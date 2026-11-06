@@ -10,20 +10,33 @@
  * earlier call touched is that area's first touch. Under `align`, the area's ledger units come from the alignment
  * module's `deliverForArea` (ranked, at most {@link AREA_CAP}, contested ones first) and go to the model as
  * `additionalContext`, one terse line each and the line to end with last, as the context eval's `focus-pool` renders
- * them. Under `none` the hook only logs. Every call appends one `ReplayHookLogEntry` line to the log; a failure is
- * logged and never reaches Codex.
+ * them. Under `none` the hook only logs.
+ *
+ * Under `git-conflict` and `git-conflict-pull`, after every tool call (PostToolUse: a patch, a command or a code cell
+ * may write files) the hook identifies, read-only, which of the agent's changes would conflict with the other refs
+ * visible at the work's start (merge-assist-replay-git.ts: hunk overlap in base lines, no merge). `git-conflict`
+ * pushes each new (ref, file) once: who, their hunk and stated intent fenced as data, and what to do, at most
+ * {@link PUSH_CAP} per call. `git-conflict-pull` writes the current list to the workspace's `.git/rerail-conflicts.md`
+ * (what `git conflicts` prints) and sends one line whenever the set changes, new or resolved. Every call appends one
+ * `ReplayHookLogEntry` line to the log; a failure is logged and never reaches Codex.
  */
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { areaOf, cleanDecision, endLine, type ToolKind, touchedPaths } from "./merge-assist-context-hook.js";
+import { conflictKey, type GitConflict, identify, pullFile, pullLine, pushText, type RefSide, workspaceRanges } from "./merge-assist-replay-git.js";
 
-export const REPLAY_ARMS = ["none", "align"] as const;
+export const REPLAY_ARMS = ["none", "align", "git-conflict", "git-conflict-pull"] as const;
 export type ReplayArm = (typeof REPLAY_ARMS)[number];
+export const GIT_ARMS: readonly ReplayArm[] = ["git-conflict", "git-conflict-pull"];
 
 /** The most units one area's first touch delivers, contested ones included. */
 export const AREA_CAP = 3;
+/** The most conflicts one `git-conflict` hook call pushes; the rest go out at later calls if they still hold. */
+export const PUSH_CAP = 3;
+/** A command that reads `git-conflict-pull`'s list. */
+export const CHECK_COMMAND = /\bgit\s+conflicts\b|rerail-conflicts\.md/u;
 
 /** A unit of coordination the alignment ledger holds: what one side established, anchored to files and symbols. */
 export interface LedgerUnit {
@@ -77,15 +90,25 @@ export interface ReplayHookConfig {
   readonly root: string;
   readonly log: string;
   readonly state: string;
+  /** The other refs as visible at the work's start, under the `git-conflict` arms; empty otherwise. */
+  readonly refs: readonly RefSide[];
+  /** The workspace commit the agent's changes are taken against: the base snapshot after setup. */
+  readonly workspaceBase: string;
+  /** `git-conflict-pull`'s list, which `git conflicts` prints; null under the other arms. */
+  readonly conflictsFile: string | null;
 }
 
 export interface ReplayHookState {
   calls: number;
   delivered: string[];
   seenAreas: string[];
+  /** `git-conflict`: the (ref, file) keys already pushed. */
+  pushed: string[];
+  /** The (ref, file) keys the last identification found. */
+  open: string[];
 }
 
-const INITIAL: ReplayHookState = { calls: 0, delivered: [], seenAreas: [] };
+const INITIAL: ReplayHookState = { calls: 0, delivered: [], seenAreas: [], pushed: [], open: [] };
 
 export interface ReplayHookLogEntry {
   readonly at: number;
@@ -102,6 +125,13 @@ export interface ReplayHookLogEntry {
   readonly text?: string;
   /** How long `deliverForArea` took over this call's opened areas, in milliseconds. */
   readonly deliverMs?: number;
+  /** `git-conflict` arms, at a call that identifies: every conflict found, and the ones this call pushed (`git-conflict`). */
+  readonly conflicts?: ReadonlyArray<{ readonly ref: string; readonly file: string }>;
+  readonly pushed?: ReadonlyArray<{ readonly ref: string; readonly file: string }>;
+  /** How long the identification took, in milliseconds. */
+  readonly identifyMs?: number;
+  /** The call ran `git conflicts` or read the list. */
+  readonly checked?: boolean;
   readonly error?: string;
 }
 
@@ -137,6 +167,32 @@ async function stdinText(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
   return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * One identification under the `git-conflict` arms: the conflicts the workspace's changes would have now, and the
+ * text to send. `git-conflict` pushes the (ref, file) pairs not pushed before, at most {@link PUSH_CAP}.
+ * `git-conflict-pull` rewrites the list `git conflicts` prints and sends its one line when the set changed.
+ */
+function gitConflicts(config: ReplayHookConfig, state: ReplayHookState): { found: GitConflict[]; sent: GitConflict[]; pushed: string[]; text: string; ms: number } {
+  const started = performance.now();
+  const found = identify(workspaceRanges(config.root, config.workspaceBase), config.refs);
+  const pushed = new Set(state.pushed);
+  let sent: GitConflict[] = [];
+  let text = "";
+  if (config.arm === "git-conflict") {
+    sent = found.filter(conflict => !pushed.has(conflictKey(conflict))).slice(0, PUSH_CAP);
+    for (const conflict of sent) pushed.add(conflictKey(conflict));
+    text = sent.map(conflict => pushText(conflict, config.refs)).join("\n\n");
+  } else if (config.conflictsFile !== null) {
+    const before = [...state.open].sort().join("\n");
+    const now = found.map(conflictKey).sort().join("\n");
+    if (now !== before) {
+      writeFileSync(config.conflictsFile, pullFile(found, config.refs));
+      text = pullLine(found);
+    }
+  }
+  return { found, sent, pushed: [...pushed], text, ms: Math.round(performance.now() - started) };
 }
 
 async function main(): Promise<void> {
@@ -181,10 +237,18 @@ async function main(): Promise<void> {
     }
     // Contested units first across the call's areas too, so each line to end with comes after every unit line.
     const ordered = [...chosen.filter(item => item.unit.conflict === true), ...chosen.filter(item => item.unit.conflict !== true)];
-    const text = ordered.length === 0 ? "" : renderUnits(ordered.map(item => item.unit));
+    const git = GIT_ARMS.includes(config.arm) && event === "PostToolUse" ? gitConflicts(config, state) : null;
+    const text = ordered.length > 0 ? renderUnits(ordered.map(item => item.unit)) : git?.text ?? "";
     if (text !== "") process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } })}\n`);
-    const next: ReplayHookState = { calls: state.calls + 1, delivered: [...delivered], seenAreas: [...seen] };
+    const next: ReplayHookState = {
+      calls: state.calls + 1,
+      delivered: [...delivered],
+      seenAreas: [...seen],
+      pushed: git?.pushed ?? state.pushed,
+      open: git === null ? state.open : git.found.map(conflictKey),
+    };
     writeFileSync(config.state, JSON.stringify(next));
+    const pair = (conflict: GitConflict) => ({ ref: conflict.ref, file: conflict.file });
     const entry: ReplayHookLogEntry = {
       at: Date.now(),
       event,
@@ -197,6 +261,8 @@ async function main(): Promise<void> {
       chars: text.length,
       ...(text === "" ? {} : { text }),
       ...(deliverMs === undefined ? {} : { deliverMs }),
+      ...(git === null ? {} : { conflicts: git.found.map(pair), identifyMs: git.ms, ...(config.arm === "git-conflict" ? { pushed: git.sent.map(pair) } : {}) }),
+      ...(CHECK_COMMAND.test(JSON.stringify(input.tool_input ?? "")) ? { checked: true } : {}),
     };
     appendFileSync(config.log, `${JSON.stringify(entry)}\n`);
   } catch (error) {

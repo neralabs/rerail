@@ -28,8 +28,8 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -122,7 +122,7 @@ export interface Pair {
 }
 
 /** Bumped whenever extraction changes, so cached commit records are rebuilt. */
-const EXTRACT_VERSION = 3;
+const EXTRACT_VERSION = 5;
 export const JUDGE_REPOSITORY = "eval:merge-assist-align";
 const MAX_CONCURRENCY = 4;
 /** Pairs replayed at once; pairs that share a side and ledger then share judge answers as they go. */
@@ -974,7 +974,7 @@ function report(scores: readonly PairScore[], replays: readonly PairReplay[]): s
   lines.push("");
   lines.push("| unit kind | delivered | delivered from first | anchored to a conflict | confirmed | pairs recalled by it |");
   lines.push("|---|---|---|---|---|---|");
-  for (const kind of ["handoff", "position", "retirement", "contract", "copy"]) {
+  for (const kind of ["handoff", "position", "retirement", "contract", "copy", "artefact"]) {
     const all = replays.flatMap(replay => replay.deliveries.filter(delivery => delivery.unit.kind === kind));
     lines.push(`| ${kind} | ${all.length} | ${all.filter(delivery => delivery.fromFirst).length} | ${conflicts.reduce((sum, score) => sum + score.anchored.filter(hit => hit.kind === kind).length, 0)} | ${conflicts.reduce((sum, score) => sum + score.confirmed.filter(hit => hit.kind === kind).length, 0)} | ${conflicts.filter(score => score.confirmed.some(hit => hit.kind === kind)).length} |`);
   }
@@ -993,11 +993,25 @@ function perCommit(replays: readonly PairReplay[], kind: "conflict" | "negative"
   return commits === 0 ? "—" : (subset.reduce((sum, replay) => sum + replay.deliveries.length, 0) / commits).toFixed(2);
 }
 
+/**
+ * A private `CODEX_HOME` for the judge: the person's `auth.json` as a symlink and nothing else, so their config,
+ * model, hooks and MCP servers never reach a judgment. Never written to `~/.codex`.
+ */
+function judgeCodexHome(cacheDir: string): string {
+  const home = join(cacheDir, "codex-home");
+  mkdirSync(home, { recursive: true });
+  const auth = join(home, "auth.json");
+  const source = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json");
+  if (!existsSync(auth) && existsSync(source)) symlinkSync(source, auth);
+  return home;
+}
+
 function makeJudge(cacheDir: string, options: AlignmentOptions): AgentJudge | null {
   if (options.noJudge === true) return null;
   mkdirSync(cacheDir, { recursive: true });
   const database = openRerailDatabase(join(cacheDir, "judge.sqlite"));
-  const judge = createAgentJudge({ database, preferredHost: "codex", limitPerHour: 1_000_000, ...(options.judgeTimeoutMs === undefined ? {} : { timeoutMs: options.judgeTimeoutMs }) });
+  const env = { ...process.env, CODEX_HOME: judgeCodexHome(cacheDir) };
+  const judge = createAgentJudge({ database, env, preferredHost: "codex", limitPerHour: 1_000_000, ...(options.judgeTimeoutMs === undefined ? {} : { timeoutMs: options.judgeTimeoutMs }) });
   return limitedJudge(judge, Math.min(MAX_CONCURRENCY, options.concurrency ?? MAX_CONCURRENCY));
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  artefactUnits,
   branchName,
   closedHandoffKeys,
   codeFingerprints,
@@ -10,6 +11,7 @@ import {
   extractUnits,
   type FileChange,
   handoffUnits,
+  movedCodeUnits,
   namedAnchors,
   parseShow,
   positionPassages,
@@ -61,7 +63,7 @@ describe("declarations", () => {
     expect(declarations("typescript", text).map(entry => [entry.name, entry.kind, entry.exported, entry.signature])).toEqual([
       ["load", "function", true, "export async function load(id: string, options: Options): Promise<User>"],
       ["helper", "function", false, "function helper()"],
-      ["Options", "type", true, "export interface Options"],
+      ["Options", "type", true, "export interface Options { cache: boolean }"],
       ["LIMIT", "constant", true, "export const LIMIT = 10;"],
       ["Store", "class", true, "class Store"],
     ]);
@@ -147,6 +149,7 @@ describe("handoffUnits", () => {
     const units = handoffUnits(change, texts, resolve);
     expect(units.map(unit => [unit.anchors.files, unit.anchors.symbols])).toEqual([
       [["docs/open-items.md"], ["put_tape"]],
+      [["docs/open-items.md"], []],
       [["src/engine/store.ts"], []],
     ]);
     expect(units[0]!.key).toBe("docs/open-items.md\u0000- o70: who owns `put_tape` busy retries");
@@ -278,5 +281,78 @@ describe("consumerHits", () => {
     ];
     const texts = new Map([["src/api/routes.ts", "const ledger = store.openLedger(path);"], ["src/api/other.ts", "openLedgerish()"]]);
     expect([...consumerHits(units, texts)]).toEqual([["a", { files: ["src/api/routes.ts"], symbols: ["Store.openLedger"] }]]);
+  });
+});
+
+describe("link-1 regressions", () => {
+  it("needs a hand-off marker where a comment or item starts, or an open-item reference", () => {
+    const change = commit([file("src/engine/store.ts", [
+      "export function handoffSettings(page: Page) {}",
+      "  // the follow-up reads this later",
+      "  // FIXME: the retry budget",
+      "  // P's relational inputs (test-only, open item O18)",
+    ])]);
+    expect(handoffUnits(change, noTexts, resolve).map(unit => unit.text.split(" (")[0])).toEqual(["// FIXME: the retry budget", "// P's relational inputs"]);
+  });
+
+  it("makes an open-item section one hand-off keyed by its heading, closed when the heading goes", () => {
+    const lines = ["## O61. The builtin catalogue", "The closure is a fixed catalogue of `rx_match` builtins."];
+    const change = commit([file("docs/final-shape/open-items.md", lines)]);
+    const units = handoffUnits(change, { before: new Map(), after: new Map([["docs/final-shape/open-items.md", lines.join("\n")]]) }, resolve);
+    expect(units.map(unit => [unit.kind, unit.key, unit.anchors.symbols])).toEqual([["handoff", "docs/final-shape/open-items.md\u0000#o61. the builtin catalogue", ["rx_match"]]]);
+    expect(closedHandoffKeys(commit([file("docs/final-shape/open-items.md", [], [lines[0]!])]))).toEqual(["docs/final-shape/open-items.md\u0000#o61. the builtin catalogue"]);
+  });
+
+  it("finds code moved between files without a rename", () => {
+    const body = ["export function checkRule(rule: Rule): Result {", "  const compiled = compileRule(rule.source);", "  const cases = rule.cases.map(toCase);", "  const failures = cases.filter(item => !item.ok);", "  return { compiled, failures, passed: failures.length === 0 };", "  // done", "  const extra = summarise(failures, cases);", "  log(extra.message);", "}"];
+    const change = commit([file("src/cli/rule-draft.ts", [], body), file("src/engine/code-rule/rule-check.ts", body, [], "added")]);
+    const texts = { before: new Map([["src/cli/rule-draft.ts", body.join("\n")]]), after: new Map([["src/engine/code-rule/rule-check.ts", body.join("\n")]]) };
+    expect(movedCodeUnits(change, texts).map(unit => [unit.anchors.files, unit.anchors.symbols])).toEqual([[["src/cli/rule-draft.ts", "src/engine/code-rule/rule-check.ts"], ["checkRule"]]]);
+  });
+
+  it("treats a migrations list and a type's fields as contracts", () => {
+    const change = commit([
+      file("src/engine/storage/migrations.ts", ["  { id: \"rule-approvals\", up },"]),
+      file("native/src/logic/front.rs", ["    Ast { document: String, captures: Vec<String> },"], ["    Ast { document: String },"]),
+    ]);
+    const texts = {
+      before: new Map([["native/src/logic/front.rs", "pub enum Literal {\n    Ast { document: String },\n}"]]),
+      after: new Map([["native/src/logic/front.rs", "pub enum Literal {\n    Ast { document: String, captures: Vec<String> },\n}"]]),
+    };
+    expect(contractUnits(change, texts).map(unit => [unit.anchors.files[0], unit.anchors.symbols])).toEqual([
+      ["src/engine/storage/migrations.ts", []],
+      ["native/src/logic/front.rs", ["Literal"]],
+    ]);
+  });
+
+  it("reads a long new decision doc in chunks so a late decision still reaches the judge", () => {
+    const filler = Array.from({ length: 40 }, (_unused, index) => `Background line ${index} describing the spike setup in some detail.`);
+    const lines = ["# Facts engine: plan", ...filler, "", "Replacement of his executor is sequenced with him, not done unilaterally."];
+    const change = commit([file("docs/facts/PLAN.md", lines, [], "added")]);
+    const passages = positionPassages(change, { before: new Map(), after: new Map([["docs/facts/PLAN.md", lines.join("\n")]]) });
+    expect(passages.some(passage => passage.text.includes("sequenced with him"))).toBe(true);
+  });
+});
+
+describe("artefactUnits", () => {
+  it("records a new module with its doc comment and new exports added to an existing file", () => {
+    const module = ["//! The setfix evaluator: runs recursive rules to a fixed point over sets.", "pub fn run_setfix(program: &Program) -> Sets {", "}"];
+    const change = commit([
+      file("native/src/logic/native/setfix.rs", module, [], "added"),
+      file("src/engine/store.ts", ["export function compileOnce(table: Table) {}"]),
+      file("src/engine/other.ts", ["const local = 1;"]),
+    ], { subject: "logic: setfix" });
+    const texts = {
+      before: new Map([["src/engine/store.ts", "export function open() {}"], ["src/engine/other.ts", "export function open() {}"]]),
+      after: new Map([
+        ["native/src/logic/native/setfix.rs", module.join("\n")],
+        ["src/engine/store.ts", "export function open() {}\nexport function compileOnce(table: Table) {}"],
+        ["src/engine/other.ts", "export function open() {}\nconst local = 1;"],
+      ]),
+    };
+    expect(artefactUnits(change, texts).map(unit => [unit.text, unit.anchors])).toEqual([
+      ["adds native/src/logic/native/setfix.rs: The setfix evaluator: runs recursive rules to a fixed point over sets. (run_setfix)", { files: ["native/src/logic/native/setfix.rs"], symbols: ["run_setfix"] }],
+      ["adds compileOnce to src/engine/store.ts: logic: setfix", { files: ["src/engine/store.ts"], symbols: ["compileOnce"] }],
+    ]);
   });
 });

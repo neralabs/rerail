@@ -192,16 +192,29 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   L1, B's violation of D lower with `focus-pool` than with `none`, by the same stratified permutation test with strata
   = B task, its effect the mean within-task difference in proportions with a cluster-bootstrap 95% CI, one-sided
   α 0.05 for a check looked at once (`--planned-looks 1`, the default) and the Pocock 0.0221 per look otherwise, at
-  most three. A B run with an error counts as a violation.
+  most three. A B run with an error counts as a violation. `--analyze-replay replay.json [...] --arms A[,B...]
+  --control none [--look N]` analyses `merge-assist-replay.ts --json` reports, refusing to pool reports with another
+  dataset, model, grader model, config, timeouts or align module, a pair defined differently, or the same run twice.
+  The unit is a run and the strata are replay pairs. Leaked runs are left out and counted per arm; a run with an
+  error, an empty diff or no grader verdict counts as a failure (conflicting, not done, and at least as costly as its
+  pair's worst sound run). Primary, per treatment arm against the control, one-sided: R1, the blind grader's
+  "conflicts with first" rate lower (yes and unclear 1, no 0), Holm across the listed treatments, the Pocock 0.0221
+  per look, at most three, `STOP: success` when every treatment's R1 rejects. Secondary, raw p: done (yes 1,
+  partial 0.5, no 0; treatment not worse, read from the CI), total tokens and wall time (log, ratio of geometric
+  means), merge-tree conflict files against first's head and first_half files touched; and for the `git-conflict`
+  arms, descriptively, the share of runs that ran `git conflicts`, detections, resolved and open at the end. Effects
+  are mean within-pair differences with cluster-bootstrap 95% CIs, 20,000 permutations, seed 1. `--self-test` adds
+  R1's no-effect false-positive rate at 14 pairs × 2 runs per arm, one treatment and two with Holm.
 - `merge-assist-guard.ts` (`node --import tsx benchmark/merge-assist-guard.ts --index index.json [--thresholds ...]
   [--hook-calls N]`) scores the guard offline, with no agent: each labelled teammate file and project file as a
   patch, it prints per real decision and source the recall on its caught files, fires on its passed files and cross
   noise, distractor fires per patch, an embedding threshold sweep on these forms (reported, never frozen from here),
   the hook's model load and embedding time per call, and fails when a teammate file line reached the judge.
 - `merge-assist-replay.ts` (`node --import tsx benchmark/merge-assist-replay.ts --dataset dir [--pairs id,id]
-  [--trials N] [--arms none,align] [--concurrency N] [--timeout-min N] [--json out.json] [--repo path]`) replays
-  the later side of a real architecture conflict with a Codex agent and asks whether the alignment ledger, delivered
-  as the agent first touches an area, keeps it from conflicting with the earlier side. See
+  [--trials N] [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--json
+  out.json] [--repo path] [--detect-only]`) replays the later side of a real architecture conflict with a Codex agent
+  and asks whether the alignment ledger, delivered as the agent first touches an area, or the textual conflicts a
+  read-only hunk-overlap identifier finds after each edit keep it from conflicting with the earlier side. See
   [Architecture-conflict replay](#architecture-conflict-replay).
 - `merge-assist-align.ts` (`node --import tsx benchmark/merge-assist-align.ts --pairs pairs.json [--repo dir | --repos
   root] [--ids a,b] [--concurrency N] [--cache dir] [--json out.json] [--no-judge] [--verbose]`) replays the later side
@@ -342,22 +355,83 @@ are quick.
   second starts at its creation, or at its earliest authored commit if that was earlier. At most 3 units go out per
   area, contested ones first, one terse line each, with the `focus-pool` line to end the final message with
   ("Note: … decided differently on …") last.
+- **`git-conflict` arms.** The dumbest in-flight mechanism: no ranking, no judge, no extraction, no merge. After every
+  tool call (a patch, a command or a code cell may write files), the hook (`benchmark/merge-assist-replay-git.ts`)
+  identifies, reading only, which of the agent's changes would conflict with another ref visible at second's start:
+  first as of `first_visible`, and each `concurrent` ref at its newest first-parent commit by then. The agent's side
+  is `git diff --unified=0` of the working files against the base (untracked files as new files); a ref's side is the
+  same diff from its merge base with `base_sha`, its ranges carried to the base's lines through the merge base's own
+  diff to the base. Two hunks in the same file conflict when they touch the same base lines or leave at most 3
+  unchanged lines between them (an approximation of git's rule), unless both make the same change to the same lines;
+  renames are ignored. Files the agent did not change never count, so base drift does not. The refs' hunks are read
+  from the source before the run; the hook never reads the source, and nothing is written to it. `git-conflict`
+  pushes each (ref, file) once, at most 3 per call: "Git conflict in flight: <PR #N or
+  branch> by <author> (public since <time>) also changes <file>; your changes would conflict with theirs", their
+  overlapping hunk (at most 40 lines) and stated intent (pull request title and first body paragraph, else its latest
+  3 commit subjects) fenced as data, then "Make your code compatible with theirs, unless that is contrary to the
+  approach your task asks for; if it is, keep yours and tell the person in one line which branch you diverge from and
+  why." `git-conflict-pull` keeps the current list (the same items) in the workspace's `.git/rerail-conflicts.md`,
+  which a repo-local alias prints as `git conflicts`, and sends one line whenever the set changes, new or resolved:
+  how many branches and which files, to see them with `git conflicts`, and to make the code compatible before
+  finishing unless that is contrary to the task, telling the person which it diverged from. A conflict is resolved
+  when a later identification no longer finds its overlap.
 - **Recorded.** The diff against the base (after setup), Codex's `--json` events, the hook log (each unit with its
-  file and the second it went out at, and whether the text reached Codex's transcript), tokens, wall time and the
-  final message.
+  file and the second it went out at, and whether the text reached Codex's transcript; under the `git-conflict` arms
+  every identification with the conflicts found and pushed, and calls that ran `git conflicts` or read the list),
+  tokens, wall time and the final message. Per `git-conflict` run: each (ref, file) identified, when, when it was
+  pushed, when it was resolved, how many stayed open at the end, and when the agent read the list.
 - **Blind grade.** A separate `codex exec` with no hooks, in an empty folder, and with `--output-schema`. It sees the
   task, the rubric, `done` and the diff, nothing about the arm. Added lines that could tell the arm are stripped:
-  `Note:`, `decided differently`, first's author, branch and PR numbers, and `Rerail` (in Rerail's own repository,
-  only the hook's unit labels). It answers `conflicts_with_first` (yes/no/unclear), reasons citing diff lines, and
-  `done` (yes/partial/no). A run that changed no file gets "no" and "no" without a grader call (marked `empty diff`).
+  `Note:`, `decided differently`, first's and the visible refs' authors, branch and PR numbers, the `git-conflict`
+  arms' wording and data fences, and `Rerail` (in Rerail's own repository, only the hook's unit labels). It answers
+  `conflicts_with_first` (yes/no/unclear), reasons citing diff lines, and `done` (yes/partial/no). A run that changed
+  no file gets "no" and "no" without a grader call (marked `empty diff`).
 - **Deterministic checks.** The diff is applied to `base_sha` as a commit in a scratch repository that borrows the
   source's objects. `git merge-tree` then merges it against first's head and against `first_visible`, counting
   conflicted files and hunks. The checks also list the diff's files among first's `first_half` files and among every
   file first changed. Each pair also shows the real second-head × first-head merge.
-- **Report.** The ledger per pair, a row per run, the grader's reasons, leaked runs, and aggregates per arm and per
-  pair × arm: leaked runs, grader yes, unclear, done, textual conflicts, first-half touches, units, note lines,
+- **Report.** The ledger and the visible refs per pair, a row per run, the grader's reasons, the `git-conflict`
+  detections, leaked runs, and aggregates per arm and per pair × arm: leaked runs, grader yes, unclear, done, textual
+  conflicts, first-half touches, units, note lines, identified and still-open conflicts, runs that read the list,
   median minutes and mean tokens. `--json` writes all of it, events and hook logs included. Folders are removed
   unless `--keep`.
+- **`--detect-only`.** No agent. Every selected pair of `pairs.json` (specs not needed) replays second's real commits
+  in order, at their authoring times, through the same identifier: the files second's own non-merge commits changed
+  so far are the agent's, and each ref visible then (first's last labelled commit visible by then, each `concurrent`
+  ref's head then) is compared from the commit's merge base with it. It prints, per pair, when a conflict with first
+  was first identified against `noticed_at` (the lead in hours), on any file and on one of the conflict's labelled
+  (`first_half` or `second_half`) files, how many (ref, file) pairs were identified against first and against other
+  refs, then the conflict pairs identified before `noticed_at` (any file, labelled file) and the negatives identified
+  against first (false detections).
+
+## OSS architecture-conflict replay, simple in-flight git arms: pre-registration
+
+Fixed before any agent runs on the OSS replay specs (`/tmp/ma-ctx/oss/dataset/replay/`, 14 conflict pairs from 13
+repositories in TypeScript, JavaScript, Python, Go and Rust, curated by agents that never saw the mechanism's code),
+and not changed after.
+
+- **Question.** Does telling an agent, while it works, that its edits would conflict with another open pull request
+  make it build something compatible with that pull request's design, compared with telling it nothing?
+- **Arms.** `none` (control); `git-conflict` (push: after every edit, hunks that touch the same or adjacent base lines
+  as another visible pull request's are injected with that pull request's hunk and stated intent, and "make your code
+  compatible with theirs unless that is contrary to the approach your task asks for"); `git-conflict-pull` (one line
+  when the set of conflicts changes; the agent reads them with `git conflicts` and decides when to deal with them).
+  Both identify conflicts read-only; nothing is merged or written. Both are frozen: they have no tuning parameters and
+  were only smoke-run on the Rerail dev pair.
+- **Fixed settings.** Each run starts from the second pull request's `base_sha` as a history-free snapshot; the
+  ledger of other pull requests is as visible at the second's start (the first plus every concurrent one). Codex 0.158,
+  default model, `--timeout-min 20`, the sandbox profile and leak guard; leaked runs are excluded and reported.
+- **Primary** (per treatment against `none`, one-sided, stratified by pair, Holm across the two treatments): R1, the
+  share of runs the blind grader judges to conflict with the first pull request's design (yes or unclear count as a
+  conflict; errors and empty diffs count as failures) is lower.
+- **Secondary** (raw p): done not worse; tokens; time; textual conflicts with the first's head; for the pull arm, how
+  often and when the agent looked, and conflicts left open at the end.
+- **Looks.** Look 1: 2 trials per pair and arm (84 runs). Looks 2 and 3 add 2 trials each. Stop for success when both
+  treatments reject at Holm-adjusted p ≤ 0.0221 (Pocock, three looks); stop after look 3 whatever the result.
+- **Analysis.** `node --import tsx benchmark/merge-assist-stats.ts --analyze-replay <look reports...> --arms
+  git-conflict,git-conflict-pull --control none`.
+- **Later arm.** The in-flight alignment mechanism (`align`) joins on the same specs only after all five links pass on
+  the Rerail dev set; it runs with a repeated `none` slice of 1 trial per pair to check for drift between the runs.
 
 ## Steer strategies
 

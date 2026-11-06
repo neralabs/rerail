@@ -7,10 +7,10 @@
  * (`./ledger.ts`) qualifies it by branch and the time it became visible.
  */
 import { createHash } from "node:crypto";
-import type { CommitChange, FileChange } from "./commits.js";
+import type { CommitChange, FileChange, LineBlock } from "./commits.js";
 import { type Declaration, declarations, identifiers, shortName, sourceLanguageOf, sqlTables } from "./symbols.js";
 
-export type UnitKind = "handoff" | "position" | "retirement" | "contract" | "copy";
+export type UnitKind = "handoff" | "position" | "retirement" | "contract" | "copy" | "artefact";
 
 export interface UnitAnchors {
   /** Repository paths; one ending in `/` covers everything under it. */
@@ -47,18 +47,26 @@ export const MAX_UNIT_TEXT = 320;
 const MAX_UNIT_SYMBOLS = 12;
 const MAX_UNIT_FILES = 12;
 /** The most passages one commit offers the position judge, and the longest. */
-export const MAX_COMMIT_PASSAGES = 8;
+export const MAX_COMMIT_PASSAGES = 24;
 export const MAX_PASSAGE_CHARS = 1_500;
 const MIN_PASSAGE_CHARS = 60;
 /** Consecutive normalised code lines one fingerprint covers. */
 export const FINGERPRINT_WINDOW = 6;
 const MAX_COMMIT_FINGERPRINTS = 4_000;
 
-const HANDOFF_LINE = /\b(?:TODO|FIXME|XXX)\b|\bopen (?:item|question)s?\b|\bdecision needed\b|\bneeds? (?:a |an )?decision\b|\bleft (?:to|for) (?:the )?[\w-]+|\bfollow[- ]?ups?\b|\bTBD\b|\bto be decided\b|\bunresolved\b|\bblocked (?:on|by)\b|\bwaiting (?:on|for)\b|\bnot yet (?:done|implemented|wired|ported|handled|decided)\b|\bparked\b|\bhand[- ]?off\b|\bowner:/iu;
+/**
+ * A hand-off marker: TODO, FIXME, an open-item id or "open item" where a comment, heading or list item starts, or an
+ * explicit open-item reference (`open item O18`) anywhere. A word like "follow-up" mid-sentence is not one.
+ */
+const HANDOFF_MARKER = /^\s*(?:\/\/+!?|#+|\/?\*+|--|<!--|[-*+]|\d+[.)]|\|)?\s*(?:\*\*)?(?:TODO|FIXME|XXX|O\d{1,3}\b|open (?:item|question)s?\b|decision needed|TBD\b)|\bopen items? O\d{1,3}\b/u;
 const HANDOFF_HEADING = /\b(?:open items?|open questions?|follow[- ]?ups?|todos?|next steps?|hand[- ]?offs?|left to do|remaining work|known gaps?|outstanding|pending decisions?|decisions? needed)\b/iu;
+/** A doc section that is itself an open item: `O61. The builtin catalogue`. */
+const OPEN_ITEM_HEADING = /^O\d{1,3}\b/u;
+/** Docs whose every passage is a design statement worth reading: decision records, plans, PRDs, open-item ledgers. */
+const DESIGN_PATH = /(?:^|\/)(?:decisions?|adrs?|rfcs?)\/|open[-_]?items|(?:^|[/_-])(?:plan|design|prd|shape|invariants|architecture)[^/]*\.\w+$/iu;
 const RETIREMENT_LINE = /\b(?:remov(?:e|es|ed|ing)|retir(?:e|es|ed|ing)|deprecat(?:e|es|ed|ing)|replac(?:e|es|ed|ing)|drop(?:s|ped|ping)?|delet(?:e|es|ed|ing)|supersed(?:e|es|ed|ing)|rip(?:s|ped)? out|no longer|obsolete|sunset)\b/iu;
-const DECISION_LINE = /\b(?:decid\w*|decisions?|we (?:will|won't|do not|don't|never|always|keep|use|chose|choose)|must(?:n't| not)?|never|always|instead of|rather than|in favou?r of|chose|choose|prefer\w*|should(?:n't| not)?|shall|stance|invariant|source of truth|system of record|no longer|is the (?:only|single)|owns?|deprecat\w*|retir\w*|replac\w*|design)\b/iu;
-const FORMAT_PATH = /(?:^|\/)(?:[^/]*schema[^/]*|migrations?\/[^/]+|[^/]*\.(?:sql|proto|graphql|gql|avsc|fbs|thrift)|[^/]*openapi[^/]*)$/iu;
+const DECISION_LINE = /\b(?:decid\w*|decisions?|we (?:will|won't|do not|don't|never|always|keep|use|chose|choose)|must(?:n't| not)?|never|always|instead of|rather than|in favou?r of|chose|choose|prefer\w*|should(?:n't| not)?|shall|stance|invariant|source of truth|system of record|no longer|is the (?:only|single)|owns?|deprecat\w*|retir\w*|replac\w*|remov\w*|delet\w*|supersed\w*|obsolete|design)\b/iu;
+const FORMAT_PATH = /(?:^|\/)(?:[^/]*schema[^/]*|migrations?\/[^/]+|[^/]*migrations?[^/]*\.\w+|[^/]*\.(?:sql|proto|graphql|gql|avsc|fbs|thrift)|[^/]*openapi[^/]*)$/iu;
 const DOC_PATH = /\.(?:md|mdx|markdown|rst|adoc)$/iu;
 const NOT_DESIGN_DOC = /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|LICENSE|NOTICE|CODE_OF_CONDUCT|SECURITY|THIRD_PARTY)[^/]*$/iu;
 const HEADING = /^\s{0,3}#{1,6}\s+(.*)$/u;
@@ -161,6 +169,7 @@ export interface CommitTexts {
 /** Hand-off units: added lines that leave work or a decision open and name what it concerns. */
 export function handoffUnits(change: CommitChange, texts: CommitTexts, resolve: PathResolver): ExtractedUnit[] {
   const units: ExtractedUnit[] = [];
+  const sections = new Map<string, { path: string; lines: string[] }>();
   for (const file of change.files) {
     const doc = DOC_PATH.test(file.path);
     const code = sourceLanguageOf(file.path) !== null;
@@ -168,10 +177,17 @@ export function handoffUnits(change: CommitChange, texts: CommitTexts, resolve: 
     for (const block of file.added) {
       block.lines.forEach((line, offset) => {
         if (line.trim().length < 6) return;
-        const underHeading = doc && LIST_OR_ROW.test(line) && HANDOFF_HEADING.test(headingAbove(afterLines, block.start + offset) ?? "");
-        if (!underHeading && !HANDOFF_LINE.test(line)) return;
+        const heading = doc ? headingAbove(afterLines, block.start + offset) ?? "" : "";
+        if (doc && OPEN_ITEM_HEADING.test(heading)) {
+          const section = sections.get(heading) ?? { path: file.path, lines: [] };
+          section.lines.push(line);
+          sections.set(heading, section);
+          return;
+        }
+        const underHeading = doc && LIST_OR_ROW.test(line) && HANDOFF_HEADING.test(heading);
+        if (!underHeading && !HANDOFF_MARKER.test(line)) return;
         const named = namedAnchors(line, resolve);
-        if (!code && named.files.length === 0 && named.symbols.length === 0) return;
+        if (!code && named.files.length === 0 && named.symbols.length === 0 && !underHeading) return;
         units.push({
           kind: "handoff",
           text: cutText(`${line.trim()} (${file.path})`, MAX_UNIT_TEXT),
@@ -181,8 +197,18 @@ export function handoffUnits(change: CommitChange, texts: CommitTexts, resolve: 
       });
     }
   }
+  // An open-item section a commit adds to or changes is one hand-off, keyed by its heading.
+  for (const [heading, section] of sections) {
+    const named = namedAnchors(section.lines.join("\n"), resolve);
+    units.push({
+      kind: "handoff",
+      text: cutText(`${heading}: ${section.lines.find(line => line.trim().length > 0)?.trim() ?? ""} (${section.path})`, MAX_UNIT_TEXT),
+      anchors: { files: unique([section.path, ...named.files], MAX_UNIT_FILES), symbols: named.symbols },
+      key: `${section.path}\u0000#${heading.toLowerCase()}`,
+    });
+  }
   for (const line of change.body.split("\n")) {
-    if (!HANDOFF_LINE.test(line)) continue;
+    if (!HANDOFF_MARKER.test(line)) continue;
     const named = namedAnchors(line, resolve);
     if (named.files.length === 0 && named.symbols.length === 0) continue;
     units.push({ kind: "handoff", text: cutText(`${line.trim()} (commit message: ${change.subject})`, MAX_UNIT_TEXT), anchors: named, key: null });
@@ -195,7 +221,11 @@ export function closedHandoffKeys(change: CommitChange): string[] {
   const keys: string[] = [];
   for (const file of change.files) {
     for (const block of file.removed) {
-      for (const line of block.lines) if (line.trim().length >= 6 && (HANDOFF_LINE.test(line) || LIST_OR_ROW.test(line))) keys.push(`${file.oldPath}\u0000${normaliseLine(line)}`);
+      for (const line of block.lines) {
+        const heading = HEADING.exec(line);
+        if (heading !== null && OPEN_ITEM_HEADING.test(heading[1]!.trim())) keys.push(`${file.oldPath}\u0000#${heading[1]!.trim().toLowerCase()}`);
+        else if (line.trim().length >= 6 && (HANDOFF_MARKER.test(line) || LIST_OR_ROW.test(line))) keys.push(`${file.oldPath}\u0000${normaliseLine(line)}`);
+      }
     }
   }
   return keys;
@@ -262,16 +292,59 @@ export function retirementUnits(change: CommitChange, texts: CommitTexts, resolv
       key: null,
     });
   }
-  // Table rows in docs are measurements and logs far more often than statements; they are left out.
-  const docLines = change.files.filter(file => isDesignDoc(file.path)).flatMap(file => file.added.flatMap(block => block.lines)).filter(line => !/^\s*\|/u.test(line));
-  const statements = [change.subject, ...change.body.split("\n"), ...docLines];
+  // Retirement statements come from the message only: a doc's statements reach the position judge as passages.
   const seen = new Set<string>();
-  for (const line of statements) {
+  for (const line of [change.subject, ...change.body.split("\n")]) {
     if (!RETIREMENT_LINE.test(line) || seen.has(line)) continue;
     seen.add(line);
     const named = namedAnchors(line, resolve);
     if (named.files.length === 0 && named.symbols.length === 0) continue;
     units.push({ kind: "retirement", text: cutText(line === change.subject ? line : `${line.trim()} (${change.subject})`, MAX_UNIT_TEXT), anchors: named, key: null });
+  }
+  units.push(...movedCodeUnits(change, texts));
+  return units;
+}
+
+/** Shared fingerprint windows between one file's removed lines and another's added lines that count as a move. */
+const MIN_MOVED_WINDOWS = 2;
+
+function windowHashes(blocks: readonly LineBlock[]): Set<string> {
+  const hashes = new Set<string>();
+  for (const block of blocks) {
+    const lines = block.lines.map(fingerprintLine).filter((line): line is string => line !== null);
+    for (let start = 0; start + FINGERPRINT_WINDOW <= lines.length; start += 1) hashes.add(createHash("sha1").update(lines.slice(start, start + FINGERPRINT_WINDOW).join("\n")).digest("hex").slice(0, 16));
+  }
+  return hashes;
+}
+
+/**
+ * Code moved between files without a Git rename: a source file's removed lines reappearing among another file's added
+ * lines. Anchored to both files and to the declarations that moved with it.
+ */
+export function movedCodeUnits(change: CommitChange, texts: CommitTexts): ExtractedUnit[] {
+  const sources = change.files.filter(file => sourceLanguageOf(file.oldPath) !== null && file.removed.length > 0);
+  const targets = change.files.filter(file => sourceLanguageOf(file.path) !== null && file.added.length > 0);
+  if (sources.length === 0 || targets.length === 0) return [];
+  const added = new Map(targets.map(file => [file.path, windowHashes(file.added)]));
+  const units: ExtractedUnit[] = [];
+  for (const source of sources) {
+    const removed = windowHashes(source.removed);
+    if (removed.size === 0) continue;
+    for (const target of targets) {
+      if (target.path === source.oldPath || (source.status === "renamed" && target.path === source.path)) continue;
+      let shared = 0;
+      for (const hash of added.get(target.path)!) if (removed.has(hash)) shared += 1;
+      if (shared < MIN_MOVED_WINDOWS) continue;
+      const language = sourceLanguageOf(target.path)!;
+      const before = new Set(declarations(sourceLanguageOf(source.oldPath)!, texts.before.get(source.oldPath) ?? "").map(declaration => shortName(declaration.name)));
+      const moved = declarations(language, texts.after.get(target.path) ?? "").map(declaration => declaration.name).filter(name => before.has(shortName(name)) && distinctiveSymbol(name));
+      units.push({
+        kind: "retirement",
+        text: cutText(`moves code from ${source.oldPath} to ${target.path}${moved.length > 0 ? ` (${moved.slice(0, 6).join(", ")})` : ""}: ${change.subject}`, MAX_UNIT_TEXT),
+        anchors: { files: [source.oldPath, target.path], symbols: unique(moved, MAX_UNIT_SYMBOLS) },
+        key: null,
+      });
+    }
   }
   return units;
 }
@@ -338,14 +411,36 @@ export function positionPassages(change: CommitChange, texts: CommitTexts): Pass
       }
     }
     if (run !== null) runs.push(run);
+    // Decision records, plans and open-item ledgers are read whole; elsewhere a run must state a choice.
+    const designDoc = DESIGN_PATH.test(file.path);
     for (const entry of runs) {
-      const text = entry.lines.join("\n").trim();
-      if (text.length < MIN_PASSAGE_CHARS || !DECISION_LINE.test(text)) continue;
-      const number = passages.filter(passage => passage.path !== null).length + 1;
-      passages.push({ id: `${change.sha}:${number}`, path: file.path, heading: headingAbove(afterLines, entry.start), text: text.slice(0, MAX_PASSAGE_CHARS) });
+      // A long run is read in paragraph-aligned chunks, so a decision deep in a new doc is not cut off.
+      let chunk: string[] = [];
+      let chunkStart = entry.start;
+      const flush = (): void => {
+        const text = chunk.join("\n").trim();
+        chunk = [];
+        if (text.length < MIN_PASSAGE_CHARS || (!designDoc && !DECISION_LINE.test(text))) return;
+        const number = passages.filter(passage => passage.path !== null).length + 1;
+        passages.push({ id: `${change.sha}:${number}`, path: file.path, heading: headingAbove(afterLines, chunkStart), text: text.slice(0, MAX_PASSAGE_CHARS) });
+      };
+      entry.lines.forEach((line, offset) => {
+        const size = chunk.reduce((sum, kept) => sum + kept.length + 1, 0);
+        if (chunk.length > 0 && size + line.length > MAX_PASSAGE_CHARS && (line.trim() === "" || HEADING.test(line) || size > MAX_PASSAGE_CHARS * 0.8)) {
+          flush();
+          chunkStart = entry.start + offset;
+        }
+        if (chunk.length === 0) chunkStart = entry.start + offset;
+        chunk.push(line);
+      });
+      flush();
     }
   }
-  return passages.slice(0, MAX_COMMIT_PASSAGES);
+  // Over the cap, chunks that state a choice go before the rest of a design doc.
+  const fromMessage = passages.filter(passage => passage.path === null);
+  const docs = passages.filter(passage => passage.path !== null);
+  const ordered = [...docs.filter(passage => DECISION_LINE.test(passage.text)), ...docs.filter(passage => !DECISION_LINE.test(passage.text))];
+  return [...fromMessage, ...ordered].slice(0, MAX_COMMIT_PASSAGES);
 }
 
 /** A code line as fingerprints compare it: trimmed, whitespace collapsed; blank, brace-only and comment lines drop. */
@@ -391,8 +486,60 @@ export function touchedSymbols(files: readonly FileChange[]): Set<string> {
   return names;
 }
 
-/** Every deterministic unit a commit yields: hand-offs, retirements and contract changes. */
+/** The first sentence of a file's leading doc comment (`//!`, a block comment, `#`, a docstring, a doc's title), or null. */
+export function leadingSummary(text: string): string | null {
+  const lines: string[] = [];
+  for (const raw of text.split("\n").slice(0, 40)) {
+    const line = raw.trim();
+    if (lines.length === 0 && (line === "" || line.startsWith("#!") || /^(?:"use |'use |\/\/ SPDX|# SPDX|<!--)/u.test(line))) continue;
+    const comment = /^(?:\/\/[!/]?|\/\*\*?|\*(?!\/)|#{1,6}|"""|''')\s?(.*)$/u.exec(line);
+    if (comment === null || line === "*/") break;
+    const body = comment[1]!.replace(/\*\/$/u, "").replace(/"""|'''/gu, "").trim();
+    if (body !== "") lines.push(body);
+    if (/[.!?](?:\s|$)/u.test(body) && lines.join(" ").length >= 30) break;
+  }
+  const joined = lines.join(" ").replace(/\s+/gu, " ").trim();
+  if (joined.length < 12) return null;
+  const sentence = /^(.+?[.!?])(?:\s|$)/u.exec(joined);
+  return (sentence?.[1] ?? joined).slice(0, 240);
+}
+
+/** New exported declarations a modified file gains that make one artefact unit. */
+const MIN_NEW_EXPORTS = 1;
+
+/**
+ * Artefact units: something a commit builds that other work should reuse rather than rebuild: a new module, harness or
+ * design note (an added file), or new exported functions and types in an existing one. Summarised by the file's
+ * leading doc comment or the commit subject, anchored to the file and the new declarations.
+ */
+export function artefactUnits(change: CommitChange, texts: CommitTexts): ExtractedUnit[] {
+  const units: ExtractedUnit[] = [];
+  for (const file of change.files) {
+    if (file.status === "deleted") continue;
+    const after = texts.after.get(file.path);
+    const language = sourceLanguageOf(file.path);
+    const doc = DOC_PATH.test(file.path) && isDesignDoc(file.path);
+    if (language === null && !doc) continue;
+    const exported = language === null || after === undefined ? [] : declarations(language, after).filter(declaration => declaration.exported && declaration.kind !== "module");
+    const previously = new Set(exportedDeclarations(file.oldPath, texts.before.get(file.oldPath)).map(declaration => declaration.name));
+    const fresh = file.status === "added" ? exported : exported.filter(declaration => !previously.has(declaration.name));
+    if (file.status !== "added" && fresh.length < MIN_NEW_EXPORTS) continue;
+    if (file.status === "added" && language !== null && fresh.length === 0 && !/(?:bench|harness|test|spike|tool|script)/iu.test(file.path)) continue;
+    const summary = (after === undefined ? null : leadingSummary(after)) ?? change.subject;
+    const names = fresh.map(declaration => declaration.name);
+    const what = file.status === "added" ? `adds ${file.path}` : `adds ${names.slice(0, 6).join(", ")} to ${file.path}`;
+    units.push({
+      kind: "artefact",
+      text: cutText(`${what}: ${summary}${file.status === "added" && names.length > 0 ? ` (${names.slice(0, 6).join(", ")})` : ""}`, MAX_UNIT_TEXT),
+      anchors: { files: [file.path], symbols: unique(names.filter(distinctiveSymbol), MAX_UNIT_SYMBOLS) },
+      key: null,
+    });
+  }
+  return units;
+}
+
+/** Every deterministic unit a commit yields: hand-offs, retirements, contract changes and artefacts. */
 export function extractUnits(change: CommitChange, texts: CommitTexts, resolve: PathResolver): ExtractedUnit[] {
   if (change.merge) return [];
-  return [...handoffUnits(change, texts, resolve), ...retirementUnits(change, texts, resolve), ...contractUnits(change, texts)];
+  return [...handoffUnits(change, texts, resolve), ...retirementUnits(change, texts, resolve), ...contractUnits(change, texts), ...artefactUnits(change, texts)];
 }

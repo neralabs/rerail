@@ -30,8 +30,6 @@ import { type AgentJudge, contestPositions, fenceData, newJudgeNonce, rankJsonSc
 import {
   type AlignmentContext,
   contextFor,
-  copyUnits,
-  fingerprintIndex,
   JUDGE_REPOSITORY,
   loadHistory,
   type OwnCommits,
@@ -62,6 +60,10 @@ interface ExpectedUnit {
   proposition: string;
   source: LabelSource;
   notes?: string;
+  /** False for labels no sensible unit can match (id collisions): excluded and reported apart. */
+  scored?: boolean;
+  /** Other units that would also catch the conflict; a match on any is reported beside the primary's. */
+  alternates?: Array<{ type: ExpectedUnit["type"]; sha: string; visible_at: string; proposition: string; source: LabelSource }>;
 }
 
 interface Touches {
@@ -84,13 +86,17 @@ interface PositionPairLabel {
   justification: string;
 }
 
-/** The unit kinds that count as stating a label of each type: a retirement statement is a position too. */
+/**
+ * The unit kinds that count as stating a label of each type: a retirement statement is a position too, and a `copy`
+ * label (an artefact on the earlier side the later side could reuse) is stated by an artefact unit or by a position
+ * saying the artefact exists.
+ */
 const COMPATIBLE: Record<Exclude<ExpectedUnit["type"], "id-collision">, readonly string[]> = {
   "hand-off": ["handoff"],
   position: ["position", "retirement"],
   retirement: ["retirement", "position"],
   contract: ["contract", "position"],
-  copy: ["copy"],
+  copy: ["artefact", "position"],
 };
 
 const BARS = { extraction: 0.8, precision: 0.8, anchoring: 0.8, selection: 0.7, falseFires: 0.5, contradictPrecision: 0.8, contradictRecall: 0.8, falseAlarm: 0.1 };
@@ -200,27 +206,10 @@ async function unitsStating(judge: AgentJudge, proposition: string, units: reado
 
 const NO_OWN: OwnCommits = { shas: new Set(), identities: new Set() };
 
-/** The labelled side's ledger as of `time`, with the copy units the other side's chain shares with it. */
+/** The labelled side's ledger as of `time`: its own units only, nothing the other side's commits produce. */
 async function sideLedger(context: AlignmentContext, pair: Pair, sideKey: "first" | "second", time: string): Promise<LedgerUnit[]> {
-  const labelled: Side = pair[sideKey];
-  const other: Side = pair[sideKey === "first" ? "second" : "first"];
-  const loaded = await loadHistory(context, resolveSide(context, labelled), NO_OWN);
-  const units = visibleUnits([loaded.history], time);
-  // Copy provenance is relational: it exists once the other side adds code this side holds.
-  const index = fingerprintIndex([loaded]);
-  const ownByPath = new Map<string, Set<string>>();
-  const copies = new Map<string, LedgerUnit>();
-  for (const commit of resolveSide(context, other).commits) {
-    const record = await context.record(commit.sha);
-    if (record === undefined || record.merge) continue;
-    for (const unit of copyUnits(index, Date.parse(commit.authoredAt), record, ownByPath)) if (!copies.has(unit.id)) copies.set(unit.id, unit);
-    for (const fingerprint of record.fingerprints) {
-      const hashes = ownByPath.get(fingerprint.path) ?? new Set<string>();
-      hashes.add(fingerprint.hash);
-      ownByPath.set(fingerprint.path, hashes);
-    }
-  }
-  return [...units, ...copies.values()];
+  const loaded = await loadHistory(context, resolveSide(context, pair[sideKey]), NO_OWN);
+  return visibleUnits([loaded.history], time);
 }
 
 interface ExtractionResult {
@@ -229,6 +218,8 @@ interface ExtractionResult {
   type: ExpectedUnit["type"];
   candidates: number;
   hit: boolean;
+  /** A match on the primary proposition alone. */
+  primaryHit: boolean;
   reason: "matched" | "not extracted" | "wrong type" | "excluded";
   matched: Array<{ id: string; kind: string; sha: string; text: string; anchors: LedgerUnit["anchors"]; compatible: boolean }>;
   errors: string[];
@@ -239,17 +230,31 @@ async function scoreExtraction(context: AlignmentContext, pairs: readonly Pair[]
   const judge = judgeOf(context);
   return pool(labels, options.concurrency, async label => {
     const base = { conflict_id: label.conflict_id, catalogue_id: label.catalogue_id, type: label.type };
-    if (label.type === "id-collision") return { ...base, candidates: 0, hit: false, reason: "excluded", matched: [], errors: [] };
+    if (label.type === "id-collision" || label.scored === false) return { ...base, candidates: 0, hit: false, primaryHit: false, reason: "excluded", matched: [], errors: [] };
     const pair = pairs.find(entry => entry.id === label.conflict_id);
-    if (pair === undefined) return { ...base, candidates: 0, hit: false, reason: "not extracted", matched: [], errors: [`no pair ${label.conflict_id}`] };
+    if (pair === undefined) return { ...base, candidates: 0, hit: false, primaryHit: false, reason: "not extracted", matched: [], errors: [`no pair ${label.conflict_id}`] };
     const introduced = pair[label.side].commits.find(commit => commit.sha === label.sha)?.visible_at;
     const time = introduced !== undefined && Date.parse(introduced) > Date.parse(label.visible_at) ? introduced : label.visible_at;
     const units = await sideLedger(context, pair, label.side, time);
-    const { matched, errors } = await unitsStating(judge, label.proposition, units);
-    const compatible = COMPATIBLE[label.type];
-    const entries = matched.map(unit => ({ id: unit.id, kind: unit.kind, sha: unit.sha, text: unit.text, anchors: unit.anchors, compatible: compatible.includes(unit.kind) }));
+    const propositions = [
+      { proposition: label.proposition, type: label.type, primary: true },
+      ...(label.alternates ?? []).filter(alternate => alternate.type !== "id-collision").map(alternate => ({ proposition: alternate.proposition, type: alternate.type, primary: false })),
+    ];
+    const entries: ExtractionResult["matched"] = [];
+    const errors: string[] = [];
+    let primaryHit = false;
+    for (const wanted of propositions) {
+      const found = await unitsStating(judge, wanted.proposition, units);
+      errors.push(...found.errors);
+      const compatible = COMPATIBLE[wanted.type as Exclude<ExpectedUnit["type"], "id-collision">];
+      for (const unit of found.matched) {
+        const ok = compatible.includes(unit.kind);
+        if (ok && wanted.primary) primaryHit = true;
+        if (!entries.some(entry => entry.id === unit.id && entry.compatible === ok)) entries.push({ id: unit.id, kind: unit.kind, sha: unit.sha, text: unit.text, anchors: unit.anchors, compatible: ok });
+      }
+    }
     const hit = entries.some(entry => entry.compatible);
-    return { ...base, candidates: units.length, hit, reason: hit ? "matched" : entries.length > 0 ? "wrong type" : "not extracted", matched: entries, errors };
+    return { ...base, candidates: units.length, hit, primaryHit, reason: hit ? "matched" : entries.length > 0 ? "wrong type" : "not extracted", matched: entries, errors };
   });
 }
 
@@ -377,12 +382,14 @@ async function linkOne(context: AlignmentContext, pairs: readonly Pair[], option
   const results = await scoreExtraction(context, pairs, options);
   const scored = results.filter(result => result.reason !== "excluded");
   const hits = scored.filter(result => result.hit).length;
+  const primaryHits = scored.filter(result => result.primaryHit).length;
   const sample = shuffled(await allUnits(context, pairs), options.seed).slice(0, options.sample);
   const { grades, errors } = await gradeUnits(judgeOf(context), sample);
   const good = grades.filter(grade => grade.real && grade.typeCorrect).length;
   console.log("## Link 1: extraction\n");
   console.log("| metric | value | bar | result |\n|---|---|---|---|");
-  console.log(`| conflicts with a matching unit | ${rate(hits, scored.length)} | ≥ ${BARS.extraction} | ${verdict(hits / Math.max(1, scored.length), BARS.extraction)} |`);
+  console.log(`| conflicts with a matching unit (primary or alternate) | ${rate(hits, scored.length)} | ≥ ${BARS.extraction} | ${verdict(hits / Math.max(1, scored.length), BARS.extraction)} |`);
+  console.log(`| conflicts with a unit matching the primary proposition | ${rate(primaryHits, scored.length)} | ≥ ${BARS.extraction} | ${verdict(primaryHits / Math.max(1, scored.length), BARS.extraction)} |`);
   console.log(`| precision: sampled units real and correctly typed | ${rate(good, grades.length)} | ≥ ${BARS.precision} | ${verdict(good / Math.max(1, grades.length), BARS.precision)} |`);
   console.log(`| excluded (id-collision labels) | ${results.length - scored.length} | | |`);
   console.log("\n| conflict | catalogue | label type | candidates | result | matched units (kind: text) |\n|---|---|---|---|---|---|");

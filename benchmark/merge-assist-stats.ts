@@ -405,8 +405,8 @@ const LARGE_HEADROOM: readonly Hypothesis[] = [
   { id: "H-time", metric: "time_to_completion", sizes: ["large"], pair: [3, 0] },
 ];
 
-function formatEffect(metric: Metric, value: number): string {
-  switch (METRIC_SPECS[metric].kind) {
+function formatEffect(kind: MetricSpec["kind"], value: number): string {
+  switch (kind) {
     case "binary": return `${value >= 0 ? "+" : ""}${value.toFixed(3)}`;
     case "log": return `×${value.toFixed(3)}`;
     case "plain": return `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
@@ -462,12 +462,12 @@ function printAnalyses(title: string, analyses: readonly Analysis[], adjusted: R
       const scope = hypothesis.sizes?.join("+") ?? "all";
       const better = hypothesis.margin === undefined
         ? `${pair[0]} ${METRIC_SPECS[metric].better} than ${pair[1]}`
-        : `non-inferiority: ${pair[0]}/${pair[1]} < margin ${formatEffect(metric, hypothesis.margin)}`;
+        : `non-inferiority: ${pair[0]}/${pair[1]} < margin ${formatEffect(METRIC_SPECS[metric].kind, hypothesis.margin)}`;
       if (result === null) return [hypothesis.id, `${METRIC_SPECS[metric].label} (${better})`, scope, "0", "0", "-", "-", "-", "-", "no paired task"];
       const holmP = adjusted[index] ?? null;
       return [
         hypothesis.id, `${METRIC_SPECS[metric].label} (${better})`, scope, String(result.runs), `${result.tasks}${unpaired.length === 0 ? "" : ` (+${unpaired.length} unpaired)`}`,
-        formatEffect(metric, result.effect), `[${formatEffect(metric, result.ci[0])}, ${formatEffect(metric, result.ci[1])}]`,
+        formatEffect(METRIC_SPECS[metric].kind, result.effect), `[${formatEffect(METRIC_SPECS[metric].kind, result.ci[0])}, ${formatEffect(METRIC_SPECS[metric].kind, result.ci[1])}]`,
         formatP(result.p), holmP === null ? "-" : formatP(holmP),
         diagnostic ? "decides nothing" : holmP === null ? (result.p <= POCOCK_ALPHA ? "(nominal) reject" : "(nominal) keep") : holmP <= POCOCK_ALPHA ? "REJECT H0" : "keep H0",
       ];
@@ -613,6 +613,209 @@ function analyzeLiveReports(paths: readonly string[], look: number, plannedLooks
   console.log(`\n${result.reject ? "STOP: success" : look >= plannedLooks ? "STOP: futility/max looks" : "CONTINUE"}`);
 }
 
+// ---------------------------------------------------------------------------------------------------------- replay
+
+/** The fields of a merge-assist-replay.ts run (`ReplayRun`) the analysis reads. */
+export interface ReplayRunFields {
+  readonly pair: string;
+  readonly arm: string;
+  readonly trial: number;
+  readonly error: string | null;
+  readonly leaked: boolean;
+  readonly wallMs: number;
+  readonly usage: Usage | null;
+  readonly diff: string;
+  readonly merge: { readonly head: { readonly files: readonly string[] } } | null;
+  readonly touches: { readonly firstHalf: readonly string[] };
+  readonly grade: { readonly verdict: { readonly conflicts_with_first: "yes" | "no" | "unclear"; readonly done: "yes" | "partial" | "no" } | null; readonly error: string | null } | null;
+  readonly git: { readonly checks: number; readonly detections: ReadonlyArray<{ readonly resolvedAtS: number | null }>; readonly openAtEnd: number } | null;
+}
+
+/** The fields of a merge-assist-replay.ts `--json` report the analysis reads. */
+interface ReplayReport {
+  readonly format: string;
+  readonly options: Readonly<Record<string, unknown>>;
+  readonly pairs: ReadonlyArray<{ readonly id: string; readonly pair: unknown; readonly spec: unknown }>;
+  readonly runs: readonly ReplayRunFields[];
+}
+
+const REPLAY_REPORT_FORMAT = "rerail.merge-assist-replay/v1";
+/** The replay options that define what an arm and its grading are: they must match to pool. */
+const REPLAY_PROTOCOL_OPTIONS = ["dataset", "model", "judgeModel", "config", "timeoutMin", "judgeTimeoutMin", "alignModule"] as const;
+
+export const REPLAY_METRICS = ["conflict", "done", "total_tokens", "wall_time", "merge_conflict_files", "first_half_files"] as const;
+export type ReplayMetric = (typeof REPLAY_METRICS)[number];
+
+export const REPLAY_SPECS: Readonly<Record<ReplayMetric, MetricSpec>> = {
+  conflict: { kind: "binary", better: "lower", label: "conflicts with first (grader yes or unclear)" },
+  done: { kind: "binary", better: "higher", label: "done (yes 1, partial 0.5, no 0)" },
+  total_tokens: { kind: "log", better: "lower", label: "total tokens" },
+  wall_time: { kind: "log", better: "lower", label: "wall time" },
+  merge_conflict_files: { kind: "plain", better: "lower", label: "merge-tree conflict files vs first's head" },
+  first_half_files: { kind: "plain", better: "lower", label: "first_half files touched" },
+};
+
+/** A replay run that failed: a run error, an empty diff, or no grader verdict. It counts as conflicting and not done. */
+export const replayFailed = (run: ReplayRunFields): boolean => run.error !== null || run.diff.trim() === "" || run.grade?.verdict == null;
+
+function replayMeasured(metric: ReplayMetric, run: ReplayRunFields): number {
+  switch (metric) {
+    case "conflict": return run.grade?.verdict?.conflicts_with_first === "no" ? 0 : 1;
+    case "done": return { yes: 1, partial: 0.5, no: 0 }[run.grade?.verdict?.done ?? "no"];
+    case "total_tokens": return run.usage === null ? 0 : run.usage.input + run.usage.output;
+    case "wall_time": return run.wallMs / 1000;
+    case "merge_conflict_files": return run.merge?.head.files.length ?? 0;
+    case "first_half_files": return run.touches.firstHalf.length;
+  }
+}
+
+/**
+ * Per replay pair, the treatment's and the control's values of `metric` over `runs` (leaked runs already left out).
+ * A failed run conflicts (1) and is not done (0); for a cost it is at least as costly as its pair's worst sound run.
+ */
+export function replayStrata(metric: ReplayMetric, runs: readonly ReplayRunFields[], treatment: string, control: string): { strata: Stratum[]; unpaired: string[] } {
+  const strata: Stratum[] = [];
+  const unpaired: string[] = [];
+  for (const pair of [...new Set(runs.map(run => run.pair))]) {
+    const own = runs.filter(run => run.pair === pair && (run.arm === treatment || run.arm === control));
+    const sound = own.filter(run => !replayFailed(run)).map(run => replayMeasured(metric, run));
+    const worst = sound.length === 0 ? 0 : Math.max(...sound);
+    const value = (run: ReplayRunFields): number => {
+      if (!replayFailed(run)) return replayMeasured(metric, run);
+      if (metric === "conflict") return 1;
+      if (metric === "done") return 0;
+      return Math.max(replayMeasured(metric, run), worst);
+    };
+    const a = own.filter(run => run.arm === treatment).map(value);
+    const b = own.filter(run => run.arm === control).map(value);
+    if (a.length === 0 || b.length === 0) unpaired.push(pair);
+    else strata.push({ task: pair, a, b });
+  }
+  return { strata, unpaired };
+}
+
+/** One replay hypothesis: the one-sided stratified permutation test and the effect with its cluster-bootstrap CI. */
+export function replayTest(metric: ReplayMetric, raw: readonly Stratum[], seed: number, permutations = PERMUTATIONS, resamples = RESAMPLES): TestResult {
+  const { kind, better } = REPLAY_SPECS[metric];
+  const analysed = (value: number) => (kind === "log" ? Math.log1p(value) : value);
+  const strata = raw.map(stratum => ({ task: stratum.task, a: stratum.a.map(analysed), b: stratum.b.map(analysed) }));
+  const estimate = (picked: readonly Stratum[]) => {
+    const difference = stratifiedStatistic(picked) / picked.length;
+    return kind === "log" ? Math.exp(difference) : difference;
+  };
+  const random = seeded(seed);
+  const p = permutationTest(strata, better, permutations, random);
+  const ci = clusterBootstrap(strata, estimate, resamples, random);
+  return { runs: strata.reduce((total, stratum) => total + stratum.a.length + stratum.b.length, 0), tasks: strata.length, effect: estimate(strata), ci, p };
+}
+
+/** Why `reports` cannot be pooled: not replay reports, the same batch twice, or a different protocol or pair spec. */
+function replayPoolingProblems(reports: ReadonlyArray<{ path: string; report: ReplayReport }>): string[] {
+  const problems: string[] = [];
+  for (const { path, report } of reports) if (report.format !== REPLAY_REPORT_FORMAT || !Array.isArray(report.runs)) problems.push(`${path} is not a --json report of benchmark/merge-assist-replay.ts`);
+  if (problems.length > 0) return problems;
+  if (new Set(reports.map(({ path }) => resolve(path))).size < reports.length) problems.push("the same report appears twice");
+  const seen = new Map<string, string>();
+  for (const { path, report } of reports) {
+    for (const run of report.runs) {
+      const key = `${run.pair}\0${run.arm}\0${run.trial}\0${run.wallMs}`;
+      const other = seen.get(key);
+      if (other !== undefined && other !== path) problems.push(`${path} and ${other} hold the same run (${run.pair} ${run.arm} #${run.trial}): the same batch twice`);
+      seen.set(key, path);
+    }
+  }
+  const [first, ...rest] = reports;
+  for (const { path, report } of rest) {
+    for (const option of REPLAY_PROTOCOL_OPTIONS) {
+      if (!isDeepStrictEqual(report.options[option], first!.report.options[option])) problems.push(`${path} ran with ${option} ${JSON.stringify(report.options[option])}, ${first!.path} with ${JSON.stringify(first!.report.options[option])}`);
+    }
+  }
+  const specs = new Map<string, { path: string; pair: unknown; spec: unknown }>();
+  for (const { path, report } of reports) {
+    for (const entry of report.pairs) {
+      const known = specs.get(entry.id);
+      if (known === undefined) specs.set(entry.id, { path, pair: entry.pair, spec: entry.spec });
+      else if (!isDeepStrictEqual(known.pair, entry.pair) || !isDeepStrictEqual(known.spec, entry.spec)) problems.push(`pair ${entry.id} is defined differently in ${path} and ${known.path}`);
+    }
+  }
+  return problems;
+}
+
+interface ReplayAnalysis {
+  readonly id: string;
+  readonly metric: ReplayMetric;
+  readonly treatment: string;
+  readonly result: TestResult | null;
+  readonly unpaired: readonly string[];
+}
+
+function analyseReplay(id: string, metric: ReplayMetric, runs: readonly ReplayRunFields[], treatment: string, control: string, seed: number): ReplayAnalysis {
+  const { strata, unpaired } = replayStrata(metric, runs, treatment, control);
+  return { id, metric, treatment, result: strata.length === 0 ? null : replayTest(metric, strata, seed), unpaired };
+}
+
+function printReplay(title: string, analyses: readonly ReplayAnalysis[], control: string, adjusted: ReadonlyArray<number | null>): void {
+  console.log(`\n${title}`);
+  console.log(table(
+    ["hypothesis", "metric", "n runs", "n pairs", "effect", "95% CI", "raw p", "Holm p", `decision (≤ ${POCOCK_ALPHA})`],
+    analyses.map(({ id, metric, treatment, result, unpaired }, index) => {
+      const { kind, better, label } = REPLAY_SPECS[metric];
+      const name = `${label} (${treatment} ${better} than ${control}${metric === "done" ? "; not worse: read the CI" : ""})`;
+      if (result === null) return [id, name, "0", "0", "-", "-", "-", "-", "no paired pair"];
+      const holmP = adjusted[index] ?? null;
+      return [
+        id, name, String(result.runs), `${result.tasks}${unpaired.length === 0 ? "" : ` (+${unpaired.length} unpaired)`}`,
+        formatEffect(kind, result.effect), `[${formatEffect(kind, result.ci[0])}, ${formatEffect(kind, result.ci[1])}]`,
+        formatP(result.p), holmP === null ? "-" : formatP(holmP),
+        holmP === null ? (result.p <= POCOCK_ALPHA ? "(nominal) reject" : "(nominal) keep") : holmP <= POCOCK_ALPHA ? "REJECT H0" : "keep H0",
+      ];
+    }),
+  ));
+}
+
+/**
+ * `--analyze-replay`: per treatment arm against `control`, R1 (conflicts with first lower) with Holm across the
+ * treatments and the look's verdict; then the secondaries, raw p, and what the `git-conflict` arms identified.
+ */
+function analyzeReplayReports(paths: readonly string[], arms: readonly string[], control: string, look: number, seed: number): void {
+  const reports = paths.map(path => ({ path, report: JSON.parse(readFileSync(path, "utf8")) as ReplayReport }));
+  const problems = replayPoolingProblems(reports);
+  const all = reports.flatMap(({ report }) => report.runs);
+  const treatments = arms.filter(arm => arm !== control);
+  for (const arm of [control, ...treatments]) if (!all.some(run => run.arm === arm)) problems.push(`no report holds a run of arm ${arm}`);
+  if (treatments.length === 0) problems.push(`--arms names no treatment besides the control ${control}`);
+  if (problems.length > 0) throw new Error(`Refusing to pool:\n- ${problems.join("\n- ")}`);
+  const used = [control, ...treatments];
+  const listed = all.filter(run => used.includes(run.arm));
+  const runs = listed.filter(run => !run.leaked);
+  const options = reports[0]!.report.options;
+  console.log(`Merge Assist replay: ${treatments.join(", ")} (treatment${treatments.length === 1 ? "" : "s"}) vs ${control} (control), strata = replay pair, look ${look} of at most ${MAX_LOOKS}; ${reports.length} report(s) pooled: ${paths.join("; ")}`);
+  console.log(`${REPLAY_PROTOCOL_OPTIONS.map(option => `${option} ${JSON.stringify(options[option] ?? null)}`).join(", ")}; ${PERMUTATIONS} permutations within pair, ${RESAMPLES} cluster-bootstrap resamples, seed ${seed}; one-sided`);
+  console.log(`\nExcluded (leaked): ${used.map(arm => `${arm} ${listed.filter(run => run.arm === arm && run.leaked).length}/${listed.filter(run => run.arm === arm).length}`).join(", ")}`);
+  const failures = runs.filter(replayFailed);
+  console.log(`Failures (a run error, an empty diff or no verdict), counted as conflicting and not done: ${used.map(arm => `${arm} ${failures.filter(run => run.arm === arm).length}/${runs.filter(run => run.arm === arm).length}`).join(", ")}`);
+  for (const run of failures) console.log(`  ${run.arm} ${run.pair} #${run.trial}: ${(run.error ?? (run.diff.trim() === "" ? "empty diff" : run.grade?.error ?? "no grader verdict")).replace(/\s+/gu, " ").slice(0, 160)}`);
+  const primary = treatments.map((arm, index) => analyseReplay(`R1-${index + 1}`, "conflict", runs, arm, control, seed));
+  const adjusted = holm(primary.map(({ result }) => result?.p ?? 1));
+  printReplay(`Primary: R1 per treatment (Holm across ${treatments.length})`, primary, control, adjusted);
+  const secondaryMetrics = REPLAY_METRICS.filter(metric => metric !== "conflict");
+  const secondary = treatments.flatMap((arm, index) => secondaryMetrics.map(metric => analyseReplay(`S${index + 1}-${metric}`, metric, runs, arm, control, seed)));
+  printReplay("Secondary (not used for stopping; raw p against the per-look α)", secondary, control, secondary.map(() => null));
+  const gitArms = treatments.filter(arm => runs.some(run => run.arm === arm && run.git !== null));
+  if (gitArms.length > 0) {
+    console.log("\nWhat the git-conflict arms identified (descriptive; the control identifies nothing)");
+    console.log(table(
+      ["arm", "runs", "ran git conflicts", "detections", "resolved", "open at end"],
+      gitArms.map(arm => {
+        const own = runs.filter(run => run.arm === arm && run.git !== null);
+        const total = (pick: (git: NonNullable<ReplayRunFields["git"]>) => number) => own.reduce((sum, run) => sum + pick(run.git!), 0);
+        return [arm, String(own.length), `${own.filter(run => run.git!.checks > 0).length}/${own.length}`, String(total(git => git.detections.length)), String(total(git => git.detections.filter(detection => detection.resolvedAtS !== null).length)), String(total(git => git.openAtEnd))];
+      }),
+    ));
+  }
+  console.log(`\n${verdict(adjusted, look)}`);
+}
+
 // ---------------------------------------------------------------------------------------------------------- self-test
 
 /** A standard normal draw (Box–Muller) from `random`. */
@@ -665,13 +868,35 @@ function syntheticLargeRuns(arms: readonly string[], random: () => number): ArmR
   }).flat();
 }
 
+/** The synthetic replay batch's shape: 14 replay pairs with 2 runs per arm. */
+const REPLAY_PAIRS = 14;
+const REPLAY_RUNS = 2;
+
+/**
+ * Synthetic replay runs under no effect: every arm shares each pair's conflict rate (0.2 to 0.8), and every run has
+ * the same 10% chance of failing (no diff) and 5% of leaking.
+ */
+function syntheticReplayRuns(arms: readonly string[], random: () => number): ReplayRunFields[] {
+  return Array.from({ length: REPLAY_PAIRS }, (_, pair) => {
+    const conflictRate = 0.2 + 0.6 * random();
+    return arms.flatMap(arm => Array.from({ length: REPLAY_RUNS }, (_, trial): ReplayRunFields => {
+      const empty = random() < 0.1;
+      return {
+        pair: `p${pair}`, arm, trial: trial + 1, error: null, leaked: random() < 0.05, wallMs: 60_000, usage: null, diff: empty ? "" : "diff", merge: null, touches: { firstHalf: [] },
+        grade: { verdict: { conflicts_with_first: random() < conflictRate ? "yes" : "no", done: "yes" }, error: null }, git: null,
+      };
+    }));
+  }).flat();
+}
+
 /**
  * `--self-test`: across 200 synthetic datasets each, the false-positive rate under no effect is at most 0.05 at
  * α 0.05, and under a large effect (+0.4 first-pass clean; time × 0.6) power is at least 0.9, for a binary and a
  * continuous metric; for time's non-inferiority test at margin ×{@link TIME_MARGIN}, the false-positive rate at a true
  * ratio of exactly the margin is at most 0.05, and the power at a true ratio of 0.9 is reported. The large family
- * (A,B,C) under its global null rejects any hypothesis after Holm at most 5% of the time. All through the same test,
- * arm pairing and permutation count the analysis uses.
+ * (A,B,C) under its global null rejects any hypothesis after Holm at most 5% of the time, and so does the replay R1
+ * (one treatment, and two with Holm; failures and leaks included). All through the same test, arm pairing and
+ * permutation count the analysis uses.
  */
 function selfTest(): boolean {
   const datasets = 200;
@@ -720,6 +945,22 @@ function selfTest(): boolean {
     `large family A,B,C, global null (${LARGE_TASKS} tasks × ${LARGE_RUNS} runs per arm)`, "family-wise false-positive rate, Holm", `${familyRejections}/${datasets} = ${familyRate.toFixed(3)}`, "≤ 0.05",
     familyRate <= 0.05 ? "ok" : "FAIL", `${((performance.now() - started) / 1000).toFixed(1)}s`,
   ]);
+  const replayStarted = performance.now();
+  const replayArms = ["none", "T1", "T2"];
+  let singleRejections = 0;
+  let replayFamilyRejections = 0;
+  for (let dataset = 0; dataset < datasets; dataset++) {
+    const runs = syntheticReplayRuns(replayArms, random).filter(run => !run.leaked);
+    const pValues = replayArms.slice(1).map(arm => permutationTest(replayStrata("conflict", runs, arm, "none").strata, "lower", PERMUTATIONS, random));
+    if (pValues[0]! <= alpha) singleRejections++;
+    if (holm(pValues).some(p => p <= alpha)) replayFamilyRejections++;
+  }
+  const replayShape = `${REPLAY_PAIRS} pairs × ${REPLAY_RUNS} runs per arm`;
+  for (const [name, rejections] of [[`replay R1, T1 vs none, no effect (${replayShape})`, singleRejections], [`replay R1, T1,T2 vs none, no effect (${replayShape})`, replayFamilyRejections]] as const) {
+    const rate = rejections / datasets;
+    ok &&= rate <= 0.05;
+    rows.push([name, name.includes("T1,T2") ? "family-wise false-positive rate, Holm" : "false-positive rate", `${rejections}/${datasets} = ${rate.toFixed(3)}`, "≤ 0.05", rate <= 0.05 ? "ok" : "FAIL", `${((performance.now() - replayStarted) / 1000).toFixed(1)}s`]);
+  }
   console.log(`Self-test: ${datasets} synthetic datasets per case (18 tasks × 2 runs per arm unless stated), ${PERMUTATIONS} permutations each, α ${alpha} one-sided`);
   console.log(table(["case", "check", "rejected", "required", "", "time"], rows));
   console.log(`Large family, raw rejections per hypothesis at α ${alpha}: ${LARGE_PRIMARY.map((hypothesis, index) => `${hypothesis.id} ${rawRejections[index]}/${datasets}`).join(", ")}`);
@@ -732,7 +973,7 @@ function selfTest(): boolean {
 
 // ---------------------------------------------------------------------------------------------------------- CLI
 
-const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] [--diagnostic] | --analyze report.json [report.json ...] --family large --arms A,B,C[,D] [--diagnostic] [--look N] [--seed N] | --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N] | --self-test`;
+const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] [--diagnostic] | --analyze report.json [report.json ...] --family large --arms A,B,C[,D] [--diagnostic] [--look N] [--seed N] | --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N] | --analyze-replay replay.json [replay.json ...] --arms A[,B...] --control none [--look N] [--seed N] | --self-test`;
 
 function main(): void {
   const args = process.argv.slice(2);
@@ -742,6 +983,8 @@ function main(): void {
   }
   const paths: string[] = [];
   const livePaths: string[] = [];
+  const replayPaths: string[] = [];
+  let control: string | null = null;
   let arms: string[] | null = null;
   let family: Family = "default";
   let metric: Metric | null = null;
@@ -766,6 +1009,12 @@ function main(): void {
       case "--analyze-live":
         while (args[index + 1] !== undefined && !args[index + 1]!.startsWith("--")) livePaths.push(args[++index]!);
         break;
+      case "--analyze-replay":
+        while (args[index + 1] !== undefined && !args[index + 1]!.startsWith("--")) replayPaths.push(args[++index]!);
+        break;
+      case "--control":
+        control = value();
+        break;
       case "--planned-looks": {
         const number = Number(value());
         if (!Number.isInteger(number) || number < 1 || number > MAX_LOOKS) throw new Error(`--planned-looks takes 1 to ${MAX_LOOKS}\n${USAGE}`);
@@ -774,7 +1023,7 @@ function main(): void {
       }
       case "--arms": {
         const names = value().split(",").map(name => name.trim()).filter(name => name !== "");
-        if (names.length < 2 || names.length > 4 || new Set(names).size < names.length) throw new Error(`--arms takes two to four different arms, treatment first: A,B (default family) or A,B,C[,D] (large)\n${USAGE}`);
+        if (names.length === 0 || names.length > 4 || new Set(names).size < names.length) throw new Error(`--arms takes up to four different arms, treatment first: A,B (default family), A,B,C[,D] (large) or the treatments of a replay\n${USAGE}`);
         arms = names;
         break;
       }
@@ -811,6 +1060,14 @@ function main(): void {
     analyzeLiveReports(livePaths, look ?? livePaths.length, plannedLooks, seed);
     return;
   }
+  if (replayPaths.length > 0) {
+    if (paths.length > 0 || livePaths.length > 0 || metric !== null || family !== "default") throw new Error(`--analyze-replay takes no --analyze, --analyze-live, --metric or --family\n${USAGE}`);
+    if (arms === null || control === null) throw new Error(`--analyze-replay takes --arms and --control\n${USAGE}`);
+    if (look === null && replayPaths.length > MAX_LOOKS) throw new Error(`${replayPaths.length} reports is more than ${MAX_LOOKS} looks; pass --look\n${USAGE}`);
+    analyzeReplayReports(replayPaths, arms, control, look ?? replayPaths.length, seed);
+    return;
+  }
+  if (control !== null) throw new Error(`--control belongs to --analyze-replay\n${USAGE}`);
   if (paths.length === 0 || arms === null) throw new Error(USAGE);
   if (family === "default" && arms.length !== 2) throw new Error(`The default family takes two arms: --arms A,B\n${USAGE}`);
   if (family === "large" && arms.length < 3) throw new Error(`--family large takes --arms A,B,C (treatment, posthoc, second control), and D for --diagnostic headroom\n${USAGE}`);

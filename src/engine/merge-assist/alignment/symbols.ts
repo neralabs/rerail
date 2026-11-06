@@ -38,6 +38,8 @@ export function sourceLanguageOf(path: string): SourceLanguage | null {
 
 /** The longest signature kept, in characters. */
 const MAX_SIGNATURE = 400;
+/** A type's signature carries its body, so it may be longer. */
+const MAX_TYPE_SIGNATURE = 2_000;
 /** A declaration head spans at most this many lines before it is cut. */
 const MAX_HEAD_LINES = 12;
 
@@ -94,9 +96,39 @@ function collapse(text: string): string {
   return text.replace(/\s+/gu, " ").trim();
 }
 
+/** A type's body is part of its contract (fields, variants, members) up to this many lines. */
+const MAX_TYPE_BODY_LINES = 40;
+
+/**
+ * A brace-delimited type's whole declaration (struct, enum, interface, Go type): its fields and variants are what
+ * other code depends on. Undefined when the type has no braced body within reach (an alias, a unit struct).
+ */
+function typeBody(lines: readonly string[], start: number): string | undefined {
+  let depth = 0;
+  let opened = false;
+  let text = "";
+  for (let index = start; index < Math.min(lines.length, start + MAX_TYPE_BODY_LINES); index += 1) {
+    const line = lines[index]!;
+    for (const char of line) {
+      if (char === "{") {
+        depth += 1;
+        opened = true;
+      } else if (char === "}") depth -= 1;
+      else if (char === ";" && !opened) return undefined;
+    }
+    text = `${text} ${line}`;
+    if (opened && depth <= 0) return collapse(text).slice(0, MAX_TYPE_SIGNATURE);
+  }
+  return undefined;
+}
+
 /** The head of the declaration starting at `lines[start]`: through its parameters, cut before its body. */
 function headOf(lines: readonly string[], start: number, language: SourceLanguage, kind: DeclarationKind): string {
   if (kind === "constant") return collapse(lines[start]!).slice(0, MAX_SIGNATURE);
+  if (kind === "type" && language !== "python") {
+    const body = typeBody(lines, start);
+    if (body !== undefined) return body;
+  }
   let depth = 0;
   let head = "";
   for (let index = start; index < Math.min(lines.length, start + MAX_HEAD_LINES); index += 1) {
