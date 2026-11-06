@@ -382,6 +382,44 @@ toolchain), with the same direction when they are included.
 - The push arm sent a median of 2 injections per run; done was not worse (+0.05).
 - This is the floor the alignment units (hand-offs, positions, contracts, artefacts) must beat: they exist for the
   clashes this one cannot see.
+- **Correction.** This comparison graded "conflicts with the first pull request", which assumes the first one was
+  right. Relabelled from history, 2 of its 14 pairs had the later design adopted (Starlette #3069/#3166, pytest
+  #14860/#14934) and one had neither (pytest #14543/#14749). The completion run below measures against the design
+  the project adopted, to completion, and supersedes this result.
+
+#### 6.3.6 The same push, measured to completion against the adopted design
+
+Measured as the session-focus comparison was: every task run to a finished result, then what is left and what it
+cost. 26 open-source pairs, both pull requests public at once, the later one's task replayed with every open pull
+request visible: in 11 (D1) the earlier design was adopted, in 15 (D2) the later one was and the earlier was closed
+for it. Up to 3 review rounds from a reviewer that knows the adopted design and lists the violated conflict items;
+Codex 0.158 with `openai.gpt-6-luna` on Bedrock throughout. Pre-registered, three looks, 282 runs used (29 excluded
+by the leak guard for reading environment variables or the Go module cache; none favoured an arm, 14 against 15).
+D1 and D2 weighted equally.
+
+| Primary (push against nothing) | Effect (95% CI) | Holm p | Result |
+| --- | --- | --- | --- |
+| Conflict items with the adopted design left after completion | −0.0 (−0.2, +0.1) | 0.78 | no difference |
+| Agent cost per task | ×1.08 (×0.99, ×1.18) | 1.00 | not lower |
+| Agent time per task, not worse than ×1.10 | ×1.02 (×0.92, ×1.12) | 0.037 | not shown at the per-look bar |
+| D2: ended on the adopted design, no more than 0.10 worse | −0.04 (−0.16, +0.07) | 0.33 | harm not ruled out |
+
+| Scenario | Arm | Conflict items after the first pass | After completion | Ended on the adopted design | Review rounds | Agent cost | Agent time |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| D1 | nothing | 2.83 | 0.14 | 55/59 | 1.14 | $0.01 | 1.9 min |
+| D1 | push | 1.71 | 0.05 | 53/56 | 0.77 | $0.01 | 1.9 min |
+| D2 | nothing | 1.58 | 0.10 | 76/83 | 1.06 | $0.03 | 3.1 min |
+| D2 | push | 1.42 | 0.15 | 73/85 | 0.98 | $0.03 | 2.9 min |
+
+- At equal outcomes the push buys nothing the agent pays for: review takes both arms to almost no remaining
+  conflicts, at the same cost and time.
+- What it buys is review: first-pass conflict items −0.7 (CI −1.1, −0.2) and review rounds −0.3 per task (−0.5,
+  −0.1), nominal p ≤ 0.0001, almost all of it where the earlier design was the adopted one (D1: 2.83 → 1.71 items,
+  1.14 → 0.77 rounds). Human review time is not counted here, and it is the cost this saves.
+- Where the earlier design lost (D2), the push neither helped the first pass (1.58 → 1.42) nor clearly hurt the end
+  result (76/83 → 73/85); the run can't rule out a harm of up to 0.16.
+- Agent cost is pennies per task on this model; any case for in-flight conflict identification rests on reviewer
+  rounds and on the person, not on agent spend.
 
 The same lookup drives comparison: a peer decision is compared with this branch's only when an agent here works in
 its scope. A branch nobody's work touches costs nothing.
