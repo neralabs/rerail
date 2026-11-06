@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../../src/engine/index.js";
 import { editSteer } from "../support/steers.js";
-import { encodeRerailEventResult, RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/index.js";
+import { encodeRerailEventResult, InactiveSessionError, RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/index.js";
 import { runRerailEventStream, serveRerailEventStream } from "../../src/harness/event-stream.js";
 import { startTestRepository } from "../support/started-repository.js";
 
@@ -74,6 +74,22 @@ describe("Rerail event stream", () => {
       { eventId: "start", deliveries: [] },
     ]);
     expect(ingest).toHaveBeenCalledOnce();
+  });
+
+  it("answers an event for an inactive session by its code, and any other failure as an invalid event", async () => {
+    const line = JSON.stringify({ event: { kind: "user-prompt", eventId: "prompt", sessionId: "s1", text: "hello" } });
+    const answers = async (error: Error) => await runStream([RERAIL_EVENT_PROTOCOL_PREFACE, line], { ingest: async () => { throw error; } });
+
+    expect(await answers(new InactiveSessionError("s1"))).toEqual([
+      { eventId: "prompt", error: { code: "inactive-session", message: "Inactive session: s1" } },
+    ]);
+    // Another copy of the class, as the bundled stream sees one thrown from the package's other entry points.
+    expect(await answers(Object.assign(new Error("Session s1 has ended"), { code: "inactive-session" }))).toEqual([
+      { eventId: "prompt", error: { code: "inactive-session", message: "Session s1 has ended" } },
+    ]);
+    expect(await answers(new Error("Inactive session: s1"))).toEqual([
+      { eventId: "prompt", error: { code: "invalid-event", message: "Inactive session: s1" } },
+    ]);
   });
 
   it("rejects an incompatible preface without ingesting", async () => {

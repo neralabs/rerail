@@ -61,7 +61,7 @@ fn every<'r, D: Doc>(count: usize, make: impl Fn() -> Passed<'r, D>) -> Vec<Pass
 
 fn named_children<'r, D: Doc>(node: &Node<'r, D>) -> Vec<Node<'r, D>> {
     node.children()
-        .filter(|child| child.is_named() && !child.kind().ends_with("comment"))
+        .filter(|child| child.is_named() && !super::util::is_comment_kind(&child.kind()))
         .collect()
 }
 
@@ -501,7 +501,7 @@ fn pass_by_name<'r, D: Doc>(
 /// The expression inside any parentheses: neither ESTree nor PHP-Parser has a parenthesized
 /// expression, so `super((a))`'s `arguments[0]` is `a`, as `f((a))`'s PHP argument is.
 fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
-    while node.kind() == "parenthesized_expression" {
+    while super::util::is_paren_kind(&node.kind()) {
         match named_children(&node).as_slice() {
             [inner] => node = inner.clone(),
             _ => break,

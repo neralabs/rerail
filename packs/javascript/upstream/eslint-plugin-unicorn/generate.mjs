@@ -35,6 +35,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertCommit,
   assertPortableCase,
+  ECMA_EXTENSIONS,
   isVariantPath,
   lint,
   pinnedRequire,
@@ -52,8 +53,6 @@ const TOOL = "eslint-plugin-unicorn";
 const PINS = { eslint: "10.11.0", "eslint-plugin-unicorn": "76.0.0", "@typescript-eslint/parser": "8.70.0" };
 const CHECKOUT = { repository: "https://github.com/sindresorhus/eslint-plugin-unicorn", commit: "f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1" };
 const PREFIX = "unicorn/";
-/** The ecma family's extensions (`CODE_RULE_DIALECTS`): a named case outside them is not JavaScript to Rerail. */
-const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 
 function parseArguments(argv) {
   const options = {};

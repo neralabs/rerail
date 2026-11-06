@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import { CURRENT_LINK } from "../engine/storage/rerail-home.js";
 import {
   CODEX_TRUST_NOTE,
   detectHarnesses,
@@ -40,7 +41,7 @@ export function codingAgentHome(): string {
 
 /** Registrations point at `<rerail home>/current` once set-up has run; before that, at the running package. */
 export function registrationRoot(rerailHome: string, packageRoot: string): string {
-  const current = join(rerailHome, "current");
+  const current = join(rerailHome, CURRENT_LINK);
   return existsSync(join(current, "package.json")) ? current : packageRoot;
 }
 

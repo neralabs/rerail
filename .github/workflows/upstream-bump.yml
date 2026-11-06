@@ -156,9 +156,16 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
-      # The php and blade tool-packs run their upstream under the exact PHP their runtime pins, and Composer installs it.
+      # A tool-pack whose runtime pins a PHP runs its upstream under exactly that one, and Composer installs it.
+      - id: needs
+        name: Read what the tool-pack's runtime needs
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: node --import tsx scripts/upstream/tool-pack-needs.ts --pack "$PACK" --tool "$TOOL" >> "$GITHUB_OUTPUT"
+
       - name: Set up the pinned PHP and Composer
-        if: matrix.pack == 'php' || matrix.pack == 'blade'
+        if: steps.needs.outputs.php == 'true'
         uses: ./.github/actions/php
 
       - name: Bump the pins

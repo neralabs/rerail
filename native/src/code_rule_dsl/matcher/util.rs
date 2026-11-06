@@ -32,14 +32,7 @@ thread_local! {
     pub(super) static THREE_VALUED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Whether a node kind is a comment in some grammar: tree-sitter's `comment`, Blade's
-/// `html_comment`, Rust's `line_comment` and `block_comment`.
-pub(super) fn is_comment_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "comment" | "html_comment" | "line_comment" | "block_comment"
-    )
-}
+pub(super) use crate::code_rule_dsl::language::adapter::{is_comment_kind, is_paren_kind};
 
 /// An address in the current stack frame.
 #[inline(always)]

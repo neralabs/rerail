@@ -76,7 +76,7 @@ import { checkNodeVersion } from "../setup/node-version.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { modelStatusLine } from "../engine/native/model-status.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
   ManagedUpdater,
   type UpdateResult,
@@ -265,7 +265,7 @@ function gitLookup(): { found: true } | { found: false; looked: readonly string[
 async function runStatusCommand(home: string): Promise<number> {
   const lookup = await lookupDaemon(home);
   // No managed install, no database and no daemon: Rerail was never set up here, so it is not merely stopped.
-  if (lookup.status === "absent" && !existsSync(join(home, "current")) && !existsSync(join(home, RERAIL_DATABASE_FILE))) {
+  if (lookup.status === "absent" && !existsSync(join(home, CURRENT_LINK)) && !existsSync(join(home, RERAIL_DATABASE_FILE))) {
     process.stdout.write("Rerail is not installed on this computer. Install it with npx @neralabs/rerail setup.\n");
     return 3;
   }

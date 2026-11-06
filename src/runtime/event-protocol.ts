@@ -1,12 +1,25 @@
 import { z } from "zod/v4";
-import { STEER_STRATEGIES, type AdapterDelivery, type AdapterEvent } from "../engine/adapter-contract.js";
+import { RERAIL_HOSTS, STEER_STRATEGIES, type AdapterDelivery, type AdapterEvent } from "../engine/adapter-contract.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 
 export const RERAIL_EVENT_PROTOCOL_PREFACE = "RERAIL-EVENTS/1";
+export const INACTIVE_SESSION = "inactive-session";
+
+/**
+ * An event for a session the runtime has not started or has ended; the event stream answers it as `inactive-session`.
+ * The stream reads the `code`, not the class, so an event loop may throw any `Error` whose `code` is `inactive-session`.
+ */
+export class InactiveSessionError extends Error {
+  readonly code = INACTIVE_SESSION;
+
+  constructor(sessionId: string) {
+    super(`Inactive session: ${sessionId}`);
+  }
+}
 export const RERAIL_EVENT_MAX_FRAME_BYTES = 1024 * 1024;
 
 const SessionSchema = z.object({
-  host: z.enum(["omp", "pi", "claude-code", "codex", "cursor"]),
+  host: z.enum(RERAIL_HOSTS),
   sessionId: z.string().min(1),
   cwd: z.string().min(1),
 }).strict();

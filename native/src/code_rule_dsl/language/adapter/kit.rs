@@ -5,10 +5,11 @@
 use super::value::kit as value_kit;
 use super::{
     Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, Rust, ScopeRules,
-    Sql, ValueRules, Vue, with_adapter,
+    Sql, ValueRules, Vue, has_import_targets, is_comment_kind, is_paren_kind, parsed_by_forte,
+    with_adapter,
 };
 use crate::code_rule_dsl::language::{
-    CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support,
+    CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support, kind_ids,
 };
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
@@ -1201,6 +1202,66 @@ fn adapters_read_the_capabilities_the_registry_supports() {
                 with_adapter!(language.family(), A => reads::<A>(semantic)),
                 "{} {semantic:?}",
                 language.name()
+            );
+        }
+    }
+}
+
+/// The scope kinds, and the kinds the shared walks pass over, are the ones the shared code named
+/// before they moved here, in every registry dialect.
+#[test]
+fn shared_walks_read_the_kinds_they_named() {
+    fn scope_kinds<S: ScopeRules>(dialect: GrammarDialect) {
+        let ids = |names: &[&str]| kind_ids(dialect, names);
+        assert_eq!(
+            ids(S::PAREN_KINDS),
+            ids(&["parenthesized_expression"]),
+            "{dialect:?}"
+        );
+        if S::FLOW {
+            return;
+        }
+        assert_eq!(
+            ids(S::DOTTED_NAME_KINDS),
+            ids(&["dotted_name"]),
+            "{dialect:?}"
+        );
+        assert_eq!(ids(S::THIS_KINDS), ids(&["this"]), "{dialect:?}");
+        let attribute = if S::IMPORT_PATHS {
+            ids(&["scoped_identifier", "scoped_type_identifier"])
+        } else {
+            ids(&["attribute"])
+        };
+        assert_eq!(ids(S::ATTRIBUTE_KINDS), attribute, "{dialect:?}");
+    }
+    for language in CodeRuleLanguage::ALL {
+        for dialect in language.dialects().iter().copied() {
+            with_adapter!(language.family(), A => scope_kinds::<<A as Adapter>::Scope>(dialect));
+            for name in (0..dialect.kind_count() as u16).filter_map(|id| dialect.kind_name(id)) {
+                assert_eq!(
+                    is_comment_kind(name),
+                    matches!(
+                        name,
+                        "comment" | "html_comment" | "line_comment" | "block_comment"
+                    ),
+                    "{name} in {dialect:?}"
+                );
+                assert_eq!(is_paren_kind(name), name == "parenthesized_expression");
+            }
+        }
+    }
+}
+
+/// A file is parsed by Forte, and may ask for import targets, in the families that did before
+/// these moved onto the adapter.
+#[test]
+fn family_choices_stay_with_their_families() {
+    for language in CodeRuleLanguage::ALL {
+        for dialect in language.dialects().iter().copied() {
+            assert_eq!(parsed_by_forte(dialect), dialect == GrammarDialect::Blade);
+            assert_eq!(
+                has_import_targets(dialect),
+                Family::of(dialect) == Family::Ecma
             );
         }
     }

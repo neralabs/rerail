@@ -7,6 +7,7 @@ import { diffLines } from "diff";
 import { z } from "zod";
 import {
   encodeCodeRuleWorkspaceRequest,
+  isWorkspaceBusy,
   loadNativeBinding,
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
@@ -1437,7 +1438,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
           followGitignore: this.#followGitignore,
         });
       } catch (error) {
-        if (!(error instanceof Error) || error.message !== "WORKSPACE_BUSY") throw error;
+        if (!isWorkspaceBusy(error)) throw error;
         await pause(backoff);
         backoff = Math.min(backoff * 2, 25);
       }
@@ -1932,7 +1933,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         this.#workspaceEvaluations.set(workspace, evaluation);
         return evaluation;
       } catch (error) {
-        if (!(error instanceof Error) || error.message !== "WORKSPACE_BUSY") throw error;
+        if (!isWorkspaceBusy(error)) throw error;
         await pause(backoff);
         backoff = Math.min(backoff * 2, 25);
       }

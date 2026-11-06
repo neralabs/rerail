@@ -54,6 +54,7 @@ concurrency:
 # core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main. It runs the
 # licence and lint jobs only: release-packs.yml validates and packs every pack on it, main runs everything once it is
 # merged, and release.yml builds and smokes core again on its tag.
+# The changes job decides that once (`release-pr`); every job that skips it reads that output.
 
 jobs:
   licenses:
@@ -184,6 +185,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      release-pr: ${{ github.head_ref == 'changeset-release/main' }}
       rust: ${{ github.event_name == 'pull_request' && steps.filter.outputs.rust || 'true' }}
       conformance: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.conformance || 'true' }}
       e2e: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.e2e || 'true' }}
@@ -300,9 +302,10 @@ jobs:
   # Release pull request reads none.
   test-data:
     name: Pack test data
+    needs: changes
     if: >-
       ${{
-        github.head_ref != 'changeset-release/main' &&
+        needs.changes.outputs.release-pr != 'true' &&
         (
           github.event_name != 'pull_request' ||
           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
@@ -351,9 +354,10 @@ jobs:
   # It runs this commit's script alone, under the read role, where the test-data job does.
   test-data-in-s3:
     name: Pack test data is in S3
+    needs: changes
     if: >-
       ${{
-        github.head_ref != 'changeset-release/main' &&
+        needs.changes.outputs.release-pr != 'true' &&
         (
           github.event_name != 'pull_request' ||
           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
@@ -408,7 +412,7 @@ jobs:
     needs: [changes, test-data]
     if: >-
       ${{
-        needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main' &&
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
         (
           github.event_name != 'pull_request' ||
           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
@@ -497,7 +501,8 @@ jobs:
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:
     name: Build
-    if: github.head_ref != 'changeset-release/main'
+    needs: changes
+    if: needs.changes.outputs.release-pr != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -690,7 +695,7 @@ jobs:
           (
             github.event.pull_request.head.repo.full_name == github.repository &&
             github.actor != 'dependabot[bot]' &&
-            github.head_ref != 'changeset-release/main'
+            needs.changes.outputs.release-pr != 'true'
           )
         )
       }}
@@ -933,7 +938,7 @@ jobs:
           (
             github.event.pull_request.head.repo.full_name == github.repository &&
             github.actor != 'dependabot[bot]' &&
-            github.head_ref != 'changeset-release/main'
+            needs.changes.outputs.release-pr != 'true'
           )
         )
       }}
@@ -1006,7 +1011,7 @@ jobs:
           (
             github.event.pull_request.head.repo.full_name == github.repository &&
             github.actor != 'dependabot[bot]' &&
-            github.head_ref != 'changeset-release/main'
+            needs.changes.outputs.release-pr != 'true'
           )
         )
       }}

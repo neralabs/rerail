@@ -23,6 +23,7 @@ use crate::code_rule_dsl::import_target::ViewSlot;
 use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::parsed_by_forte;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
     FileAnchorIndex, FileGates, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
@@ -33,7 +34,7 @@ use crate::code_rule_dsl::model::{
 };
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
-use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading, UNREAD};
+use crate::code_rule_dsl::soundness::{SYNTAX_ERRORS, SyntaxErrors, SyntaxReading, UNREAD};
 use crate::code_rule_dsl::value::names;
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
@@ -166,14 +167,8 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                         .objects
                         .get(&source_hash)
                         .ok_or_else(|| invalid(format!("{path} is not in the store")))?;
-                    let source = storage
-                        .store
-                        .get_source(stored.source)
-                        .map_err(|error| invalid(error.to_string()))?;
-                    file.input.source = Arc::new(
-                        String::from_utf8(source)
-                            .map_err(|_| invalid(format!("stored {path} is not UTF-8")))?,
-                    );
+                    file.input.source =
+                        Arc::new(documents::stored_source(&storage.store, stored, &path)?);
                 }
             }
             #[cfg(feature = "code-rule-profile")]
@@ -711,7 +706,7 @@ fn evaluate_document(
         };
         if !file.failures.contains_key(&id) && read.incomplete(grammar) && gates.admit(grammar) {
             file.failures
-                .insert(id, ("source-incomplete", "file has syntax errors"));
+                .insert(id, ("source-incomplete", SYNTAX_ERRORS));
         }
     }
     #[cfg(test)]
@@ -853,7 +848,7 @@ pub(super) fn encode_tape(
     // Parser and the only native tree are scoped to this one source revision.
     // Neither can overlap with the restored document during selection.
     let interrupted = || closed.load(Ordering::Relaxed) || matcher_budget_exhausted();
-    let image = if language == GrammarDialect::Blade {
+    let image = if parsed_by_forte(language) {
         // Forte's step budget bounds the parse; closing the workspace or the matcher budget
         // interrupts the view and the encoding.
         #[cfg(feature = "code-rule-profile")]

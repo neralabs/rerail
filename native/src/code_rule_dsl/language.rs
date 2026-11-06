@@ -531,13 +531,7 @@ impl SourceType {
     /// module only where `type` is `module`, CommonJS where it is anything else and where there
     /// is no manifest. No syntax is read.
     pub(crate) fn by_package_type(path: &str, package: Option<PackageType>) -> Self {
-        let name = path.rsplit('/').next().unwrap_or(path);
-        match name.rsplit_once('.').map(|(_, extension)| extension) {
-            Some("mjs" | "mts") => Self::Module,
-            Some("cjs" | "cts") => Self::CommonJs,
-            _ if package == Some(PackageType::Module) => Self::Module,
-            _ => Self::CommonJs,
-        }
+        adapter::Ecma::source_type_by_package_type(path, package)
     }
 }
 

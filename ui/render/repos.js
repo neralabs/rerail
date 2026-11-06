@@ -5,7 +5,8 @@
  */
 import { h, icon } from "../dom.js";
 import { data, runningCount } from "../state.js";
-import { repoLine, repoRuleCounts } from "../repo-rules.js";
+import { repoRuleCounts } from "../repo-rule-counts.js";
+import { repoLine } from "../repo-rules.js";
 
 /**
  * `{ total, on }` for repository `repo`: its own rules as last read (`loadRepoRuleCounts`), else for the repository

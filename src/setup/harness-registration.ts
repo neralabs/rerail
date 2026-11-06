@@ -33,16 +33,17 @@ import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-comma
 import { andList, shellQuote } from "../harness/setup-screens.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
+import { CURRENT_LINK, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
 import { runGit } from "../engine/git.js";
 import { pinnedNodePath } from "./node-path.js";
 import { DAEMON_ACCESS_TOKEN_FILE } from "../runtime/daemon-control.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
 import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 
-export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
+export type Harness = RerailHost;
 
-export const HARNESSES: readonly Harness[] = ["omp", "pi", "claude-code", "codex", "cursor"];
+export const HARNESSES: readonly Harness[] = RERAIL_HOSTS;
 
 export interface RegistrationOptions {
   /** Installed package root containing package.json, dist/ and hooks/. */
@@ -209,7 +210,7 @@ function registeredRoot(script: string, executable: string): string | undefined 
 }
 
 async function isRerailPackageRoot(context: Context, root: string): Promise<boolean> {
-  if (root === context.root || root === join(context.home, ".rerail", "current")) return true;
+  if (root === context.root || root === join(context.home, ".rerail", CURRENT_LINK)) return true;
   let verified = context.packageRoots.get(root);
   if (verified === undefined) {
     verified = readFile(join(root, "package.json"), "utf8").then(text => {
@@ -812,7 +813,7 @@ async function claudeIsolationEntries(context: Context): Promise<Record<string, 
   ];
   // Native Windows runs commands unsandboxed: only the file tools' rules apply there.
   if (context.platform === "win32") return { "permissions.deny": deny };
-  const packageCode = [join(rerailHome, "current"), join(rerailHome, "versions"), context.root, await realpath(context.root).catch(() => context.root)];
+  const packageCode = [join(rerailHome, CURRENT_LINK), join(rerailHome, VERSIONS_DIR), context.root, await realpath(context.root).catch(() => context.root)];
   return {
     "permissions.deny": deny,
     "sandbox.filesystem.denyRead": protectedDirectories,
@@ -1387,7 +1388,7 @@ function newContext(options: RegistrationOptions, mode: Mode): Context {
   return {
     mode,
     root,
-    managed: options.managed ?? root === join(defaultRerailHome(), "current"),
+    managed: options.managed ?? root === join(defaultRerailHome(), CURRENT_LINK),
     packageRoots: new Map(),
     home: resolve(options.home ?? homedir()),
     nodePath: options.nodePath ?? pinnedNodePath(),

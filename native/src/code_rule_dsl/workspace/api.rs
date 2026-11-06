@@ -867,6 +867,11 @@ pub struct WorkspaceApplyTask {
     pub(super) request_buffer: Option<Vec<u8>>,
     pub(super) request_direct: Option<Request>,
 }
+/// The message a workspace task fails with while another apply holds `cpu_slot`: the host reads this
+/// constant (`isWorkspaceBusy`), pauses and calls again.
+#[napi]
+pub const WORKSPACE_BUSY: &str = "WORKSPACE_BUSY";
+
 /// One apply at a time across the process's workspaces. It guards no data, so it is a mutex a
 /// panic does not poison: an apply that panics while holding it frees it for the next one.
 pub(super) fn cpu_slot() -> &'static parking_lot::Mutex<()> {
@@ -879,7 +884,7 @@ impl Task for WorkspaceApplyTask {
     fn compute(&mut self) -> Result<ResultText> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
             let Some(_slot) = cpu_slot().try_lock() else {
-                return Err(invalid("WORKSPACE_BUSY"));
+                return Err(invalid(WORKSPACE_BUSY));
             };
             self.apply_with_slot()
         })

@@ -4,6 +4,7 @@ import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { decodeCursor, encodeCursor } from "../storage/page-cursor.js";
+import { holdsTable } from "../storage/table-probe.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import { scrubSecrets, scrubValue } from "../secret-scrub.js";
 import {
@@ -66,9 +67,7 @@ export function storedFailures(failures: readonly AuditFailure[]): AuditFailure[
 const HOLDS_UNLISTED_TABLE = new WeakSet<RerailDatabase>();
 function holdsUnlistedTable(database: RerailDatabase): boolean {
   if (HOLDS_UNLISTED_TABLE.has(database)) return true;
-  const holds = database.$client
-    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_unlisted_failures'")
-    .get() !== undefined;
+  const holds = holdsTable(database.$client, "audit_unlisted_failures");
   if (holds) HOLDS_UNLISTED_TABLE.add(database);
   return holds;
 }

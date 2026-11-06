@@ -19,6 +19,7 @@ import {
   stateOf,
   workspaceStartState,
   type RepositorySetupIo,
+  workspaceSetUp,
 } from "../runtime/repository-start.js";
 import { recordSetUp } from "../engine/catalog/rule-configuration.js";
 import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
@@ -477,12 +478,11 @@ function otherStartedRepositories(database: RerailDatabase, repositoryKey: Repos
  */
 function setUpState(root: string, databasePath: string): "not-set-up" | "review-offered" | "set-up" {
   if (!existsSync(databasePath)) return "not-set-up";
+  if (workspaceSetUp(root, databasePath)) return "set-up";
   const database = openRerailDatabase(databasePath, { readonly: true });
   try {
     const checkout = lookupCheckout(database, root);
-    if (checkout === undefined) return "not-set-up";
-    if (!checkoutStatus(database, checkout).setUp) return setupReviewOffered(database, checkout.repositoryKey) ? "review-offered" : "not-set-up";
-    return "set-up";
+    return checkout !== undefined && setupReviewOffered(database, checkout.repositoryKey) ? "review-offered" : "not-set-up";
   } finally {
     database.$client.close();
   }

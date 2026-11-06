@@ -358,7 +358,8 @@ fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
     let outcome = loop {
         match task.compute() {
             Err(error)
-                if error.reason == "WORKSPACE_BUSY" && std::time::Instant::now() < deadline =>
+                if error.reason == super::api::WORKSPACE_BUSY
+                    && std::time::Instant::now() < deadline =>
             {
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
