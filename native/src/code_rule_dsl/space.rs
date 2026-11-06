@@ -157,9 +157,20 @@ impl DenseSet {
 
     /// Removes the nodes in `range`.
     pub(in crate::code_rule_dsl) fn clear(&mut self, range: std::ops::Range<u32>) {
-        let mut mask = Self { words: vec![0; self.words.len()] };
-        mask.fill(range);
-        self.difference_with(&mask);
+        let (start, end) = (range.start as usize, range.end as usize);
+        if start >= end {
+            return;
+        }
+        let (first, last) = (start / 64, (end - 1) / 64);
+        let low = u64::MAX << (start % 64);
+        let high = u64::MAX >> (63 - (end - 1) % 64);
+        if first == last {
+            self.words[first] &= !(low & high);
+            return;
+        }
+        self.words[first] &= !low;
+        self.words[first + 1..last].iter_mut().for_each(|word| *word = 0);
+        self.words[last] &= !high;
     }
 
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {

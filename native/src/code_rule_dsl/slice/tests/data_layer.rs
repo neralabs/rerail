@@ -64,7 +64,7 @@ fn with_options(document: &mut serde_json::Value, options: &serde_json::Map<Stri
 }
 
 /// Each policy split into what the slice runs (compiled) and the clauses it refused, with reasons.
-fn split(path: &Path) -> ((String, CompiledCodeRuleDsl), Vec<(String, String)>) {
+fn split(path: &Path) -> Result<((String, CompiledCodeRuleDsl), Vec<(String, String)>), String> {
     let mut document: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut refused = Vec::new();
     document["clauses"].as_array_mut().unwrap().retain(|clause| match refusal(clause) {
@@ -79,7 +79,7 @@ fn split(path: &Path) -> ((String, CompiledCodeRuleDsl), Vec<(String, String)>) 
             clause.get("define").is_some() || (listed("RERAIL_DL_ONLY") != Some(false) && listed("RERAIL_DL_SKIP") != Some(true))
         }
     });
-    let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{}", e.reason));
+    let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).map_err(|e| e.reason)?;
     // Matchers that do not lower are left out of the wave by `policies::lower`; name them here.
     for clause in &compiled.inner.clauses {
         let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
@@ -93,7 +93,7 @@ fn split(path: &Path) -> ((String, CompiledCodeRuleDsl), Vec<(String, String)>) 
             }
         }
     }
-    ((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled), refused)
+    Ok(((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled), refused))
 }
 
 #[test]
@@ -102,7 +102,14 @@ fn data_layer_bench() {
     let root = PathBuf::from(std::env::var("RERAIL_DL_ROOT").expect("RERAIL_DL_ROOT"));
     let mut policies = Vec::new();
     for path in std::env::var("RERAIL_DL_POLICY").expect("RERAIL_DL_POLICY").split(':') {
-        let (policy, refused) = split(Path::new(path));
+        // A policy left with nothing to run (every clause refused) is named and skipped.
+        let (policy, refused) = match split(Path::new(path)) {
+            Ok(split) => split,
+            Err(why) => {
+                eprintln!("DL {path}: skipped: {why}");
+                continue;
+            }
+        };
         let total = policy.1.inner.clauses.len() + refused.iter().filter(|(_, why)| !why.starts_with("match_tree") && !why.starts_with("lower")).count();
         eprintln!("DL {}: {total} clauses, {} not run on the slice's path", policy.0, refused.len());
         for (clause, why) in &refused {
@@ -123,6 +130,14 @@ fn data_layer_bench() {
     let footprint = crate::code_rule_dsl::prof::footprint_mb;
     let (cpu0, wall0) = (cpu(), std::time::Instant::now());
     let program = authored(&Default::default());
+    // A policy the wave does not lower on its own is named and left out.
+    policies.retain(|policy| match Rules::lower_with(std::slice::from_ref(policy), &program, backend) {
+        Ok(_) => true,
+        Err(error) => {
+            eprintln!("DL {}: skipped: does not lower: {error:?}", policy.0);
+            false
+        }
+    });
     let mut rules = Rules::lower_with(&policies, &program, backend).unwrap();
     let lowering = (cpu() - cpu0, wall0.elapsed());
     eprintln!("DL lowered {} clauses in cpu {:?}, wall {:?}; footprint {} MB", rules.clauses(), lowering.0, lowering.1, footprint());
@@ -214,7 +229,7 @@ fn data_layer_fixtures() {
         with_options(&mut document, &options);
         let file = temp("dl-policy").with_extension("json");
         std::fs::write(&file, document.to_string()).unwrap();
-        let (compiled, refused) = split(&file);
+        let (compiled, refused) = split(&file).unwrap_or_else(|why| panic!("{}: {why}", file.display()));
         let entry = options.get("entryPoint").and_then(|e| e.as_str()).unwrap_or("?").to_owned();
         let policies = vec![(policy.file_stem().unwrap().to_string_lossy().into_owned(), compiled.1)];
         let program = authored(&options);

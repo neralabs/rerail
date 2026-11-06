@@ -295,6 +295,7 @@ fn set_operations() {
         nodes += d.nodes;
     }
     waves.push(from..docs.len());
+    population(&docs, &waves);
     for (label, spans) in [("one space", vec![0..docs.len()]), ("waves of 2^18 nodes", waves)] {
         println!("\n{label}: {} spaces, files {} nodes {}", spans.len(), docs.len(), docs.iter().map(|d| u64::from(d.nodes)).sum::<u64>());
         operations(&docs, &spans);
@@ -334,8 +335,14 @@ fn operations(docs: &[DocSets], spans: &[std::ops::Range<usize>]) {
         .collect();
     let at = |name: &str| names.iter().position(|n| *n == name).unwrap();
     println!("op\tresult\tdense ms\tcontainers ms\tdense/containers");
-    let rounds = 5;
+    // `RERAIL_SET_ONLY=<text>`: only the operations whose label holds it; `RERAIL_SET_ROUNDS`: rounds
+    // per operation (5), more to sample one operation under a profiler.
+    let only = std::env::var("RERAIL_SET_ONLY").ok();
+    let rounds: u32 = std::env::var("RERAIL_SET_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(5);
     let time = |label: &str, dense_op: &dyn Fn(&NodeSpace, &[Pair]) -> DenseSet, chunked_op: &dyn Fn(&NodeSpace, &[Pair]) -> NodeSet| {
+        if only.as_ref().is_some_and(|only| !label.contains(only.as_str())) {
+            return;
+        }
         let mut members = 0;
         for (space, sets) in &built {
             let (d, c) = (dense_op(space, sets), chunked_op(space, sets));
@@ -361,6 +368,13 @@ fn operations(docs: &[DocSets], spans: &[std::ops::Range<usize>]) {
         time(&format!("{a} ∩ {b}"), &|_, s| { let mut x = s[a_].0.clone(); x.intersect_with(&s[b_].0); x }, &|_, s| { let mut x = s[a_].1.clone(); x.intersect_with(&s[b_].1); x });
         time(&format!("{a} − {b}"), &|_, s| { let mut x = s[a_].0.clone(); x.difference_with(&s[b_].0); x }, &|_, s| { let mut x = s[a_].1.clone(); x.difference_with(&s[b_].1); x });
     }
+    // The same intersections with the inside-set's runs made bitmaps first: what runs cost.
+    for (a, b) in [("call", "inside:function_definition"), ("identifier", "inside:class_definition")] {
+        let (a_, b_) = (at(a), at(b));
+        let as_words: Vec<NodeSet> = built.iter().map(|(_, s)| s[b_].1.as_bitmaps()).collect();
+        let wave = |sp: &NodeSpace| built.iter().position(|(x, _)| std::ptr::eq(x, sp)).unwrap();
+        time(&format!("{a} ∩ {b} (as bitmaps)"), &|_, s| { let mut x = s[a_].0.clone(); x.intersect_with(&s[b_].0); x }, &|sp, s| { let mut x = s[a_].1.clone(); x.intersect_with(&as_words[wave(sp)]); x });
+    }
     for (a, b) in [("call", "await"), ("raise_statement", "decorator"), ("inside:function_definition", "inside:class_definition")] {
         let (a_, b_) = (at(a), at(b));
         time(&format!("{a} ∪ {b}"), &|_, s| { let mut x = s[a_].0.clone(); x.union_with(&s[b_].0); x }, &|_, s| { let mut x = s[a_].1.clone(); x.union_with(&s[b_].1); x });
@@ -377,4 +391,123 @@ fn operations(docs: &[DocSets], spans: &[std::ops::Range<usize>]) {
         let chunked: usize = built.iter().map(|(_, sets)| sets[i].1.bytes()).sum();
         println!("{name}\t{dense}\t{chunked}");
     }
+}
+
+/// The memory of every set at once: each kind's set and each inside-set, dense and as containers,
+/// over the whole repository and per wave (the largest wave's, which is what a run holds).
+fn population(docs: &[DocSets], waves: &[std::ops::Range<usize>]) {
+    use crate::code_rule_dsl::space::{NodeSet, NodeSpace};
+    let mut kinds: Vec<String> = docs.iter().flat_map(|d| d.kinds.keys().cloned()).collect();
+    kinds.sort();
+    kinds.dedup();
+    let scopes: Vec<String> = docs.first().map(|d| d.inside.keys().cloned().collect()).unwrap_or_default();
+    let sets = kinds.len() + scopes.len();
+    let measure = |span: std::ops::Range<usize>| -> (usize, usize) {
+        let docs = &docs[span];
+        let space = NodeSpace::new(docs.iter().map(|d| d.nodes).collect());
+        let mut chunked = 0;
+        for k in &kinds {
+            let mut set = NodeSet::empty(&space);
+            docs.iter().enumerate().filter_map(|(f, d)| d.kinds.get(k).map(|ps| (f, ps))).for_each(|(f, ps)| set.insert_file(f, ps.iter().copied()));
+            chunked += set.bytes();
+        }
+        for k in &scopes {
+            let mut set = NodeSet::empty(&space);
+            docs.iter().enumerate().for_each(|(f, d)| set.insert_runs(f, d.inside[k].iter().map(|&(a, b)| a..b)));
+            chunked += set.bytes();
+        }
+        (sets * space.words() * 8, chunked)
+    };
+    let (dense, chunked) = measure(0..docs.len());
+    println!("\npopulation: {sets} sets (every kind, {} inside-sets)", scopes.len());
+    println!("  whole repository: dense {:.1} MB, containers {:.1} MB", dense as f64 / 1e6, chunked as f64 / 1e6);
+    let per_wave: Vec<(usize, usize)> = waves.iter().map(|w| measure(w.clone())).collect();
+    let max = per_wave.iter().copied().max_by_key(|p| p.0).unwrap_or_default();
+    let max_c = per_wave.iter().map(|p| p.1).max().unwrap_or(0);
+    println!("  largest wave: dense {:.1} MB, containers {:.1} MB (largest containers {:.1} MB)", max.0 as f64 / 1e6, max.1 as f64 / 1e6, max_c as f64 / 1e6);
+}
+
+/// Decision 0045 step 3: the kind postings as the store keeps them (delta-varint preorders per
+/// (document, kind), `content_store::prefilter::pack`) against container segments
+/// (`NodeSet::segment`): bytes over the repository, and the CPU to read every posting into a set.
+#[test]
+#[ignore = "a measurement over a repository on disk (RERAIL_SET_CENSUS_ROOT)"]
+fn posting_forms() {
+    use crate::code_rule_dsl::space::{NodeSet, NodeSpace};
+    let root = PathBuf::from(std::env::var("RERAIL_SET_CENSUS_ROOT").expect("RERAIL_SET_CENSUS_ROOT"));
+    let mut files = Vec::new();
+    python_files(&root, &mut files);
+    files.sort();
+    let python = dialect_by_label("python").unwrap();
+    let (tag, catalog) = (tape_tag(python).unwrap(), python.kinds());
+    let mut names = HashMap::new();
+    for code in 0..catalog.kind_count() as u16 {
+        if let Some(name) = catalog.kind_name(code) {
+            names.insert(kind_atom(tag, code), name.to_owned());
+        }
+    }
+    let docs: Vec<DocSets> = files.par_iter().filter_map(|p| doc_sets(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &[], &names)).collect();
+    let space = NodeSpace::new(docs.iter().map(|d| d.nodes).collect());
+    // Every (document, kind) posting in both forms.
+    let mut varint: Vec<(usize, String, Vec<u8>)> = Vec::new();
+    let mut segments: Vec<(usize, String, Vec<u8>)> = Vec::new();
+    for (f, d) in docs.iter().enumerate() {
+        let mut kinds: Vec<_> = d.kinds.iter().collect();
+        kinds.sort();
+        for (k, ps) in kinds {
+            varint.push((f, k.clone(), crate::content_store::prefilter::pack(ps)));
+            let mut one = NodeSet::empty(&space);
+            one.insert_file(f, ps.iter().copied());
+            segments.push((f, k.clone(), one.segment(f)));
+        }
+    }
+    let (vb, sb): (usize, usize) = (varint.iter().map(|p| p.2.len()).sum(), segments.iter().map(|p| p.2.len()).sum());
+    println!("postings: {} (document, kind) pairs, {} nodes", varint.len(), space.len());
+    println!("  delta-varint {:.1} MB, container segments {:.1} MB", vb as f64 / 1e6, sb as f64 / 1e6);
+    // Reading: each kind's set over the repository, from every posting of the kind (the prefilter's
+    // leaves). Varint: decode to positions, then insert; segments: copy the containers.
+    let mut by_kind: HashMap<String, Vec<usize>> = HashMap::new();
+    varint.iter().enumerate().for_each(|(i, (_, k, _))| by_kind.entry(k.clone()).or_default().push(i));
+    let rounds = 3;
+    let read_varint = || {
+        by_kind.values().map(|ids| {
+            let mut set = NodeSet::empty(&space);
+            for &i in ids {
+                let (f, _, bytes) = &varint[i];
+                let (mut at, mut pre, mut positions) = (0, 0u32, Vec::new());
+                while at < bytes.len() {
+                    let (mut delta, mut shift) = (0u32, 0);
+                    loop {
+                        let b = bytes[at];
+                        at += 1;
+                        delta |= u32::from(b & 127) << shift;
+                        if b & 128 == 0 { break }
+                        shift += 7;
+                    }
+                    pre += delta;
+                    positions.push(pre);
+                }
+                set.insert_file(*f, positions);
+            }
+            set.len()
+        }).sum::<usize>()
+    };
+    let read_segments = || {
+        by_kind.values().map(|ids| {
+            let mut set = NodeSet::empty(&space);
+            for &i in ids {
+                let (f, _, bytes) = &segments[i];
+                set.push_segment(*f, bytes).unwrap();
+            }
+            set.len()
+        }).sum::<usize>()
+    };
+    assert_eq!(read_varint(), read_segments());
+    let t = thread_cpu();
+    (0..rounds).for_each(|_| { std::hint::black_box(read_varint()); });
+    let tv = (thread_cpu() - t) / f64::from(rounds) * 1e3;
+    let t = thread_cpu();
+    (0..rounds).for_each(|_| { std::hint::black_box(read_segments()); });
+    let ts = (thread_cpu() - t) / f64::from(rounds) * 1e3;
+    println!("  reading every kind's set: delta-varint {tv:.1} ms, segments {ts:.1} ms (thread CPU, mean of {rounds})");
 }

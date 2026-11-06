@@ -426,8 +426,8 @@ impl NodeSet {
         let n: usize = self.words[from..].iter().map(|w| w.count_ones() as usize).sum();
         if n <= len {
             let at = self.values.len();
-            let b = self.words.split_off(from);
-            self.values.extend(bits(&b));
+            self.values.extend(bits(&self.words[from..]));
+            self.words.truncate(from);
             self.directory.push(Entry { key: k, form: Form::Array, at: at as u32, len: n as u32 });
             return;
         }
@@ -514,6 +514,51 @@ impl NodeSet {
                 }
                 self.seal_runs(k, from)
             }
+            // Bitmaps against bitmaps: one pass, written once.
+            (op, Bitmap(x), Bitmap(y)) => {
+                let at = self.words.len();
+                match op {
+                    Op::And => self.words.extend(x.iter().zip(y).map(|(a, b)| a & b)),
+                    Op::AndNot => self.words.extend(x.iter().enumerate().map(|(i, a)| a & !y.get(i).copied().unwrap_or(0))),
+                    Op::Or => {
+                        let (long, short) = if x.len() >= y.len() { (x, y) } else { (y, x) };
+                        self.words.extend(long.iter().enumerate().map(|(i, a)| a | short.get(i).copied().unwrap_or(0)));
+                    }
+                }
+                self.seal_words(k, at)
+            }
+            // A bitmap within runs: only the words the runs cover are read.
+            (Op::And, Bitmap(x), Runs(r)) | (Op::And, Runs(r), Bitmap(x)) => {
+                let at = self.words.len();
+                self.words.resize(at + x.len(), 0);
+                let out = &mut self.words[at..];
+                for &(s, l) in r {
+                    let (ws, wl) = (usize::from(s) / 64, usize::from(l) / 64);
+                    if ws >= x.len() {
+                        break;
+                    }
+                    let lo = !0u64 << (s % 64);
+                    if ws == wl {
+                        out[ws] |= x[ws] & lo & (!0u64 >> (63 - l % 64));
+                        continue;
+                    }
+                    out[ws] |= x[ws] & lo;
+                    for i in (ws + 1)..wl.min(x.len()) {
+                        out[i] = x[i];
+                    }
+                    if wl < x.len() {
+                        out[wl] |= x[wl] & (!0u64 >> (63 - l % 64));
+                    }
+                }
+                self.seal_words(k, at)
+            }
+            (Op::AndNot, Bitmap(x), Runs(r)) => {
+                let at = self.words.len();
+                self.words.extend_from_slice(x);
+                let out = &mut self.words[at..];
+                r.iter().for_each(|&(s, l)| clear_clipped(out, s, l));
+                self.seal_words(k, at)
+            }
             // The rest on words: the result's extent, each side or-ed in (or masked).
             (op, a, b) => {
                 let at = self.words.len();
@@ -527,14 +572,14 @@ impl NodeSet {
                 a.or_into_clipped(out);
                 match (op, b) {
                     (Op::Or, b) => b.or_into_clipped(out),
-                    (op, Bitmap(q)) => {
-                        let and = op == Op::And;
-                        out.iter_mut().zip(q).for_each(|(o, m)| *o &= if and { *m } else { !*m });
-                    }
                     (Op::AndNot, Runs(r)) => r.iter().for_each(|&(s, l)| clear_clipped(out, s, l)),
                     (Op::AndNot, Array(y)) => {
                         let limit = out.len() * 64;
                         y.iter().filter(|&&v| usize::from(v) < limit).for_each(|&v| out[usize::from(v) / 64] &= !(1 << (v % 64)));
+                    }
+                    (op, Bitmap(q)) => {
+                        let and = op == Op::And;
+                        out.iter_mut().zip(q).for_each(|(o, m)| *o &= if and { *m } else { !*m });
                     }
                     (_, Runs(r)) => {
                         // Clear the gaps between the runs, and after the last.
@@ -558,7 +603,14 @@ impl NodeSet {
 
     /// `op` with `other`, chunk by chunk; `keep_left`/`keep_right` copy chunks present on one side.
     fn apply(&self, other: &Self, op: Op) -> Self {
-        let mut out = Self { directory: Vec::new(), values: Vec::new(), words: Vec::new() };
+        // The result's buffers reserved once: an intersection is at most the smaller side, and the
+        // others at most both.
+        let (d, v, w) = match op {
+            Op::And => (self.directory.len().min(other.directory.len()), self.values.len().min(other.values.len()), self.words.len().min(other.words.len())),
+            Op::AndNot => (self.directory.len(), self.values.len(), self.words.len()),
+            Op::Or => (self.directory.len() + other.directory.len(), self.values.len() + other.values.len(), self.words.len() + other.words.len()),
+        };
+        let mut out = Self { directory: Vec::with_capacity(d), values: Vec::with_capacity(v), words: Vec::with_capacity(w) };
         let (keep_left, keep_right) = match op {
             Op::And => (false, false),
             Op::Or => (true, true),
@@ -673,9 +725,78 @@ impl NodeSet {
     }
 
     /// Bytes held: the directory and the buffers.
-    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         self.directory.len() * std::mem::size_of::<Entry>() + 2 * self.values.len() + 8 * self.words.len()
+    }
+
+    /// File `file`'s chunks as a stored segment (0045 §5): per chunk its slice (u16), its form
+    /// (u8), its length (u32) and its container, little-endian. Read back by `insert_segment`
+    /// without decoding member by member.
+    #[allow(dead_code)] // the store's postings move to it in 0045 step 3
+    pub(in crate::code_rule_dsl) fn segment(&self, file: usize) -> Vec<u8> {
+        let file = file as u64;
+        let from = self.directory.partition_point(|e| e.key >> 16 < file);
+        let mut out = Vec::new();
+        for e in self.directory[from..].iter().take_while(|e| e.key >> 16 == file) {
+            out.extend_from_slice(&((e.key & 0xffff) as u16).to_le_bytes());
+            out.push(e.form as u8);
+            out.extend_from_slice(&e.len.to_le_bytes());
+            let (at, len) = (e.at as usize, e.len as usize);
+            match e.form {
+                Form::Array => self.values[at..at + len].iter().for_each(|v| out.extend_from_slice(&v.to_le_bytes())),
+                Form::Runs => self.values[at..at + 2 * len].iter().for_each(|v| out.extend_from_slice(&v.to_le_bytes())),
+                Form::Bitmap => self.words[at..at + len].iter().for_each(|w| out.extend_from_slice(&w.to_le_bytes())),
+            }
+        }
+        out
+    }
+
+    /// Adds a segment of file `file` (`segment`), after every file already in the set.
+    #[allow(dead_code)] // the store's postings move to it in 0045 step 3
+    pub(in crate::code_rule_dsl) fn push_segment(&mut self, file: usize, mut bytes: &[u8]) -> Result<(), &'static str> {
+        let invalid = "invalid segment";
+        while !bytes.is_empty() {
+            let (head, rest) = bytes.split_at_checked(7).ok_or(invalid)?;
+            let slice = u16::from_le_bytes([head[0], head[1]]);
+            let len = u32::from_le_bytes([head[3], head[4], head[5], head[6]]) as usize;
+            let k = (file as u64) << 16 | u64::from(slice);
+            if self.directory.last().is_some_and(|e| e.key >= k) || len == 0 {
+                return Err(invalid);
+            }
+            let (form, size) = match head[2] {
+                0 => (Form::Array, 2 * len),
+                1 => (Form::Bitmap, 8 * len),
+                2 => (Form::Runs, 4 * len),
+                _ => return Err(invalid),
+            };
+            let (payload, rest) = rest.split_at_checked(size).ok_or(invalid)?;
+            let at = if form == Form::Bitmap {
+                let at = self.words.len();
+                self.words.extend(payload.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 bytes"))));
+                at
+            } else {
+                let at = self.values.len();
+                self.values.extend(payload.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])));
+                at
+            };
+            self.directory.push(Entry { key: k, form, at: at as u32, len: len as u32 });
+            bytes = rest;
+        }
+        Ok(())
+    }
+
+    /// The same members with every chunk a bitmap (to measure what runs cost against words).
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn as_bitmaps(&self) -> Self {
+        let mut out = Self::default();
+        for e in &self.directory {
+            let v = self.view(e);
+            let mut b = vec![0u64; words_to(v.last())];
+            v.or_into(&mut b);
+            out.directory.push(Entry { key: e.key, form: Form::Bitmap, at: out.words.len() as u32, len: b.len() as u32 });
+            out.words.extend_from_slice(&b);
+        }
+        out
     }
 
     /// (array, bitmap, runs) chunk counts.

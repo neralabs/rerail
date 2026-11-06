@@ -437,35 +437,79 @@ pub(in crate::code_rule_dsl) enum Device {
 
 /// The program's outputs, its operations on the host's bitmaps.
 fn evaluate(program: &Program, space: &NodeSpace, mut leaves: HashMap<usize, NodeSet>) -> Vec<NodeSet> {
-    let mut values: Vec<NodeSet> = Vec::with_capacity(program.ops.len());
+    // Each value is freed after the last operation that reads it (outputs are kept), and that
+    // operation takes it instead of copying it: the program holds its live values only.
+    let reads = |op: &Op| -> Vec<usize> {
+        match op {
+            Op::Empty | Op::All | Op::Kinds(_) | Op::Terms { .. } | Op::Uncovered => Vec::new(),
+            Op::Union(ids) => ids.clone(),
+            Op::Intersect(a, b) | Op::Except(a, b) => vec![*a, *b],
+            Op::Within(scope, tests) => std::iter::once(*scope).chain(tests.iter().copied()).collect(),
+        }
+    };
+    let mut last = vec![None::<usize>; program.ops.len()];
     for (id, op) in program.ops.iter().enumerate() {
+        reads(op).into_iter().for_each(|read| last[read] = Some(id));
+    }
+    let outputs = program.outputs.iter().copied().collect::<std::collections::HashSet<_>>();
+    let dies_at = |value: usize, at: usize| !outputs.contains(&value) && last[value].is_none_or(|l| l == at);
+    let mut values: Vec<NodeSet> = Vec::with_capacity(program.ops.len());
+    // The leaves are read before the program runs: live from the start.
+    let (mut live, mut live_sets) = (leaves.values().map(NodeSet::bytes).sum::<usize>(), leaves.len());
+    let (mut peak, mut peak_sets) = (live, live_sets);
+    let (mut sizes, mut freed) = (Vec::with_capacity(program.ops.len()), Vec::with_capacity(program.ops.len()));
+    for (id, op) in program.ops.iter().enumerate() {
+        // The first operand, taken when this is its last read and no other operand is the same value.
+        let first = |values: &mut Vec<NodeSet>, first: usize, rest: &[usize]| -> NodeSet {
+            if dies_at(first, id) && !rest.contains(&first) { std::mem::take(&mut values[first]) } else { values[first].clone() }
+        };
         let value = match op {
             Op::Empty => NodeSet::empty(space),
             Op::All => NodeSet::all(space),
             Op::Kinds(_) | Op::Terms { .. } | Op::Uncovered => leaves.remove(&id).expect("a read leaf"),
             Op::Union(ids) => {
-                let mut set = values[ids[0]].clone();
+                let mut set = first(&mut values, ids[0], &ids[1..]);
                 ids[1..].iter().for_each(|&id| set.union_with(&values[id]));
                 set
             }
             Op::Intersect(a, b) => {
-                let mut set = values[*a].clone();
+                let mut set = first(&mut values, *a, &[*b]);
                 set.intersect_with(&values[*b]);
                 set
             }
             Op::Except(a, b) => {
-                let mut set = values[*a].clone();
+                let mut set = first(&mut values, *a, &[*b]);
                 set.difference_with(&values[*b]);
                 set
             }
             Op::Within(scope, tests) => {
-                let mut set = values[*scope].clone();
+                let mut set = first(&mut values, *scope, tests);
                 set.within_files(space, &tests.iter().map(|&id| &values[id]).collect::<Vec<_>>());
                 set
             }
         };
+        sizes.push(value.bytes());
+        freed.push(false);
+        if !matches!(op, Op::Kinds(_) | Op::Terms { .. } | Op::Uncovered) {
+            live += sizes[id];
+            live_sets += 1;
+        }
         values.push(value);
+        (peak, peak_sets) = (peak.max(live), peak_sets.max(live_sets));
+        for read in reads(op).into_iter().chain(std::iter::once(id)) {
+            if dies_at(read, id) && (read != id || last[id].is_none()) && !freed[read] {
+                live -= sizes[read];
+                live_sets -= 1;
+                freed[read] = true;
+                values[read] = NodeSet::default();
+            }
+        }
     }
+    // The most the program held at once, and what dense words over the space would have held.
+    crate::code_rule_dsl::prof::count("sets.peak_live", peak_sets);
+    crate::code_rule_dsl::prof::count("sets.peak_bytes", peak);
+    crate::code_rule_dsl::prof::count("sets.peak_dense_bytes", peak_sets * space.words() * 8);
+    crate::code_rule_dsl::prof::count("sets.ops", program.ops.len());
     program.outputs.iter().map(|&id| values[id].clone()).collect()
 }
 

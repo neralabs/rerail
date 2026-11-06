@@ -123,48 +123,62 @@ the engine's id space. 120 sets: every kind, and "inside a node of kind K" for `
 - So the common operation, a kind set inside a scope set, is an array against runs: a binary
   search per member over a few runs.
 
-## Evidence: operations on the host (step 2)
+## Evidence: operations and memory (step 2)
 
-`facts::set_census::set_operations` (ignored test), same repository: each operation on the dense
-bitmap (0024's `NodeSet`, kept as `space::DenseSet` for this comparison) and on the containers
-(the new `space::NodeSet`), with every result checked equal. Thread CPU time per operation, over
-the whole repository, mean of 5; set building excluded. Load 33-108 during the runs.
+`facts::set_census::set_operations` and `population` (ignored tests), on the same repository. Both
+forms were tuned before comparing:
 
-| Operation (whole repository) | Result | Dense ms | Containers ms |
+- **dense:** `clear` had allocated a mask the size of the whole space for every file, so `within`
+  cost 1.25 s. It now clears in place: 0.29 ms.
+- **containers:** one directory over two shared buffers, not one allocation per chunk. Bitmaps
+  hold the words up to their last member. Bitmap against bitmap or runs is one fused pass that
+  writes the result once, and result buffers are reserved up front.
+
+Every result is checked equal between the forms. Thread CPU per operation over the whole
+repository (18.4 M nodes), mean of 5. The load was 80-128, so treat the times as ratios, not
+absolutes.
+
+| Operation | Result | Dense ms | Containers ms |
 |---|---|---|---|
-| call ∩ inside function | 999,607 | 0.14 | 1.24 |
-| call − inside function | 56,885 | 0.12 | 2.25 |
-| identifier ∩ inside class | 2,461,311 | 0.23 | 0.75 |
-| raise ∩ inside except | 2,002 | 0.12 | 0.13 |
-| await ∩ inside function | 24,312 | 0.15 | 0.31 |
-| decorator ∩ call | 0 | 0.14 | 0.24 |
-| inside function ∪ inside class | 16,489,891 | 0.12 | 0.63 |
-| call within files of raise | 675,330 | 1,251 | 0.51 |
-| clone call | 1,056,492 | 0.08 | 0.07 |
+| call ∩ inside function | 999,607 | 0.12 | 1.56 |
+| the same, the inside-set as bitmaps | 999,607 | 0.13 | 0.38 |
+| identifier ∩ inside class | 2,461,311 | 0.14 | 0.83 |
+| the same, the inside-set as bitmaps | 2,461,311 | 0.13 | 0.40 |
+| raise ∩ inside except | 2,002 | 0.12 | 0.08 |
+| await ∩ inside function | 24,312 | 0.13 | 0.19 |
+| decorator ∩ call | 0 | 0.12 | 0.19 |
+| call within files of raise | 675,330 | 0.20 | 0.57 |
+| clone call | 1,056,492 | 0.04 | 0.05 |
 
-In waves of 2^18 nodes (the runner's size, 72 spaces) the containers' times are the same; dense is
-the same except `within` (7 ms: one full mask per file).
+**Memory.** 117 sets (every kind and three inside-sets):
+
+| Scope | Dense | Containers |
+|---|---|---|
+| whole repository | 269.4 MB | 48.3 MB |
+| largest wave of 2^18 nodes | 3.8 MB | 0.7 MB |
+
+The prefilter's set programs on the push path, measured on a 219-file subtree with all 59
+policies that lower (`data_layer_bench`, `sets.*` counters):
+
+| | Sets held | Containers | Dense would be |
+|---|---|---|---|
+| before: every value kept to the program's end | 2,648 | 60 MB | 235 MB |
+| now: each value freed after its last read | 378 at most | 6.2 MB | 33.6 MB |
 
 What this shows:
 
-- **On the host, dense words are at memory speed.** A set over 18.4 M nodes is 2.3 MB, and an `&`
-  over it is about 0.12 ms. Containers are 1 to 15 times slower on large sets and even on sparse
-  ones. Every operation is under 2.5 ms over the whole repository, so neither form is a cost the
-  runs notice.
-- **Containers win where work follows the members:** `within` (per-file tests), per-file reads
-  (`file_nodes`), and size. Sparse sets are 10-40 times smaller (raise: 133 KB against 2.3 MB);
-  dense-ish sets are the same size.
-- **Three choices came from the measurement**, each worth several times:
-  - a bitmap holds only the words up to its last member. Roaring's 8 KB is wrong here because a
-    document is mostly far smaller than a chunk: at 8 KB, `identifier` was 10.9 MB;
-  - a chunk is a bitmap once it has more members than words (density over 1/64), because word
-    operations beat per-member work. Runs are used when they are smallest;
-  - containers live in two shared buffers behind the directory, not one allocation per chunk (that
-    was 300 ns per chunk per operation). This is also the device's work list as it stands (§4).
-
-So the containers are the form for size, for per-file work, for the store (§5) and for the
-device (§4). On the host they do not make set algebra faster. The label results, candidate roots
-and text slots are not measured yet: they come with step 3's postings.
+- **Memory is where containers pay.** Five to six times smaller for the same sets. With values
+  freed after their last read, the set programs' peak goes from 235 MB (dense, every value kept)
+  to 6.2 MB, and the footprint rise at set evaluation is gone. The run's peak is now elsewhere:
+  labels (823 MB high-water on that subtree) over a 305 MB base after lowering 407 clauses.
+- **Runs are the CPU cost.** "Inside a function" is 135 K runs, and an operation pays about 9 ns
+  per run. As bitmaps the same intersection takes 0.38 ms instead of 1.56 ms, but the set is three
+  times larger (2.3 MB against 0.74 MB). Runs stay, because memory comes first.
+- **Bitmap chunks cost 2-3 times dense**, a fixed cost of about 30 ns per chunk. Sparse sets
+  tie or win. No operation is over 2 ms on the whole repository.
+- **Choices kept from the measurement:** a bitmap priced at the chunk's extent, not Roaring's 8 KB
+  (at 8 KB, `identifier` was 10.9 MB); a bitmap once a chunk has more members than words; runs
+  when they are smallest.
 
 ## Steps
 
