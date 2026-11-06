@@ -231,8 +231,11 @@ notes.
 <summary>How Releases are made, and which tags backfill skips</summary>
 
 - `scripts/release/github-release.mjs` builds them, so notes are written once.
-- After the dist-tag check, `release.yml`'s **GitHub Release** job makes core's, titled `v<version>`: a pre-release for
-  `next` and `beta`, the repository's latest release for `latest`.
+- `release.yml`'s **GitHub Release** job makes core's, titled `v<version>`: a pre-release for `next` and `beta`, the
+  repository's latest release for `latest`. It runs once the tarball passes the shrinkwrap check and the three managed
+  installs, beside the npm publish, and waits on nothing npm does: a slow publish or a failed dist-tag read-back
+  cannot hold back or skip it. If the publish then fails, the Release stands, and the retry (`publish` input) runs the
+  job again.
 - A version without its own changelog section says no changelog entries were written.
 - Re-runs rewrite an existing Release's notes, pre-release and latest flags. After a put-back, the restored version
   becomes the latest release.

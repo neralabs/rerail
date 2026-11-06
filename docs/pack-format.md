@@ -910,8 +910,9 @@ summaries.
   hash their entries carry.
 - Notes past GitHub's 125,000 characters go out as the section's lead and a link to the changelog at the tag
   (`fittedNotes`).
-- After **Published dist-tags** passes, the **GitHub Releases** job makes one per published version
-  (`scripts/release/github-release.mjs`). Rerun, it rewrites an existing Release's notes and flags.
+- Once the publish job has tagged them, the **GitHub Releases** job makes one per published version
+  (`scripts/release/github-release.mjs`), beside **Published dist-tags** rather than after it, so npm lagging on the
+  dist-tags cannot hold back or skip a Release. Rerun, it rewrites an existing Release's notes and flags.
 - A pack's Release is never the repository's latest release, which is core's. It is a pre-release only for a held pack
   published under `next`.
 - Releases missing for older tags, or from a run that failed before its Release, are made by hand with the script's
