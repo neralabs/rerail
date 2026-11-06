@@ -37,7 +37,6 @@
 .decl text(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl line_count(d: number, k: number)
-.decl path_part(d: number, s: symbol)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
@@ -90,50 +89,14 @@ cs_role_set(r) :- cs_role_given(r, _).
 cs_role(r, p) :- cs_role_given(r, p).
 cs_role(r, p) :- cs_role_default(r, p), !cs_role_set(r).
 
-// ---- line_metrics: lineCounts."<path>" (its JSON pointer `/lineCounts/<path, ~ as ~0 and / as ~1>`), else the
-// file's own count; only the files a line-count branch reads. The pointer is built component by component from
-// path_part (a path of up to 8 components; one holding `~` has no pointer built: approximation, noted, its own
-// count read).
+// ---- line_metrics: `json_extract(parameters, '$.lineCounts.'||json_quote(path))`, the JSON pointer
+// `/lineCounts/<path, ~ as ~0 and / as ~1>`, else the file's own count; only the files a line-count branch reads.
 .decl cs_metric_doc(d: number, p: symbol)
 cs_metric_doc(d, p) :- cs_valid(d, p), cs_role(_, p).
 cs_metric_doc(d, p) :- cs_valid(d, p), cs_big_backend(p).
-.decl cs_component(d: number, p: symbol, c: symbol)
-cs_component(d, p, c) :- cs_metric_doc(d, p), path_part(d, c), !contains("~", c).
-// cs_encK(d, q, e): q a prefix of d's path p made of K whole components, e its encoding.
-.decl cs_enc1(d: number, q: symbol, e: symbol)
-cs_enc1(d, c, c) :- cs_component(d, p, c), c = p.
-cs_enc1(d, c, c) :- cs_component(d, p, c), s = cat(c, "/"), prefix(s, p).
-.decl cs_enc2(d: number, q: symbol, e: symbol)
-cs_enc2(d, q, e) :- cs_enc1(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), q = p, e = cat(cat(e0, "~1"), c).
-cs_enc2(d, q, e) :- cs_enc1(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), s = cat(q, "/"), prefix(s, p), e = cat(cat(e0, "~1"), c).
-.decl cs_enc3(d: number, q: symbol, e: symbol)
-cs_enc3(d, q, e) :- cs_enc2(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), q = p, e = cat(cat(e0, "~1"), c).
-cs_enc3(d, q, e) :- cs_enc2(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), s = cat(q, "/"), prefix(s, p), e = cat(cat(e0, "~1"), c).
-.decl cs_enc4(d: number, q: symbol, e: symbol)
-cs_enc4(d, q, e) :- cs_enc3(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), q = p, e = cat(cat(e0, "~1"), c).
-cs_enc4(d, q, e) :- cs_enc3(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), s = cat(q, "/"), prefix(s, p), e = cat(cat(e0, "~1"), c).
-.decl cs_enc5(d: number, q: symbol, e: symbol)
-cs_enc5(d, q, e) :- cs_enc4(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), q = p, e = cat(cat(e0, "~1"), c).
-cs_enc5(d, q, e) :- cs_enc4(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), s = cat(q, "/"), prefix(s, p), e = cat(cat(e0, "~1"), c).
-.decl cs_enc6(d: number, q: symbol, e: symbol)
-cs_enc6(d, q, e) :- cs_enc5(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), q = p, e = cat(cat(e0, "~1"), c).
-cs_enc6(d, q, e) :- cs_enc5(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), s = cat(q, "/"), prefix(s, p), e = cat(cat(e0, "~1"), c).
-.decl cs_enc7(d: number, q: symbol, e: symbol)
-cs_enc7(d, q, e) :- cs_enc6(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), q = p, e = cat(cat(e0, "~1"), c).
-cs_enc7(d, q, e) :- cs_enc6(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), s = cat(q, "/"), prefix(s, p), e = cat(cat(e0, "~1"), c).
-.decl cs_enc8(d: number, q: symbol, e: symbol)
-cs_enc8(d, q, e) :- cs_enc7(d, q0, e0), cs_component(d, p, c), q = cat(cat(q0, "/"), c), q = p, e = cat(cat(e0, "~1"), c).
-.decl cs_encoded(d: number, e: symbol)
-cs_encoded(d, e) :- cs_metric_doc(d, p), cs_enc1(d, p, e).
-cs_encoded(d, e) :- cs_metric_doc(d, p), cs_enc2(d, p, e).
-cs_encoded(d, e) :- cs_metric_doc(d, p), cs_enc3(d, p, e).
-cs_encoded(d, e) :- cs_metric_doc(d, p), cs_enc4(d, p, e).
-cs_encoded(d, e) :- cs_metric_doc(d, p), cs_enc5(d, p, e).
-cs_encoded(d, e) :- cs_metric_doc(d, p), cs_enc6(d, p, e).
-cs_encoded(d, e) :- cs_metric_doc(d, p), cs_enc7(d, p, e).
-cs_encoded(d, e) :- cs_metric_doc(d, p), cs_enc8(d, p, e).
 .decl cs_count_given(d: number, v: symbol)
-cs_count_given(d, v) :- cs_encoded(d, e), ptr = cat("/lineCounts/", e), option_json("parameters", ptr, v), v != "null".
+cs_count_given(d, v) :- cs_metric_doc(d, p), e = @rx_replace(@rx_replace(p, "~", "~0"), "/", "~1"),
+    ptr = cat("/lineCounts/", e), option_json("parameters", ptr, v), v != "null".
 .decl cs_count_set(d: number)
 cs_count_set(d) :- cs_count_given(d, _).
 // CAST(source_lines AS INTEGER) > k, for k 900, 3000 and 6000: a given count is a number's text (a JSON number, or
