@@ -287,3 +287,15 @@ tpl_upto(t, i + 1, cat(v, w)) :- tpl_upto(t, i, v), child(t, c, i), kind(c, "str
   CPython's order.
 - O80 (the other section): `parsed` and `string_annotation` are not taken here.
 - plan_scope_side_effects.rr (More-ergonomic-rule-syntax) needs `code "PSE-0x0"` on its violations.
+
+### The rules' fixes, and log mode in the replay
+
+- The rule side (More-ergonomic-rule-syntax, brought over as 8a2e78a0b) spells plan-scope-side-effects' codes with
+  `code "PSE-…"`, sees through a parenthesized `if` test (`unparen`), and doubles the regex backslashes that
+  Soufflé refuses (`\\.`; this reader takes `\\` as one backslash, so the engine reads the same regex).
+- The replay applies a hand-written rule's `.mode log` on production events (the suite plugin), as the plugin
+  drops a linter's `audit` severity (`log_codes` in `logic/convert/tests.rs`).
+- Replay of the changed checks (`RERAIL_REPLAY_CHECK`), machine load about 40-70: plan_scope_side_effects
+  `7 7 7 0` (recordings 1-6) and `22 22 22 0` (batches 7-8 and probes); layer_violations `11 11 11 0`,
+  post_op_no_internal_dispatch `18 10 10 0`, public_api_triples `38 37 37 0`. With the other checks as the reader
+  run left them, the totals are `2350 178 177 0` and `1638 117 113 0`.
