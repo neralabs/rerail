@@ -1,0 +1,477 @@
+// data-layer-bounded-composed-graph-paths: the 93 text contracts (relational SQL stages over source_text), by hand.
+// Generated from the policy's queries, one family per query shape; each clause's comment names its finding.
+//
+// The SQL reads source_text(path) with CR LF and lone CR made LF: NULL where the file is absent. Here a file is
+// present when an in-scope document has its path, and its text is `source`'s span; the per-line forms read
+// `src_line` (terminators dropped, so CR LF needs no normalising).
+//
+// Approximations (each named where it applies):
+// - A1 lines: SQL counts lines at LF; src_line splits Python as str.splitlines, which also breaks at \v, \f,
+//   \x1c-\x1e, \x85, \u2028, \u2029. A file holding those reports later lines here.
+// - A2 per-line regexes: W's `\s*` in `def NAME\s*\(`, `FIELD\s*:\s*`, `class …` may run across a line break
+//   (`def f` at a line's end, `(` on the next; `x:` alone on its line). Python allows neither outside strings and
+//   brackets; here each such regex is read within one line.
+// The clauses on docs/*.rst and docs/design/*.md (text-contract-81 … 89) are in
+// data-layer-bounded-composed-graph-paths.pending.rr: they read text-only documents (doc + source, no tree), and
+// the corpus runner loads .py and .rs only today, so those files would read as absent.
+// `source` and `src_line` are core.rr's (docs/rule-syntax/lib/core.rr), bound by the corpus runner.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl in_scope(d: number)
+.decl source(d: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input source, src_line
+.output violation
+
+// ---- files: present, whole text, lines ------------------------------------------------------------------------
+.decl text_contract_anchor(k: symbol)
+.decl text_contract_present(p: symbol)
+text_contract_present(p) :- doc(d, p, _), in_scope(d).
+.decl text_contract_src(p: symbol, t: symbol)
+text_contract_src(p, t) :- doc(d, p, _), in_scope(d), source(d, sp), text(sp, t).
+.decl text_contract_line(p: symbol, l: number, u: symbol)
+text_contract_line(p, l, u) :- doc(d, p, _), in_scope(d), src_line(d, l, sp), text(sp, u).
+// next(p, l, j): line j follows line l (the recursions below step along it, creating no values).
+.decl text_contract_next(p: symbol, l: number, j: number)
+text_contract_next(p, l, j) :- text_contract_line(p, l, _), j = l + 1, text_contract_line(p, j, _).
+
+// ---- defgone: rx_matches(src, '(?m)^\s*(?:async )?def NAME\s*\(') at its first match's line -------------------
+// The match starts at a line start and `\s*` runs over newlines, so it starts at the first of the whitespace-only
+// lines just above the first def line (the def line itself when the line above is not blank).
+.decl text_contract_def(k: symbol, p: symbol, l: number)
+.decl text_contract_ws(p: symbol, l: number)
+text_contract_ws(p, l) :- text_contract_line(p, l, u), match("\\s*", u).
+.decl text_contract_def_back(k: symbol, p: symbol, l: number)
+text_contract_def_back(k, p, l) :- text_contract_def(k, p, l).
+text_contract_def_back(k, p, j) :- text_contract_def_back(k, p, l), text_contract_next(p, j, l), text_contract_ws(p, j).
+.decl text_contract_def_first(k: symbol, p: symbol, l: number)
+text_contract_def_first(k, p, l) :- text_contract_def_back(k, p, _), l = min x : { text_contract_def_back(k, p, x) }.
+
+// ---- word: rx_matches(src, '\bNAME\b') at its first match's line --------------------------------------------
+.decl text_contract_word(k: symbol, p: symbol, l: number)
+.decl text_contract_word_first(k: symbol, p: symbol, l: number)
+text_contract_word_first(k, p, l) :- text_contract_word(k, p, _), l = min x : { text_contract_word(k, p, x) }.
+
+// ---- classes: the SQL's class block --------------------------------------------------------------------------
+// The first line `class C[…](…):…`, through the line before the next line starting `class `, `def ` or
+// `async def ` (decorators and other top-level statements do not end it), or the end of the file.
+.decl text_contract_hdr(p: symbol, c: symbol, l: number)
+.decl text_contract_cls(p: symbol, c: symbol, l: number)
+text_contract_cls(p, c, l) :- text_contract_hdr(p, c, _), l = min x : { text_contract_hdr(p, c, x) }.
+.decl text_contract_has_cls(p: symbol, c: symbol)
+text_contract_has_cls(p, c) :- text_contract_cls(p, c, _).
+.decl text_contract_top(p: symbol, l: number)
+text_contract_top(p, l) :- text_contract_line(p, l, u), match("(?:class |def |async def ).*", u).
+.decl text_contract_cafter(p: symbol, c: symbol, l: number)
+text_contract_cafter(p, c, t) :- text_contract_cls(p, c, l0), text_contract_top(p, t), t > l0.
+.decl text_contract_cend(p: symbol, c: symbol, l: number)
+text_contract_cend(p, c, e) :- text_contract_cafter(p, c, _), e = min x : { text_contract_cafter(p, c, x) }.
+.decl text_contract_cended(p: symbol, c: symbol)
+text_contract_cended(p, c) :- text_contract_cend(p, c, _).
+.decl text_contract_cin(p: symbol, c: symbol, l: number, u: symbol)
+text_contract_cin(p, c, l, u) :- text_contract_cls(p, c, l0), text_contract_line(p, l, u), l >= l0, text_contract_cend(p, c, e), l < e.
+text_contract_cin(p, c, l, u) :- text_contract_cls(p, c, l0), text_contract_line(p, l, u), l >= l0, !text_contract_cended(p, c).
+
+// ---- deco: the class block matches '(?m)^    @DECO(…)?\n(?:    @…\n)*    (?:async )?def NAME[…]\s*\(' --------
+.decl text_contract_kcls(k: symbol, p: symbol, c: symbol)
+.decl text_contract_deco(k: symbol, p: symbol, l: number)
+.decl text_contract_dfn(k: symbol, p: symbol, l: number)
+.decl text_contract_dchain(k: symbol, p: symbol, l: number)
+text_contract_dchain(k, p, j) :- text_contract_deco(k, p, l), text_contract_next(p, l, j).
+text_contract_dchain(k, p, j) :- text_contract_dchain(k, p, l), text_contract_kcls(k, p, c), text_contract_cin(p, c, l, u), match("    @.+", u), text_contract_next(p, l, j).
+.decl text_contract_dok(k: symbol)
+text_contract_dok(k) :- text_contract_dchain(k, p, l), text_contract_dfn(k, p, l).
+
+// ---- field / method in a class block: some line matches -----------------------------------------------------
+// '(?m)^    FIELD\s*:\s*([^\n=]+)…' matches a line `    FIELD:` whose next character is there and is not `=`.
+.decl text_contract_fld(k: symbol)
+// The first such line (rx_extract's groups are the first match's).
+.decl text_contract_fln(k: symbol, l: number, u: symbol)
+.decl text_contract_fln_first(k: symbol, l: number)
+text_contract_fln_first(k, l) :- text_contract_fln(k, _, _), l = min x : { text_contract_fln(k, x, _) }.
+
+// ---- methods: the SQL's method block ----------------------------------------------------------------------------
+// The first line `    (async )?def NAME[…](`, through the line before the next line starting `    @`, `    def ` or
+// `    async def `, or the end of the file.
+.decl text_contract_mhdr(k: symbol, p: symbol, l: number)
+.decl text_contract_has_m(k: symbol)
+text_contract_has_m(k) :- text_contract_mhdr(k, _, _).
+.decl text_contract_m0(k: symbol, p: symbol, l: number)
+text_contract_m0(k, p, l) :- text_contract_mhdr(k, p, _), l = min x : { text_contract_mhdr(k, p, x) }.
+.decl text_contract_mtop(p: symbol, l: number)
+text_contract_mtop(p, l) :- text_contract_line(p, l, u), match("    (?:@|(?:async )?def ).*", u).
+.decl text_contract_mafter(k: symbol, p: symbol, l: number)
+text_contract_mafter(k, p, t) :- text_contract_m0(k, p, l0), text_contract_mtop(p, t), t > l0.
+.decl text_contract_mend(k: symbol, p: symbol, l: number)
+text_contract_mend(k, p, e) :- text_contract_mafter(k, p, _), e = min x : { text_contract_mafter(k, p, x) }.
+.decl text_contract_mended(k: symbol, p: symbol)
+text_contract_mended(k, p) :- text_contract_mend(k, p, _).
+.decl text_contract_min(k: symbol, p: symbol, l: number, u: symbol)
+text_contract_min(k, p, l, u) :- text_contract_m0(k, p, l0), text_contract_line(p, l, u), l >= l0, text_contract_mend(k, p, e), l < e.
+text_contract_min(k, p, l, u) :- text_contract_m0(k, p, l0), text_contract_line(p, l, u), l >= l0, !text_contract_mended(k, p).
+.decl text_contract_mok(k: symbol)
+
+// ---- all-present: every regex matches the whole text ------------------------------------------------------------
+.decl text_contract_all(k: symbol)
+
+// ---- facts -------------------------------------------------------------------------------------------------------
+text_contract_anchor("text-contract-0").
+text_contract_anchor("text-contract-7").
+text_contract_anchor("text-contract-14").
+text_contract_kcls("text-contract-15", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin").
+text_contract_anchor("text-contract-15").
+text_contract_anchor("text-contract-16").
+text_contract_kcls("text-contract-17", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction").
+text_contract_anchor("text-contract-17").
+text_contract_kcls("text-contract-18", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction").
+text_contract_anchor("text-contract-18").
+text_contract_anchor("text-contract-19").
+text_contract_anchor("text-contract-31").
+text_contract_kcls("text-contract-32", "l9700_graph_query/query_builder.py", "GraphQueryBuilder").
+text_contract_anchor("text-contract-32").
+text_contract_kcls("text-contract-33", "l9700_graph_query/query_builder.py", "GraphQueryBuilder").
+text_contract_anchor("text-contract-33").
+text_contract_kcls("text-contract-34", "l9700_graph_query/query_builder.py", "GraphQueryBuilder").
+text_contract_anchor("text-contract-34").
+text_contract_anchor("text-contract-35").
+text_contract_kcls("text-contract-36", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder").
+text_contract_anchor("text-contract-36").
+text_contract_anchor("text-contract-37").
+text_contract_anchor("text-contract-42").
+text_contract_anchor("text-contract-45").
+text_contract_anchor("text-contract-46").
+text_contract_anchor("text-contract-47").
+text_contract_anchor("text-contract-48").
+text_contract_anchor("text-contract-52").
+text_contract_anchor("text-contract-59").
+text_contract_anchor("text-contract-66").
+text_contract_anchor("text-contract-71").
+text_contract_anchor("text-contract-73").
+text_contract_anchor("text-contract-79").
+text_contract_anchor("text-contract-90").
+text_contract_anchor("text-contract-91").
+text_contract_anchor("text-contract-92").
+
+// ---- class headers (one per file and class) ----
+text_contract_hdr("l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", l) :- text_contract_line("l7200_versioned_transactions/versioned_lazy_mixin.py", l, u), match("class VersionedReadTransactionLazyMixin(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", l) :- text_contract_line("l7200_versioned_transactions/versioned_transactions.py", l, u), match("class LazyVersionedReadTransaction(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("l9700_graph_query/graph_pattern.py", "PathPattern", l) :- text_contract_line("l9700_graph_query/graph_pattern.py", l, u), match("class PathPattern(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("l9700_graph_query/query_builder.py", "GraphQueryBuilder", l) :- text_contract_line("l9700_graph_query/query_builder.py", l, u), match("class GraphQueryBuilder(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", l) :- text_contract_line("l7200_versioned_transactions/graph_lazy_sql.py", l, u), match("class SqlPlanGraphQueryBuilder(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphPathsStep", l) :- text_contract_line("impl/common/l2070_server_plan/steps/intent_graph.py", l, u), match("class ExecuteGraphPathsStep(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("impl/common/l2070_server_plan/steps/intent_graph.py", "GraphPathEvidenceRelationRow", l) :- text_contract_line("impl/common/l2070_server_plan/steps/intent_graph.py", l, u), match("class GraphPathEvidenceRelationRow(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("impl/common/l2070_server_plan/graph_path_relation_plan.py", "BoundedComposedPathRelationPlan", l) :- text_contract_line("impl/common/l2070_server_plan/graph_path_relation_plan.py", l, u), match("class BoundedComposedPathRelationPlan(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("impl/common/l2070_server_plan/graph_path_relation_plan.py", "GraphPathRelationSchemas", l) :- text_contract_line("impl/common/l2070_server_plan/graph_path_relation_plan.py", l, u), match("class GraphPathRelationSchemas(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx", l) :- text_contract_line("l7200_versioned_transactions/graph_lazy_sql.py", l, u), match("class SqlGraphExecutionCtx(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("impl/common/l2070_server_plan/steps/intent_graph.py", "_ResolveGraphExecutionCtxConfig", l) :- text_contract_line("impl/common/l2070_server_plan/steps/intent_graph.py", l, u), match("class _ResolveGraphExecutionCtxConfig(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphExecuteConfig", l) :- text_contract_line("impl/common/l2070_server_plan/steps/intent_graph.py", l, u), match("class _GraphExecuteConfig(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalApiConfig", l) :- text_contract_line("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", l, u), match("class _GraphTraversalApiConfig(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+text_contract_hdr("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalTerminalConfig", l) :- text_contract_line("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", l, u), match("class _GraphTraversalTerminalConfig(?:\\[.*\\])?(?:\\(.*\\))?:.*", u).
+
+// ---- the clauses -------------------------------------------------------------------------------------------
+
+// text-contract-0 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-0", "BCGP001", "l7200_versioned_transactions/versioned_lazy_mixin.py", 1) :- text_contract_anchor("text-contract-0"), !text_contract_present("l7200_versioned_transactions/versioned_lazy_mixin.py").
+
+// text-contract-1 (BCGP002): permissionless or redundant transaction endpoint graph_query_builder() must remain deleted
+text_contract_def("text-contract-1", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_lazy_mixin.py", l, u), match("\\s*(?:async )?def graph_query_builder\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-1", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-1", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).
+
+// text-contract-2 (BCGP002): permissionless or redundant transaction endpoint graph_query_builder_async() must remain deleted
+text_contract_def("text-contract-2", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_lazy_mixin.py", l, u), match("\\s*(?:async )?def graph_query_builder_async\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-2", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-2", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).
+
+// text-contract-3 (BCGP002): permissionless or redundant transaction endpoint graph_query_builder_lazy() must remain deleted
+text_contract_def("text-contract-3", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_lazy_mixin.py", l, u), match("\\s*(?:async )?def graph_query_builder_lazy\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-3", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-3", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).
+
+// text-contract-4 (BCGP002): permissionless or redundant transaction endpoint graph_traverse() must remain deleted
+text_contract_def("text-contract-4", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_lazy_mixin.py", l, u), match("\\s*(?:async )?def graph_traverse\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-4", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-4", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).
+
+// text-contract-5 (BCGP002): permissionless or redundant transaction endpoint graph_traverse_async() must remain deleted
+text_contract_def("text-contract-5", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_lazy_mixin.py", l, u), match("\\s*(?:async )?def graph_traverse_async\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-5", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-5", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).
+
+// text-contract-6 (BCGP002): permissionless or redundant transaction endpoint graph_traverse_lazy() must remain deleted
+text_contract_def("text-contract-6", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_lazy_mixin.py", l, u), match("\\s*(?:async )?def graph_traverse_lazy\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-6", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-6", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).
+
+// text-contract-7 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-7", "BCGP001", "l7200_versioned_transactions/versioned_transactions.py", 1) :- text_contract_anchor("text-contract-7"), !text_contract_present("l7200_versioned_transactions/versioned_transactions.py").
+
+// text-contract-8 (BCGP002): permissionless or redundant transaction endpoint graph_query_builder() must remain deleted
+text_contract_def("text-contract-8", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_transactions.py", l, u), match("\\s*(?:async )?def graph_query_builder\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-8", "BCGP002", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_def_first("text-contract-8", "l7200_versioned_transactions/versioned_transactions.py", l).
+
+// text-contract-9 (BCGP002): permissionless or redundant transaction endpoint graph_query_builder_async() must remain deleted
+text_contract_def("text-contract-9", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_transactions.py", l, u), match("\\s*(?:async )?def graph_query_builder_async\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-9", "BCGP002", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_def_first("text-contract-9", "l7200_versioned_transactions/versioned_transactions.py", l).
+
+// text-contract-10 (BCGP002): permissionless or redundant transaction endpoint graph_query_builder_lazy() must remain deleted
+text_contract_def("text-contract-10", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_transactions.py", l, u), match("\\s*(?:async )?def graph_query_builder_lazy\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-10", "BCGP002", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_def_first("text-contract-10", "l7200_versioned_transactions/versioned_transactions.py", l).
+
+// text-contract-11 (BCGP002): permissionless or redundant transaction endpoint graph_traverse() must remain deleted
+text_contract_def("text-contract-11", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_transactions.py", l, u), match("\\s*(?:async )?def graph_traverse\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-11", "BCGP002", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_def_first("text-contract-11", "l7200_versioned_transactions/versioned_transactions.py", l).
+
+// text-contract-12 (BCGP002): permissionless or redundant transaction endpoint graph_traverse_async() must remain deleted
+text_contract_def("text-contract-12", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_transactions.py", l, u), match("\\s*(?:async )?def graph_traverse_async\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-12", "BCGP002", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_def_first("text-contract-12", "l7200_versioned_transactions/versioned_transactions.py", l).
+
+// text-contract-13 (BCGP002): permissionless or redundant transaction endpoint graph_traverse_lazy() must remain deleted
+text_contract_def("text-contract-13", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_line("l7200_versioned_transactions/versioned_transactions.py", l, u), match("\\s*(?:async )?def graph_traverse_lazy\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-13", "BCGP002", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_def_first("text-contract-13", "l7200_versioned_transactions/versioned_transactions.py", l).
+
+// text-contract-14 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-14", "BCGP001", "l7200_versioned_transactions/versioned_lazy_mixin.py", 1) :- text_contract_anchor("text-contract-14"), !text_contract_present("l7200_versioned_transactions/versioned_lazy_mixin.py").
+
+// text-contract-15 (BCGP003): graph_lazy() must be the @pure_lazy graph entrypoint
+text_contract_deco("text-contract-15", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_cin("l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", l, u), match("    @pure_lazy(?:\\(.*\\))?", u).
+text_contract_dfn("text-contract-15", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_cin("l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", l, u), match("    (?:async )?def graph_lazy(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-15", "BCGP003", "l7200_versioned_transactions/versioned_lazy_mixin.py", 1) :- text_contract_anchor("text-contract-15"), !text_contract_dok("text-contract-15").
+
+// text-contract-16 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-16", "BCGP001", "l7200_versioned_transactions/versioned_transactions.py", 1) :- text_contract_anchor("text-contract-16"), !text_contract_present("l7200_versioned_transactions/versioned_transactions.py").
+
+// text-contract-17 (BCGP003): graph() must delegate through @legacy_sync
+text_contract_deco("text-contract-17", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_cin("l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", l, u), match("    @legacy_sync(?:\\(.*\\))?", u).
+text_contract_dfn("text-contract-17", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_cin("l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", l, u), match("    (?:async )?def graph(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-17", "BCGP003", "l7200_versioned_transactions/versioned_transactions.py", 1) :- text_contract_anchor("text-contract-17"), !text_contract_dok("text-contract-17").
+
+// text-contract-18 (BCGP003): graph_async() must delegate through @legacy_async
+text_contract_deco("text-contract-18", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_cin("l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", l, u), match("    @legacy_async(?:\\(.*\\))?", u).
+text_contract_dfn("text-contract-18", "l7200_versioned_transactions/versioned_transactions.py", l) :- text_contract_cin("l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", l, u), match("    (?:async )?def graph_async(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-18", "BCGP003", "l7200_versioned_transactions/versioned_transactions.py", 1) :- text_contract_anchor("text-contract-18"), !text_contract_dok("text-contract-18").
+
+// text-contract-19 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-19", "BCGP001", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_anchor("text-contract-19"), !text_contract_present("l9700_graph_query/graph_pattern.py").
+
+// text-contract-20 (BCGP004): required path semantic type GraphPathEvidenceRow is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-20", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+GraphPathEvidenceRow(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-21 (BCGP004): required path semantic type PathChoice is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-21", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathChoice(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-22 (BCGP004): required path semantic type PathExpression is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-22", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathExpression(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-23 (BCGP004): required path semantic type PathMode is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-23", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathMode(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-24 (BCGP004): required path semantic type PathPattern is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-24", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathPattern(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-25 (BCGP004): required path semantic type PathSearch is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-25", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathSearch(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-26 (BCGP004): required path semantic type PathSequence is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-26", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathSequence(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-27 (BCGP004): required path semantic type PathStep is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-27", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+PathStep(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-28 (BCGP004): required path semantic type QuantifiedPath is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-28", "BCGP004", "l9700_graph_query/graph_pattern.py", 1) :- text_contract_src("l9700_graph_query/graph_pattern.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+QuantifiedPath(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-29 (BCGP005): PathPattern must own a complete PathExpression
+text_contract_fld("text-contract-29") :- text_contract_cin("l9700_graph_query/graph_pattern.py", "PathPattern", _, u), match("    expression\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-29", "BCGP005", "l9700_graph_query/graph_pattern.py", l) :- text_contract_cls("l9700_graph_query/graph_pattern.py", "PathPattern", l), !text_contract_fld("text-contract-29").
+
+// text-contract-30 (BCGP005): edge-shaped PathPattern field must be removed
+violation("data-layer-bounded-composed-graph-paths", "text-contract-30", "BCGP005", "l9700_graph_query/graph_pattern.py", l) :- text_contract_cls("l9700_graph_query/graph_pattern.py", "PathPattern", l), text_contract_cin("l9700_graph_query/graph_pattern.py", "PathPattern", _, u), match("    edge\\s*:[^=].*", u).
+
+// text-contract-31 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-31", "BCGP001", "l9700_graph_query/query_builder.py", 1) :- text_contract_anchor("text-contract-31"), !text_contract_present("l9700_graph_query/query_builder.py").
+
+// text-contract-32 (BCGP006): execute_paths_lazy() must exist with @pure_lazy
+text_contract_deco("text-contract-32", "l9700_graph_query/query_builder.py", l) :- text_contract_cin("l9700_graph_query/query_builder.py", "GraphQueryBuilder", l, u), match("    @pure_lazy(?:\\(.*\\))?", u).
+text_contract_dfn("text-contract-32", "l9700_graph_query/query_builder.py", l) :- text_contract_cin("l9700_graph_query/query_builder.py", "GraphQueryBuilder", l, u), match("    (?:async )?def execute_paths_lazy(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-32", "BCGP006", "l9700_graph_query/query_builder.py", 1) :- text_contract_anchor("text-contract-32"), !text_contract_dok("text-contract-32").
+
+// text-contract-33 (BCGP006): execute_paths() must exist with @legacy_sync
+text_contract_deco("text-contract-33", "l9700_graph_query/query_builder.py", l) :- text_contract_cin("l9700_graph_query/query_builder.py", "GraphQueryBuilder", l, u), match("    @legacy_sync(?:\\(.*\\))?", u).
+text_contract_dfn("text-contract-33", "l9700_graph_query/query_builder.py", l) :- text_contract_cin("l9700_graph_query/query_builder.py", "GraphQueryBuilder", l, u), match("    (?:async )?def execute_paths(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-33", "BCGP006", "l9700_graph_query/query_builder.py", 1) :- text_contract_anchor("text-contract-33"), !text_contract_dok("text-contract-33").
+
+// text-contract-34 (BCGP006): execute_paths_async() must exist with @legacy_async
+text_contract_deco("text-contract-34", "l9700_graph_query/query_builder.py", l) :- text_contract_cin("l9700_graph_query/query_builder.py", "GraphQueryBuilder", l, u), match("    @legacy_async(?:\\(.*\\))?", u).
+text_contract_dfn("text-contract-34", "l9700_graph_query/query_builder.py", l) :- text_contract_cin("l9700_graph_query/query_builder.py", "GraphQueryBuilder", l, u), match("    (?:async )?def execute_paths_async(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-34", "BCGP006", "l9700_graph_query/query_builder.py", 1) :- text_contract_anchor("text-contract-34"), !text_contract_dok("text-contract-34").
+
+// text-contract-35 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-35", "BCGP001", "l7200_versioned_transactions/graph_lazy_sql.py", 1) :- text_contract_anchor("text-contract-35"), !text_contract_present("l7200_versioned_transactions/graph_lazy_sql.py").
+
+// text-contract-36 (BCGP007): SQL plan builder must implement @pure_lazy execute_paths_lazy()
+text_contract_deco("text-contract-36", "l7200_versioned_transactions/graph_lazy_sql.py", l) :- text_contract_cin("l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", l, u), match("    @pure_lazy(?:\\(.*\\))?", u).
+text_contract_dfn("text-contract-36", "l7200_versioned_transactions/graph_lazy_sql.py", l) :- text_contract_cin("l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", l, u), match("    (?:async )?def execute_paths_lazy(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-36", "BCGP007", "l7200_versioned_transactions/graph_lazy_sql.py", 1) :- text_contract_anchor("text-contract-36"), !text_contract_dok("text-contract-36").
+
+// text-contract-37 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-37", "BCGP001", "impl/common/l2070_server_plan/steps/intent_graph.py", 1) :- text_contract_anchor("text-contract-37"), !text_contract_present("impl/common/l2070_server_plan/steps/intent_graph.py").
+
+// text-contract-38 (BCGP008): required ServerPlan path contract ExecuteGraphPathsStep is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-38", "BCGP008", "impl/common/l2070_server_plan/steps/intent_graph.py", 1) :- text_contract_present("impl/common/l2070_server_plan/steps/intent_graph.py"), !text_contract_has_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphPathsStep").
+
+// text-contract-39 (BCGP008): required ServerPlan path contract GraphPathEvidenceRelationRow is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-39", "BCGP008", "impl/common/l2070_server_plan/steps/intent_graph.py", 1) :- text_contract_present("impl/common/l2070_server_plan/steps/intent_graph.py"), !text_contract_has_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "GraphPathEvidenceRelationRow").
+
+// text-contract-40 (BCGP008): path step must publish an exact CTE relation contract
+text_contract_fld("text-contract-40") :- text_contract_cin("impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphPathsStep", _, u), match("    (?:async )?def cte_publication_contract(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-40", "BCGP008", "impl/common/l2070_server_plan/steps/intent_graph.py", l) :- text_contract_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphPathsStep", l), !text_contract_fld("text-contract-40").
+
+// text-contract-41 (BCGP008): path step must compile the backend relation
+text_contract_fld("text-contract-41") :- text_contract_cin("impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphPathsStep", _, u), match("    (?:async )?def compile(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-41", "BCGP008", "impl/common/l2070_server_plan/steps/intent_graph.py", l) :- text_contract_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphPathsStep", l), !text_contract_fld("text-contract-41").
+
+// text-contract-42 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-42", "BCGP001", "impl/common/l2070_server_plan/graph_path_relation_plan.py", 1) :- text_contract_anchor("text-contract-42"), !text_contract_present("impl/common/l2070_server_plan/graph_path_relation_plan.py").
+
+// text-contract-43 (BCGP008): required semantic relation contract BoundedComposedPathRelationPlan is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-43", "BCGP008", "impl/common/l2070_server_plan/graph_path_relation_plan.py", 1) :- text_contract_present("impl/common/l2070_server_plan/graph_path_relation_plan.py"), !text_contract_has_cls("impl/common/l2070_server_plan/graph_path_relation_plan.py", "BoundedComposedPathRelationPlan").
+
+// text-contract-44 (BCGP008): required semantic relation contract GraphPathRelationSchemas is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-44", "BCGP008", "impl/common/l2070_server_plan/graph_path_relation_plan.py", 1) :- text_contract_present("impl/common/l2070_server_plan/graph_path_relation_plan.py"), !text_contract_has_cls("impl/common/l2070_server_plan/graph_path_relation_plan.py", "GraphPathRelationSchemas").
+
+// text-contract-45 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-45", "BCGP001", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", 1) :- text_contract_anchor("text-contract-45"), !text_contract_present("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py").
+
+// text-contract-46 (BCGP008): bounded paths must build a semantic relation plan before SQL lowering
+text_contract_mhdr("text-contract-46", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_line("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l, u), match("    (?:async )?def _build_execute_paths_relation_plan(?:\\[.*\\])?\\s*\\(.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-46", "BCGP008", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", 1) :- text_contract_anchor("text-contract-46"), !text_contract_has_m("text-contract-46").
+
+// text-contract-47 (BCGP008): bounded path SQL lowering must consume the semantic relation plan
+text_contract_mhdr("text-contract-47", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_line("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l, u), match("    (?:async )?def _build_execute_paths_grammar(?:\\[.*\\])?\\s*\\(.*", u).
+text_contract_mok("text-contract-47") :- text_contract_min("text-contract-47", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", _, u), contains("_build_execute_paths_relation_plan()", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-47", "BCGP008", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", 1) :- text_contract_anchor("text-contract-47"), !text_contract_mok("text-contract-47").
+
+// text-contract-48 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-48", "BCGP001", "l7200_versioned_transactions/graph_lazy_sql.py", 1) :- text_contract_anchor("text-contract-48"), !text_contract_present("l7200_versioned_transactions/graph_lazy_sql.py").
+
+// text-contract-49 (BCGP009): required graph contract SqlGraphExecutionCtx is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-49", "BCGP009", "l7200_versioned_transactions/graph_lazy_sql.py", 1) :- text_contract_present("l7200_versioned_transactions/graph_lazy_sql.py"), !text_contract_has_cls("l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx").
+
+// text-contract-50 (BCGP009): SqlGraphExecutionCtx must carry graph_type
+text_contract_fld("text-contract-50") :- text_contract_cin("l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx", _, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-50", "BCGP009", "l7200_versioned_transactions/graph_lazy_sql.py", l) :- text_contract_cls("l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx", l), !text_contract_fld("text-contract-50").
+
+// text-contract-51 (BCGP009): SqlGraphExecutionCtx.graph_type must be required and non-optional
+text_contract_fln("text-contract-51", l, u) :- text_contract_cin("l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx", l, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-51", "BCGP009", "l7200_versioned_transactions/graph_lazy_sql.py", l) :- text_contract_cls("l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx", l), text_contract_fln_first("text-contract-51", m), text_contract_fln("text-contract-51", m, u), match("    graph_type\\s*:[^=]*None.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-51", "BCGP009", "l7200_versioned_transactions/graph_lazy_sql.py", l) :- text_contract_cls("l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx", l), text_contract_fln_first("text-contract-51", m), text_contract_fln("text-contract-51", m, u), match("    graph_type\\s*:[^=]+=[\\s\\x1c-\\x1f]*None[\\s\\x1c-\\x1f]*", u).
+
+// text-contract-52 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-52", "BCGP001", "impl/common/l2070_server_plan/steps/intent_graph.py", 1) :- text_contract_anchor("text-contract-52"), !text_contract_present("impl/common/l2070_server_plan/steps/intent_graph.py").
+
+// text-contract-53 (BCGP009): required graph contract _ResolveGraphExecutionCtxConfig is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-53", "BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", 1) :- text_contract_present("impl/common/l2070_server_plan/steps/intent_graph.py"), !text_contract_has_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "_ResolveGraphExecutionCtxConfig").
+
+// text-contract-54 (BCGP009): _ResolveGraphExecutionCtxConfig must carry graph_type
+text_contract_fld("text-contract-54") :- text_contract_cin("impl/common/l2070_server_plan/steps/intent_graph.py", "_ResolveGraphExecutionCtxConfig", _, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-54", "BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", l) :- text_contract_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "_ResolveGraphExecutionCtxConfig", l), !text_contract_fld("text-contract-54").
+
+// text-contract-55 (BCGP009): _ResolveGraphExecutionCtxConfig.graph_type must be required and non-optional
+text_contract_fln("text-contract-55", l, u) :- text_contract_cin("impl/common/l2070_server_plan/steps/intent_graph.py", "_ResolveGraphExecutionCtxConfig", l, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-55", "BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", l) :- text_contract_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "_ResolveGraphExecutionCtxConfig", l), text_contract_fln_first("text-contract-55", m), text_contract_fln("text-contract-55", m, u), match("    graph_type\\s*:[^=]*None.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-55", "BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", l) :- text_contract_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "_ResolveGraphExecutionCtxConfig", l), text_contract_fln_first("text-contract-55", m), text_contract_fln("text-contract-55", m, u), match("    graph_type\\s*:[^=]+=[\\s\\x1c-\\x1f]*None[\\s\\x1c-\\x1f]*", u).
+
+// text-contract-56 (BCGP009): required graph contract _GraphExecuteConfig is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-56", "BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", 1) :- text_contract_present("impl/common/l2070_server_plan/steps/intent_graph.py"), !text_contract_has_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphExecuteConfig").
+
+// text-contract-57 (BCGP009): _GraphExecuteConfig must carry graph_type
+text_contract_fld("text-contract-57") :- text_contract_cin("impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphExecuteConfig", _, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-57", "BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", l) :- text_contract_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphExecuteConfig", l), !text_contract_fld("text-contract-57").
+
+// text-contract-58 (BCGP009): _GraphExecuteConfig.graph_type must be required and non-optional
+text_contract_fln("text-contract-58", l, u) :- text_contract_cin("impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphExecuteConfig", l, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-58", "BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", l) :- text_contract_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphExecuteConfig", l), text_contract_fln_first("text-contract-58", m), text_contract_fln("text-contract-58", m, u), match("    graph_type\\s*:[^=]*None.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-58", "BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", l) :- text_contract_cls("impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphExecuteConfig", l), text_contract_fln_first("text-contract-58", m), text_contract_fln("text-contract-58", m, u), match("    graph_type\\s*:[^=]+=[\\s\\x1c-\\x1f]*None[\\s\\x1c-\\x1f]*", u).
+
+// text-contract-59 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-59", "BCGP001", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", 1) :- text_contract_anchor("text-contract-59"), !text_contract_present("impl/common/l9700_sql_graph_query/steps/graph_traverse.py").
+
+// text-contract-60 (BCGP009): required graph contract _GraphTraversalApiConfig is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-60", "BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", 1) :- text_contract_present("impl/common/l9700_sql_graph_query/steps/graph_traverse.py"), !text_contract_has_cls("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalApiConfig").
+
+// text-contract-61 (BCGP009): _GraphTraversalApiConfig must carry graph_type
+text_contract_fld("text-contract-61") :- text_contract_cin("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalApiConfig", _, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-61", "BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", l) :- text_contract_cls("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalApiConfig", l), !text_contract_fld("text-contract-61").
+
+// text-contract-62 (BCGP009): _GraphTraversalApiConfig.graph_type must be required and non-optional
+text_contract_fln("text-contract-62", l, u) :- text_contract_cin("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalApiConfig", l, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-62", "BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", l) :- text_contract_cls("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalApiConfig", l), text_contract_fln_first("text-contract-62", m), text_contract_fln("text-contract-62", m, u), match("    graph_type\\s*:[^=]*None.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-62", "BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", l) :- text_contract_cls("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalApiConfig", l), text_contract_fln_first("text-contract-62", m), text_contract_fln("text-contract-62", m, u), match("    graph_type\\s*:[^=]+=[\\s\\x1c-\\x1f]*None[\\s\\x1c-\\x1f]*", u).
+
+// text-contract-63 (BCGP009): required graph contract _GraphTraversalTerminalConfig is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-63", "BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", 1) :- text_contract_present("impl/common/l9700_sql_graph_query/steps/graph_traverse.py"), !text_contract_has_cls("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalTerminalConfig").
+
+// text-contract-64 (BCGP009): _GraphTraversalTerminalConfig must carry graph_type
+text_contract_fld("text-contract-64") :- text_contract_cin("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalTerminalConfig", _, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-64", "BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", l) :- text_contract_cls("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalTerminalConfig", l), !text_contract_fld("text-contract-64").
+
+// text-contract-65 (BCGP009): _GraphTraversalTerminalConfig.graph_type must be required and non-optional
+text_contract_fln("text-contract-65", l, u) :- text_contract_cin("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalTerminalConfig", l, u), match("    graph_type\\s*:[^=].*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-65", "BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", l) :- text_contract_cls("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalTerminalConfig", l), text_contract_fln_first("text-contract-65", m), text_contract_fln("text-contract-65", m, u), match("    graph_type\\s*:[^=]*None.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-65", "BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", l) :- text_contract_cls("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalTerminalConfig", l), text_contract_fln_first("text-contract-65", m), text_contract_fln("text-contract-65", m, u), match("    graph_type\\s*:[^=]+=[\\s\\x1c-\\x1f]*None[\\s\\x1c-\\x1f]*", u).
+
+// text-contract-66 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-66", "BCGP001", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", 1) :- text_contract_anchor("text-contract-66"), !text_contract_present("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py").
+
+// text-contract-67 (BCGP014): legacy sparse-union recursion must not bypass the relation-algebra path
+text_contract_word("text-contract-67", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_line("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l, u), match(".*\\b_try_build_sparse_union_recursive_bindings_grammar\\b.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-67", "BCGP014", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_word_first("text-contract-67", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l).
+
+// text-contract-68 (BCGP014): legacy one-edge recursion must not bypass the relation-algebra path
+text_contract_word("text-contract-68", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_line("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l, u), match(".*\\b_try_build_sparse_recursive_bindings_grammar\\b.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-68", "BCGP014", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_word_first("text-contract-68", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l).
+
+// text-contract-69 (BCGP014): legacy sparse binding grammar must not bypass the relation-algebra path
+text_contract_word("text-contract-69", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_line("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l, u), match(".*\\b_SqlSparseUnionRecursiveBindingGrammar\\b.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-69", "BCGP014", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_word_first("text-contract-69", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l).
+
+// text-contract-70 (BCGP014): legacy sparse binding final selection must not bypass the relation-algebra path
+text_contract_word("text-contract-70", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_line("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l, u), match(".*\\b_SqlSparseUnionRecursiveBindingFinalSelect\\b.*", u).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-70", "BCGP014", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l) :- text_contract_word_first("text-contract-70", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l).
+
+// text-contract-71 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-71", "BCGP001", "l9720_sparql/executor.py", 1) :- text_contract_anchor("text-contract-71"), !text_contract_present("l9720_sparql/executor.py").
+
+// text-contract-72 (BCGP010): SPARQL must acquire builders through graph_lazy(...).query_builder(...)
+violation("data-layer-bounded-composed-graph-paths", "text-contract-72", "BCGP010", "l9720_sparql/executor.py", 1) :- text_contract_src("l9720_sparql/executor.py", t), contains("graph_query_builder", t).
+
+// text-contract-73 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-73", "BCGP001", "l9720_sparql/ast.py", 1) :- text_contract_anchor("text-contract-73"), !text_contract_present("l9720_sparql/ast.py").
+
+// text-contract-74 (BCGP010): required SPARQL path type SparqlPathAlternative is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-74", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathAlternative(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-75 (BCGP010): required SPARQL path type SparqlPathExpression is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-75", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathExpression(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-76 (BCGP010): required SPARQL path type SparqlPathInverse is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-76", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathInverse(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-77 (BCGP010): required SPARQL path type SparqlPathQuantifier is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-77", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathQuantifier(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-78 (BCGP010): required SPARQL path type SparqlPathSequence is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-78", "BCGP010", "l9720_sparql/ast.py", 1) :- text_contract_src("l9720_sparql/ast.py", t), !match("(?s:.*)(?:(?:\\A|[\\r\\n])(?:class|def|async def)\\s+SparqlPathSequence(?:[^A-Za-z0-9_]|\\z))(?s:.*)", t).
+
+// text-contract-79 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-79", "BCGP001", "l9720_sparql/compiler.py", 1) :- text_contract_anchor("text-contract-79"), !text_contract_present("l9720_sparql/compiler.py").
+
+// text-contract-80 (BCGP010): SPARQL compiler must target the shared path expression contract
+violation("data-layer-bounded-composed-graph-paths", "text-contract-80", "BCGP010", "l9720_sparql/compiler.py", 1) :- text_contract_src("l9720_sparql/compiler.py", t), !contains("PathExpression", t).
+
+// text-contract-90 (BCGP001): required architecture file is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-90", "BCGP001", "scripts/lint_all.py", 1) :- text_contract_anchor("text-contract-90"), !text_contract_present("scripts/lint_all.py").
+
+// text-contract-91 (BCGP012): completion linter is not a hard-fail CI member of lint_all
+text_contract_all("text-contract-91") :- text_contract_src("scripts/lint_all.py", t), match("(?s:.*)(?:name\\s*=\\s*['\"]bounded_composed_graph_paths['\"])(?s:.*)", t), match("(?s:.*)(?:script\\s*=\\s*['\"]lint_bounded_composed_graph_paths\\.py['\"])(?s:.*)", t), match("(?s:.*)(?:enforcement\\s*=\\s*['\"]hard-fail['\"])(?s:.*)", t), match("(?s:.*)(?:in_ci\\s*=\\s*True)(?s:.*)", t).
+violation("data-layer-bounded-composed-graph-paths", "text-contract-91", "BCGP012", "scripts/lint_all.py", 1) :- text_contract_anchor("text-contract-91"), !text_contract_all("text-contract-91").
+
+// text-contract-92 (BCGP013): maintained-backend composed recursion contract is missing
+violation("data-layer-bounded-composed-graph-paths", "text-contract-92", "BCGP013", "conform/l9700_graph_query/test_bounded_composed_paths.py", 1) :- text_contract_anchor("text-contract-92"), !text_contract_present("conform/l9700_graph_query/test_bounded_composed_paths.py").
