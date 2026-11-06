@@ -213,6 +213,62 @@ Two items from §1 measured again on the full corpus, with the memo off and the 
   stayed there: freed pages the allocator kept. The run now returns them after each chunk, so the footprint holds
   near 380 MB. Peak RSS went from 653 MB to 572 MB, at the same instructions (748e9).
 
+### 2d. The file-local part profiled again: fixed cost and joins (2026-11-06)
+
+Full corpus, 100 rules, memo off, tapes cached. A `sample` of the main thread for 15 s of the local phase (3,838
+samples), and the run's spans. Three fixes came out of it first:
+
+| Change | Instructions |
+|---|---|
+| before | 748e9 |
+| Demand (decision 0046) drops only the candidates whose split fails. One component closing a cycle through a negation (`p65_m41`) had left all 100 rules without demand. Now 33 relations are demanded. Joins 18.3 to 13.6 s. | 690e9 |
+| A stratum borrows the relations run so far instead of cloning them (quadratic in strata: 3%), and a store path is canonicalised once (`realpath` per stratum: 2.5%) | 669e9 |
+
+The replay and the 252 findings are unchanged.
+
+Where the main thread goes now:
+
+| Part | Share | What |
+|---|---|---|
+| Joins (`run_join`) | 43% | finding candidates 23% (input lookups and values: 12% and up), inserting results (`Rel::push`) 11%, of which hash-table growth is 7% |
+| Engine open | 18% | input views 9% (about 800 filters per chunk, each built once: 1.3 s a run), index builds 2%, SQLite reads 1% |
+| Join specs as text | 4% | built, hex-encoded and parsed per stratum per chunk |
+| Planning (reused plans) | 3% | |
+| The rest | about 10% | statistics, step counts, allocation |
+
+**The fixed cost** is about a third of the main thread: 645 to 780 strata, each opened, planned, specified as text
+and closed in each of 104 chunks. Without changing the shape, the remaining levers are:
+
+- keep a stratum's spec between chunks when its plan is reused, instead of rebuilding the text;
+- size a derived relation's table from the planner's estimate, so it doesn't grow by rehashing.
+
+Running fewer strata per chunk (merging strata that read nothing from each other) would be a larger change.
+
+**The joins are mostly large relations built whole, then read in one place where the reader already binds the
+key:**
+
+| Stratum | Rows built | Read by | Join CPU |
+|---|---|---|---|
+| `p33_m147` | 18.3M: every node not in `m146` | one rule | 1.35 s |
+| `p55_m131` | 11.4M (`inside_ks5` of 3,144 nodes) | `pre_1020`, `pre_1021`, which bind `n` from `node(…, 1223, …)` | 0.98 s |
+| `p55_m106` | 7.2M: `name(n, v), strtest_217(v)` | only `!p55_m106(n)` | 1.19 s |
+| `p33_m131` | 6.0M | `p33_m132(n) :- p33_m126(n), p33_m131(n)`: 242k by 6.0M gives 238k | 1.66 s |
+| `p33_m132`, `p33_m16` | 6.0M each | `m17(n) :- m126(n), m16(n)` and similar | 1.82 s |
+| `p55_m676` | 6.9M: all nodes of kind 1025 or 1228 | `p55_m678(n) :- p55_m676(n), name(n, v), strtest_221(v)` | 0.41 s |
+
+Together that's about 7.4 s of 17.6 s of join CPU. Decision 0046 demands only relations that are read solely by
+negations and whose every rule starts from every node. Two extensions would cover these:
+
+1. **Positive reads:** cut a positive read of a candidate when the reader's other literals bind its variables, as
+   0046 does for negations. The demanded relation is then built for the reader's keys only.
+2. **Rules that start from a filtered base scan** (`node(_, n, 1025, …)`, `field(n, 65555, _)`, `name(n, v)`) as
+   well as from every node.
+
+The structural guard has to be restated for positive reads. A negation only filters, so the reader's remaining
+body is no larger than its own work. A positive read can connect the body, so cutting it can make `pre_<i>` larger
+than the reader. The candidate rule: cut a positive read only when a kept positive atom that is derived or
+constant-filtered binds all its variables. This is for a decision (an extension of 0046), not done here.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:
