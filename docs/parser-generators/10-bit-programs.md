@@ -4,6 +4,10 @@ Status: architecture and outline, 2026-11-06. Nothing here is built. It gathers 
 the engine's spike notes already decided, says what the latest direction changes, and lists the
 questions still open. It replaces `09-compile-and-lower.md` §3–§6 and §11.
 
+**Corrected by `12-what-is-wanted.md`:** the bit program is a side program of the existing
+transducer `Program`, as `value_programs` are, not a second program kind beside it. Where this
+page says otherwise (§1 "program kind", §3.2), `12` wins.
+
 ## Intro
 
 Three builds were reverted, each because it ignored work already done:
@@ -28,7 +32,7 @@ These are settled. Each row cites where.
 
 | topic | decision | where |
 |---|---|---|
-| program kind | a **stream transducer**: a second program kind beside the tape transducers, in the same lowering pipeline. It reads bytes and writes a tape | `01` §4, §8; `09` §7 |
+| program kind | **corrected (`12` §3):** a side program of the transducer `Program`, as `value_programs` are, read by the transducer's own interpreter, native IR, Cranelift and Metal. `01` §4 and `09` §7's "second program kind" was not what was asked | `12`; `01` §4 for its operations |
 | what it shares | plan ids, interpreted first with the JIT built in the background, backend selection, the Metal pipeline cache, the launch budget, residency slabs; the set program's slot layout and barrier pattern | `09` §7; decision 0012 |
 | executors | as for tape transducers: one verified program is the only semantic input. The CPU and Metal interpreters read it directly. One ephemeral native IR is emitted by both Cranelift and MSL, with one control-flow structure, no host callbacks and one packed ABI. Every op exists on every backend, with no Metal-to-CPU fallback | t6 §6 (`transducer-native-jit-design.md`); `final-shape/03-architecture.md` lines 88–90 |
 | what "no branching" allows | loops whose trip count is a size; selects, table lookups, gathers, scatters; one decision per file (the error bit) | `01` §1 |
@@ -88,7 +92,8 @@ The verifier refuses anything else when a program is made.
 
 ### 3.2 Executors
 
-The executors are those of the tape transducers (§1, "executors"), not new ones:
+The executors are the transducer's own (§1, "executors"), extended for the side program as they
+are for `value_programs` (`12` §3):
 
 1. **The CPU interpreter** reads the program and runs each operation over a chunk of words: one
    dispatch per operation per chunk (`09` §4.1).
