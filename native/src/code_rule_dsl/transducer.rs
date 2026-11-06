@@ -14,6 +14,8 @@ use std::ops::Range;
 // program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
 #[allow(dead_code)]
 pub(super) mod packed;
+// Lexers as stream programs (docs/parser-generators/09-compile-and-lower.md).
+pub(in crate::code_rule_dsl) mod stream;
 // N's semantic fact rows, which the matcher's families emit for N's catalog backend (tests).
 #[cfg_attr(not(test), allow(dead_code))]
 pub(super) mod semantic_facts;

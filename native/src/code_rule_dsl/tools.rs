@@ -46,3 +46,9 @@ pub fn logic(program: &str, root: &std::path::Path, t_facts: Option<&std::path::
     }
     Ok(text)
 }
+
+/// `lexer` (Bitlex text) over the files listed in `list`: the stream program against the
+/// reference evaluator, file by file (docs/parser-generators/09-compile-and-lower.md).
+pub fn bitlex_check(lexer: &str, list: &str, batch: usize) -> Result<String, String> {
+    super::transducer::stream::check(lexer, list, batch)
+}

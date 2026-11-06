@@ -2,11 +2,12 @@
 //!
 //!   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //!   rerail-engine asm <file.rir>
+//!   rerail-engine bitlex <lexer.bitlex> <file list> [--batch <bytes>]
 //!   rerail-engine logic <program.rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine bitlex <lexer.bitlex> <file list> [--batch <bytes>]\n  rerail-engine logic <program.rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -30,6 +31,23 @@ fn run(args: &[String]) -> Result<String, String> {
             _ => Err(USAGE.into()),
         },
         Some("logic") => logic(&args[1..]),
+        Some("bitlex") => bitlex(&args[1..]),
+        _ => Err(USAGE.into()),
+    }
+}
+
+/// `bitlex`: a lexer's stream program against its reference evaluator over a list of files.
+fn bitlex(args: &[String]) -> Result<String, String> {
+    let (mut positional, mut batch) = (Vec::new(), 1_usize << 18);
+    let mut args = args.iter();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--batch" => batch = args.next().ok_or("--batch requires a value")?.parse().map_err(|_| "--batch takes a byte count")?,
+            other => positional.push(other.to_owned()),
+        }
+    }
+    match positional.as_slice() {
+        [lexer, list] => rerail_engine::tools::bitlex_check(&read(lexer)?, list, batch),
         _ => Err(USAGE.into()),
     }
 }
