@@ -259,8 +259,9 @@ violation("data-layer-schema-architecture", "source-syntax", "NATIVE-SYNTAX", p,
 // Under entryPoint "all" (every other value matches no path): an invalid Python module (`syntax: invalid`) under
 // the three directories, with a trigger in its text, that CPython cannot parse either: SAP000 at line 1 (the
 // message carries CPython's error, which the key omits).
-// Approximation: tree-sitter's verdict (`syntax_error(d)`) stands for CPython's (the `parsed` stage's
-// `syntax_error`), which the corpus runner does not bind; a file tree-sitter rejects and CPython accepts would be
+// Approximation, blocked on CPython's syntax verdict (the `parsed` stage's `syntax_error`, core.rr's
+// `syntax_error(d, l, msg)`: it needs core.rr's isolated `ast.parse` worker, which the corpus runner does not run):
+// tree-sitter's verdict (`syntax_error(d)`) stands for it, so a file tree-sitter rejects and CPython accepts would be
 // reported here and not by W.
 .decl parser_error_doc(d: number, p: symbol)
 parser_error_doc(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d),
