@@ -626,6 +626,8 @@ export const operations: readonly Operation[] = [
         droppedEvents: z.number().int().nonnegative().describe("Events the coding agent never delivered, from its `events-dropped` records."),
         uncheckedBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's shell-write check finished."),
         codeRulesPendingBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's code rules were running."),
+        ignoredEdits: z.number().int().nonnegative().describe("Tool edits of files no rule checked because Git ignores them (`ignored-edit` events name each file and the ignore file, line and pattern)."),
+        ignoreRuleChanges: z.number().int().nonnegative().describe("Changes to Git's ignore rules during the session (`ignore-rules-changed` events name each file): files they newly ignore are not checked from then on."),
       }).describe("Over the whole transcript, however much of it a reader has loaded."),
     }),
     handler: (stores, input, caller) => {

@@ -226,6 +226,20 @@ In a large repository, Rerail indexes at session start before code rules can run
 
 </details>
 
+### Files Git ignores
+
+While the repository follows `.gitignore` (the default), files Git ignores are not checked, but a skip is never silent: the session's record keeps each one, and the dashboard timeline counts them.
+
+<details>
+<summary>What is recorded</summary>
+
+- A tool edit (Write, Edit, `apply_patch`) of a file a rule would read, which Git ignores: the file, and the ignore file, line and pattern that ignore it, as `git check-ignore -v` names them (`ignored-edit`).
+- A change to Git's ignore rules (`ignore-rules-changed`): a `.gitignore` a tool edit wrote (`via: "tool"`), or `.git/info/exclude` or `core.excludesFile` found changed after a command or at a turn end, whatever wrote it (`via: "observed"`). Those two files never show in a diff.
+- A shell write inside an ignored folder is not recorded file by file: the walk never enters such a folder, which is what keeps it fast. A change to the ignore rules that put the folder out of reach is.
+- `sessions_get` counts both in `gaps` (`ignoredEdits`, `ignoreRuleChanges`); `session_events` has each one, withheld from coding agents since they quote hidden ignore files.
+
+</details>
+
 ### When the daemon is down
 
 A hook never fails a tool call; the footer says `not running`.

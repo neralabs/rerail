@@ -1495,6 +1495,13 @@ export interface RepositoryAuditHooks {
   finish(checkoutRoot: string, auditId: string | undefined): void;
 }
 
+/** The pattern of Git's exclude stack that ignores a path: the file it was read from (absolute; absent when it came from no file), its line there, and the pattern. */
+export interface IgnoredEditMatch {
+  source?: string | null;
+  line: number;
+  pattern: string;
+}
+
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
   /** Refresh live rules before filtering paths for a tool's preimages; `acceptsPath` reflects them on return. */
@@ -1508,6 +1515,12 @@ export interface CodeRuleAuditor {
    * a shell-write walk neither descends into such a folder (`directory`) nor observes such a file. Absent: nothing is.
    */
   ignoresPath?(path: string, directory: boolean): boolean;
+  /**
+   * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
+   * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a
+   * file that is checked, and for one no rule reads anyway. Absent: no edit is left out for Git's rules.
+   */
+  ignoredEdit?(path: string): IgnoredEditMatch | undefined;
   /**
    * The folder whose real path must contain an accepted `path`'s real path (its owning checkout); the session folder
    * when undefined or absent.

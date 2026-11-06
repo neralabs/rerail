@@ -183,10 +183,15 @@ controls bind only an agent that reaches Rerail through MCP (see T1).
 - **People-only tools.** `repository_reset`, `repository_link`, `presentation_preferences_*` and
   `audit_settings_update` refuse an `agent`. An agent can turn Follow `.gitignore` on but never off, change
   whole-repository settings only before set-up, and never remove a library rule another repository uses.
+- **Git's ignore rules.** An agent can still widen what Git ignores, and so what Rerail checks, by writing an ignore
+  file. The session records it: a `.gitignore` a tool edit wrote, and any change to `.git/info/exclude` or
+  `core.excludesFile`, which no diff shows. Each tool edit left unchecked because Git ignores the file is recorded too.
+  Nothing blocks either.
 - **Transcript view** (`agentTranscriptPayload`, `src/engine/transcript-boundary.ts`):
   - Tool results lose their `output`.
   - Tool calls whose input names a hidden or secret-like path lose their input.
-  - Unknown event kinds are withheld whole.
+  - Unknown event kinds are withheld whole, and so are the records of what Git's ignore rules left unchecked and of
+    changes to them, which quote hidden ignore files.
   - Inputs too deep or large to read are withheld (fail closed).
 - **Findings in secret-like files** (`sensitiveByName`, `src/engine/path-boundary.ts`) reach the agent as rule and
   place only, without the matched code.

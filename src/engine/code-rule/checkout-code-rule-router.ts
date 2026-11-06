@@ -24,6 +24,7 @@ import type {
   AuditSettings,
   RuleSteerDelivery,
   RepositoryAuditHooks,
+  IgnoredEditMatch,
 } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
@@ -127,6 +128,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   ignoresPath(path: string, directory: boolean): boolean {
     const routed = this.#route(path);
     return routed !== undefined && routed.lane.enforcer.ignoresPath(routed.path, directory);
+  }
+
+  /** Why the checkout that owns the file `path` leaves an edit of it unchecked for Git's rules (`ignoredEdit` of its enforcer). */
+  ignoredEdit(path: string): IgnoredEditMatch | undefined {
+    const routed = this.#route(path);
+    return routed?.lane.enforcer.ignoredEdit(routed.path);
   }
 
   sourceRoot(path: string): string | undefined {

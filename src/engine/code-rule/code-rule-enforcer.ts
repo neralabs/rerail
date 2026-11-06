@@ -10,6 +10,7 @@ import {
   loadNativeBinding,
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
+  type NativeGitIgnoreMatch,
   type NativeGitIgnoreMatcher,
   type NativePackageFacts,
   type NativePackageFactsReader,
@@ -675,17 +676,20 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
+    return this.#readsPath(path) && !this.ignoresPath(path, false);
+  }
+
+  /** `acceptsPath` apart from Git's ignore rules. */
+  #readsPath(path: string): boolean {
     const language = languageFor(path);
     const workspace = (this.#replacement ?? this.#workspace)?.workspace;
-    if (language === undefined)
-      return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path) && !this.ignoresPath(path, false);
+    if (language === undefined) return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path);
     const graphInput = loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
     return (
-      (((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&
+      ((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&
         (workspace?.readsPackageManifests() ?? true)) ||
-        (workspace?.readsServerGraph() === true && graphInput) ||
-        (workspace?.acceptsPath(path) ?? true)) &&
-      !this.ignoresPath(path, false)
+      (workspace?.readsServerGraph() === true && graphInput) ||
+      (workspace?.acceptsPath(path) ?? true)
     );
   }
 
@@ -695,14 +699,29 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * so a broken `.gitignore` never hides sources.
    */
   ignoresPath(path: string, directory: boolean): boolean {
-    if (!this.#followGitignore) return false;
+    return this.#askGitIgnore(path, matcher => matcher.ignored(path, directory)) ?? false;
+  }
+
+  /**
+   * Why an edit of the file `path` (relative to the workspace root) goes unchecked though the rules would read it: the
+   * pattern by which Git ignores it, while this lane follows `.gitignore`. Undefined for a file it checks, and for one
+   * no rule reads anyway.
+   */
+  ignoredEdit(path: string): NativeGitIgnoreMatch | undefined {
+    if (!this.#followGitignore || !this.#readsPath(path)) return undefined;
+    return this.#askGitIgnore(path, matcher => matcher.ignoredBy(path, false)) ?? undefined;
+  }
+
+  /** `ask` of this checkout's exclude stack while the lane follows `.gitignore`; undefined otherwise, and outside Git. */
+  #askGitIgnore<T>(path: string, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
+    if (!this.#followGitignore) return undefined;
     try {
       this.#gitIgnore ??= loadNativeBinding().openGitIgnoreMatcher(this.#workspaceRoot);
-      return this.#gitIgnore?.ignored(path, directory) ?? false;
+      return this.#gitIgnore === null ? undefined : ask(this.#gitIgnore);
     } catch (error) {
       this.#gitIgnore ??= null;
       process.stderr.write(`rerail: cannot read Git ignore rules for ${path || "."}: ${errorMessage(error)}\n`);
-      return false;
+      return undefined;
     }
   }
 

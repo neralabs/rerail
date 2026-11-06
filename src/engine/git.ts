@@ -1,7 +1,7 @@
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { posix, win32 } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -255,6 +255,23 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string |
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
 export async function gitHead(cwd: string): Promise<string | undefined> {
   return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+}
+
+/**
+ * The exclude files of the Git checkout at `cwd` that no diff shows, absolute: its `info/exclude` (the common Git
+ * folder's, which every worktree shares) and the file `core.excludesFile` names, else Git's default, `git/ignore` in
+ * `XDG_CONFIG_HOME` or `~/.config`. Empty outside a Git checkout, or without Git.
+ */
+export async function gitExcludeFiles(cwd: string): Promise<string[]> {
+  // Git prints the path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
+  const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"]);
+  if (exclude === undefined || exclude === "") return [];
+  const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"]);
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const excludesFile = configured === undefined || configured === ""
+    ? join(xdg === undefined || xdg === "" ? join(process.env.HOME ?? homedir(), ".config") : xdg, "git", "ignore")
+    : configured;
+  return [resolve(cwd, exclude), resolve(cwd, excludesFile)];
 }
 
 /** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */

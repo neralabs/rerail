@@ -442,7 +442,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `repository_context_get` | `GET /api/repository?repository=&checkout=` | A repository's clones and checkouts (own and effective state), and the caller's checkout and folder. |
 | `repository_rules_get` | `GET /api/repository/rules?repository=&checkout=` | Rules per attachment folder with on, mode, suppressions, config, what decided each, `addedAt`, and `updatedAt` for your rules; unresolvable ones marked unavailable. |
 | `repository_settings_set` | `PUT /api/repository/settings` | On/off, mode, `suppressions` per repository or checkout (`owner`) and folder; By Rerail code rule `config` (whole repository). Null clears. |
-| `repository_follow_gitignore_set` | `PUT /api/repository/follow-gitignore` | Follow `.gitignore` (default on): ignored files aren't audited (shell writes, direct edits, repository audits); tracked files are. New sessions only; summary field `followGitignore`. Agents may only turn it on, before set-up. |
+| `repository_follow_gitignore_set` | `PUT /api/repository/follow-gitignore` | Follow `.gitignore` (default on): ignored files aren't audited (shell writes, direct edits, repository audits); tracked files are. A tool edit it leaves unchecked, and a change to Git's ignore rules, are recorded on the session (`sessions_get` `gaps`). New sessions only; summary field `followGitignore`. Agents may only turn it on, before set-up. |
 | `repository_attachments_set` | `PUT /api/repository/attachments` | Add or remove packs, By Rerail rules and library rules per folder, with optional settings. The first addition (or `configure: true`) sets the repository up. |
 | `repository_start` | `POST /api/repository/start` | Start; `scope` is `checkout` (and checkouts inside) or `repository`. |
 | `repository_stop` | `POST /api/repository/stop` | Stop, same scopes; rules and history kept. |
@@ -458,7 +458,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `library_rules_upsert` | `PUT /api/library-rules/{id}` | Create or replace your rule (`attach: true` adds it to the target); a By Rerail id stores an edited copy. |
 | `library_rules_remove` | `DELETE /api/library-rules/{id}` | Delete your rule, its attachments and settings. |
 | `sessions_list` | `GET /api/sessions?since=&limit=&cursor=` | Sessions newest first with counts, `steeredViolations`, `lastEventAt`; `total`, `nextCursor`. |
-| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran. |
+| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes to Git's ignore rules (`ignoreRuleChanges`). |
 | `session_events` | `GET /api/sessions/{sessionId}/events?after=&before=&limit=` | Ordered events, at most 500 per page, forward from `after` or the page before `before`; `nextAfter` continues. Agents get some payloads withheld ([details](#what-a-coding-agent-may-read)). |
 | `work_links_list` | `GET /api/sessions/{sessionId}/work-links` | A session's external references. |
 | `work_links_add` | `PUT /api/sessions/{sessionId}/work-links` | `{ kind, reference, url? }`; re-linking updates the url. |
