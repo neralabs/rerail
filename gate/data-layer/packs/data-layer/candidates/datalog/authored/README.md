@@ -7,7 +7,8 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
 `convert.rs` is the contract, summarized here.
 
 - Declare every relation the file reads or defines (core.rr's need not be: its declarations are the prelude, below,
-  "Base relations beyond the converter's"). The base relations use the converter's signatures:
+  "Base relations beyond the converter's"; an `.input` of a relation nothing declares is the error
+  `UndeclaredInput`). The base relations use the converter's signatures:
 
   ```
   .decl doc(d: number, path: symbol, module: symbol)

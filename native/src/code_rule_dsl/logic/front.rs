@@ -345,6 +345,8 @@ pub(in crate::code_rule_dsl) enum Error {
     /// A component creates values (`@cat`, …) without moving along the tree (`cycles`): `rule` is one it
     /// could not bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
+    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rr's, for `.rr`).
+    UndeclaredInput { relation: String },
 }
 
 impl Error {
@@ -375,6 +377,7 @@ impl fmt::Display for Error {
                 let component = component.iter().cloned().collect::<Vec<_>>().join(", ");
                 write!(f, "unbounded value cycle: {{{component}}} creates values without moving along the tree ({rule})")
             }
+            Error::UndeclaredInput { relation } => write!(f, ".input {relation}: no .decl declares {relation}'s columns"),
         }
     }
 }
@@ -735,6 +738,10 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
             prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
             prog.inputs.push(rel);
         }
+    }
+    // An input's columns are its declaration's: the planner reads them.
+    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(*rel)) {
+        return Err(Error::UndeclaredInput { relation: relation.clone() });
     }
     cycles::check(&prog)?;
     Ok(prog)

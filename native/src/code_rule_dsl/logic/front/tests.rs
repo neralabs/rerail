@@ -204,6 +204,13 @@ fn positive_nearest_takes_a_wildcard() {
     assert!(matches!(&p.rules[0].body[1], Literal::Nearest { a, kindset, .. } if a.starts_with("rr_near") && kindset == "k"));
 }
 
+/// `.input` of a relation nothing declares is a named error, not the planner's panic (`plan`'s `prog.decls[rel]`).
+#[test]
+fn an_undeclared_input_is_named() {
+    let undeclared = ".decl w(x: symbol)\nw(\"a\").\n.decl v(x: symbol)\nv(x) :- w(x).\n.input undeclared\n";
+    assert_eq!(parse(undeclared).unwrap_err(), Error::UndeclaredInput { relation: "undeclared".into() });
+}
+
 #[test]
 fn comparisons_bind_like_t() {
     let bound = |vs: &[&str]| vs.iter().map(|v| v.to_string()).collect::<BTreeSet<_>>();

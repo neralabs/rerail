@@ -28,6 +28,7 @@ fn error_name(e: &Error) -> &'static str {
         Error::UnboundedLattice { .. } => "UnboundedLattice",
         Error::UnboundDemand { .. } => "UnboundDemand",
         Error::UnboundedValueCycle { .. } => "UnboundedValueCycle",
+        Error::UndeclaredInput { .. } => "UndeclaredInput",
     }
 }
 
