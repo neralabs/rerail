@@ -582,6 +582,9 @@ jobs:
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.lifecycle \
             --source .rerail/data-layer-upstream --output "$reports/lifecycle-original.json"
           cmp fixtures/host/data-layer-port/batch-10-lifecycle.json "$reports/lifecycle-original.json"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.contracts.recovery \
+            --source .rerail/data-layer-upstream --output "$reports/identity-inventory-original.json"
+          cmp fixtures/host/data-layer-port/batch-10-identity-inventory.json "$reports/identity-inventory-original.json"
           timeout 115s npx vitest run --dir test test/conformance/data-layer/dod/ \
             --reporter=json --outputFile="$reports/dod.json"
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
@@ -627,8 +630,8 @@ jobs:
           done
           timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/evidence_cases.py
           timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/assertions/evidence_cases.py
-          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/completion_cases.py
-          timeout 115s python test/scripts/data_layer/test_complete_measurement.py
+          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/contracts/completion_cases.py
+          python3 test/scripts/data_layer/test_complete_measurement.py
           for mode in snapshot workspace; do
             timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-configured-repository.test.ts \
               -t "configured repository $mode" --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/configured-repository-$mode.json"

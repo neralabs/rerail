@@ -19,6 +19,7 @@ def verify_contracts(reports):
     expected.update(f'discovers and classifies explicit matching roots through {mode}' for mode in ['snapshot', 'workspace'])
     expected.update(f'preserves {check} across clean, positive, restored, removed and readded revisions' for check in CHECKS)
     expected.add('preserves optimizer-document-dependency across clean, positive, restored, removed and readded revisions')
+    expected.add('preserves constructor positives and clean results beside unrelated lexical inventory')
     expected.update(['preserves the original signing canonicalization and deployed trust root',
                      'routes original matching phases and summary-only output through the production command',
                      'reads live source approvals and delegates only explicit signing to the original signer',

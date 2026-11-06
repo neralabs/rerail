@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from data_layer_rule_audit import fixtures_path
 from data_layer_ten.completion import verify_contracts
 
@@ -15,12 +15,12 @@ from data_layer_ten.completion import verify_contracts
 def report():
     receipt=json.loads(fixtures_path('host/data-layer-port/batch-10-native-assertions.json').read_text())
     names=receipt['dodCompletion']['assertionIds']
-    assert len(names)==53
+    assert len(names)==54
     return dict(numFailedTests=0, testResults=[dict(assertionResults=[dict(fullName=name,status='passed') for name in names])])
 
 
 def test_exact_published_contract_matrix_is_accepted(report):
-    assert verify_contracts([report])['assertions']==53
+    assert verify_contracts([report])['assertions']==54
 
 
 @pytest.mark.parametrize('fragment',['approved-one through snapshot','invalid-internal through workspace','optimizer-document-dependency','matching roots through snapshot','original signer'])

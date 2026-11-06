@@ -38,7 +38,7 @@ it("binds complete runs and positive controls to the batch implementation",()=>{
  expect(receipt.format).toBe("rerail.data-layer-batch-ten-assertions/v7");
  for(const mode of["snapshot","workspace"]){expect(receipt.executionPaths[mode]).toMatchObject({cases:1098,completeResults:975,positiveResults:870,distinctObservations:781,distinctPositiveObservations:683,detectorCases:974,nativeHelperCases:67,retainedPythonCases:57,semanticFallbacks:[]});expect(receipt.executionPaths[mode].retainedPythonCaseIds).toHaveLength(57);expect(receipt.executionPaths[mode].engineSha256).toBe(receipt.engineSha256);expect(receipt.executionPaths[mode].originalCalls["matching_architecture:_source_requires_matching_scan"]).toBeUndefined();}
  expect(Object.keys(receipt.hostAssertionLedger)).toHaveLength(57);
- expect(receipt.dodCompletion).toMatchObject({assertions:53,lifecycleRules:10,lifecycleRevisions:57,approvalApiComparisons:28});
+ expect(receipt.dodCompletion).toMatchObject({assertions:54,lifecycleRules:10,lifecycleRevisions:57,approvalApiComparisons:28});
  expect(receipt.cumulative).toMatchObject({checks:100,codeFiles:9021,expected:25262,actual:25262,falsePositives:0,falseNegatives:0,engineFailures:0});
  expect(receipt.helperReplay).toEqual({observations:104,supplemental:15,apiComparisons:238,disabledHelpers:12,assertions:24});
  expect(receipt.configured).toMatchObject({observations:1392,positiveObservations:978,apiComparisons:2784,selectionComparisons:878,assertions:3662});

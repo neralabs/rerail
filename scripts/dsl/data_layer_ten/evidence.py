@@ -129,7 +129,9 @@ def receipt(oracle_path,snapshot,workspace,controls,configured,contracts,helper_
  files|=set(Path('scripts/dsl/data_layer_nine').glob('*.py'))|set(Path('scripts/dsl/data_layer_six').glob('*.py'))
  files|={Path('native/src/code_rule_dsl')/p for p in ['compile/evidence.rs','compile/relational.rs','eval/evidence.rs','eval/query.rs','relational.rs','relational/source.rs','relational/python_ast.rs','workspace/evaluate.rs','workspace/global.rs','capabilities.json','value/python_ast/metadata.py','value/python_ast/worker.py']}
  files|={Path('native/src/code_rule_dsl/value/python_ast.rs'),Path('native/src/code_rule_dsl/value/python_ast/tests.rs')}
- files|={Path('native/src/code_rule_dsl/relational')/p for p in ['syntax.rs','shared.rs','anchors.rs']}
+ files|={Path('native/src/code_rule_dsl')/p for p in ['model.rs','workspace/api.rs','workspace/index.rs','workspace/mod.rs','workspace/tests.rs','workspace/context_tests.rs','relational/producer.rs','relational/producer/partition.rs','relational/batch.rs','relational/batch/tests.rs']}
+ files|={Path('scripts/dsl/data_layer_batch_seven_identity.py'),Path('scripts/dsl/data_layer_generate_batch_seven.py'),Path('fixtures/host/data-layer-port/batch-10-identity-inventory.json')}
+ files|={Path('native/src/code_rule_dsl/relational')/p for p in ['syntax.rs','table.rs','table/bindings_tests.rs','shared.rs','anchors.rs']}
  files|={Path('src/engine/code-rule/code-rule-schema.ts'),Path('src/engine/code-rule/code-rule.ts'),Path('.gitattributes')}
  files|={Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json') for c in CHECKS}
  for id in cumulative['policyFileSha256']:
