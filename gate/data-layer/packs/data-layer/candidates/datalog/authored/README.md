@@ -99,6 +99,10 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl value_type_of(n: node, t: symbol)           // the type of n's value, as W's value.type names it
 .decl value_type(v: symbol, t: symbol)            // core.rr's: a value text of `value` and a type it has somewhere
 .decl comment(c: node, s: symbol)                 // a comment's text without its marker
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+                                                  // W's `parse: {grammar: pythonFString}` root children, in order
+.decl fstring_template(n: node, marker: symbol, v: symbol)
+                                                  // its root value with `interpolation: marker` (a constant)
 // built-in, not declared: m is each match of regex re in span sp's text, leftmost-first and non-overlapping
 // match_all(re: symbol, sp: span, m: span)
 // built-in, not declared: gsp is the span of named group g in match m (of match_all("re", sp, m)), where g takes part
@@ -167,6 +171,24 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   `node_text` and `text` (its whole text, marker included, what W's `regex` on it reads) and in `docof` (it is a
   document's like any span). A Rust comment is a node of `node`, which T keeps, and has its node rows. Tie a comment
   to code by position: `line` and `col` against a node's, or its document's `tape_line`.
+- `fstring_piece(n, i, kind, v)` and `fstring_template(n, marker, v)` are W's `parse: {grammar: pythonFString}`
+  (`literal::parse_python_fstring`) at `n`, a Python `string`, `concatenated_string` or `format_specifier` node
+  (W's hosts), with no row where W gets no tree: no f-string among the parts (`"a" "b"`), bytes, a `t` string, or a
+  literal W cannot decode. W's budget does not apply.
+  - `fstring_piece`: the root's children, `i` from 0 in order, `kind` W's: `literal` (`v` its decoded text, what W's
+    `value` and `regex` on it read; a debug field's `x = ` and a parsed spec's literal text are in it, as CPython's
+    Constant) and `interpolation` (`v` its expression's source, `x.y` of `{x.y!r:>10}`). At an interpolation's `i`,
+    beside it: `debug` (`v` the `x = ` of `{x = }`, as written: the text W puts in the literal before it) and
+    `format_spec` (`v` the spec's source without its `:`, `>10`, nested fields as written). In
+    `f'a{x!r:>10}b{y=}'`: `(0, literal, "a")`, `(1, interpolation, "x")`, `(1, format_spec, ">10")`,
+    `(2, literal, "by=")`, `(3, interpolation, "y")`, `(3, debug, "y=")`. W's `has: {kind: literal, …}` is
+    `fstring_piece(n, _, "literal", v)`; a spec's own pieces are its `format_specifier` node's rows.
+  - `fstring_template(n, "{...}", v)`: the root's value with interpolation slot text `"{...}"`, W's
+    `parse: {grammar: pythonFString, interpolation: "{...}", value: …}` (W's default marker is `"{}"`): the decoded text,
+    each interpolation the marker, a debug field's `x = ` literal. `f'\x53ELECT {x} FROM t'` is
+    `SELECT {...} FROM t`, `rf'SELECT {{name}} {x}'` is `SELECT {name} {...}`, `f'{SELECT = } FROM t'` is
+    `SELECT = {...} FROM t`, `(f'SELECT {x}' ' FROM t')`'s concatenated_string `SELECT {...} FROM t`. The marker is a
+    constant: the runner parses each host once per marker the program's `fstring_template` atoms hold.
 
 The tree and the path, bound the same way (`facts::vtab::syntax::tree`; `docof` with `Extra`):
 

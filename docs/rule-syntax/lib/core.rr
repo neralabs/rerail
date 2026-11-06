@@ -79,8 +79,17 @@
 // the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
 // container or bytes has no text in `value`.
 .decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
+// fstring_piece(n, i, kind, v): the pieces of f-string n (a Python string, concatenated_string or format_specifier
+// whose value is a JoinedStr), in order from 0: in f'a{x!r:>10}b{y=}', (0, "literal", "a"), (1, "interpolation",
+// "x"), (1, "format_spec", ">10"), (2, "literal", "by="), (3, "interpolation", "y"), (3, "debug", "y="). A literal
+// piece is decoded and holds a debug field's `y=` text, as CPython's Constant does; debug and format_spec rows share
+// their interpolation's i. No row for a plain string, bytes, or a literal whose value is not known.
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+// fstring_template(n, "{...}", "SELECT {...} FROM t") for f'SELECT {x} FROM t': n's decoded text with each
+// interpolation replaced by the marker, a constant; a debug field's `x = ` stays literal text. The same hosts.
+.decl fstring_template(n: node, marker: symbol, v: symbol)
 .input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
-.input value, str, strprefix, name, comment, static_value, value_type, value_type_of
+.input value, str, strprefix, name, comment, static_value, value_type, value_type_of, fstring_piece, fstring_template
 
 // ---- text tests (built-in constraints) -----------------------------------------------------------------------
 // Most tests on text are not regexes: exact names, sets of names, prefixes, suffixes, path shapes. They are
