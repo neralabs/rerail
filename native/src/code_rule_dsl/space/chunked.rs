@@ -1,7 +1,8 @@
 //! Node sets as chunked containers (decision 0045).
 //!
-//! A node is (file, position in the file). Positions are cut into chunks of 2^16; each chunk that
-//! holds a member is one container, found in a sorted directory by `file << 16 | position >> 16`:
+//! A node is its number in the space (`NodeSpace::base(file) + position`). The space is cut into
+//! chunks of 2^16 nodes, across files as in Roaring; each chunk that holds a member is one
+//! container, found in a sorted directory by `node >> 16`:
 //!
 //! - **array**: sorted low 16 bits;
 //! - **bitmap**: `u64` words up to the last member (at most 1,024: 8 KB);
@@ -14,8 +15,12 @@
 //!
 //! A chunk is a bitmap once it holds more members than its bitmap has words (a density over 1/64):
 //! word operations then beat per-member work. Below that it is an array, or runs where those are
-//! smaller. A bitmap is priced at the chunk's extent, not at 2^16 bits as in Roaring, because a
-//! document is mostly much smaller than a chunk.
+//! smaller. A bitmap is priced at the words up to its last member, not at 2^16 bits as in Roaring.
+//!
+//! A chunk holds about 32 files of the 9,010-file repository (2,045 nodes on average), so the
+//! per-chunk work of an operation is paid 282 times there, not once per file (0045, profile).
+//! Files are ranges of the space: per-file questions (`within_files`, `file_nodes`, a file's
+//! stored segment) take the space. Sets are built in node order by `Builder`.
 
 use std::cmp::Ordering;
 
@@ -46,8 +51,7 @@ enum View<'a> {
     Runs(&'a [(u16, u16)]),
 }
 
-/// A set of a space's nodes: per file of the space, its members as chunked containers. File
-/// numbers are the space's (`NodeSpace::base`'s order).
+/// A set of a space's nodes, as chunked containers over the space's node numbers.
 #[derive(Clone, Debug, Default)]
 pub(in crate::code_rule_dsl) struct NodeSet {
     directory: Vec<Entry>,
@@ -64,9 +68,9 @@ impl PartialEq for NodeSet {
 
 impl Eq for NodeSet {}
 
-/// A node's directory key (file, its 2^16 slice) and its value in the chunk.
-fn key(file: u32, position: u32) -> (u64, u16) {
-    ((u64::from(file) << 16) | u64::from(position >> 16), position as u16)
+/// A node's directory key (its 2^16 slice of the space) and its value in the chunk.
+fn key(node: u32) -> (u64, u16) {
+    (u64::from(node >> 16), node as u16)
 }
 
 fn words_to(last: u16) -> usize {
@@ -109,6 +113,26 @@ impl View<'_> {
             View::Array(a) => a.iter().for_each(|&v| out[usize::from(v) / 64] |= 1 << (v % 64)),
             View::Runs(r) => r.iter().for_each(|&(s, l)| fill(out, s, l)),
             View::Bitmap(b) => out.iter_mut().zip(b).for_each(|(o, w)| *o |= w),
+        }
+    }
+
+    /// Whether a member is in `a..=b`.
+    fn any_between(self, a: u16, b: u16) -> bool {
+        match self {
+            View::Array(x) => x.get(x.partition_point(|&v| v < a)).is_some_and(|&v| v <= b),
+            View::Runs(r) => r.get(r.partition_point(|&(_, l)| l < a)).is_some_and(|&(s, _)| s <= b),
+            View::Bitmap(w) => {
+                let (first, last) = (usize::from(a) / 64, (usize::from(b) / 64).min(w.len().wrapping_sub(1)));
+                if w.is_empty() || first > last {
+                    return false;
+                }
+                let lo = !0u64 << (a % 64);
+                let hi = if usize::from(b) / 64 == last { !0u64 >> (63 - b % 64) } else { !0 };
+                if first == last {
+                    return w[first] & lo & hi != 0;
+                }
+                w[first] & lo != 0 || w[first + 1..last].iter().any(|&x| x != 0) || w[last] & hi != 0
+            }
         }
     }
 
@@ -294,11 +318,11 @@ impl NodeSet {
         Self::default()
     }
 
-    /// Every node of the space: one run per file chunk.
+    /// Every node of the space: one run per chunk.
     pub(in crate::code_rule_dsl) fn all(space: &NodeSpace) -> Self {
-        let mut set = Self::default();
-        (0..space.files()).for_each(|file| set.push_file_ranges(file as u32, [0..space.count(file)]));
-        set
+        let mut b = Builder::default();
+        b.run(0, space.len());
+        b.finish()
     }
 
     fn view(&self, e: &Entry) -> View<'_> {
@@ -311,93 +335,48 @@ impl NodeSet {
     }
 
     /// File `file`'s positions (ascending), added to the set.
-    pub(in crate::code_rule_dsl) fn insert_file(&mut self, file: usize, positions: impl IntoIterator<Item = u32>) {
-        let mut add = Self::default();
-        add.push_file(file as u32, positions);
-        self.union_with(&add);
+    #[cfg_attr(not(test), allow(dead_code))] // tests and measurements
+    pub(in crate::code_rule_dsl) fn insert_file(&mut self, space: &NodeSpace, file: usize, positions: impl IntoIterator<Item = u32>) {
+        let base = space.base(file);
+        let mut b = Builder::default();
+        positions.into_iter().for_each(|p| b.node(base + p));
+        self.union_with(&b.finish());
     }
 
     /// File `file`'s runs `ranges` (sorted, apart), added to the set: §3's tree axes build sets this way.
     #[allow(dead_code)] // no tree-axis set is built on the host yet
-    pub(in crate::code_rule_dsl) fn insert_runs(&mut self, file: usize, ranges: impl IntoIterator<Item = std::ops::Range<u32>>) {
-        let mut add = Self::default();
-        add.push_file_ranges(file as u32, ranges);
-        self.union_with(&add);
+    pub(in crate::code_rule_dsl) fn insert_runs(&mut self, space: &NodeSpace, file: usize, ranges: impl IntoIterator<Item = std::ops::Range<u32>>) {
+        let base = space.base(file);
+        let mut b = Builder::default();
+        ranges.into_iter().for_each(|r| b.run(base + r.start, base + r.end));
+        self.union_with(&b.finish());
     }
 
     /// Adds every node of file `file`.
+    #[cfg_attr(not(test), allow(dead_code))] // tests and measurements
     pub(in crate::code_rule_dsl) fn fill_file(&mut self, space: &NodeSpace, file: usize) {
-        let mut add = Self::default();
-        add.push_file_ranges(file as u32, [0..space.count(file)]);
-        self.union_with(&add);
+        let mut b = Builder::default();
+        let range = space.range(file);
+        b.run(range.start, range.end);
+        self.union_with(&b.finish());
     }
 
     /// The set of `words`, a slot of the space's dense words (Metal's `set_steps`).
-    pub(in crate::code_rule_dsl) fn from_words(space: &NodeSpace, words: &[u64]) -> Self {
-        let mut set = Self::default();
-        for file in 0..space.files() {
-            let range = space.range(file);
-            let base = range.start;
-            let positions = range.filter(|&node| words[node as usize / 64] >> (node % 64) & 1 != 0).map(|node| node - base);
-            set.push_file(file as u32, positions);
-        }
-        set
+    pub(in crate::code_rule_dsl) fn from_words(_space: &NodeSpace, words: &[u64]) -> Self {
+        let mut b = Builder::default();
+        b.words_at(0, words);
+        b.finish()
     }
 
     /// The set as the space's dense words (Metal's `set_steps`).
     pub(in crate::code_rule_dsl) fn to_words(&self, space: &NodeSpace) -> Vec<u64> {
         let mut words = vec![0_u64; space.words()];
-        for (file, position) in self.iter() {
-            let node = space.base(file as usize) + position;
-            words[node as usize / 64] |= 1 << (node % 64);
+        for e in &self.directory {
+            let at = (e.key as usize) << 10;
+            let end = words.len().min(at + 1024);
+            self.view(e).or_into_clipped(&mut words[at..end]);
         }
         words
-    }
-
-    /// Adds the positions (ascending) of file `file`, after every file already in the set.
-    fn push_file(&mut self, file: u32, positions: impl IntoIterator<Item = u32>) {
-        let mut current: Option<u64> = None;
-        let start = self.values.len();
-        let mut from = start;
-        for p in positions {
-            let (k, v) = key(file, p);
-            if current != Some(k) {
-                if let Some(ck) = current {
-                    self.seal_array(ck, from);
-                }
-                current = Some(k);
-                from = self.values.len();
-            }
-            self.values.push(v);
-        }
-        if let Some(ck) = current {
-            self.seal_array(ck, from);
-        }
-    }
-
-    /// Adds the runs `ranges` (sorted, apart) of file `file`, after every file already in the set.
-    fn push_file_ranges(&mut self, file: u32, ranges: impl IntoIterator<Item = std::ops::Range<u32>>) {
-        let mut current: Option<u64> = None;
-        let mut from = self.values.len();
-        for r in ranges {
-            let mut s = r.start;
-            while s < r.end {
-                let e = r.end.min((s | 0xffff) + 1);
-                let (k, lo) = key(file, s);
-                if current != Some(k) {
-                    if let Some(ck) = current {
-                        self.seal_runs(ck, from);
-                    }
-                    current = Some(k);
-                    from = self.values.len();
-                }
-                self.values.extend([lo, (e - 1) as u16]);
-                s = e;
-            }
-        }
-        if let Some(ck) = current {
-            self.seal_runs(ck, from);
-        }
     }
 
     /// The array in `values[from..]` is chunk `k`: kept, or moved to the form that suits it.
@@ -635,12 +614,31 @@ impl NodeSet {
                 }
                 self.seal_counted(k, at, n)
             }
+            // A bitmap less runs: the runs' mask as for `And`, inverted.
             (Op::AndNot, Bitmap(x), Runs(r)) => {
                 let at = self.words.len();
-                self.words.extend_from_slice(x);
+                let len = x.len();
+                self.words.resize(at + len, 0);
                 let out = &mut self.words[at..];
-                r.iter().for_each(|&(s, l)| clear_clipped(out, s, l));
-                self.seal_words(k, at)
+                let end = len * 64;
+                for &(s, l) in r {
+                    let (s, after) = (usize::from(s), usize::from(l) + 1);
+                    if s >= end {
+                        break;
+                    }
+                    out[s / 64] ^= 1 << (s % 64);
+                    if after < end {
+                        out[after / 64] ^= 1 << (after % 64);
+                    }
+                }
+                let (mut carry, mut n) = (0u64, 0usize);
+                for (o, &v) in out.iter_mut().zip(x) {
+                    let mask = prefix_xor(*o) ^ carry;
+                    carry = 0u64.wrapping_sub(mask >> 63);
+                    *o = v & !mask;
+                    n += o.count_ones() as usize;
+                }
+                self.seal_counted(k, at, n)
             }
             // The rest on words: the result's extent, each side or-ed in (or masked).
             (op, a, b) => {
@@ -756,13 +754,43 @@ impl NodeSet {
     pub(in crate::code_rule_dsl) fn union_with(&mut self, other: &Self) {
         // Appending later files (the common way sets are built) copies the other's buffers once.
         if self.directory.last().is_none_or(|l| other.directory.first().is_none_or(|f| l.key < f.key)) {
-            let (values, words) = (self.values.len() as u32, self.words.len() as u32);
-            self.directory.extend(other.directory.iter().map(|e| Entry { at: e.at + if e.form == Form::Bitmap { words } else { values }, ..*e }));
-            self.values.extend_from_slice(&other.values);
-            self.words.extend_from_slice(&other.words);
+            self.append(other, 0);
+            return;
+        }
+        // Only the last chunk shared (later files of the same chunk): that chunk is merged.
+        if let (Some(&l), Some(f)) = (self.directory.last(), other.directory.first())
+            && l.key == f.key
+            && other.directory.get(1).is_none_or(|g| g.key > l.key)
+        {
+            let mut merged = Self::default();
+            merged.combine(l.key, Op::Or, self.view(&l), other.view(f));
+            // The last chunk's container is at the end of its buffer: chunks are written in order.
+            self.directory.pop();
+            if l.form == Form::Bitmap {
+                self.words.truncate(l.at as usize);
+            } else {
+                self.values.truncate(l.at as usize);
+            }
+            self.append(&merged, 0);
+            self.append(other, 1);
             return;
         }
         *self = self.apply(other, Op::Or);
+    }
+
+    /// Appends `other`'s chunks from `from` on, which come after every chunk of the set.
+    fn append(&mut self, other: &Self, from: usize) {
+        let (values, words) = (self.values.len() as u32, self.words.len() as u32);
+        if from >= other.directory.len() {
+            return;
+        }
+        let (start_values, start_words) = other.directory[from..].iter().fold((u32::MAX, u32::MAX), |(v, w), e| {
+            if e.form == Form::Bitmap { (v, w.min(e.at)) } else { (v.min(e.at), w) }
+        });
+        let (sv, sw) = (if start_values == u32::MAX { other.values.len() as u32 } else { start_values }, if start_words == u32::MAX { other.words.len() as u32 } else { start_words });
+        self.directory.extend(other.directory[from..].iter().map(|e| Entry { at: if e.form == Form::Bitmap { e.at - sw + words } else { e.at - sv + values }, ..*e }));
+        self.values.extend_from_slice(&other.values[sv as usize..]);
+        self.words.extend_from_slice(&other.words[sw as usize..]);
     }
 
     #[cfg_attr(not(test), allow(dead_code))] // the programs use `difference`
@@ -771,20 +799,81 @@ impl NodeSet {
     }
 
     /// Keeps the set's nodes in files where each of `tests` has a node.
-    pub(in crate::code_rule_dsl) fn within_files(&mut self, _space: &NodeSpace, tests: &[&Self]) {
-        let mut out = Self::default();
-        let mut at = vec![0_usize; tests.len()];
-        for e in &self.directory {
-            let file = e.key >> 16;
-            let held = tests.iter().zip(at.iter_mut()).all(|(test, j)| {
-                *j += test.directory[*j..].partition_point(|t| t.key >> 16 < file);
-                test.directory.get(*j).is_some_and(|t| t.key >> 16 == file)
-            });
-            if held {
-                out.copy_chunk(self, e);
+    pub(in crate::code_rule_dsl) fn within_files(&mut self, space: &NodeSpace, tests: &[&Self]) {
+        let Some((first, rest)) = tests.split_first() else { return };
+        let mut kept = Builder::default();
+        let mut open: Option<std::ops::Range<u32>> = None;
+        // The first test's files, kept where every other test has a node too.
+        for file in first.files(space) {
+            let range = space.range(file);
+            if rest.iter().all(|test| test.any_in(range.clone())) {
+                match &mut open {
+                    Some(r) if r.end == range.start => r.end = range.end,
+                    _ => {
+                        if let Some(r) = open.replace(range) {
+                            kept.run(r.start, r.end);
+                        }
+                    }
+                }
             }
         }
-        *self = out;
+        if let Some(r) = open {
+            kept.run(r.start, r.end);
+        }
+        *self = self.intersection(&kept.finish());
+    }
+
+    /// The files holding a member, ascending, each once.
+    fn files<'a>(&'a self, space: &'a NodeSpace) -> impl Iterator<Item = usize> + 'a {
+        let mut last = None;
+        self.files_by_chunk(space).filter(move |&f| last.replace(f) != Some(f))
+    }
+
+    /// Per chunk, the files with a member in it: a file across chunks may come twice.
+    fn files_by_chunk<'a>(&'a self, space: &'a NodeSpace) -> impl Iterator<Item = usize> + 'a {
+        let mut file = 0usize;
+        self.directory.iter().flat_map(move |e| {
+            let base = (e.key as u32) << 16;
+            let view = self.view(e);
+            let mut held = Vec::new();
+            // Files are ranges: per file overlapping the chunk, one range query.
+            while file < space.files() && space.base(file) < base + 65_536 {
+                let range = space.range(file);
+                if range.end > base && range.start < range.end {
+                    let (a, b) = (range.start.max(base) - base, (range.end - 1).min(base + 65_535) - base);
+                    if view.any_between(a as u16, b as u16) {
+                        held.push(file);
+                    }
+                }
+                if range.end > base + 65_536 {
+                    break;
+                }
+                file += 1;
+            }
+            held
+        })
+    }
+
+    /// Whether a member is in `range` (of nodes).
+    fn any_in(&self, range: std::ops::Range<u32>) -> bool {
+        if range.is_empty() {
+            return false;
+        }
+        let (first, last) = (range.start >> 16, (range.end - 1) >> 16);
+        let mut at = self.directory.partition_point(|e| e.key < u64::from(first));
+        while let Some(e) = self.directory.get(at) {
+            let k = e.key as u32;
+            if k > last {
+                return false;
+            }
+            let a = if k == first { range.start as u16 } else { 0 };
+            let b = if k == last { (range.end - 1) as u16 } else { u16::MAX };
+            if self.view(e).any_between(a, b) {
+                return true;
+            }
+            at += 1;
+        }
+        false
     }
 
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
@@ -793,30 +882,32 @@ impl NodeSet {
 
     // The contract's membership test; no caller yet.
     #[allow(dead_code)]
-    pub(in crate::code_rule_dsl) fn contains(&self, file: usize, position: u32) -> bool {
-        let (k, v) = key(file as u32, position);
+    pub(in crate::code_rule_dsl) fn contains(&self, node: u32) -> bool {
+        let (k, v) = key(node);
         let at = self.directory.partition_point(|e| e.key < k);
         self.directory.get(at).is_some_and(|e| e.key == k && self.view(e).contains(v))
     }
 
-    /// The members as (file, position), ascending.
-    pub(in crate::code_rule_dsl) fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+    /// The members (node numbers), ascending.
+    pub(in crate::code_rule_dsl) fn iter(&self) -> impl Iterator<Item = u32> + '_ {
         self.directory.iter().flat_map(|e| self.chunk_nodes(e))
     }
 
-    fn chunk_nodes(&self, e: &Entry) -> impl Iterator<Item = (u32, u32)> + '_ {
-        let (file, high) = ((e.key >> 16) as u32, ((e.key & 0xffff) as u32) << 16);
+    fn chunk_nodes(&self, e: &Entry) -> impl Iterator<Item = u32> + '_ {
+        let high = (e.key as u32) << 16;
         let mut values = Vec::new();
         self.view(e).for_each(|v| values.push(v));
-        values.into_iter().map(move |v| (file, high | u32::from(v)))
+        values.into_iter().map(move |v| high | u32::from(v))
     }
 
     /// The set's nodes of file `file`, as positions in the file, ascending.
-    pub(in crate::code_rule_dsl) fn file_nodes<'a>(&'a self, _space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
-        let file = file as u64;
-        let from = self.directory.partition_point(|e| e.key >> 16 < file);
-        let to = from + self.directory[from..].partition_point(|e| e.key >> 16 == file);
-        self.directory[from..to].iter().flat_map(|e| self.chunk_nodes(e).map(|(_, p)| p))
+    pub(in crate::code_rule_dsl) fn file_nodes<'a>(&'a self, space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
+        let range = space.range(file);
+        let (first, last) = (u64::from(range.start >> 16), u64::from(range.end.saturating_sub(1) >> 16));
+        let from = self.directory.partition_point(|e| e.key < first);
+        let to = if range.is_empty() { from } else { from + self.directory[from..].partition_point(|e| e.key <= last) };
+        let (start, end) = (range.start, range.end);
+        self.directory[from..to].iter().flat_map(move |e| self.chunk_nodes(e).filter(move |&n| n >= start && n < end).map(move |n| n - start))
     }
 
     /// Bytes held: the directory and the buffers.
@@ -824,15 +915,20 @@ impl NodeSet {
         self.directory.len() * std::mem::size_of::<Entry>() + 2 * self.values.len() + 8 * self.words.len()
     }
 
-    /// File `file`'s chunks as a stored segment (0045 §5): per chunk its slice (u16), its form
-    /// (u8), its length (u32) and its container, little-endian. Read back by `insert_segment`
-    /// without decoding member by member.
-    pub(in crate::code_rule_dsl) fn segment(&self, file: usize) -> Vec<u8> {
-        let file = file as u64;
-        let from = self.directory.partition_point(|e| e.key >> 16 < file);
+    /// File `file`'s members as a stored segment (0045 §5): the file's own 2^16 slices, per slice
+    /// its number (u16), its form (u8), its length (u32) and its container, little-endian.
+    #[cfg_attr(not(test), allow(dead_code))] // tests and measurements
+    pub(in crate::code_rule_dsl) fn segment(&self, space: &NodeSpace, file: usize) -> Vec<u8> {
+        let mut b = Builder::default();
+        self.file_nodes(space, file).for_each(|p| b.node(p));
+        b.finish().encode()
+    }
+
+    /// The set's chunks as a segment: for a set of one file's positions (a space of one file).
+    pub(in crate::code_rule_dsl) fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        for e in self.directory[from..].iter().take_while(|e| e.key >> 16 == file) {
-            out.extend_from_slice(&((e.key & 0xffff) as u16).to_le_bytes());
+        for e in &self.directory {
+            out.extend_from_slice(&(e.key as u16).to_le_bytes());
             out.push(e.form as u8);
             out.extend_from_slice(&e.len.to_le_bytes());
             let (at, len) = (e.at as usize, e.len as usize);
@@ -843,44 +939,6 @@ impl NodeSet {
             }
         }
         out
-    }
-
-    /// Adds a segment of file `file` (`segment`), whose positions are below `count`, after every
-    /// file already in the set.
-    pub(in crate::code_rule_dsl) fn push_segment(&mut self, file: usize, mut bytes: &[u8], count: u32) -> Result<(), &'static str> {
-        let invalid = "invalid segment";
-        while !bytes.is_empty() {
-            let (head, rest) = bytes.split_at_checked(7).ok_or(invalid)?;
-            let slice = u16::from_le_bytes([head[0], head[1]]);
-            let len = u32::from_le_bytes([head[3], head[4], head[5], head[6]]) as usize;
-            let k = (file as u64) << 16 | u64::from(slice);
-            if self.directory.last().is_some_and(|e| e.key >= k) || len == 0 {
-                return Err(invalid);
-            }
-            let (form, size) = match head[2] {
-                0 => (Form::Array, 2 * len),
-                1 => (Form::Bitmap, 8 * len),
-                2 => (Form::Runs, 4 * len),
-                _ => return Err(invalid),
-            };
-            let (payload, rest) = rest.split_at_checked(size).ok_or(invalid)?;
-            let at = if form == Form::Bitmap {
-                let at = self.words.len();
-                self.words.extend(payload.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 bytes"))));
-                at
-            } else {
-                let at = self.values.len();
-                self.values.extend(payload.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])));
-                at
-            };
-            self.directory.push(Entry { key: k, form, at: at as u32, len: len as u32 });
-            let e = *self.directory.last().expect("just pushed");
-            if (u32::from(slice) << 16 | u32::from(self.view(&e).last())) >= count {
-                return Err("a position past the file's nodes");
-            }
-            bytes = rest;
-        }
-        Ok(())
     }
 
     /// The same members with every chunk a bitmap (to measure what runs cost against words).
@@ -928,6 +986,257 @@ impl NodeSet {
     }
 }
 
+/// Builds a set in node order: each chunk's members gather in a bitmap of the chunk, and the chunk
+/// is sealed in the form that suits it (`seal_array`'s rule) when a later chunk starts.
+pub(in crate::code_rule_dsl) struct Builder {
+    set: NodeSet,
+    key: Option<u64>,
+    /// The open chunk's members while it has only single nodes, few enough to seal as an array
+    /// without scanning the chunk's words.
+    pending: Vec<u16>,
+    /// Whether the open chunk is in `scratch`.
+    dense: bool,
+    scratch: Vec<u64>,
+    /// The words written in the open chunk.
+    lo: usize,
+    hi: usize,
+}
+
+impl Default for Builder {
+    fn default() -> Self {
+        Self { set: NodeSet::default(), key: None, pending: Vec::new(), dense: false, scratch: vec![0; 1024], lo: usize::MAX, hi: 0 }
+    }
+}
+
+impl Builder {
+    fn open(&mut self, k: u64) {
+        if self.key != Some(k) {
+            assert!(self.key.is_none_or(|open| open < k), "members are added in chunk order");
+            self.seal();
+            self.key = Some(k);
+        }
+    }
+
+    /// Moves the open chunk's pending nodes to `scratch`.
+    fn spill(&mut self) {
+        if self.dense {
+            return;
+        }
+        self.dense = true;
+        for i in 0..self.pending.len() {
+            let v = self.pending[i];
+            let w = usize::from(v) / 64;
+            self.scratch[w] |= 1 << (v % 64);
+            self.touch(w, w);
+        }
+        self.pending.clear();
+    }
+
+    fn touch(&mut self, from: usize, to: usize) {
+        self.lo = self.lo.min(from);
+        self.hi = self.hi.max(to);
+    }
+
+    /// Adds node `node`: in a chunk at or after every chunk added to (any order within one).
+    pub(in crate::code_rule_dsl) fn node(&mut self, node: u32) {
+        let (k, v) = key(node);
+        self.open(k);
+        if !self.dense {
+            match self.pending.last() {
+                Some(&last) if last == v => return,
+                // Out of order within the chunk: the chunk's words take any order.
+                Some(&last) if last > v => self.spill(),
+                _ if self.pending.len() < 1024 => {
+                    self.pending.push(v);
+                    return;
+                }
+                _ => self.spill(),
+            }
+        }
+        let w = usize::from(v) / 64;
+        self.scratch[w] |= 1 << (v % 64);
+        self.touch(w, w);
+    }
+
+    /// Adds nodes `start..end`.
+    pub(in crate::code_rule_dsl) fn run(&mut self, start: u32, end: u32) {
+        let mut s = start;
+        while s < end {
+            let e = end.min((s | 0xffff) + 1);
+            let (k, a) = key(s);
+            self.open(k);
+            self.spill();
+            let b = (e - 1) as u16;
+            fill(&mut self.scratch, a, b);
+            self.touch(usize::from(a) / 64, usize::from(b) / 64);
+            s = e;
+        }
+    }
+
+    /// Adds the members of `words`, whose bit `j` of word `i` is node `start + 64 i + j`.
+    pub(in crate::code_rule_dsl) fn words_at(&mut self, start: u32, words: &[u64]) {
+        for (i, &w) in words.iter().enumerate() {
+            if w == 0 {
+                continue;
+            }
+            let (k, v) = key(start + 64 * i as u32);
+            self.open(k);
+            self.spill();
+            let (at, shift) = (usize::from(v) / 64, v % 64);
+            self.scratch[at] |= w << shift;
+            self.touch(at, at);
+            let carry = if shift == 0 { 0 } else { w >> (64 - shift) };
+            if carry != 0 {
+                if at + 1 < 1024 {
+                    self.scratch[at + 1] |= carry;
+                    self.touch(at + 1, at + 1);
+                } else {
+                    self.open(k + 1);
+                    self.spill();
+                    self.scratch[0] |= carry;
+                    self.touch(0, 0);
+                }
+            }
+        }
+    }
+
+    /// Adds a stored segment (`NodeSet::encode`) of the file at `base`, whose positions are below
+    /// `count`: arrays and runs move by `base`, bitmaps are shifted into the space's chunks.
+    pub(in crate::code_rule_dsl) fn segment(&mut self, base: u32, mut bytes: &[u8], count: u32) -> Result<(), &'static str> {
+        let invalid = "invalid segment";
+        let mut last: Option<u16> = None;
+        while !bytes.is_empty() {
+            let (head, rest) = bytes.split_at_checked(7).ok_or(invalid)?;
+            let slice = u16::from_le_bytes([head[0], head[1]]);
+            let len = u32::from_le_bytes([head[3], head[4], head[5], head[6]]) as usize;
+            if last.is_some_and(|l| l >= slice) || len == 0 {
+                return Err(invalid);
+            }
+            last = Some(slice);
+            let size = match head[2] {
+                0 => 2 * len,
+                1 => 8 * len,
+                2 => 4 * len,
+                _ => return Err(invalid),
+            };
+            let (payload, rest) = rest.split_at_checked(size).ok_or(invalid)?;
+            let from = u32::from(slice) << 16;
+            let u16s = || payload.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]));
+            match head[2] {
+                0 => {
+                    for v in u16s() {
+                        let top = from | u32::from(v);
+                        if top >= count {
+                            return Err("a position past the file's nodes");
+                        }
+                        self.node(base + top);
+                    }
+                }
+                1 => {
+                    let words = payload.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 bytes"))).collect::<Vec<_>>();
+                    let top = from + View::Bitmap(&words).last() as u32;
+                    if words.last() == Some(&0) || top >= count {
+                        return Err("a position past the file's nodes");
+                    }
+                    self.words_at(base + from, &words);
+                }
+                _ => {
+                    let mut pairs = u16s();
+                    while let (Some(s), Some(l)) = (pairs.next(), pairs.next()) {
+                        let top = from | u32::from(l);
+                        if s > l || top >= count {
+                            return Err("a position past the file's nodes");
+                        }
+                        self.run(base + (from | u32::from(s)), base + top + 1);
+                    }
+                }
+            }
+            bytes = rest;
+        }
+        Ok(())
+    }
+
+    /// Seals the open chunk.
+    fn seal(&mut self) {
+        let Some(k) = self.key.take() else { return };
+        if !self.dense {
+            let from = self.set.values.len();
+            self.set.values.extend_from_slice(&self.pending);
+            self.pending.clear();
+            self.set.seal_array(k, from);
+            return;
+        }
+        self.dense = false;
+        if self.lo > self.hi {
+            return;
+        }
+        let (lo, hi) = (self.lo, self.hi);
+        let words = &self.scratch[..=hi];
+        let n = count(&words[lo..]);
+        // Runs: the 0 -> 1 transitions.
+        let mut runs = 0usize;
+        let mut prev = 0u64;
+        for &w in &words[lo..] {
+            runs += (w & !((w << 1) | (prev >> 63))).count_ones() as usize;
+            prev = w;
+        }
+        let w = hi + 1;
+        let set = &mut self.set;
+        let from = set.values.len();
+        if 4 * runs < (2 * n).min(8 * w) {
+            // Two states per bit scan: outside a run the next set bit starts one; inside, the
+            // next clear bit ends it.
+            let mut start: Option<u32> = None;
+            for (at, &word) in words.iter().enumerate().skip(lo) {
+                let base = (at * 64) as u32;
+                let mut x = word;
+                loop {
+                    match start {
+                        None => {
+                            if x == 0 {
+                                break;
+                            }
+                            let t = x.trailing_zeros();
+                            start = Some(base + t);
+                            x |= (1u64 << t) - 1;
+                        }
+                        Some(s) => {
+                            let clear = !x;
+                            if clear == 0 {
+                                break;
+                            }
+                            let t = clear.trailing_zeros();
+                            set.values.extend([s as u16, (base + t - 1) as u16]);
+                            start = None;
+                            x &= !((1u64 << t) - 1);
+                        }
+                    }
+                }
+            }
+            if let Some(s) = start {
+                set.values.extend([s as u16, (hi * 64 + 63) as u16]);
+            }
+            let len = (set.values.len() - from) / 2;
+            debug_assert_eq!(len, runs);
+            set.directory.push(Entry { key: k, form: Form::Runs, at: from as u32, len: len as u32 });
+        } else if n > w {
+            set.directory.push(Entry { key: k, form: Form::Bitmap, at: set.words.len() as u32, len: w as u32 });
+            set.words.extend_from_slice(words);
+        } else {
+            set.values.extend(bits(&words[lo..]).map(|v| v + (lo * 64) as u16));
+            set.directory.push(Entry { key: k, form: Form::Array, at: from as u32, len: n as u32 });
+        }
+        self.scratch[lo..=hi].fill(0);
+        self.lo = usize::MAX;
+        self.hi = 0;
+    }
+
+    pub(in crate::code_rule_dsl) fn finish(mut self) -> NodeSet {
+        self.seal();
+        self.set
+    }
+}
+
 impl View<'_> {
     /// `or_into` for an `out` that may be shorter than the members (they are cut at its end).
     fn or_into_clipped(self, out: &mut [u64]) {
@@ -961,36 +1270,46 @@ mod tests {
         }
     }
 
-    /// Sets of every shape: sparse, dense, runs, across chunk edges and files.
-    fn sample(g: &mut Lcg, shape: u32) -> (NodeSet, BTreeSet<(u32, u32)>) {
-        let mut set = NodeSet::default();
+    const SPANS: [u32; 4] = [100, 70_000, 140_000, 5_000];
+
+    fn space() -> NodeSpace {
+        NodeSpace::new(SPANS.to_vec())
+    }
+
+    /// Sets of every shape: sparse, dense, runs, across chunk edges and files (whose bases are not
+    /// aligned to words or chunks).
+    fn sample(g: &mut Lcg, shape: u32) -> (NodeSet, BTreeSet<u32>) {
+        let space = space();
+        let mut b = Builder::default();
         let mut model = BTreeSet::new();
-        for file in 0..4u32 {
-            let span = [100u32, 70_000, 140_000, 5_000][file as usize];
+        for file in 0..4usize {
+            let (span, base) = (SPANS[file], space.base(file));
             if shape % 3 == 2 {
-                let mut ranges = Vec::new();
                 let mut at = g.next() % 50;
                 while at < span {
                     let len = 1 + g.next() % 20_000;
                     let end = (at + len).min(span);
-                    ranges.push(at..end);
+                    (at..end).for_each(|p| {
+                        model.insert(base + p);
+                    });
+                    b.run(base + at, base + end);
                     at = end + 1 + g.next() % 30_000;
                 }
-                ranges.iter().for_each(|r| r.clone().for_each(|p| { model.insert((file, p)); }));
-                set.push_file_ranges(file, ranges);
             } else {
                 let density = if shape % 3 == 0 { 50 } else { 2 };
-                let ps: Vec<u32> = (0..span).filter(|_| g.next() % density == 0).collect();
-                ps.iter().for_each(|&p| { model.insert((file, p)); });
-                set.push_file(file, ps);
+                for p in (0..span).filter(|_| g.next() % density == 0) {
+                    model.insert(base + p);
+                    b.node(base + p);
+                }
             }
         }
-        (set, model)
+        (b.finish(), model)
     }
 
     #[test]
     fn chunked_sets_agree_with_ordered_sets() {
         let mut g = Lcg(7);
+        let space = space();
         for round in 0..12u32 {
             let (a, ma) = sample(&mut g, round);
             let (b, mb) = sample(&mut g, round / 3 + round);
@@ -1007,45 +1326,69 @@ mod tests {
             assert!(u2.iter().eq(u.iter().copied()), "union, round {round}");
             assert!(d2.iter().eq(d.iter().copied()), "difference, round {round}");
             // Dense words round-trip (the Metal bridge).
-            let space = NodeSpace::new(vec![100, 70_000, 140_000, 5_000]);
             assert_eq!(NodeSet::from_words(&space, &a.to_words(&space)), a, "words, round {round}");
-            for &(f, p) in ma.iter().take(50) {
-                assert!(a.contains(f as usize, p));
+            for &n in ma.iter().take(50) {
+                assert!(a.contains(n));
             }
+            // Per file: positions, and within files.
+            for file in 0..4 {
+                let range = space.range(file);
+                let want: Vec<u32> = ma.range(range.clone()).map(|n| n - range.start).collect();
+                assert!(a.file_nodes(&space, file).eq(want.iter().copied()), "file_nodes, round {round} file {file}");
+            }
+            let mut w = a.clone();
+            w.within_files(&space, &[&b]);
+            let held = |f: usize| mb.range(space.range(f)).next().is_some();
+            let want: Vec<u32> = ma.iter().copied().filter(|&n| held((0..4).find(|&f| space.range(f).contains(&n)).unwrap())).collect();
+            assert!(w.iter().eq(want.iter().copied()), "within, round {round}");
         }
     }
 
     #[test]
-    fn containers_follow_the_members() {
-        let mut s = NodeSet::default();
-        s.push_file(0, [1, 500, 9_000]);
-        s.push_file_ranges(1, [10..60_000]);
-        s.push_file(2, 0..10_000);
-        s.push_file(3, [1, 5, 9]);
-        assert_eq!(s.shape(), (1, 1, 2), "sparse: array; a subtree: runs; a dense block: runs; more members than words: bitmap");
-        let mut d = NodeSet::default();
-        d.push_file(0, (0..65_536).step_by(2));
-        assert_eq!(d.shape(), (0, 1, 0), "half the chunk, no runs: bitmap");
+    fn files_of_a_chunk_append_in_order() {
+        // Files of one chunk inserted one by one: the shared chunk is merged, not rebuilt.
+        let space = NodeSpace::new(vec![10, 10, 10]);
+        let mut s = NodeSet::empty(&space);
+        s.insert_file(&space, 0, [1, 2]);
+        s.insert_file(&space, 1, [0]);
+        s.insert_runs(&space, 2, [3..7]);
+        assert!(s.iter().eq([1, 2, 10, 23, 24, 25, 26]));
+        assert_eq!(s.directory.len(), 1);
     }
 
-    /// A segment written here is the store's format: `segment_positions` reads the same members,
-    /// and `push_segment` the same set, for every form.
+    #[test]
+    fn containers_follow_the_members() {
+        let mut b = Builder::default();
+        [1, 500, 9_000].iter().for_each(|&n| b.node(n));
+        b.run(65_536 + 10, 65_536 + 60_000);
+        (2 * 65_536..2 * 65_536 + 10_000).for_each(|n| b.node(n));
+        [1, 5, 9].iter().for_each(|&n| b.node(3 * 65_536 + n));
+        assert_eq!(b.finish().shape(), (1, 1, 2), "sparse: array; a subtree: runs; a dense block: runs; more members than words: bitmap");
+        let mut d = Builder::default();
+        (0..65_536).step_by(2).for_each(|n| d.node(n));
+        assert_eq!(d.finish().shape(), (0, 1, 0), "half the chunk, no runs: bitmap");
+    }
+
+    /// A file's segment is the store's format: `segment_positions` reads the same positions, and
+    /// `Builder::segment` puts them back at the file's base, for every form.
     #[test]
     fn segments_are_the_stores_format() {
         let mut g = Lcg(11);
+        let space = space();
         for round in 0..6u32 {
             let (set, model) = sample(&mut g, round);
-            for file in 0..4u32 {
-                let bytes = set.segment(file as usize);
-                let want: Vec<u32> = model.iter().filter(|(f, _)| *f == file).map(|&(_, p)| p).collect();
+            let mut back = Builder::default();
+            for file in 0..4usize {
+                let bytes = set.segment(&space, file);
+                let range = space.range(file);
+                let want: Vec<u32> = model.range(range.clone()).map(|n| n - range.start).collect();
                 assert_eq!(crate::content_store::segment_positions(&bytes).unwrap(), want, "round {round} file {file}");
-                let mut back = NodeSet::default();
-                back.push_segment(file as usize, &bytes, 200_000).unwrap();
-                assert!(back.iter().map(|(_, p)| p).eq(want.iter().copied()));
+                back.segment(range.start, &bytes, space.count(file)).unwrap();
                 if let Some(&last) = want.last() {
-                    assert!(NodeSet::default().push_segment(file as usize, &bytes, last).is_err(), "a position past the file is refused");
+                    assert!(Builder::default().segment(range.start, &bytes, last).is_err(), "a position past the file is refused");
                 }
             }
+            assert_eq!(back.finish(), set, "round {round}");
         }
     }
 }

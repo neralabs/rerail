@@ -17,7 +17,7 @@
 use super::lower::{VOCABULARY, anchored};
 use super::LANG_STRIDE;
 use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
-use crate::code_rule_dsl::space::{NodeSet, NodeSpace};
+use crate::code_rule_dsl::space::{Builder, NodeSet, NodeSpace};
 use crate::content_store::{ContentStore, StoreResult};
 use std::collections::{BTreeSet, HashMap};
 
@@ -421,8 +421,9 @@ pub(super) fn select(
             })
             .flatten()
             .collect::<HashMap<_, _>>();
-        let mut by_kind: HashMap<u16, NodeSet> = HashMap::new();
-        let mut uncovered = NodeSet::empty(&space);
+        // Files are read in space order, so each kind's set is built in node order.
+        let mut by_kind: HashMap<u16, Builder> = HashMap::new();
+        let mut uncovered = Builder::default();
         let reads_uncovered = program.ops.contains(&Op::Uncovered);
         {
             let mut kinds = db.prepare_cached("SELECT kind, postings FROM tape_kind_counts WHERE tape_id=?1")?;
@@ -436,25 +437,32 @@ pub(super) fn select(
                     crate::code_rule_dsl::prof::count("working_set.kind_hits", 1);
                     for (&atom, &kind) in &wanted {
                         let Some(postings) = u32::try_from(atom).ok().and_then(|atom| image.postings(atom)) else { continue };
-                        let set = by_kind.entry(kind).or_insert_with(|| NodeSet::empty(&space));
-                        push_kinds(postings, at, space.count(at), set)?;
+                        let set = by_kind.entry(kind).or_default();
+                        push_kinds(postings, space.base(at), space.count(at), set)?;
                     }
                 } else if !wanted.is_empty() {
                     let mut rows = kinds.query([file])?;
                     while let Some(row) = rows.next()? {
                         let Some(&kind) = wanted.get(&row.get::<_, i64>(0)?) else { continue };
-                        let set = by_kind.entry(kind).or_insert_with(|| NodeSet::empty(&space));
-                        push_kinds(row.get_ref(1)?.as_blob()?, at, space.count(at), set)?;
+                        let set = by_kind.entry(kind).or_default();
+                        push_kinds(row.get_ref(1)?.as_blob()?, space.base(at), space.count(at), set)?;
                     }
                 }
                 if reads_uncovered {
+                    // A file's rows are each ascending, not one after another.
+                    let mut positions = Vec::new();
                     let mut rows = missing.query([file])?;
                     while let Some(row) = rows.next()? {
-                        decode(row.get_ref(0)?.as_blob()?, at, space.count(at), &mut uncovered)?;
+                        positions.extend(decode(row.get_ref(0)?.as_blob()?, space.count(at))?);
                     }
+                    positions.sort_unstable();
+                    positions.dedup();
+                    positions.into_iter().for_each(|p| uncovered.node(space.base(at) + p));
                 }
             }
         }
+        let by_kind = by_kind.into_iter().map(|(kind, set)| (kind, set.finish())).collect::<HashMap<_, _>>();
+        let uncovered = uncovered.finish();
         // A text's term postings, by term.
         let terms_of = |expression: &str, literal: bool| -> rusqlite::Result<NodeSet> {
             let mut set = NodeSet::empty(&space);
@@ -470,12 +478,27 @@ pub(super) fn select(
             };
             let mut postings = db.prepare_cached("SELECT tape_id, postings FROM term_postings WHERE lang=?1 AND term=?2")?;
             for term in terms {
+                let mut files = Vec::new();
                 let mut rows = postings.query(rusqlite::params![lang, term])?;
                 while let Some(row) = rows.next()? {
                     if let Some(&at) = index.get(&row.get::<_, i64>(0)?) {
-                        decode(row.get_ref(1)?.as_blob()?, at, space.count(at), &mut set)?;
+                        files.push((at, decode(row.get_ref(1)?.as_blob()?, space.count(at))?));
                     }
                 }
+                // One term's set, built in node order (a file's rows merged), then joined to the
+                // others'.
+                files.sort_unstable_by_key(|&(at, _)| at);
+                let mut term_set = Builder::default();
+                for group in files.chunk_by_mut(|x, y| x.0 == y.0) {
+                    let at = group[0].0;
+                    let mut positions = group.iter_mut().flat_map(|(_, p)| std::mem::take(p)).collect::<Vec<_>>();
+                    if group.len() > 1 {
+                        positions.sort_unstable();
+                        positions.dedup();
+                    }
+                    positions.into_iter().for_each(|p| term_set.node(space.base(at) + p));
+                }
+                set.union_with(&term_set.finish());
             }
             Ok(set)
         };
@@ -508,9 +531,12 @@ pub(super) fn select(
     // Each plan keeps its gated files' nodes only.
     for (set, gate) in outputs.iter_mut().zip(&gated.plans) {
         let Some(gate) = gate else { continue };
-        let mut kept = NodeSet::empty(&space);
-        files.iter().enumerate().filter(|(_, file)| gate.contains(file)).for_each(|(at, _)| kept.fill_file(&space, at));
-        set.intersect_with(&kept);
+        let mut kept = Builder::default();
+        files.iter().enumerate().filter(|(_, file)| gate.contains(file)).for_each(|(at, _)| {
+            let range = space.range(at);
+            kept.run(range.start, range.end);
+        });
+        set.intersect_with(&kept.finish());
     }
     let ns_per_plan = started.elapsed().as_nanos() as f64 / outputs.len().max(1) as f64;
     let candidates = outputs.iter().map(NodeSet::len).collect::<Vec<_>>();
@@ -638,16 +664,15 @@ fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, 
     Ok(words.into_iter().map(|words| NodeSet::from_words(space, &words)).collect())
 }
 
-/// Adds a kind's container segment (`content_store::postings::segment_positions`) of the space's
-/// file `file`, of `count` nodes, to `set`: its containers are copied, not decoded.
-fn push_kinds(bytes: &[u8], file: usize, count: u32, set: &mut NodeSet) -> rusqlite::Result<()> {
+/// Adds a kind's container segment (`content_store::postings::segment_positions`) of the file at
+/// `base`, of `count` nodes, to `set`: arrays and runs move by `base`, bitmaps are shifted.
+fn push_kinds(bytes: &[u8], base: u32, count: u32, set: &mut Builder) -> rusqlite::Result<()> {
     let invalid = |why: &str| rusqlite::Error::UserFunctionError(format!("invalid kind segment: {why}").into());
-    set.push_segment(file, bytes, count).map_err(invalid)
+    set.segment(base, bytes, count).map_err(invalid)
 }
 
-/// Adds a posting segment's nodes (preorders as varint deltas, from 0) of the space's file `file`,
-/// of `count` nodes, to `set`.
-fn decode(bytes: &[u8], file: usize, count: u32, set: &mut NodeSet) -> rusqlite::Result<()> {
+/// A posting segment's positions (preorders as varint deltas, from 0) in a file of `count` nodes.
+fn decode(bytes: &[u8], count: u32) -> rusqlite::Result<Vec<u32>> {
     let invalid = || rusqlite::Error::UserFunctionError("invalid posting".into());
     let (mut at, mut pre) = (0, 0_u32);
     let mut positions = Vec::new();
@@ -673,6 +698,5 @@ fn decode(bytes: &[u8], file: usize, count: u32, set: &mut NodeSet) -> rusqlite:
         positions.push(pre);
     }
     positions.dedup();
-    set.insert_file(file, positions);
-    Ok(())
+    Ok(positions)
 }

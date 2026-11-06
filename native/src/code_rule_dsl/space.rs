@@ -214,7 +214,7 @@ impl DenseSet {
 
 pub(in crate::code_rule_dsl) mod chunked;
 
-pub(in crate::code_rule_dsl) use chunked::NodeSet;
+pub(in crate::code_rule_dsl) use chunked::{Builder, NodeSet};
 
 #[cfg(test)]
 mod tests {
@@ -228,16 +228,16 @@ mod tests {
         a.fill_file(&space, 2);
         assert_eq!(a.len(), 70);
         let mut b = NodeSet::empty(&space);
-        b.insert_file(3, [1]);
-        b.insert_file(0, [1]);
+        b.insert_file(&space, 3, [1]);
+        b.insert_file(&space, 0, [1]);
         let mut within = NodeSet::all(&space);
         within.within_files(&space, &[&b]);
-        assert_eq!(within.iter().collect::<Vec<_>>(), [(0, 0), (0, 1), (0, 2), (3, 0), (3, 1), (3, 2), (3, 3), (3, 4)]);
+        assert_eq!(within.iter().collect::<Vec<_>>(), [0, 1, 2, 73, 74, 75, 76, 77]);
         let mut union = a.clone();
         union.union_with(&b);
         assert_eq!(union.len(), 72);
         union.difference_with(&a);
-        assert_eq!(union.iter().collect::<Vec<_>>(), [(0, 1), (3, 1)]);
+        assert_eq!(union.iter().collect::<Vec<_>>(), [1, 74]);
         assert_eq!(b.file_nodes(&space, 3).collect::<Vec<_>>(), [1]);
         assert_eq!(b.file_nodes(&space, 1).count(), 0);
         let mut dense = DenseSet::empty(&space);
