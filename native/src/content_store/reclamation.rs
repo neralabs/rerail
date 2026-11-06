@@ -374,8 +374,8 @@ impl ContentStore {
             [],
         )?;
         self.commit(transaction)?;
-        connection
-            .execute_batch("PRAGMA wal_checkpoint(PASSIVE); PRAGMA incremental_vacuum(4096);")?;
+        connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
+        incremental_vacuum(&connection, 4096)?;
         drop(connection);
         self.decompressed_cache
             .lock()
@@ -411,6 +411,15 @@ fn execute_collect(
     transaction
         .execute(collect_sql(sql), params)
         .map_err(StoreError::from)
+}
+
+/// Returns up to `pages` free pages to the file system (16 MB at 4096: a grammar change frees about 63 MB on the full
+/// corpus, decision 0051). The pragma frees a page per step, so it is stepped to the end: run as a batch, it freed none.
+pub(super) fn incremental_vacuum(connection: &rusqlite::Connection, pages: u32) -> StoreResult<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
+    let mut rows = statement.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
 }
 
 pub(super) fn capacity_state(bytes: u64) -> CapacityState {

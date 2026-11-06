@@ -316,6 +316,54 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
 
 /// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
 #[allow(clippy::too_many_arguments)]
+/// Records the run's manifest in the persistent store, and, when it is new, starts collection on a thread of its own:
+/// passes until one finds nothing twice or 200 ms have gone (`RERAIL_CORPUS_GC=off`: none). The history's high-water
+/// mark is `RERAIL_CORPUS_HISTORY_MB` (default 512), the low-water mark three quarters of it.
+fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32]) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let fresh = store
+        .record_corpus_run(&root.to_string_lossy(), sources, crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), memo::plan_digest(program), now)
+        .map_err(|e| Error::Plan(e.to_string()))?;
+    if !fresh || std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") {
+        return Ok(None);
+    }
+    let mut policy = crate::content_store::CorpusPolicy::default();
+    if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
+        (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
+    }
+    let path = store.database_path().to_path_buf();
+    Ok(Some(std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let mut passes = 0;
+        let outcome = (|| -> std::result::Result<String, crate::content_store::StoreError> {
+            let store = ContentStore::open(&path)?;
+            let (mut idle, mut kept, mut plan_rows, mut tapes, mut sources) = (0, None, 0, 0, 0);
+            while idle < 2 && started.elapsed() < std::time::Duration::from_millis(200) {
+                let pass = store.collect_corpus_pass(&policy, now)?;
+                passes += 1;
+                idle = if pass.did_work() { 0 } else { idle + 1 };
+                kept = pass.kept.or(kept);
+                (plan_rows, tapes, sources) = (plan_rows + pass.plan_rows, tapes + pass.collection.tapes, sources + pass.collection.sources);
+            }
+            Ok(match kept {
+                Some(k) => format!(
+                    "{} manifests kept, {} evicted; history {:.1} MB (high water {} MB), protected {:.1} MB; {tapes} tapes, {sources} sources and {plan_rows} memo rows of dead plans deleted{}",
+                    k.manifests,
+                    k.evicted,
+                    k.history_bytes as f64 / 1048576.0,
+                    policy.high_water >> 20,
+                    k.protected_bytes as f64 / 1048576.0,
+                    if idle < 2 { "; more left for later passes" } else { "" }
+                ),
+                None => format!("no decision due; {tapes} tapes, {sources} sources and {plan_rows} memo rows deleted"),
+            })
+        })()
+        .map_err(|e| e.to_string());
+        (passes, outcome)
+    })))
+}
+
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
 /// directory; `RERAIL_TAPE_CACHE=off` keeps none.
 fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
@@ -556,7 +604,9 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
     type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<crate::content_store::SourceId>, u64)>, Vec<memo::Entry>);
     let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Chunk>>(1);
     let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
-    let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64))> {
+    // A run over the persistent store records which sources it read, its manifest (decision 0051).
+    let recording = tapes.is_some() && t.is_none();
+    let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>)> {
     let worker = scope.spawn(|| {
         let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
         let add = |acc: &mut (f64, f64), from: (f64, f64)| {
@@ -568,6 +618,7 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
         let mut pending_docs = Vec::new();
         let mut hits = Vec::new();
         let mut pending_nodes = 0;
+        let mut read_sources = Vec::new();
         let mut at = docs.iter().peekable();
         let mut t = thread_usage();
         // A file's memo entry when the run is memoised and the memo has it, else its document, built.
@@ -577,10 +628,13 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
             let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
             drop(read);
             let mut source_id = None;
-            if memoised {
+            if memoised || recording {
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
                 let id = memo::source(store, &source).map_err(|e| Error::Plan(e.to_string()))?;
                 source_id = Some(id);
+            }
+            if let (true, Some(id)) = (memoised, source_id) {
+                let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
                 if let Some(entry) = memo::lookup(store, id, path, *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))? {
                     return Ok((source_id, Ok(entry)));
                 }
@@ -602,8 +656,12 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
         };
         while let Some((d, path)) = at.next() {
             match build(d, path) {
-                Ok((_, Ok(entry))) => hits.push(entry),
+                Ok((source_id, Ok(entry))) => {
+                    read_sources.extend(source_id);
+                    hits.push(entry);
+                }
                 Ok((source_id, Err(doc))) => {
+                    read_sources.extend(source_id);
                     pending_nodes += doc.facts.len();
                     pending_docs.push((*d, path.clone(), source_id, doc.facts.len() as u64));
                     pending.push(doc);
@@ -642,7 +700,7 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
             t = thread_usage();
         }
         drop(send);
-        (parse, batch)
+        (parse, batch, read_sources)
     });
     for built in chunks_in {
         let (chunk_nodes_built, sources, chunk_docs, hits) = built?;
@@ -831,6 +889,8 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
     worker.join().map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
+    // The run's manifest, then collection in the background while the cross-file part runs (decision 0051).
+    let collecting = if recording { record_run(store, root, &worker_cpu.2, &memo_program)? } else { None };
     statements.enter("stats");
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.
     for rel in &split.exports {
@@ -936,6 +996,13 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
     });
     if memoised {
         crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk)", docs.len()));
+    }
+    if let Some(collecting) = collecting {
+        let (passes, outcome) = collecting.join().map_err(|_| Error::Plan("store collection panicked".to_owned()))?;
+        crate::code_rule_dsl::logic::profile::decision("store collection (decision 0051)", || match outcome {
+            Ok(summary) => format!("{passes} passes in the background: {summary}"),
+            Err(e) => format!("{passes} passes, then stopped: {e}"),
+        });
     }
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
     if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {

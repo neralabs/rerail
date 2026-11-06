@@ -6,18 +6,21 @@
 //! of its path (`doc_keys`), a node is `key << 32 | index` in its tape (a function of the content and the grammar),
 //! a kind is its grammar code, and a symbol is an atom of the persistent store, which never gives one out again
 //! (decision 0047): the run interns into it. The plan names everything else the rows depend on: the engine build, the
-//! grammar version, the file-local program (its constants as atoms) and the key.
+//! grammar version and the file-local program (its constants as atoms). It is one per run, so the run's manifest names
+//! it (decision 0051); the document key is in the entry, and an entry under another key is a miss.
 
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
-const SCHEMA: u32 = 2;
+const SCHEMA: u32 = 3;
 
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Entry {
+    /// The document key the rows were made under (`doc_keys`): their node ids are `key << 32 | index`.
+    pub key: i64,
     /// The document's nodes (for the run's report).
     pub nodes: u64,
     /// Per exported relation: its width and its rows, flat.
@@ -27,7 +30,7 @@ pub(super) struct Entry {
 }
 
 /// Each path's document key: from its hash, in `1..2^31` (so `key << 32` stays positive), the next free one on a
-/// collision. A key is in the memo's plan, so a key a collision moved only misses the memo.
+/// collision. A key is in each entry, so a key a collision moved only misses the memo.
 pub(super) fn doc_keys(paths: &[String]) -> Vec<i64> {
     const SPAN: u64 = (1 << 31) - 1;
     let mut taken = HashSet::with_capacity(paths.len());
@@ -44,16 +47,19 @@ pub(super) fn doc_keys(paths: &[String]) -> Vec<i64> {
         .collect()
 }
 
-/// The run's plan for document `key`: the engine build, the grammar version and `program` (a digest of the file-local
-/// part as lowered, its atoms included).
-fn plan(program: &[u8; 32], key: i64) -> FactsPlanSet {
+/// The run's plan: the engine build, the grammar version and `program` (a digest of the file-local part as lowered,
+/// its atoms included).
+pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local/v1\0");
+    hash.update(b"rerail.corpus-local/v2\0");
     hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
     hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
     hash.update(program);
-    hash.update(key.to_le_bytes());
-    FactsPlanSet::new(vec![hash.finalize().into()])
+    hash.finalize().into()
+}
+
+fn plan(program: &[u8; 32]) -> FactsPlanSet {
+    FactsPlanSet::new(vec![plan_digest(program)])
 }
 
 /// A digest of the file-local program: its rules, declarations, facts, inputs and outputs as lowered.
@@ -74,18 +80,18 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
 
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.
 pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
-    let set = plan(program, key);
+    let set = plan(program);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path })?;
     match memo.results.get(&set.plans[0]) {
-        Some(result) => decode(&result.entry).map(Some),
+        Some(result) => Ok(Some(decode(&result.entry)?).filter(|entry| entry.key == key)),
         None => Ok(None),
     }
 }
 
 /// Memoises `entry` as the document's at `path`.
 pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
-    let set = plan(program, key);
-    let result = FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(entry) };
+    let set = plan(program);
+    let result = FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key, ..entry.clone() }) };
     store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path }, &set, &[result], &[])?;
     Ok(())
 }
@@ -102,6 +108,7 @@ fn encode(entry: &Entry) -> Vec<u8> {
         out.extend_from_slice(&(s.len() as u64).to_le_bytes());
         out.extend_from_slice(s.as_bytes());
     };
+    put(&mut out, entry.key as u64);
     put(&mut out, entry.nodes);
     put(&mut out, entry.rows.len() as u64);
     for (rel, (width, values)) in &entry.rows {
@@ -147,7 +154,8 @@ fn decode(bytes: &[u8]) -> StoreResult<Entry> {
         }
     }
     let mut r = Reader { bytes, at: 0 };
-    let mut entry = Entry { nodes: r.u64()?, ..Entry::default() };
+    let key = r.u64()? as i64;
+    let mut entry = Entry { key, nodes: r.u64()?, ..Entry::default() };
     for _ in 0..r.u64()? {
         let rel = r.text()?;
         let width = r.u64()? as usize;
@@ -176,7 +184,7 @@ mod tests {
 
     #[test]
     fn an_entry_round_trips_and_keys_are_stable() {
-        let mut entry = Entry { nodes: 7, ..Entry::default() };
+        let mut entry = Entry { key: 5, nodes: 7, ..Entry::default() };
         entry.rows.insert("fl1_violation_at".into(), (3, vec![5, 1, 2, 5, 3, 4]));
         entry.lines.insert("violation".into(), (vec![1], vec!["r\t21474836480\tx".into()]));
         assert_eq!(decode(&encode(&entry)).unwrap(), entry);

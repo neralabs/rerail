@@ -102,6 +102,9 @@ fn churning_every_file_keeps_the_history_under_the_high_water_mark() {
         connection.query_row("SELECT count(*) FROM corpus_manifests", [], |r| r.get(0)).unwrap()
     };
     assert!((3..20).contains(&kept), "{kept} manifests kept of 20");
+    // The pages the collected versions held went back to the file system.
+    let free: i64 = store.connection.lock().unwrap().query_row("PRAGMA freelist_count", [], |r| r.get(0)).unwrap();
+    assert!(free < 64, "{free} free pages left in the file");
 }
 
 #[test]
