@@ -538,7 +538,7 @@ by_set(x, y) :- node(_, a, "expression_statement", x, _), node(_, b, _, y, _), p
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `!nearest(n, s, set)` with s named, and two aggregates compared.
+/// `!nearest(n, s, set)` with s named, two aggregates compared, and `unset` (its text is "").
 #[test]
 fn negated_nearest_and_compared_aggregates_run() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("negnearest");
@@ -554,12 +554,21 @@ fscope("function_definition").
 other(x, y) :- node(_, c, "call", x, _), node(_, s, "function_definition", y, _), !nearest(c, s, fscope).
 .decl same(x: number)
 same(x) :- node(d, _, "module", x, _), count : { node(d, _, "call", _, _) } = count : { node(d, _, "function_definition", _, _) }.
-.output other, same
+.decl text(n: node, s: symbol)
+.decl unset(x: node)
+.input text
+.decl empty(x: number, t: symbol)
+empty(x, t) :- node(_, _, "module", x, _), unset(v), text(v, t).
+.decl given(x: number)
+given(x) :- node(_, n, "call", x, _), !unset(n).
+.output other, same, empty, given
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(read("other"), "38\t0\n46\t17\n");
     assert_eq!(read("same"), "0\n");
+    assert_eq!(read("empty"), "0\t\n");
+    assert_eq!(read("given"), "38\n46\n");
     let _ = std::fs::remove_dir_all(&dir);
 }

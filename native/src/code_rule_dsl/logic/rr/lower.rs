@@ -1301,7 +1301,8 @@ pub(super) fn float_key(f: f64) -> i64 {
 
 /// A regex's named groups, in order (`(?<x>…)` and `(?P<x>…)`).
 /// The empty value `unset(x)` binds (`core.rr`): the id -1, which no node has, so no tree relation holds of it.
-/// Each `unset(x)` is taken out and `x` replaced by it in the rule. (`text(x, "")` does not hold of it yet: O77.)
+/// Each `unset(x)` is taken out and `x` replaced by it in the rule; `!unset(x)` is `x != -1`. Its text is "":
+/// `text(x, t)` of it is `t = ""` (O77).
 pub(super) const UNSET: i64 = -1;
 
 fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Literal>), Error> {
@@ -1315,6 +1316,10 @@ fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Lite
                 }
                 [Term::Wild] => {}
                 _ => return not_yet("`unset` of a value"),
+            },
+            Literal::Atom(a) if a.rel == "unset" => match a.args.as_slice() {
+                [x @ Term::Var(_)] => rest.push(Literal::Cmp { l: x.clone(), op: "!=", r: Term::Int(UNSET) }),
+                _ => return not_yet("`!unset` of a value"),
             },
             l => rest.push(l),
         }
@@ -1341,6 +1346,21 @@ fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Lite
             _ => {}
         }
     }
+    // The empty value's text is "".
+    let rest = rest
+        .into_iter()
+        .filter_map(|l| match l {
+            Literal::Atom(a) if a.rel == "text" && a.args.first() == Some(&Term::Int(UNSET)) => {
+                let t = a.args.get(1).cloned().unwrap_or(Term::Wild);
+                match (t, a.neg) {
+                    (Term::Wild, false) => None,
+                    (Term::Wild, true) => Some(Literal::Cmp { l: Term::Int(1), op: "=", r: Term::Int(0) }),
+                    (t, neg) => Some(Literal::Cmp { l: t, op: if neg { "!=" } else { "=" }, r: Term::Str(String::new()) }),
+                }
+            }
+            l => Some(l),
+        })
+        .collect();
     Ok((head, rest))
 }
 
