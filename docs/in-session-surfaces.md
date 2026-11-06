@@ -173,8 +173,8 @@ One line per rule, `◆ Rerail · <rule id>  steered  ·  why?`, where `why?` op
 
 Where your line appears, and what happens to a steer found as the turn ends:
 
-- **Claude Code:** under the tool call, after `PostToolUse:<Tool> says:`; two or more lines start on their own line. `why?` is a link in terminals known to draw them ([below](#links-in-the-terminal)), else `why? → <url>`. A turn-end steer shows its line then; the block reaches the agent at its next tool call or session start as a late steer, never with your next prompt.
-- **Codex:** under the tool call (`↳ Hook · …`), plain: `… steered  ·  why? → <url>`. A turn-end steer shows its line then; the block rides the next hook carrying context (your next prompt, a tool call, a session start) as a late steer.
+- **Claude Code:** under the tool call, after `PostToolUse:<Tool> says:`; two or more lines start on their own line. `why?` is a link in terminals known to draw them ([below](#links-in-the-terminal)), else `why? → <url>`. A turn-end steer waits whole: its line and block reach you and the agent together at its next tool call or session start, as a late steer, never at the turn's end or with your next prompt.
+- **Codex:** under the tool call (`↳ Hook · …`), plain: `… steered  ·  why? → <url>`. A turn-end steer waits whole: its line and block ride the next hook carrying context (your next prompt, a tool call, a session start) as a late steer.
 - **Cursor:** no line of Rerail's own; the agent is asked to begin its reply with `… steered  ·  [why?](<url>)`. A turn-end steer waits for the next tool result or session start.
 - **OMP:** drawn in OMP's theme colours, `why?` a link where the terminal draws them. Ctrl+O expands it to show each rule's source and the block, dimmed. A steer riding an edit's tool result shows right after that call's results, before the next model call; the agent never sees the line. At turn end, the run waits up to 10 seconds for the turn's check, then pending steers continue the run before it reports done. A steer arriving once the session is idle waits for your next message.
 - **Pi:** Pi's default message card, showing the whole block; Pi's extension API gives Rerail nothing to draw its own line with. Turn end as OMP.
@@ -311,7 +311,7 @@ The footer never animates. Full audits and rule lists are on the dashboard.
 <summary>Exact counting</summary>
 
 - **Rules** is the session's configured coverage: code and conversation rules that are on, including mid-session changes. Not rules matching the current file, nor checks that passed.
-- **Steered** counts lines you saw: two rules in one edit count 2; a delivery naming no rule counts 1. A Claude Code turn-end steer counts once, when its line shows. Logs, matches, queued guidance and failed sends don't count.
+- **Steered** counts lines you saw: two rules in one edit count 2; a delivery naming no rule counts 1. A turn-end steer counts once, when it reaches the agent with its line. Logs, matches, queued guidance and failed sends don't count.
 - **Unknown is not zero.** Older sessions, and history lost in a reset, show `steering unavailable`; recomputing coverage shows `rules unavailable`.
 - **A steer proves nothing** about whether the agent read it or fixed anything. A crash right after sending can leave it uncounted.
 - **Violations are not a to-do list** or a review-ready signal. Rerail running normally and an audit reporting failures are separate states.

@@ -1,0 +1,1 @@
+In Claude Code and Codex, a steer found as a turn ends no longer shows its `steered` line at the turn's end while the agent is told nothing until its next tool call: the line, the block and the steered count now go out together when the agent is told, and nothing goes out if it never is.

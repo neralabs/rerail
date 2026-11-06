@@ -70,7 +70,7 @@ export interface ClaudeOutputOptions {
 
 /**
  * Steers reach the model as `additionalContext` and the person as one line per rule in `systemMessage` (Claude Code
- * shows it under the tool call); at `Stop`, only the person's lines (`steerHookOutput`).
+ * shows it under the tool call); at `Stop`, nothing, the steers waiting for the next tool call (`steerHookOutput`).
  */
 export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery[], { note, links = "hyperlink", mark }: ClaudeOutputOptions = {}): HookOutput {
   return steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines(links, mark), note);
@@ -98,6 +98,6 @@ export async function handleClaudeEvent(
   if (hook === "Stop") return claudeHookOutput(hook, await linkDeliveries(await holdStopSteers(path, deliveries), cwd), { links, mark });
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })) : undefined;
   const routed: HeldDelivery[] = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
-  // `linkDeliveries` copies each delivery, so a held steer keeps its `shown` mark.
+  // `linkDeliveries` copies each delivery, so a held steer keeps its `late` mark.
   return claudeHookOutput(hook, await linkDeliveries(routed, cwd), { note, links, mark });
 }

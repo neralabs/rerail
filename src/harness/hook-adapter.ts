@@ -159,27 +159,27 @@ export async function routeDeliveries(
   return carried ? pendingSteers : [];
 }
 
-/** A steer held for the next context event; `shown` once the person has already seen its line, at `Stop`. */
-export type HeldDelivery = AdapterDelivery & { readonly shown?: true };
+/** A steer held for the next context event; `late` when held past the end of a turn, at `Stop`, so its lead says so. */
+export type HeldDelivery = AdapterDelivery & { readonly late?: true };
 
 /** The person's lines for `deliveries`, as the host draws them, in one `systemMessage`; nothing without a line. */
 export type SteerLines = (deliveries: readonly AdapterDelivery[]) => { systemMessage: string } | Record<string, never>;
 
 /**
- * Holds `Stop`'s steers for the next context event, marking `shown` each one whose line the person sees at `Stop`.
- * `Stop` reaches the model only through a block, which Claude Code shows it as an error and Codex records as the
- * user's turn, so a steer never goes out there.
+ * Holds `Stop`'s steers, marked `late`, for the next context event. `Stop` reaches the model only through a block,
+ * which Claude Code shows as an error and Codex records as the user's turn, so a steer never goes out there, and nor
+ * does its line: the person would read that the agent was steered while it has been told nothing.
  */
 export async function holdStopSteers(path: string, deliveries: readonly AdapterDelivery[]): Promise<AdapterDelivery[]> {
   const held = deliveries.filter(delivery => steers(delivery.requested));
-  await persistPending(path, held.map(delivery => (delivery.rules.length > 0 ? { ...delivery, shown: true as const } : delivery)));
+  await persistPending(path, held.map(delivery => ({ ...delivery, late: true as const })));
   return held;
 }
 
 /**
- * Steers reach the model as `additionalContext` at a context event, after `note`, and the person as one line per rule.
- * At `Stop` only the person's lines go out; the steers wait for the next context event (design N4c), led as late steers.
- * A steer counts once, when the person sees its line (D5): at `Stop` for a late steer, whose block later goes out uncounted.
+ * Steers reach the model as `additionalContext` at a context event, after `note`, and the person as one line per rule,
+ * both at once. At `Stop` nothing goes out: the steers wait for the next context event (design N4c), where each held
+ * past the turn's end is led as a late steer. A steer counts once, when it goes out with its line (D5).
  */
 export function steerHookOutput(
   hook: string,
@@ -188,16 +188,12 @@ export function steerHookOutput(
   lines: SteerLines,
   note?: string,
 ): HookOutput {
-  const unseen = deliveries.filter(delivery => delivery.shown !== true);
-  if (hook === "Stop") {
-    const shown = lines(unseen);
-    return "systemMessage" in shown ? prepareGuidanceOutput(shown, deliveryRuleIds(unseen.filter(delivery => delivery.rules.length > 0))) : shown;
-  }
-  const content = deliveryText(deliveries.map(delivery => (delivery.shown === true ? { ...delivery, content: asLateSteer(delivery.content) } : delivery)));
+  if (hook === "Stop") return {};
+  const content = deliveryText(deliveries.map(delivery => (delivery.late === true ? { ...delivery, content: asLateSteer(delivery.content) } : delivery)));
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
   if (context === "" || contextEvents[hook] !== true) return {};
-  const output = { ...lines(unseen), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
-  return deliveryText(unseen) === undefined ? output : prepareGuidanceOutput(output, deliveryRuleIds(unseen));
+  const output = { ...lines(deliveries), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
+  return deliveryText(deliveries) === undefined ? output : prepareGuidanceOutput(output, deliveryRuleIds(deliveries));
 }
 
 interface LockOwner {

@@ -258,7 +258,7 @@ describe("hook host durable state", () => {
 
     expect(await holdStopSteers(path, [leaky])).toEqual([leaky]);
     expect(await readFile(path, "utf8")).not.toContain(secret);
-    expect(await readPending(path)).toEqual([stored]);
+    expect(await readPending(path)).toEqual([{ ...stored, late: true }]);
 
     await replacePending(path, [leaky, delivery("plain")]);
     expect(await readFile(path, "utf8")).not.toContain(secret);
