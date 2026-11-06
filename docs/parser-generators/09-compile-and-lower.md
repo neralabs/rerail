@@ -641,7 +641,7 @@ The paths below are under `native/src/code_rule_dsl/transducer/stream/`.
 | `base_u8<T>` | `arm64/simd.rs:102–221`, a generic impl over `BaseU8` (`bool`, `u8`) | done |
 | `simd8<uint8_t>` | `arm64/simd.rs:270–547` | done |
 | `simd8<int8_t>` | `arm64/simd.rs:551–741` | done |
-| `simd8x64<T>` | `arm64/simd.rs:746–840`; `NUM_CHUNKS` checked at `:751` | done |
+| `simd8x64<T>` | `arm64/simd.rs:746–839`; `NUM_CHUNKS` checked at `:751` | done |
 | `prefix_xor` | `arm64/bitmask.rs:8` | done |
 | `bitmanipulation.h` | `arm64/bitmanipulation.rs` | done |
 | `simdprune_tables` | `internal/simdprune_tables.rs` | done |
