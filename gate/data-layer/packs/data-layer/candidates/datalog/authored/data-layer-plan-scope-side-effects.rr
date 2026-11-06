@@ -1,0 +1,129 @@
+// data-layer-plan-scope-side-effects, clause `branch-audit`, by hand.
+// Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-plan-scope-side-effects.json.
+//
+// The clause's matcher is under `when: {option: {oracleAnalyzer: true}}`, which the converter converts only for the
+// run's options (nothing at the defaults); here it follows every configuration through `option_on`. Its module gate
+// is the `$option: sourceGate` regex: true (the default), the module's text must contain a plan opener's name; false
+// (`^`), every module passes.
+//
+// An `if_statement` ($IF) whose nearest enclosing `plan` with-statement (`inside`, stopBy `plan`: the first plan
+// ancestor is tested and ends the walk) is a `write-plan` ($PLAN), and whose `condition` field is
+// - `direct-read`: a `typed-read` call (its `function` an identifier, or an attribute whose `attribute` field is
+//   one, named a read terminal), or a parenthesized_expression with a child that is a direct-read; or
+// - `read-test`: the condition, or a node under it through children, an identifier ($READ_NAME) that is neither an
+//   attribute's `attribute` field nor a keyword_argument's `name` field, where the module has an assignment whose
+//   `left` is `assigned-read-name` (an identifier of that text, or a pattern_list, tuple_pattern, list_pattern,
+//   tuple or list with a child that is one, recursively) and whose `right` is a typed-read, that ends before $IF
+//   starts (`layout.after` to capture.IF, breaks min 0: the capture starts at or after the assignment's end), and
+//   whose nearest plan with-statement is a write-plan and the same node as $PLAN.
+// `syntax: valid`; the finding is at the if statement's line. Exact.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_on(name: symbol)
+.decl inside(n: node, a: node, set: relation)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl branch_audit_withk(kind: symbol)
+branch_audit_withk("with_statement").
+
+// The plan openers, and the write-plan ones among them.
+.decl branch_audit_open_name(s: symbol)
+branch_audit_open_name("open_provider_read_plan"). branch_audit_open_name("open_provider_versioned_read_plan").
+branch_audit_open_name("open_provider_versioned_write_plan"). branch_audit_open_name("open_provider_write_plan").
+branch_audit_open_name("open_read_plan"). branch_audit_open_name("open_write_plan").
+.decl branch_audit_write_name(s: symbol)
+branch_audit_write_name("open_provider_versioned_write_plan"). branch_audit_write_name("open_provider_write_plan").
+branch_audit_write_name("open_write_plan").
+
+// The name a call's `function` names: an identifier, or an attribute's `attribute` field identifier.
+.decl branch_audit_callee(c: node, s: symbol)
+branch_audit_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, s).
+branch_audit_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", x), node(_, x, "identifier", _, _), text(x, s).
+
+// A with-item `value` that opens a plan: the opener's call, or an as_pattern with that call as a child.
+.decl branch_audit_opened(v: node, s: symbol)
+branch_audit_opened(v, s) :- branch_audit_callee(v, s).
+branch_audit_opened(v, s) :- node(_, v, "as_pattern", _, _), child(v, c, _), branch_audit_callee(c, s).
+.decl branch_audit_opens(w: node, s: symbol)
+branch_audit_opens(w, s) :- node(_, w, "with_statement", _, _), child(w, c, _), node(_, c, "with_clause", _, _),
+    child(c, i, _), node(_, i, "with_item", _, _), field(i, "value", v), branch_audit_opened(v, s).
+.decl branch_audit_plan(w: node)
+branch_audit_plan(w) :- branch_audit_opens(w, s), branch_audit_open_name(s).
+.decl branch_audit_write_plan(w: node)
+branch_audit_write_plan(w) :- branch_audit_opens(w, s), branch_audit_write_name(s).
+
+// typed-read and direct-read.
+.decl branch_audit_read_name(s: symbol)
+branch_audit_read_name("count"). branch_audit_read_name("count_async"). branch_audit_read_name("execute").
+branch_audit_read_name("execute_async"). branch_audit_read_name("execute_one"). branch_audit_read_name("execute_one_async").
+branch_audit_read_name("first"). branch_audit_read_name("first_async"). branch_audit_read_name("select_one").
+branch_audit_read_name("select_one_async").
+.decl branch_audit_typed_read(c: node)
+branch_audit_typed_read(c) :- branch_audit_callee(c, s), branch_audit_read_name(s).
+.decl branch_audit_direct_read(n: node)
+branch_audit_direct_read(n) :- branch_audit_typed_read(n).
+branch_audit_direct_read(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), branch_audit_direct_read(c).
+
+// The assignments of a typed read, and the names their `left` binds (assigned-read-name).
+.decl branch_audit_seqk(kind: symbol)
+branch_audit_seqk("pattern_list"). branch_audit_seqk("tuple_pattern"). branch_audit_seqk("list_pattern").
+branch_audit_seqk("tuple"). branch_audit_seqk("list").
+.decl branch_audit_target(a: node, t: node)
+branch_audit_target(a, t) :- node(_, a, "assignment", _, _), field(a, "right", r), branch_audit_typed_read(r), field(a, "left", t).
+branch_audit_target(a, t) :- branch_audit_target(a, q), node(_, q, k, _, _), branch_audit_seqk(k), child(q, t, _).
+.decl branch_audit_bound(a: node, s: symbol)
+branch_audit_bound(a, s) :- branch_audit_target(a, t), node(_, t, "identifier", _, _), text(t, s).
+
+// The sites whose nearest plan with-statement matters: the if statements and those assignments. Their nearest plan
+// ancestor, when it is a write-plan.
+.decl branch_audit_site(n: node)
+branch_audit_site(n) :- node(_, n, "if_statement", _, _).
+branch_audit_site(a) :- branch_audit_bound(a, _).
+.decl branch_audit_under(n: node, w: node)
+branch_audit_under(n, w) :- branch_audit_site(n), inside(n, w, branch_audit_withk), branch_audit_plan(w).
+.decl branch_audit_blocked(n: node, w: node)
+branch_audit_blocked(n, w) :- branch_audit_under(n, w), branch_audit_under(n, s), inside(s, w, branch_audit_withk).
+.decl branch_audit_scope(n: node, w: node)
+branch_audit_scope(n, w) :- branch_audit_under(n, w), !branch_audit_blocked(n, w), branch_audit_write_plan(w).
+
+// The condition of an if in a write plan, and the nodes under it through children (read-test's recursion).
+.decl branch_audit_cond(i: node, c: node)
+branch_audit_cond(i, c) :- branch_audit_scope(i, _), node(_, i, "if_statement", _, _), field(i, "condition", c).
+.decl branch_audit_in_cond(i: node, n: node)
+branch_audit_in_cond(i, c) :- branch_audit_cond(i, c).
+branch_audit_in_cond(i, n) :- branch_audit_in_cond(i, q), child(q, n, _).
+.decl branch_audit_attr_field(x: node)
+branch_audit_attr_field(x) :- node(_, q, "attribute", _, _), field(q, "attribute", x).
+.decl branch_audit_kw_name(x: node)
+branch_audit_kw_name(x) :- node(_, q, "keyword_argument", _, _), field(q, "name", x).
+
+// read-test: an identifier of the condition named by an earlier typed-read assignment of the same write plan.
+.decl branch_audit_read_test(i: node)
+branch_audit_read_test(i) :- branch_audit_in_cond(i, x), node(_, x, "identifier", _, _), !branch_audit_attr_field(x),
+    !branch_audit_kw_name(x), text(x, s), branch_audit_scope(i, w), node(_, i, _, is, _), branch_audit_bound(a, s),
+    branch_audit_scope(a, w), node(_, a, _, _, ae), ae <= is.
+
+.decl branch_audit_if(i: node)
+branch_audit_if(i) :- branch_audit_cond(i, c), branch_audit_direct_read(c).
+branch_audit_if(i) :- branch_audit_read_test(i).
+
+// The module gate (sourceGate).
+.decl branch_audit_gate(d: number)
+branch_audit_gate(d) :- doc(d, _, _), !option_on("sourceGate").
+branch_audit_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s),
+    match("(?s:.*)(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)(?s:.*)", s).
+
+violation("data-layer-plan-scope-side-effects", "branch-audit", "PSE-AUDIT-010", p, l) :- option_on("oracleAnalyzer"),
+    branch_audit_if(i), node(d, i, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), branch_audit_gate(d),
+    doc(d, p, _), line(i, l).
