@@ -6,7 +6,7 @@
 .scope include "**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_grammar_surface.py
 #include "python/ast-shape.rr"
-.setting severity "Surface error"
+.severity Surface error
 .decl sgp_name(group: symbol, name: symbol)
 sgp_name("helper", "grammar_execute").
 sgp_name("helper", "grammar_execute_async").

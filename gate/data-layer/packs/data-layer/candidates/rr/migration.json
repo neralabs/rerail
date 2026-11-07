@@ -1154,6 +1154,13 @@
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
     },
     {
+      "destination": "docs/rule-syntax/lib/python/ast-shape.rr",
+      "sha256": "e26f714a94ea280d1845e2ec754017c42f36c74eeb867b83c4d09e4a6cebee2a",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_lib/serverplan_facts.py"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
       "sha256": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
       "origin": "authored",
@@ -1325,7 +1332,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "sha256": "7de64de7566156b608314e54b86ace7714d6ef1a40300574b300958f697b8b74",
+      "sha256": "19b3e6a210866b3d80c0edca7fe36275bf2e0d0be09102aa8c4e23cd9c7c7587",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_grammar_surface.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1336,13 +1343,6 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
-    },
-    {
-      "destination": "docs/rule-syntax/lib/python/ast-shape.rr",
-      "sha256": "e26f714a94ea280d1845e2ec754017c42f36c74eeb867b83c4d09e4a6cebee2a",
-      "origin": "authored",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-      "upstreamPath": "scripts/lint_lib/serverplan_facts.py"
     }
   ],
   "rules": [
@@ -1425,7 +1425,7 @@
       "legacySha256": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "ruleSha256": "7de64de7566156b608314e54b86ace7714d6ef1a40300574b300958f697b8b74"
+      "ruleSha256": "19b3e6a210866b3d80c0edca7fe36275bf2e0d0be09102aa8c4e23cd9c7c7587"
     },
     {
       "check": "permission_error",

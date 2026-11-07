@@ -9,7 +9,7 @@ def serverplan_grammar_surface(source, target, header):
     shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
     text = '\n'.join(line for line in header('serverplan_grammar_surface', target).splitlines()
                      if not line.startswith('.scope exclude')).replace('"python/ast.rr"', '"python/ast-shape.rr"') + '\n'
-    text += '.setting severity "Surface error"\n'
+    text += '.severity Surface error\n'
     text += '.decl sgp_name(group: symbol, name: symbol)\n'
     for group, values in [('helper', shared.FORBIDDEN_GRAMMAR_NAMES),
                           ('direct', shared.FORBIDDEN_DIRECT_GRAMMAR_NAMES),
