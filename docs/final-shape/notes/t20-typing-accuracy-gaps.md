@@ -225,3 +225,43 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
     refuses it, for every language, as before this work), so it still reaches only the native resolvers.
     No pack rule uses it (the Python pack exempts the capability). Lowering it onto the library's `reach` is
     what removes the native Python resolver.
+
+- **Cost of `calls.rr` on django** (2026-11-06). The first Jedi scoring run used 1,126 s of CPU and did not
+  finish. Profiling slices of django (`RERAIL_PROFILE`, debug build, CPU = user + sys, machine load 30-97)
+  showed where the time went. Each fix below keeps every output the same, `pv`, `tv` and `vopen` included.
+
+  | Fix | Slice | Cross-file CPU before → after |
+  |---|---|---|
+  | `alook(n, c, a)`: an attribute's lookup class, joined once | utils (49 files) | 17.5 → 8.7 s |
+  | `pass(n, c)`: pass-through values made per file | utils + template (75) | 32.4 → 16.2 s |
+  | A join through same-document atoms is not a hop (`cross_rounds::bound`) | db/models (24) | 36.4 → 18.0 s |
+  | `fv(c, a, k, v)`, and proven types from one type's supertypes | db/models (24) | 18.0 → 9.3 s |
+  | `type_first` by `min`, not by pairs compared as text | utils + db (172) | 73 s, of which 25 s was this |
+  | `fret(f, k, v)` | utils + db (172) | → 40.9 s |
+  | Node types written in one transaction | utils + template (75) | write 2.7 → 0.07 s |
+  | Previous round's rows bound from memory | utils + template (75) | 5.63 → 3.86 s |
+
+  At the end: 75 files take 3.9 s, 172 files 37 s and 393 files (django without `contrib` and `conf`) 51.5 s,
+  with a peak RSS of 552 MB. Before, 172 files did not finish in 110 s.
+
+  The program-side fixes work around engine costs, which are listed in O85.
+
+- **`calls.rr` against Jedi on django** (O83; `typing::oracle_tests::benchmark_python_calls_program_corpus`,
+  ignored). Jedi 0.19.2 `goto` recorded over django's 907 files. The run took 112 s of CPU (debug, the test with
+  its scoring) and a peak RSS of 815 MB.
+
+  | Calls | Count |
+  |---|---|
+  | All | 37,141 |
+  | Jedi undecided | 9,491 |
+  | Both decided | 20,364 |
+  | Agree | 20,205 (99.2% of both decided) |
+  | Program: another workspace definition | 142 |
+  | Program: a workspace definition, Jedi: external | 17 |
+  | Program unknown, Jedi decided | 7,286 |
+
+  The spike's `calls.rdl` scored 99.18% of 33,309 (t9 §7.4). Most of the 142 resolve through a decorator. For
+  example, `mark_safe(...)` is decorated with `keep_lazy`, and the program gives the wrapper in
+  `utils/functional.py`, where Jedi gives the decorated `def`. Most of the 17 are `super().__init__` calls, where
+  Jedi stops at `object.__init__` and the program gives a workspace base's. Neither group has been judged one by
+  one. The 7,286 unknowns are where the program says `call_open` instead of guessing.

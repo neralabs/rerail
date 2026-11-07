@@ -1479,6 +1479,10 @@ a real corpus (the Python pack's django, `fd91518f`) is a broader accuracy check
 **Closure:** a Jedi 0.19.2 recording over django (`fixtures/python/calls/generate_corpus.py`), a scorer of
 `calls.rr` over the same files through `corpus::run`, and the run recorded in t20.
 
+**Closed 2026-11-06:** run, and recorded in t20. 99.2% of 20,364 calls both decide agree; 142 differ, mostly
+through decorators. Making the 7,286 calls the program leaves open, which Jedi decides, is the accuracy work
+left.
+
 ## O84. The type relations' first draft: what they leave out
 
 `calls.rr`'s type relations (decision 0047, point 3; t20) answer at the positions whose value the program models
@@ -1495,3 +1499,22 @@ a real corpus (the Python pack's django, `fd91518f`) is a broader accuracy check
 
 **Closure:** annotations read (gap 2), positions widened to every expression a rule asks about (by demand), and
 generic arguments carried as terms.
+
+## O85. Cross-file costs `calls.rr` works around
+
+Profiling `calls.rr` on django (t20, "Cost of `calls.rr` on django") found engine costs. The program now avoids
+each of them by how its rules are written; another program would meet them again.
+- **One column per lookup.** The input and `__prev` sources look up rows by one equality column. A join on two
+  columns (`look(n, x, s)` by scope and name, `found__prev` by class and attribute) walks every row for the first
+  and filters on the second.
+- **A recursive relation priced by its seeds.** The set fixpoint prices the full relation (`sfx_f_<rel>`) at its
+  seed rules' rows, so a plan may scan it before a selective atom binds it. This happened in the call rule's
+  `pv(r, …)` before `retval(f, r)`.
+- **A kind test in a recursive step.** `kind(n, "assignment")` with `n` bound, in a probe of the cross-file part,
+  cost one walk of every node of that kind per delta row (about 18k VM steps). `pass(n, c)`, made per file,
+  avoids it. The cause in the plan is not confirmed.
+- **Every round reruns the whole cross-file part.** Strata the hop relations do not read (the type relations,
+  the outputs) could run once, after the last round. They are about a fifth of the cross-file CPU on 172 files.
+
+**Closure:** each cost fixed in the engine and measured on the same slices with the program's rules written
+plainly.
