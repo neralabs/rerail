@@ -1,0 +1,110 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl strprefix(n: node, s: symbol)
+.input doc, node, child, strprefix
+.decl in_scope(d: number)
+.decl m10(n: node)
+.decl m106(n: node)
+.decl m109(n: node)
+.decl m110(n: node)
+.decl m112(n: node)
+.decl m122(n: node)
+.decl m125(n: node)
+.decl m126(n: node)
+.decl m128(n: node)
+.decl m13(n: node)
+.decl m138(n: node)
+.decl m14(n: node)
+.decl m141(n: node)
+.decl m142(n: node)
+.decl m144(n: node)
+.decl m16(n: node)
+.decl m26(n: node)
+.decl m29(n: node)
+.decl m30(n: node)
+.decl m32(n: node)
+.decl m42(n: node)
+.decl m45(n: node)
+.decl m46(n: node)
+.decl m48(n: node)
+.decl m58(n: node)
+.decl m61(n: node)
+.decl m62(n: node)
+.decl m64(n: node)
+.decl m74(n: node)
+.decl m77(n: node)
+.decl m78(n: node)
+.decl m80(n: node)
+.decl m90(n: node)
+.decl m93(n: node)
+.decl m94(n: node)
+.decl m96(n: node)
+.decl out_scope(d: number)
+.decl u104(n: node)
+.decl u120(n: node)
+.decl u136(n: node)
+.decl u24(n: node)
+.decl u40(n: node)
+.decl u56(n: node)
+.decl u72(n: node)
+.decl u8(n: node)
+.decl u88(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+m10(n) :- strprefix(n, v9), contains("f", v9).
+m13(n) :- child(n, v11, _), node(_, v11, "string", _, _), strprefix(v11, v12), contains("f", v12).
+m14(n) :- node(_, n, "string", _, _), !m10(n).
+m14(n) :- node(_, n, "concatenated_string", _, _), !m13(n).
+m16(n) :- child(v15, n, _), node(_, v15, "concatenated_string", _, _).
+m26(n) :- strprefix(n, v25), contains("f", v25).
+m29(n) :- child(n, v27, _), node(_, v27, "string", _, _), strprefix(v27, v28), contains("f", v28).
+m30(n) :- node(_, n, "string", _, _), !m26(n).
+m30(n) :- node(_, n, "concatenated_string", _, _), !m29(n).
+m32(n) :- child(v31, n, _), node(_, v31, "concatenated_string", _, _).
+m42(n) :- strprefix(n, v41), contains("f", v41).
+m45(n) :- child(n, v43, _), node(_, v43, "string", _, _), strprefix(v43, v44), contains("f", v44).
+m46(n) :- node(_, n, "string", _, _), !m42(n).
+m46(n) :- node(_, n, "concatenated_string", _, _), !m45(n).
+m48(n) :- child(v47, n, _), node(_, v47, "concatenated_string", _, _).
+m58(n) :- strprefix(n, v57), contains("f", v57).
+m61(n) :- child(n, v59, _), node(_, v59, "string", _, _), strprefix(v59, v60), contains("f", v60).
+m62(n) :- node(_, n, "string", _, _), !m58(n).
+m62(n) :- node(_, n, "concatenated_string", _, _), !m61(n).
+m64(n) :- child(v63, n, _), node(_, v63, "concatenated_string", _, _).
+m74(n) :- strprefix(n, v73), contains("f", v73).
+m77(n) :- child(n, v75, _), node(_, v75, "string", _, _), strprefix(v75, v76), contains("f", v76).
+m78(n) :- node(_, n, "string", _, _), !m74(n).
+m78(n) :- node(_, n, "concatenated_string", _, _), !m77(n).
+m80(n) :- child(v79, n, _), node(_, v79, "concatenated_string", _, _).
+m90(n) :- strprefix(n, v89), contains("f", v89).
+m93(n) :- child(n, v91, _), node(_, v91, "string", _, _), strprefix(v91, v92), contains("f", v92).
+m94(n) :- node(_, n, "string", _, _), !m90(n).
+m94(n) :- node(_, n, "concatenated_string", _, _), !m93(n).
+m96(n) :- child(v95, n, _), node(_, v95, "concatenated_string", _, _).
+m106(n) :- strprefix(n, v105), contains("f", v105).
+m109(n) :- child(n, v107, _), node(_, v107, "string", _, _), strprefix(v107, v108), contains("f", v108).
+m110(n) :- node(_, n, "string", _, _), !m106(n).
+m110(n) :- node(_, n, "concatenated_string", _, _), !m109(n).
+m112(n) :- child(v111, n, _), node(_, v111, "concatenated_string", _, _).
+m122(n) :- strprefix(n, v121), contains("f", v121).
+m125(n) :- child(n, v123, _), node(_, v123, "string", _, _), strprefix(v123, v124), contains("f", v124).
+m126(n) :- node(_, n, "string", _, _), !m122(n).
+m126(n) :- node(_, n, "concatenated_string", _, _), !m125(n).
+m128(n) :- child(v127, n, _), node(_, v127, "concatenated_string", _, _).
+m138(n) :- strprefix(n, v137), contains("f", v137).
+m141(n) :- child(n, v139, _), node(_, v139, "string", _, _), strprefix(v139, v140), contains("f", v140).
+m142(n) :- node(_, n, "string", _, _), !m138(n).
+m142(n) :- node(_, n, "concatenated_string", _, _), !m141(n).
+m144(n) :- child(v143, n, _), node(_, v143, "concatenated_string", _, _).
+.output violation

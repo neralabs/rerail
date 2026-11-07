@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
 import { data } from "../../ui/state.js";
-import { inPack, nextSuppressions, optionsText, packSuppressions, suppressionsText } from "../../ui/derive.js";
+import { inPack, packSuppressions } from "../../ui/derive.js";
 import { settingWrites } from "../../ui/settings-writes.js";
 
 type Request = { method: string; body: unknown; answer: (status: number, body?: unknown) => void };
@@ -28,47 +28,7 @@ const entry = (id: string, folder: string, fields: Record<string, unknown> = {})
   ...fields,
 });
 
-describe("a rule's suppression comments and options on the page", () => {
-  it("shows them honoured or ignored with what decided it", () => {
-    const rules = toStoredRules([
-      entry("eslint:no-var", ""),
-      entry("eslint:eqeqeq", "", { suppressions: "ignore", suppressionsSource: inWorktree("", "pack") }),
-      entry("eslint:radix", "", { suppressions: "ignore", suppressionsSource: inRepository("web", "rule") }),
-    ]);
-
-    expect(suppressionsText(rules.get("eslint:no-var")!, "/work/a")).toBe("Honoured · Rule pack eslint default");
-    expect(suppressionsText(rules.get("eslint:eqeqeq")!, "/work/a")).toBe("Ignored · Set in this worktree for its rule pack");
-    expect(suppressionsText(rules.get("eslint:radix")!, "/work/a")).toBe("Ignored · Set for the repository at web");
-  });
-
-  it("lists each folder's own when the folders the rule is added at disagree, and switches to ignore", () => {
-    const rule = toStoredRules([
-      entry("eslint:no-var", ""),
-      entry("eslint:no-var", "web", { suppressions: "ignore", suppressionsSource: inRepository("web", "rule") }),
-    ]).get("eslint:no-var")!;
-
-    expect(rule.folderStates.map(state => state.suppressions)).toEqual(["honour", "ignore"]);
-    expect(rule.mixed).toBe(false);
-    expect(suppressionsText(rule)).toBe("Honoured in Whole repository, Ignored in web");
-    expect(nextSuppressions(rule)).toBe("ignore");
-  });
-
-  it("switches to honour once every folder ignores them", () => {
-    const rule = toStoredRules([entry("eslint:no-var", "", { suppressions: "ignore", suppressionsSource: inRepository("", "rule") })]).get("eslint:no-var")!;
-
-    expect(nextSuppressions(rule)).toBe("honour");
-  });
-
-  it("lists configured options with what decided each, and none when the rule has none", () => {
-    const rules = toStoredRules([
-      entry("eslint:max-depth", "", { config: { max: 3, style: "always" }, configSource: { max: inRepository("", "rule") } }),
-      entry("eslint:no-var", ""),
-    ]);
-
-    expect(optionsText(rules.get("eslint:max-depth")!)).toBe("max: 3 · Set for the repository, style: \"always\"");
-    expect(optionsText(rules.get("eslint:no-var")!)).toBeNull();
-  });
-
+describe("a rule pack's suppression comments on the page", () => {
   it("sums up an added pack's rules for its panel", () => {
     const honouring = [...toStoredRules([entry("eslint:no-var", ""), entry("eslint:radix", "")]).values()];
     const one = [...toStoredRules([entry("eslint:no-var", ""), entry("eslint:radix", "", { suppressions: "ignore" })]).values()];
@@ -193,74 +153,38 @@ describe("the page's rule setting writes", () => {
     data.attachedPacks = new Map();
   });
 
-  it("ignores suppression comments for a rule at every folder it is added at, owned as the page says", async () => {
+  it("switches a rule at every folder it is added at, owned as the page says", async () => {
     owner = "checkout";
-    const saving = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    const saving = page().setEnabled(["eslint:no-var"], false, "Off.");
 
-    expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["ignore", "ignore"]);
+    expect(stored("eslint:no-var").enabled).toBe(false);
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]!.body).toEqual({
-      repository: "A", checkout: "/work/a", folder: "", owner: "checkout", targets: [{ kind: "rule", id: "eslint:no-var" }], suppressions: "ignore",
+      repository: "A", checkout: "/work/a", folder: "", owner: "checkout", targets: [{ kind: "rule", id: "eslint:no-var" }], on: false,
     });
     writes()[0]!.answer(200, {});
     await vi.waitFor(() => expect(writes()).toHaveLength(2));
-    expect(writes()[1]!.body).toMatchObject({ folder: "web", owner: "checkout", targets: [{ kind: "rule", id: "eslint:no-var" }], suppressions: "ignore" });
+    expect(writes()[1]!.body).toMatchObject({ folder: "web", owner: "checkout", targets: [{ kind: "rule", id: "eslint:no-var" }], on: false });
     writes()[1]!.answer(200, {});
     await saving;
 
-    expect(toast).toHaveBeenCalledWith("Ignored.");
-    expect(stored("eslint:no-var").suppressions).toBe("ignore");
-  });
-
-  // Self-review round 8: this worktree's own setting outranks the repository's, so a repository change does not show
-  // in a folder the worktree decides.
-  it("shows a repository change only in the folders this worktree's setting does not decide", async () => {
-    data.rules = toStoredRules([
-      entry("eslint:no-var", "", { suppressions: "honour", suppressionsSource: inWorktree("", "rule") }),
-      entry("eslint:no-var", "web", { suppressions: "honour", suppressionsSource: inRepository("web", "rule") }),
-    ]);
-    const saving = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
-    expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["honour", "ignore"]);
-    for (let index = 0; index < 2; index += 1) {
-      await vi.waitFor(() => expect(writes()).toHaveLength(index + 1));
-      writes()[index]!.answer(200, {});
-    }
-    await saving;
-  });
-
-  // Self-review round 9: a rule's own setting, just written, outranks its pack's at the same owner and folder, so a pack
-  // change made before the page refreshes does not show on it.
-  it("weighs a change not yet refreshed when showing the next one", async () => {
-    let done = 0;
-    const answerPending = () => vi.waitFor(() => {
-      expect(writes().length).toBeGreaterThan(done);
-      for (const write of writes().slice(done)) write.answer(200, {});
-      done = writes().length;
-    });
-    const rule = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
-    expect(stored("eslint:no-var").folderStates.map(state => state.suppressionsSource)).toEqual([inRepository("", "rule"), inRepository("web", "rule")]);
-    const pack = page().setPackSuppressions("eslint", "honour", "Honoured for ESLint.");
-    expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["ignore", "ignore"]);
-    while (done < 4) await answerPending();
-    await Promise.all([rule, pack]);
-    expect(stored("eslint:no-var").suppressions).toBe("ignore");
+    expect(toast).toHaveBeenCalledWith("Off.");
   });
 
   it("puts the rule back as it was when the write fails", async () => {
-    const saving = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    const saving = page().setEnabled(["eslint:no-var"], false, "Off.");
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
     writes()[0]!.answer(503, { error: "daemon restarting" });
     await saving;
 
-    expect(stored("eslint:no-var").suppressions).toBe("honour");
-    expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["honour", "honour"]);
+    expect(stored("eslint:no-var").enabled).toBe(true);
     expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Could not save: PUT \/api\/repository\/settings answered 503/u));
   });
 
   // Review finding F6: a write the daemon never answers fails after a while, so later clicks for the repository go out.
   it("gives up on a write the daemon never answers and sends the next one", async () => {
     vi.useFakeTimers();
-    const hung = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    const hung = page().setPackSuppressions("eslint", "ignore", "Ignored.");
     const next = page().setEnabled(["eslint:radix"], false, "Off.");
     await vi.advanceTimersByTimeAsync(0);
     expect(writes()).toHaveLength(1);
@@ -282,51 +206,52 @@ describe("the page's rule setting writes", () => {
   // Self-review rounds 10 and 11: writes go out in click order; after a failure the page keeps what a saved folder
   // decides (the root's setting reaches web too) and puts back a write that saved nothing without undoing later clicks.
   it("sends writes in click order and, after a failure, keeps what was saved", async () => {
-    const partial = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    const partial = page().setPackSuppressions("eslint", "ignore", "Ignored.");
     const enabling = page().setEnabled(["eslint:radix"], false, "Off.");
-    const ignoring = page().setSuppressions(["eslint:radix"], "ignore", "Ignored.");
+    const disabling = page().setEnabled(["eslint:eqeqeq"], false, "Off.");
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
     writes()[0]!.answer(200, {});
     await vi.waitFor(() => expect(writes()).toHaveLength(2));
     writes()[1]!.answer(503, { error: "daemon restarting" });
     await partial;
     expect(stored("eslint:no-var").folderStates.map(state => [state.suppressions, state.suppressionsSource])).toEqual([
-      ["ignore", inRepository("", "rule")], ["ignore", inRepository("web", "rule")],
+      ["ignore", inRepository("", "pack")], ["ignore", inRepository("web", "pack")],
     ]);
 
-    // The on/off write was clicked before the suppressions one: it goes out first, and the other waits for its answer.
+    // The radix write was clicked before the eqeqeq one: it goes out first, and the other waits for its answer.
     await vi.waitFor(() => expect(writes()).toHaveLength(3));
-    expect(writes()[2]!.body).toMatchObject({ on: false });
+    expect(writes()[2]!.body).toMatchObject({ targets: [{ kind: "rule", id: "eslint:radix" }], on: false });
     writes()[2]!.answer(503, { error: "daemon restarting" });
     await enabling;
     await vi.waitFor(() => expect(writes()).toHaveLength(4));
-    expect(writes()[3]!.body).toMatchObject({ suppressions: "ignore" });
+    expect(writes()[3]!.body).toMatchObject({ targets: [{ kind: "rule", id: "eslint:eqeqeq" }], on: false });
     writes()[3]!.answer(200, {});
-    await ignoring;
-    expect(stored("eslint:radix")).toMatchObject({ enabled: true, suppressions: "ignore", suppressionsSource: inRepository("", "rule") });
+    await disabling;
+    expect(stored("eslint:radix").enabled).toBe(true);
+    expect(stored("eslint:eqeqeq").enabled).toBe(false);
   });
 
   // Self-review rounds 12 and 13: a write another repository's page left unanswered does not hold this one's back, and
   // one for the same repository still goes out first when the page comes back to it.
   it("keeps click order per repository across switches, and never makes another repository wait", async () => {
-    void page().setSuppressions(["eslint:no-var"], "honour", "Honoured.");
+    void page().setEnabled(["eslint:no-var"], false, "Off.");
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
     changeScope({ repository: "B", checkout: "/work/b" });
     data.rules = toStoredRules([entry("eslint:radix", "")]);
-    void page().setSuppressions(["eslint:radix"], "ignore", "Ignored.");
+    void page().setEnabled(["eslint:radix"], false, "Off.");
     await vi.waitFor(() => expect(writes()).toHaveLength(2));
     expect(writes()[1]!.body).toMatchObject({ repository: "B", targets: [{ kind: "rule", id: "eslint:radix" }] });
     writes()[1]!.answer(200, {});
 
     changeScope({ repository: "A", checkout: "/work/a" });
     data.rules = toStoredRules([entry("eslint:no-var", "")]);
-    const again = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    const again = page().setEnabled(["eslint:no-var"], false, "Off.");
     // Nothing the page could do on its own would send it: let every pending reaction run, then look.
     for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
     expect(writes()).toHaveLength(2);
     writes()[0]!.answer(200, {});
     await vi.waitFor(() => expect(writes()).toHaveLength(3));
-    expect(writes()[2]!.body).toMatchObject({ repository: "A", suppressions: "ignore" });
+    expect(writes()[2]!.body).toMatchObject({ repository: "A", on: false });
     writes()[2]!.answer(200, {});
     await again;
   });

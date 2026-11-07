@@ -1,1 +1,0 @@
-test.concurrent("foo", function () {})

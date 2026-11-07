@@ -1,1 +1,0 @@
-const foo = 0; class C { foo = foo + 1; }

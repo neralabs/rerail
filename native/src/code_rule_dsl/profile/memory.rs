@@ -1,7 +1,4 @@
-//! Cheap RSS boundaries; allocator enumeration requires an explicit memory census.
-use std::sync::LazyLock;
-static ALLOCATOR_CENSUS: LazyLock<bool> =
-    LazyLock::new(|| std::env::var_os("RERAIL_PROFILE_MEMORY_CENSUS").is_some());
+//! Process high-water marks and allocator residency at selected diagnostic boundaries.
 #[derive(Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Sample {
@@ -37,7 +34,7 @@ pub(crate) fn sample(phase: &str) -> Option<Sample> {
         } else {
             peak.saturating_mul(1024)
         };
-        let (allocated_bytes, in_use_bytes) = allocator_if(*ALLOCATOR_CENSUS, allocator);
+        let (allocated_bytes, in_use_bytes) = allocator();
         Some(Sample {
             peak_rss_bytes,
             rss_bytes: resident(),
@@ -49,12 +46,6 @@ pub(crate) fn sample(phase: &str) -> Option<Sample> {
     {
         None
     }
-}
-fn allocator_if(
-    enabled: bool,
-    probe: impl FnOnce() -> (Option<usize>, Option<usize>),
-) -> (Option<usize>, Option<usize>) {
-    if enabled { probe() } else { (None, None) }
 }
 #[cfg(target_os = "macos")]
 fn resident() -> Option<u64> {
@@ -111,18 +102,6 @@ fn allocator() -> (Option<usize>, Option<usize>) {
 }
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn cpu_tracing_does_not_enumerate_allocator_zones() {
-        let calls = std::cell::Cell::new(0);
-        let probe = || {
-            calls.set(calls.get() + 1);
-            (Some(100), Some(50))
-        };
-        assert_eq!(super::allocator_if(false, probe), (None, None));
-        assert_eq!(calls.get(), 0);
-        assert_eq!(super::allocator_if(true, probe), (Some(100), Some(50)));
-        assert_eq!(calls.get(), 1);
-    }
     #[test]
     fn memory_probes_are_limited_to_selected_boundaries() {
         assert!(super::sample("anchor-lower").is_none());

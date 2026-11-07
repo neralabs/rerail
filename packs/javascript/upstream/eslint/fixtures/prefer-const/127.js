@@ -1,1 +1,0 @@
-class C { static { let a, b; ({ a, b } = foo); } }

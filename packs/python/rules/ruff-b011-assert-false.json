@@ -3,7 +3,7 @@
   "id": "ruff-b011-assert-false",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B011 (assert-false): an `assert` statement whose test is the literal `False` (Ruff's `is_const_false`; parentheses transparent), reported on the literal. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/B011.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Raise AssertionError instead of assert False; assertions are stripped when Python runs with optimizations enabled.",
   "scope": {
     "include": [
       "**/*"

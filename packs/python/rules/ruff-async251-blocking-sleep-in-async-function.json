@@ -3,7 +3,7 @@
  "id": "ruff-async251-blocking-sleep-in-async-function",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC251 (blocking-sleep-in-async-function): a call to `time.sleep` inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Don't call time.sleep() inside async functions; await the async library's sleep so other tasks keep running.",
  "scope": {
   "include": [
    "**/*"

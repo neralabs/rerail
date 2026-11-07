@@ -1,5 +1,5 @@
 import {
-  loadBundledCatalog,
+  loadRuleCatalog,
   type CodeRule,
   openRerailDatabase,
   type RerailDatabase,
@@ -54,12 +54,12 @@ function library(name = "rerail.sqlite"): RerailDatabase {
 describe("code rule writes compile in the engine", () => {
   it("rejects a rule the engine cannot compile at upsertLibraryRule, with the engine's reason", () => {
     const database = library();
-    const bundle = loadBundledCatalog();
+    const ruleCatalog = loadRuleCatalog();
     try {
-      expect(() => upsertLibraryRule(database, bundle, unboundMessage, "code")).toThrow(ENGINE_REASON);
-      expect(() => upsertLibraryRule(database, bundle, unboundMessage, "code")).toThrow(/policy rule test:unbound-message does not compile/);
+      expect(() => upsertLibraryRule(database, ruleCatalog, unboundMessage, "code")).toThrow(ENGINE_REASON);
+      expect(() => upsertLibraryRule(database, ruleCatalog, unboundMessage, "code")).toThrow(/policy rule test:unbound-message does not compile/);
       expect(getLibraryRule(database, unboundMessage.id)).toBeUndefined();
-      expect(upsertLibraryRule(database, bundle, MOCK_CODE_RULES[1]!, "code").document.rule).toEqual(MOCK_CODE_RULES[1]);
+      expect(upsertLibraryRule(database, ruleCatalog, MOCK_CODE_RULES[1]!, "code").document.rule).toEqual(MOCK_CODE_RULES[1]);
     } finally {
       database.$client.close();
     }
@@ -80,7 +80,7 @@ describe("code rule writes compile in the engine", () => {
     const database = library();
     try {
       process.env.RERAIL_ENGINE_PATH = join(root, "missing.node");
-      expect(() => upsertLibraryRule(database, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "code"))
+      expect(() => upsertLibraryRule(database, loadRuleCatalog(), MOCK_CODE_RULES[0]!, "code"))
         .toThrow(/cannot validate policy rule mock-no-console-log: native kernel unavailable/);
       expect(getLibraryRule(database, MOCK_CODE_RULES[0]!.id)).toBeUndefined();
     } finally {
@@ -120,11 +120,11 @@ describe("code rule writes compile in the engine", () => {
 
   it("rejects a whole import that contains a rule the engine cannot compile, naming it", () => {
     const source = library("source.sqlite");
-    const bundle = loadBundledCatalog();
+    const ruleCatalog = loadRuleCatalog();
     let dump: RulesDump;
     try {
-      upsertLibraryRule(source, bundle, MOCK_CODE_RULES[0]!, "code");
-      upsertLibraryRule(source, bundle, MOCK_CODE_RULES[1]!, "code");
+      upsertLibraryRule(source, ruleCatalog, MOCK_CODE_RULES[0]!, "code");
+      upsertLibraryRule(source, ruleCatalog, MOCK_CODE_RULES[1]!, "code");
       dump = exportRulesDump(source);
     } finally {
       source.$client.close();
@@ -135,7 +135,7 @@ describe("code rule writes compile in the engine", () => {
     try {
       let error: unknown;
       try {
-        importRulesDump(destination, bundle, broken);
+        importRulesDump(destination, ruleCatalog, broken);
       } catch (caught) {
         error = caught;
       }

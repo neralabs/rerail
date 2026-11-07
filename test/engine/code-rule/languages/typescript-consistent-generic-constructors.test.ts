@@ -1,6 +1,6 @@
 /**
  * typescript-eslint-consistent-generic-constructors (packs/typescript/ candidate) must not steer an agent into breaking
- * a project that compiles with `isolatedDeclarations` (NER-1786). With that compiler option an exported declaration
+ * a project that compiles with `isolatedDeclarations`. With that compiler option an exported declaration
  * needs an explicit type annotation, so `export const s: Map<string, X> = new Map();` is required, and the rule's fix
  * (`export const s = new Map<string, X>();`) fails tsc with TS9010. typescript-eslint skips this report when the
  * `isolatedDeclarations` parser option is set; Rerail has no such fact yet, so the steer says when not to follow it.
@@ -40,7 +40,7 @@ function findings(compiled: NativeCompiledCodeRuleDsl, source: string): { line: 
   return result.violations.map(violation => ({ line: violation.span.startLine + 1, message: violation.message }));
 }
 
-describe("typescript-eslint-consistent-generic-constructors and isolatedDeclarations (NER-1786)", () => {
+describe("typescript-eslint-consistent-generic-constructors and isolatedDeclarations", () => {
   it.each([
     ["an exported const with arguments", "export const state: Map<string, Set<Chunk>> = new Map(entries);"],
     ["an exported const without arguments", "export const state: Map<string, Set<Chunk>> = new Map;"],
@@ -49,7 +49,7 @@ describe("typescript-eslint-consistent-generic-constructors and isolatedDeclarat
     const reported = findings(await compile(), source);
     expect(reported).toHaveLength(1);
     expect(reported[0]?.line).toBe(1);
-    expect(reported[0]?.message).toMatch(/^The generic type arguments should be specified as part of the constructor type arguments\./);
+    expect(reported[0]?.message).toMatch(/^Move the type arguments from the annotation onto the `new` call/);
     expect(reported[0]?.message).toContain("isolatedDeclarations");
   });
 });

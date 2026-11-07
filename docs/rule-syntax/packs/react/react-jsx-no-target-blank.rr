@@ -1,0 +1,76 @@
+.policy "react-jsx-no-target-blank" revision 2
+.description "Add rel=\"noreferrer\" to links that open in a new tab."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/jsx-no-target-blank, at its defaults (links only, no referrer allowed, spreads trusted, dynamic links
+// enforced): an <a> whose target may be "_blank", whose href is external or computed, and whose rel does not
+// surely contain "noreferrer". React keeps the last of repeated props, and so does the rule.
+//   <a target="_blank" href="https://x">            reported, at the open tag
+//   <a target="_blank" href={url} rel="noreferrer">  not reported
+//   <a target="_blank" href="/local">               not: a relative link stays on the site
+//   <a target={x ? "_blank" : null} href={u} rel={x ? "noreferrer" : ""}>   not: rel follows the same test
+// ESLint's fix (add or extend rel) is not offered: the JSON has none.
+#include "tsx/react.rr"
+
+.violation target_blank(at: node)
+    code "react/jsx-no-target-blank"
+    "Using target=\"_blank\" without rel=\"noreferrer\" (which implies rel=\"noopener\") is a security risk in older browsers: see https://mathiasbynens.github.io/rel-noopener/#recommendations"
+    suppress eslint "react/jsx-no-target-blank"
+    suppress oxlint "jsx-no-target-blank"
+target_blank(o) :- react_open(_, o), plain_tag(o, "a"),
+    last_prop(o, "target", t), may_blank(t), risky_link(o), !secure_rel(o).
+
+// The target: target="_BLANK", target={"_blank"}, or a ternary with "_blank" on either side (case ignored).
+.decl may_blank(t: node)
+may_blank(t) :- prop_value(t, v), blank_lit(v).
+may_blank(t) :- prop_value(t, c), kind(c, "ternary_expression"), (field(c, "consequence", v) ; field(c, "alternative", v)),
+    blank_lit(v).
+.decl blank_lit(v: node)
+blank_lit(v) :- kind(v, "string"), (jsx_string(v, s) ; !jsx_string(v, _), value(v, s)), @lower(s) = "_blank".
+// The link: the last href is a literal with a scheme or `//` (href="mailto:x" counts), or some href is {…}.
+.decl risky_link(o: node)
+risky_link(o) :- last_prop(o, "href", h), child(h, v, 1), jsx_string(v, u), match("(?s)(\\w+:|//).*", u).
+risky_link(o) :- jsx_prop(o, "href", h), child(h, v, 1), kind(v, "jsx_expression").
+
+// The last rel is secure when every value it may have is a string whose space-separated words include noreferrer
+// (case ignored). rel_value(r, v, s) is one possible value as text; rel_unknown(r) a possible value that is no string.
+.decl secure_rel(o: node)
+secure_rel(o) :- last_prop(o, "rel", r), !rel_unknown(o, r), count : { rel_value(o, r, s), !noreferrer(s) } = 0.
+.decl noreferrer(s: symbol)
+noreferrer(s) :- rel_value(_, _, s), match("(.* )?noreferrer( .*)?", @lower(s)).
+.decl rel_value(o: node, r: node, s: symbol)
+rel_value(o, r, s) :- last_prop(o, "rel", r), child(r, v, 1), jsx_string(v, s).
+rel_value(o, r, s) :- last_prop(o, "rel", r), rel_expr(r, v), kind(v, "string"), value(v, s).
+// `{`noreferrer ${x}`}`: the text before the first substitution.
+rel_value(o, r, @replace_all(t, "^`|\\$\\{[\\s\\S]*$|`$", "")) :- last_prop(o, "rel", r), rel_expr(r, v),
+    kind(v, "template_string"), text(v, t).
+rel_value(o, r, s) :- rel_branch(o, r, v), kind(v, "string"), value(v, s).
+.decl rel_unknown(o: node, r: node)
+rel_unknown(o, r) :- last_prop(o, "rel", r), !child(r, _, 1).                    // <a rel>
+rel_unknown(o, r) :- last_prop(o, "rel", r), child(r, j, 1), kind(j, "jsx_expression"), !rel_expr(r, _).  // rel={}
+rel_unknown(o, r) :- last_prop(o, "rel", r), rel_expr(r, v), !kind(v, "string"), !kind(v, "template_string"),
+    !kind(v, "ternary_expression").
+rel_unknown(o, r) :- rel_branch(o, r, v), !kind(v, "string").
+rel_unknown(o, r) :- last_prop(o, "rel", r), rel_expr(r, c), kind(c, "ternary_expression"), paired(o, c, tc),
+    count : { field(tc, "consequence", b), blank_exact(b) } = 0,
+    count : { field(tc, "alternative", b), blank_exact(b) } = 0.
+.decl rel_expr(r: node, v: node)
+rel_expr(r, v) :- kind(r, "jsx_attribute"), child(r, j, 1), kind(j, "jsx_expression"), prop_value(r, v).
+// rel={c ? "noreferrer" : ""} has both values, unless target is a ternary on the same test: then only the side
+// where target is exactly "_blank". ESLint compares the tests' names, so two tests with no name (a.b, f())
+// count as the same.
+.decl rel_branch(o: node, r: node, v: node)
+rel_branch(o, r, v) :- last_prop(o, "rel", r), rel_expr(r, c), kind(c, "ternary_expression"), !paired(o, c, _),
+    (field(c, "consequence", v) ; field(c, "alternative", v)).
+rel_branch(o, r, v) :- last_prop(o, "rel", r), rel_expr(r, c), paired(o, c, tc), field(tc, "consequence", b),
+    blank_exact(b), field(c, "consequence", v).
+rel_branch(o, r, v) :- last_prop(o, "rel", r), rel_expr(r, c), paired(o, c, tc), field(tc, "alternative", b),
+    blank_exact(b), count : { field(tc, "consequence", b2), blank_exact(b2) } = 0, field(c, "alternative", v).
+.decl paired(o: node, c: node, tc: node)  // rel's ternary c and target's ternary tc test the same name
+paired(o, c, tc) :- last_prop(o, "rel", r), rel_expr(r, c), kind(c, "ternary_expression"), last_prop(o, "target", t),
+    prop_value(t, tc), kind(tc, "ternary_expression"), field(c, "condition", a), field(tc, "condition", b),
+    (kind(a, "identifier"), kind(b, "identifier"), text(a, x), text(b, x) ; !kind(a, "identifier"), !kind(b, "identifier")).
+.decl blank_exact(b: node)
+blank_exact(b) :- kind(b, "string"), value(b, "_blank").

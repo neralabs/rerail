@@ -1,5 +1,6 @@
-// Records eslint-plugin-vue 10.11.1 for the rules the Vue pack ports (../../conformance.json). Run offline by a
-// maintainer, never in CI, with the tools of ../../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
+// Records eslint-plugin-vue 10.11.1 for the rules the Vue pack ports (../../conformance.json). Run by
+// `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request CI), with
+// the tools of ../../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
 //
 //   node generate.mjs fixtures <eslint-plugin-vue checkout at tag v10.11.1 (ec9c53a6fbed637d7b0fbcd6893b0206ae32839f)>
 //   node generate.mjs corpus [<name>...]            # corpora of ../../../../fixtures/vue/corpora.json, under .rerail/corpora/vue
@@ -35,6 +36,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { packFixturesWritten, recordingWritten } from "../../../../scripts/s3/pack-fixtures.mjs";
 import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
 import { AUTHORED } from "./authored.mjs";
 
@@ -115,6 +117,7 @@ function write(file, source, findings) {
   };
   writeFileSync(join(HERE, file), `${JSON.stringify(out, null, 1)}\n`);
   console.log(`wrote ${file}: ${out.findings.length} findings`);
+  console.log(recordingWritten(join(HERE, file), source.kind));
 }
 
 // --- fixtures ----------------------------------------------------------------------------------------------------
@@ -230,6 +233,7 @@ function fixtures(checkout) {
   const findings = files.flatMap(path => lint(readFileSync(join(root, path), "utf8"), path).findings);
   writeAuthoredRecord(authored);
   writeFileSync(join(HERE, "cases.json"), `${JSON.stringify({ origin: ORIGIN, cases }, null, 1)}\n`);
+  console.log(packFixturesWritten([join(HERE, "cases.json")]));
   writeLicense(checkout, cases.filter(c => c.kept));
   write("fixtures.expected.json", { kind: "fixtures", origin: ORIGIN, rules: ruleIds, files }, findings);
   const kept = cases.filter(c => c.kept).length;
@@ -259,7 +263,7 @@ function writeLicense(checkout, kept) {
 
 Upstream: [vuejs/eslint-plugin-vue](https://github.com/vuejs/eslint-plugin-vue/tree/${UPSTREAM_COMMIT}) at tag \`${UPSTREAM_TAG}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2017 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the code of RuleTester cases of the rules the Vue pack ports (\`../../conformance.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. Every other file under \`upstream/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`read_tests.mjs\`, \`generate.mjs\`, \`authored.mjs\`, \`cases.json\`, the fixtures \`rerail-*.vue\` (written by Rerail; \`upstream/eslint-plugin-vue/UPSTREAM.md\` lists them) and the recordings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
+The files listed below are the code of RuleTester cases of the rules the Vue pack ports (\`../../conformance.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-vue's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. Every other file under \`upstream/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`read_tests.mjs\`, \`generate.mjs\`, \`authored.mjs\`, \`cases.json\`, the fixtures \`rerail-*.vue\` (written by Rerail; \`upstream/eslint-plugin-vue/UPSTREAM.md\` lists them) and the recordings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
 
 This file is written by \`upstream/eslint-plugin-vue/generate.mjs fixtures\`. Paths are relative to the pack directory (\`packs/vue/\`).
 

@@ -335,12 +335,14 @@ enum Context {
 
 type Visit<T = Flowing> = Result<T, BuildError>;
 
+/// Visits the PHP program rooted at `root`, a file's.
 pub(crate) fn visit_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit<()> {
     visit(builder, root, false)
 }
 
-/// A Blade template's embedded program (`blade::view`), whose markers stand for the variables
-/// Blade's directives define.
+/// Visits a Blade template's compiled view (`blade::view`), whose markers stand for the variables
+/// Blade's directives define and whose top level is the scope of the view's data. Blade's embedder
+/// reads its views so (`embed::CompiledView`).
 pub(crate) fn visit_blade_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit<()> {
     visit(builder, root, true)
 }

@@ -1,1 +1,0 @@
-@endforelse($some, $args)

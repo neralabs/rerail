@@ -3,7 +3,7 @@
   "id": "ruff-sim113-enumerate-for-loop",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM113 (enumerate-for-loop): `N += 1` as a top-level statement of a non-async `for` body without `continue`, where the binding `N` reads (`resolves.binding`) is a name assignment of `0` (plain, annotated, or an unpacked element of a display, paired by index as Ruff's match_value where the engine gives no value) whose parent statement is the loop's, `N` is bound only once inside the loop (`binds` with `bindings` within the loop: deletions and comprehension walruses count, comprehension targets, nested functions' locals and keyword arguments do not), and no load of `N` outside the loop in its scope, at or after the initial assignment, reads the initial binding (whose references Ruff's rebinding inherits) or a binding inside the loop. The loop and the initial assignment are found again by node identity (`compare` with `text: \"node\"`), so identical loops in one scope stay apart.",
+  "description": "Use enumerate() instead of a counter that starts at 0 and is incremented by hand in each pass of a for loop.",
   "scope": {
     "include": [
       "**/*"

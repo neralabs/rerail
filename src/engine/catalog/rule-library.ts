@@ -6,7 +6,7 @@ import { and, asc, eq, notInArray, or } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
 import { readStoredCodeRule, unknownRuleKind, type QuarantinedRule } from "./rule-quarantine.js";
 import { storableCodeRule } from "../code-rule/code-rule-compile.js";
-import type { BundledCatalog, LibraryRule, RepositoryKey } from "./repository-model.js";
+import type { RuleCatalog, LibraryRule, RepositoryKey } from "./repository-model.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
 import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
@@ -58,11 +58,11 @@ export function validateLibraryDocument(document: unknown, kind: RuleKind): Rule
 }
 
 /** Write an already validated document; the caller owns the transaction. */
-export function writeLibraryRule(db: Queries, bundle: BundledCatalog, document: RuleDocument, options: LibraryRuleWriteOptions = {}): void {
+export function writeLibraryRule(db: Queries, ruleCatalog: RuleCatalog, document: RuleDocument, options: LibraryRuleWriteOptions = {}): void {
   const id = document.rule.id;
   const existing = db.select().from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
   // A library rule written before a release bundled its id wins over that By Rerail rule, so it stays editable.
-  if (bundle.documents.has(id) && existing === undefined && options.shadowBundled !== true) {
+  if (ruleCatalog.documents.has(id) && existing === undefined && options.shadowBundled !== true) {
     throw new Error(`rule ${id} is a By Rerail rule id; give your rule another id`);
   }
   // A database from before the library table can hold an id's kind with no library row; one of a kind this build
@@ -103,14 +103,14 @@ export function writeLibraryRule(db: Queries, bundle: BundledCatalog, document: 
 /** Validate, then store a library rule. Throws on an invalid body, a By Rerail id, or a kind change. */
 export function upsertLibraryRule(
   db: RerailDatabase,
-  bundle: BundledCatalog,
+  ruleCatalog: RuleCatalog,
   document: unknown,
   kind: RuleKind,
   options: LibraryRuleWriteOptions = {},
 ): LibraryRule {
   const validated = validateLibraryDocument(document, kind);
   return db.transaction(tx => {
-    writeLibraryRule(tx, bundle, validated, options);
+    writeLibraryRule(tx, ruleCatalog, validated, options);
     return readRequired(tx, validated.rule.id);
   }, { behavior: "immediate" });
 }
@@ -192,8 +192,8 @@ export function removeLibraryRule(db: RerailDatabase, id: string): boolean {
   }, { behavior: "immediate" });
 }
 
-function freeCopyId(db: Queries, bundle: BundledCatalog, sourceId: string): string {
-  const taken = (id: string) => bundle.documents.has(id)
+function freeCopyId(db: Queries, ruleCatalog: RuleCatalog, sourceId: string): string {
+  const taken = (id: string) => ruleCatalog.documents.has(id)
     || db.select({ id: ruleCatalogIdentities.ruleId }).from(ruleCatalogIdentities).where(eq(ruleCatalogIdentities.ruleId, id)).get() !== undefined
     || db.select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get() !== undefined;
   let candidate = `${sourceId}-copy`;
@@ -204,25 +204,25 @@ function freeCopyId(db: Queries, bundle: BundledCatalog, sourceId: string): stri
 /**
  * Store an edited By Rerail rule as a library copy, in one transaction: wherever the original is present in the
  * repository (its pack or the rule itself is attached), the copy is added at the same folder and a repository
- * setting switches the original off there. The original stays a reference to the bundle.
+ * setting switches the original off there. The original stays a reference to the rule catalog.
  */
 export function copyRerailRuleToLibrary(
   db: RerailDatabase,
-  bundle: BundledCatalog,
+  ruleCatalog: RuleCatalog,
   repositoryKey: RepositoryKey,
   sourceId: string,
   edited: unknown,
   options: { readonly id?: string; readonly now?: number } = {},
 ): CopiedRule {
-  const original = bundle.documents.get(sourceId);
+  const original = ruleCatalog.documents.get(sourceId);
   if (original === undefined) throw new Error(`${sourceId} is not a By Rerail rule`);
   if (typeof edited !== "object" || edited === null) throw new Error("the edited rule must be an object");
   const now = options.now ?? Date.now();
   return db.transaction(tx => {
-    const id = options.id ?? freeCopyId(tx, bundle, sourceId);
+    const id = options.id ?? freeCopyId(tx, ruleCatalog, sourceId);
     const document = validateLibraryDocument({ ...edited, id }, original.kind);
-    writeLibraryRule(tx, bundle, document, { copiedFromRuleId: sourceId, now });
-    const packId = bundle.packOf.get(sourceId);
+    writeLibraryRule(tx, ruleCatalog, document, { copiedFromRuleId: sourceId, now });
+    const packId = ruleCatalog.packOf.get(sourceId);
     const presences = tx.select({ folder: ruleAttachments.folder }).from(ruleAttachments).where(and(
       eq(ruleAttachments.repositoryKey, repositoryKey),
       packId === undefined

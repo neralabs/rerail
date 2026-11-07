@@ -1,1 +1,0 @@
-<template><span slot-scope="props"></span></template>

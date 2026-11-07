@@ -1,1 +1,0 @@
-function f() { var a = 1; return function(){ f(++a); }; }

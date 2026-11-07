@@ -1,1 +1,0 @@
-import Warning from '../lib/warning'; var warn = new Warning('text');

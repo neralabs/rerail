@@ -1,1 +1,0 @@
-A: for (a in obj) { break A; }

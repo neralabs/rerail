@@ -1,3 +1,0 @@
-[].concat.apply([
-/*empty*/
-], args);

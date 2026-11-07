@@ -1,1 +1,0 @@
-function foo(){} return 1; var bar = function*(){ return 1; }; return 1; var baz = () => {}; return 1;

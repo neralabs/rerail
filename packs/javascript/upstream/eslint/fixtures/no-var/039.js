@@ -1,1 +1,0 @@
-var fx = function (i = 0) { if (i < 5) { return fx(i + 1); } console.log(i); }; fx();

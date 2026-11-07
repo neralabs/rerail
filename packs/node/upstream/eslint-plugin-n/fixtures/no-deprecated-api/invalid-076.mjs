@@ -1,1 +1,0 @@
-import b from 'node:buffer'; new b.Buffer()

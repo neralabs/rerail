@@ -3,7 +3,7 @@
   "id": "ruff-b021-f-string-docstring",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B021 (f-string-docstring): the first statement of a module, function or class body is an expression statement whose value is an f-string (an `f`-prefixed literal, or an implicit concatenation containing one; parentheses transparent). Comments before it are not statements. Reported on the statement.",
+  "description": "Use a plain string literal, not an f-string, for docstrings; Python doesn't treat an f-string as a docstring.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

@@ -200,7 +200,7 @@ grep -qF "$PACKAGE@next is $FIRST_VERSION" "$SMOKE/setup.log" || fail "the insta
 [ -x "$LAUNCHER" ] || fail "setup did not write the launcher $LAUNCHER"
 CLAUDE_COMMAND="$SANDBOX_HOME/.claude/commands/rerail.md"
 [ -f "$CLAUDE_COMMAND" ] || fail "setup did not create $CLAUDE_COMMAND"
-grep -qF "It is not on in any repo yet." "$SMOKE/setup.log" || fail "setup did not end on the skip summary"
+grep -qF "Rerail is installed · not on in any repo yet" "$SMOKE/setup.log" || fail "setup did not end on the skip summary"
 if [ -e "$RERAIL_DIR/daemon.json" ]; then fail "setup started a daemon although Rerail is on nowhere"; fi
 
 info "rerail daemon start --port $DAEMON_PORT"
@@ -224,17 +224,18 @@ info "rerail start (the set-up's start answer, as a coding agent relays it)"
 start_output="$(sandbox "$LAUNCHER" start --answer start)"
 printf '%s\n' "$start_output"
 # The project is an empty folder: no rule pack fits it, so set-up starts Rerail with none.
-case "$start_output" in *"Rerail is on in proj. No rule packs are on yet."*"#rules"*) ;; *) fail "rerail start did not set up and start the project" ;; esac
+case "$start_output" in *"Rerail is on in proj · no rule packs on yet"*"#rules"*) ;; *) fail "rerail start did not set up and start the project" ;; esac
 
 info "Exercising the installed Claude hook, composed HUD, and exact-session command"
 sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({hook_event_name:"SessionStart",session_id:"installer-smoke",cwd:process.cwd(),source:"startup"}))' \
   | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-hook.js" >/dev/null
+# NO_COLOR keeps the `R E R A I L` mark plain: in colour, each letter carries its own escape codes.
 status_output="$(sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({session_id:"installer-smoke",cwd:process.cwd()}))' \
-  | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-status.js")"
+  | sandbox env NO_COLOR=1 "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-status.js")"
 # A fresh session shows the rule count only: `steered N×` appears once Rerail has steered in it.
 case "$status_output" in
   *steered*) fail "installed HUD shows a steer count for a session Rerail has not steered" ;;
-  *user-status*Rerail*" rules"*) ;;
+  *user-status*"R E R A I L"*" rules"*) ;;
   *) fail "installed HUD did not preserve the user status and render the session's rule count" ;;
 esac
 session_output="$(sandbox "$LAUNCHER" session claude-code installer-smoke)"
@@ -265,10 +266,18 @@ update_output="$(sandbox "$LAUNCHER" update check)"
 printf '%s\n' "$update_output"
 case "$update_output" in *"Available: $NEXT_VERSION"*"Update available: yes"*) ;; *) fail "update check did not offer $NEXT_VERSION" ;; esac
 
+# A command the connected coding agents lack, as after updating from a version without it: the update brings it back.
+SHOW_ME_COMMAND="$SANDBOX_HOME/.claude/commands/rerail-show-me.md"
+SHOW_ME_SKILL="$SANDBOX_HOME/.codex/skills/rerail-show-me/SKILL.md"
+rm "$SHOW_ME_COMMAND" "$SHOW_ME_SKILL"
 info "rerail update"
 update_output="$(sandbox "$LAUNCHER" update)"
 printf '%s\n' "$update_output"
 case "$update_output" in *"Activated Rerail $NEXT_VERSION"*) ;; *) fail "rerail update did not activate $NEXT_VERSION" ;; esac
+case "$update_output" in *"Refreshed Rerail in "*) ;; *) fail "rerail update did not refresh the connected coding agents" ;; esac
+[ -f "$SHOW_ME_COMMAND" ] || fail "rerail update did not reinstall $SHOW_ME_COMMAND"
+[ -f "$SHOW_ME_SKILL" ] || fail "rerail update did not reinstall $SHOW_ME_SKILL"
+if compgen -G "$SANDBOX_HOME/.claude/commands/*.bak" >/dev/null; then fail "rerail update backed up command files Rerail generated"; fi
 status_output="$(sandbox "$LAUNCHER" update status)"
 printf '%s\n' "$status_output"
 case "$status_output" in *"Current: $NEXT_VERSION"*"Previous: $FIRST_VERSION"*) ;; *) fail "update status does not show $NEXT_VERSION current over $FIRST_VERSION" ;; esac

@@ -3,7 +3,7 @@
   "id": "ruff-e721-type-comparison",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's E721 (type-comparison): a comparison with an `==` or `!=` operator whose operand on either side is a type (a call whose callee resolves to the builtin `type` or `builtins.type`, or a name from Ruff's builtin type and exception list that resolves to the builtin) while neither side is a dtype (`x.dtype`, or a call of a callee resolving to `numpy.dtype`), reported on the whole comparison once per offending operator (a chained comparison can report twice, as in Ruff).",
+  "description": "Use isinstance(), or is and is not, instead of == or != to compare types; equality on types misses subclasses and can be overridden.",
   "scope": {
     "include": [
       "**/*"

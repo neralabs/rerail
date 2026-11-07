@@ -41,38 +41,68 @@
           "contains-Callable": {
             "any": [
               {
-                "all": [
+                "any": [
                   {
-                    "kind": "identifier"
-                  },
-                  {
-                    "regex": "Callable"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "any": [
+                    "all": [
                       {
-                        "kind": "string"
+                        "kind": "identifier"
                       },
                       {
-                        "kind": "concatenated_string"
+                        "regex": "Callable"
                       }
                     ]
                   },
                   {
-                    "value": {
-                      "regex": "Callable"
-                    }
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "regex": "Callable"
+                      }
+                    ]
                   }
                 ]
               },
               {
                 "has": {
-                  "matches": "contains-Callable",
-                  "stopBy": "neighbor"
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "Callable"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "concatenated_string"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "Callable"
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "end"
                 }
               }
             ]
@@ -80,38 +110,68 @@
           "contains-Transaction": {
             "any": [
               {
-                "all": [
+                "any": [
                   {
-                    "kind": "identifier"
-                  },
-                  {
-                    "regex": "Transaction"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "any": [
+                    "all": [
                       {
-                        "kind": "string"
+                        "kind": "identifier"
                       },
                       {
-                        "kind": "concatenated_string"
+                        "regex": "Transaction"
                       }
                     ]
                   },
                   {
-                    "value": {
-                      "regex": "Transaction"
-                    }
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "regex": "Transaction"
+                      }
+                    ]
                   }
                 ]
               },
               {
                 "has": {
-                  "matches": "contains-Transaction",
-                  "stopBy": "neighbor"
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "Transaction"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "concatenated_string"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "Transaction"
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "end"
                 }
               }
             ]
@@ -139,6 +199,15 @@
             "all": [
               {
                 "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "regex": "Callable"
+                  },
+                  {
+                    "regex": "Transaction"
+                  },
                   {
                     "all": [
                       {
@@ -332,6 +401,12 @@
                 "any": [
                   {
                     "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "regex": "versioned_(?:read|write)"
+                      },
                       {
                         "all": [
                           {
@@ -667,19 +742,10 @@
                                               "has": {
                                                 "all": [
                                                   {
-                                                    "any": [
-                                                      {
-                                                        "kind": "string"
-                                                      },
-                                                      {
-                                                        "kind": "concatenated_string"
-                                                      }
-                                                    ]
+                                                    "kind": "string"
                                                   },
                                                   {
-                                                    "value": {
-                                                      "regex": "^(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)$"
-                                                    }
+                                                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"\"\"|'''(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)'''|\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"|'(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)')$"
                                                   },
                                                   {
                                                     "not": {
@@ -722,6 +788,12 @@
                   },
                   {
                     "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "regex": "versioned_(?:read|write)"
+                      },
                       {
                         "all": [
                           {
@@ -904,19 +976,10 @@
                                                                   "has": {
                                                                     "all": [
                                                                       {
-                                                                        "any": [
-                                                                          {
-                                                                            "kind": "string"
-                                                                          },
-                                                                          {
-                                                                            "kind": "concatenated_string"
-                                                                          }
-                                                                        ]
+                                                                        "kind": "string"
                                                                       },
                                                                       {
-                                                                        "value": {
-                                                                          "regex": "^(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)$"
-                                                                        }
+                                                                        "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"\"\"|'''(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)'''|\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"|'(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)')$"
                                                                       },
                                                                       {
                                                                         "not": {
@@ -1000,19 +1063,10 @@
                                                                     "has": {
                                                                       "all": [
                                                                         {
-                                                                          "any": [
-                                                                            {
-                                                                              "kind": "string"
-                                                                            },
-                                                                            {
-                                                                              "kind": "concatenated_string"
-                                                                            }
-                                                                          ]
+                                                                          "kind": "string"
                                                                         },
                                                                         {
-                                                                          "value": {
-                                                                            "regex": "^(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)$"
-                                                                          }
+                                                                          "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"\"\"|'''(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)'''|\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"|'(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)')$"
                                                                         },
                                                                         {
                                                                           "not": {
@@ -1152,19 +1206,10 @@
                                                                     "has": {
                                                                       "all": [
                                                                         {
-                                                                          "any": [
-                                                                            {
-                                                                              "kind": "string"
-                                                                            },
-                                                                            {
-                                                                              "kind": "concatenated_string"
-                                                                            }
-                                                                          ]
+                                                                          "kind": "string"
                                                                         },
                                                                         {
-                                                                          "value": {
-                                                                            "regex": "^(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)$"
-                                                                          }
+                                                                          "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"\"\"|'''(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)'''|\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"|'(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)')$"
                                                                         },
                                                                         {
                                                                           "not": {
@@ -1248,19 +1293,10 @@
                                                                       "has": {
                                                                         "all": [
                                                                           {
-                                                                            "any": [
-                                                                              {
-                                                                                "kind": "string"
-                                                                              },
-                                                                              {
-                                                                                "kind": "concatenated_string"
-                                                                              }
-                                                                            ]
+                                                                            "kind": "string"
                                                                           },
                                                                           {
-                                                                            "value": {
-                                                                              "regex": "^(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)$"
-                                                                            }
+                                                                            "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"\"\"|'''(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)'''|\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"|'(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)')$"
                                                                           },
                                                                           {
                                                                             "not": {

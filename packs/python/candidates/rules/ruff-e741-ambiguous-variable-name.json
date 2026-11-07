@@ -3,7 +3,7 @@
   "id": "ruff-e741-ambiguous-variable-name",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's E741 (ambiguous-variable-name): a name `l`, `I` or `O` bound as a variable: assignment, augmented-assignment, annotated, `for`/comprehension, `with ... as`, `except ... as` and walrus targets (through tuple, list and starred unpacking), `global`/`nonlocal` names, function and lambda parameters, and `type` alias names. Not match-pattern captures, imports, type parameters or `del`. Stub files (`.pyi`) are skipped.",
+  "description": "Avoid naming variables or parameters l, I or O; in many fonts they are hard to tell apart from 1 and 0.",
   "scope": {
     "include": [
       "**/*"

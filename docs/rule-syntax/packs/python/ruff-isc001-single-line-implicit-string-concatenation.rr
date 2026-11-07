@@ -1,0 +1,21 @@
+.policy "ruff-isc001-single-line-implicit-string-concatenation" revision 2
+.description "Join string literals that are implicitly concatenated on one line into a single literal; the split adds nothing and may hide a forgotten comma."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ISC001 (flake8-implicit-str-concat): two string literals side by side on one line, which Python joins
+// into one. On one line that is usually a missing comma, or a leftover of a reformat. Any pair counts: plain,
+// f-, t- and bytes strings, inside f-string interpolations too; a pair split over lines (ISC002) does not.
+// Reported at the first literal of the pair. (Ruff's fix, merging them, is not offered here.)
+//   _ = "a" "b" "c"                ← ISC001 at "a" and at "b"
+//   _ = f"a {'b' 'c'} e"           ← ISC001 inside the interpolation
+//   _ = ("abc"
+//        "def")                     not reported: on two lines
+#include "python/ast.rr"
+
+.violation ISC001(at: node) code "ISC001"
+    "Merge these adjacent literals into one string, escaping any braces or quotes the merge exposes; if they were meant as separate items, add the missing comma instead."
+    suppress ruff "ISC001"
+ISC001(a) :- kind(cs, "concatenated_string"), child(cs, a, _), kind(a, "string"), next_sibling(a, b), kind(b, "string"),
+    end_line(a, l), line(b, l).

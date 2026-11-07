@@ -3,7 +3,7 @@
   "id": "bandit-b308-mark-safe",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect potentially unsafe django mark_safe calls",
+  "description": "Avoid Django's mark_safe(); it turns off autoescaping and can expose cross-site scripting when the content isn't fully trusted.",
   "scope": {
     "include": [
       "**/*.py"
@@ -33,7 +33,7 @@
       "violation": {
         "code": "B308",
         "anchor": "witness.span",
-        "message": "Use of mark_safe may expose cross-site scripting vulnerabilities and should be reviewed.",
+        "message": "Build this HTML with format_html() instead of mark_safe so any untrusted parts get escaped.",
         "suppress": {
           "nosec": {
             "codes": [

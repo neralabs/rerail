@@ -1,3 +1,0 @@
-
-				(Foo && Foo())<string, number>;
-			

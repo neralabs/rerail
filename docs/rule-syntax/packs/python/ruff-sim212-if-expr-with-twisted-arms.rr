@@ -1,0 +1,19 @@
+.policy "ruff-sim212-if-expr-with-twisted-arms" revision 2
+.description "Swap the arms of a conditional expression that tests not x and falls back to x, so the test reads x without the negation."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM212 (flake8-simplify): `a if not b else b`, b a plain name in the test and the else arm. Ruff's
+// fix (`b if b else a`) is unsafe; none here.
+//   y = 0 if not x else x          ← SIM212: y = x if x else 0
+//   y = 0 if not x.a else x.a      not reported: only names
+#include "python/ruff.rr"
+//   unparen(e, m)
+
+.violation SIM212(at: node, a: node, b: symbol) code "SIM212"
+    "Swap the arms to read `{b} if {b} else {a}`, dropping the `not` from `{a} if not {b} else {b}`."
+    suppress ruff "SIM212"
+SIM212(e, a, x) :- kind(e, "conditional_expression"), child(e, a, 0), child(e, t, 1), unparen(t, n),
+    kind(n, "not_operator"), field(n, "argument", v), unparen(v, tv), kind(tv, "identifier"), text(tv, x),
+    child(e, o, 2), unparen(o, ov), kind(ov, "identifier"), text(ov, x).

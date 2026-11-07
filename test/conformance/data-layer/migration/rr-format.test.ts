@@ -16,10 +16,10 @@ describe("data-layer .rr authoring contract", () => {
     execFileSync(python, ["scripts/dsl/data_layer_rr/migration.py", "inventory"], {
       timeout: 30_000, stdio: "pipe",
     });
-    const manifest = JSON.parse(readFileSync("packs/data-layer/candidates/rr/migration.json", "utf8")) as {
+    const manifest = JSON.parse(readFileSync("gate/data-layer/packs/data-layer/candidates/rr/migration.json", "utf8")) as {
       rules: { check: string; legacyPath: string }[];
     };
-    const authored = ["packs/data-layer/rules", "packs/data-layer/candidates/rules"]
+    const authored = ["gate/data-layer/packs/data-layer/rules", "gate/data-layer/packs/data-layer/candidates/rules"]
       .flatMap(directory => readdirSync(directory).filter(file => file.endsWith(".json")).map(file => join(directory, file)))
       .sort();
     expect(authored).toEqual(manifest.rules.map(rule => rule.legacyPath).sort());

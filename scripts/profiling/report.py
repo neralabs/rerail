@@ -1,17 +1,8 @@
 """Aggregate attributed native spans. Inclusive spans must not be added to children."""
 import collections
 import json
-from analysis.cpu import summarize as cpu_attribution
 
 LEAF_PHASES = {"syntax-prepare", "producer-stage", "producer-publish", "syntax-owners", "sql-release", "input-extract", "sql-input", "sql-validate", "sql-materialize", "sql-index", "sql-analyze", "sql-result", "sql-reach-prepare", "sql-reach-walk", "sql-reach-index", "anchor-fact-preparation", "anchor-lower", "anchor-prepare", "anchor-materialize", "anchor-index", "anchor-results", "anchor-schema", "anchor-release", "anchor-explain"}
-PLANNING_PHASES = {"anchor-fragment", "anchor-compose", "anchor-layout", "anchor-render", "anchor-ownership"}
-
-
-def sample_leaf_phases(events):
-    """Use planning children when available; retain historical parent-only captures."""
-    if any(event["phase"] in PLANNING_PHASES for event in events):
-        return (LEAF_PHASES - {"anchor-lower"}) | PLANNING_PHASES
-    return LEAF_PHASES
 
 
 def aggregate(log):
@@ -50,7 +41,7 @@ def aggregate(log):
                         row["counters"][name] = max(row["counters"][name], value)
                     else:
                         row["counters"][name] += value
-    return {"exclusiveCpu": cpu_attribution(events), "traceEvents": len(events), "applies": applies, "parseErrors": parse_errors, "phaseMarkers": markers,
+    return {"traceEvents": len(events), "applies": applies, "parseErrors": parse_errors, "phaseMarkers": markers,
             "inputQueues": [{"runPhase": event["runPhase"], "cpuMs": (event.get("cpuNs") or 0) / 1e6,
                              "startUnixUs": event["startUnixUs"], **(event.get("detail") or {})}
                             for event in events if event["phase"] == "input-preparation"],
@@ -103,21 +94,12 @@ def summary(report):
     lines = [f"Elapsed: {report['elapsedSeconds']:.3f}s; exit: {report['exitCode']}; timeout: {report['timedOut']}"]
     if budget:
         if "sqliteInternal" in budget and "totalObserved" in budget:
-            lines += [f"SQL execution diagnostic: {budget['status']}; {budget['observed']}/{budget['limit']} engine submissions for the complete job; {budget['sqliteInternal']} SQLite internal executions; {budget['totalObserved']} total; target exit: {report.get('targetExitCode')}. Counts do not gate performance."]
+            lines += [f"SQL execution budget: {budget['status']}; {budget['observed']}/{budget['limit']} engine submissions for the complete job; {budget['sqliteInternal']} SQLite internal executions; {budget['totalObserved']} total; target exit: {report.get('targetExitCode')}."]
         else:
             lines += [f"Legacy SQL total: {budget['observed']}; origin split unavailable; not proof of the current engine-submission limit."]
     if "process" in report:
         process = report["process"]
         lines += [f"Sampled process tree: CPU >= {process['treeCpuSecondsLowerBound']:.3f}s; peak summed RSS {process['peakTreeRssBytes']} bytes; {process['samples']} samples.", process["note"]]
-    attribution = report['native'].get('exclusiveCpu')
-    if attribution:
-        lines += [f"Observed span CPU: {attribution['observedCpuNs']/1e6:.3f} ms; unattributed {attribution['unattributedCpuNs']/1e6:.3f} ms. Parent and child CPU are not added."]
-        lines += [f"CPU attribution coverage: missing={attribution['missingCpuEvents']}, partial overlaps={attribution['partialOverlapEvents']}, clock overdraws={attribution['cpuOverdrawEvents']}."]
-        clauses = collections.Counter()
-        for row in attribution['rows']:
-            if row['rule'] and row['clause']:
-                clauses[(row['rule'],row['clause'])] += row['selfCpuNs']
-        lines += [f"  Clause CPU {cpu/1e6:.3f} ms: {rule}/{clause}" for (rule,clause),cpu in clauses.most_common(12)]
     fields = [row["fieldLookups"] for row in report["native"].get("applies", []) if row.get("fieldLookups")]
     if fields:
         lines += [f"Field navigation: {sum(row['calls'] for row in fields)} lookups; {sum(row['childrenExamined'] for row in fields)} child examinations; {sum(row['missChildrenExamined'] for row in fields)} examinations in failed lookups; maximum scan {max(row['maxScan'] for row in fields)}."]
@@ -133,18 +115,12 @@ def summary(report):
     batches = [row for row in report["native"].get("applies", []) if "anchorBatches" in row]
     if batches:
         lines += [f"SQL candidates: {sum(row['anchorBatches'] for row in batches)} batches; {sum(row['anchorSqlDataStatements'] for row in batches)} SQL data statements, including {sum(row['anchorSqlMaterializations'] for row in batches)} materializations; {sum(row['anchorBatchFiles'] for row in batches)} file memberships; {sum(row['anchorBatchPlans'] for row in batches)} plan memberships; {sum(row['anchorBatchFailures'] for row in batches)} failed batches; {sum(row['anchorCacheMisses'] for row in batches)} missing prepared selections; peak compact candidate storage {max(row['peakPreparedCandidateBytes'] for row in batches)} bytes."]
-    anchors = [row for row in report["native"].get("spans", []) if row["phase"].startswith("anchor-") and row["phase"] not in PLANNING_PHASES | {"anchor-batch"}]
+    anchors = [row for row in report["native"].get("spans", []) if row["phase"].startswith("anchor-") and row["phase"] != "anchor-batch"]
     if anchors:
         cpu = collections.Counter()
         for row in anchors:
             cpu[row["phase"]] += row["cpuMs"]
         lines += ["Candidate SQL API CPU (ms; batch parent excluded): " + "; ".join(f"{key}={value:.3f}" for key, value in sorted(cpu.items()))]
-    planning = collections.Counter()
-    for row in report["native"].get("spans", []):
-        if row["phase"] in PLANNING_PHASES:
-            planning[row["phase"]] += row["cpuMs"]
-    if planning:
-        lines += ["Candidate lowering breakdown (ms; included in anchor-lower): " + "; ".join(f"{key}={value:.3f}" for key, value in sorted(planning.items()))]
     for batch in report["native"].get("anchorPreparations", []) + report["native"].get("anchorBatches", []):
         reader = batch.get("reader", {})
         lines += [f"Candidate reader ({batch['runPhase']}): {sum(reader.get('reads', []))} BLOB reads, {sum(reader.get('bytes', []))} bytes, {reader.get('blob_opens', 0)} handle opens, {reader.get('texts', 0)} text extractions, {reader.get('child_steps', 0)} child steps; {batch.get('emittedRows', 0)} candidate rows."]

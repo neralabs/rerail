@@ -32,15 +32,64 @@
     {
       "id": "executor",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "run_in_executor\\s*\\(",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "#\\s*noqa:\\s*async-executor"
-            ],
-            "terminators": "lf"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "regex": "run_in_executor$"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "call",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "inside": {
+                            "kind": "call",
+                            "stopBy": "neighbor",
+                            "field": "function"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "attribute"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "layout": {
+                    "line": "(?:#\\s*noqa:\\s*async-executor)"
+                  }
+                }
+              }
+            ]
           }
         }
       },

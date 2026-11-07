@@ -1,1 +1,0 @@
-class x { horse() { if (err) { return callback(); } callback(); } } 

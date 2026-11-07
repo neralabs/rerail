@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "complexity-cyclomatic-python",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Cyclomatic complexity of Python functions, with lizard 1.24.0's decision points. Each def (async, decorated and methods included) is scored; a nested def is scored on its own and adds nothing to its parent, while a lambda is not a function here, so its conditions count toward the enclosing def. Decision points: if, elif, for and async for, while, except, finally, each and/or operator, each case of a match, the if of a conditional expression, and every for and if clause of a comprehension (a case guard is an if clause too). else, with, assert, try and return do not count. Deviation from lizard 1.24.0: a def whose return annotation spans several lines, or whose parameter list breaks after a default holding brackets, is scored whole here, where lizard ends it inside its signature and scores it 1 (a defect fixed in crapkit #72). A function fails when its cyclomatic complexity, 1 + its decision points, exceeds 6 (7 or more); the finding spans the whole function and its message gives the computed number. Test files and vendored, virtual-environment and build directories are out of scope.",
+  "description": "Keep Python functions at cyclomatic complexity 6 or below, counting each if, elif, loop, except, match, and/or and comprehension clause; branch-heavy functions are hard to follow and test.",
   "scope": {
     "include": [
       "**/*.py"
@@ -30,18 +30,28 @@
         "ast": {
           "language": "python",
           "rule": {
-            "matches": "boundary",
-            "count": {
-              "has": {
-                "matches": "decision",
-                "stopBy": {
-                  "matches": "boundary"
+            "all": [
+              {
+                "matches": "boundary",
+                "count": {
+                  "has": {
+                    "matches": "decision",
+                    "stopBy": {
+                      "matches": "boundary"
+                    }
+                  },
+                  "min": 6,
+                  "as": "CCN",
+                  "offset": 1
                 }
               },
-              "min": 6,
-              "as": "CCN",
-              "offset": 1
-            }
+              {
+                "has": {
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              }
+            ]
           },
           "utils": {
             "boundary": {
@@ -80,7 +90,7 @@
                   "kind": "if_clause"
                 },
                 {
-                  "kind": "case_clause"
+                  "kind": "match_statement"
                 }
               ]
             }
@@ -90,7 +100,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "Cyclomatic complexity $CCN (limit 6). Split this function into smaller ones or simplify its branching."
+        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
       }
     }
   ]

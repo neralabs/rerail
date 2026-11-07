@@ -1,1 +1,0 @@
-var A = class {static get foo() {}}; // allow: overrideMethods

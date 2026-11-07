@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sessionStartNote } from "../../../src/engine/index.js";
 import { codexHookOutput } from "../../../src/hosts/codex/codex-hook-adapter.js";
-import { goldenJson, NO_EXPLICIT_ANY, NO_FLOATING_PROMISES, SCENE_DASHBOARD, SCENE_SESSION } from "../../support/session-enforcement-scenes.js";
+import { goldenJson, NO_EXPLICIT_ANY, TWO_RULES, SCENE_DASHBOARD, SCENE_SESSION } from "../../support/session-enforcement-scenes.js";
 import { fixturesPath } from "../../support/oracles.js";
 
 const GOLDEN = fixturesPath("host", "session-enforcement", "codex");
@@ -15,10 +15,12 @@ describe("Codex session enforcement golden output", () => {
 
   it("N4 and N4b: one plain line per rule with its link printed, and the blocks for the agent", async () => {
     await expect(goldenJson(codexHookOutput("PostToolUse", [NO_EXPLICIT_ANY]))).toMatchFileSnapshot(`${GOLDEN}/n4-steer.json`);
-    await expect(goldenJson(codexHookOutput("PostToolUse", [NO_EXPLICIT_ANY, NO_FLOATING_PROMISES]))).toMatchFileSnapshot(`${GOLDEN}/n4b-two-rules.json`);
+    await expect(goldenJson(codexHookOutput("PostToolUse", [TWO_RULES]))).toMatchFileSnapshot(`${GOLDEN}/n4b-two-rules.json`);
   });
 
-  it("N4c: a late steer holds the turn open with its block", async () => {
+  it("N4c: a late steer shows its line at Stop; the block waits for the next message", async () => {
     await expect(goldenJson(codexHookOutput("Stop", [NO_EXPLICIT_ANY]))).toMatchFileSnapshot(`${GOLDEN}/n4c-late-steer-stop.json`);
+    await expect(goldenJson(codexHookOutput("PostToolUse", [{ ...NO_EXPLICIT_ANY, shown: true }])))
+      .toMatchFileSnapshot(`${GOLDEN}/n4c-late-steer-next-message.json`);
   });
 });

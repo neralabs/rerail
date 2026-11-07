@@ -1,1 +1,0 @@
-function a(err) { if (err) { obj.prop().method(err); } }

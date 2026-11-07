@@ -1,1 +1,0 @@
-/* tslint:disable:rule1 rule2 rule3... */

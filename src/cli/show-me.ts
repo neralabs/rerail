@@ -8,7 +8,7 @@ import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import type { RepositoryKey } from "../engine/catalog/repository-model.js";
 import { lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
@@ -129,7 +129,7 @@ export function startShowMe(repo: string, databasePath = defaultRerailDatabasePa
     if (ruleOwner(database) === "foreign") throw new ShowMeError(`Your library has a rule ${SHOW_ME_RULE_ID} the demo did not add, so the demo left it alone.`);
     removeDemoFile(file);
     const { repositoryKey } = recordCheckout(database, workspace);
-    upsertLibraryRule(database, loadBundledCatalog(), SHOW_ME_RULE, "code");
+    upsertLibraryRule(database, loadRuleCatalog(), SHOW_ME_RULE, "code");
     addAttachment(database, { repositoryKey, sourceKind: "library_rule", sourceId: SHOW_ME_RULE_ID, folder: "" });
   } finally {
     database.$client.close();

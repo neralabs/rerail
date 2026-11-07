@@ -1,1 +1,0 @@
-Reflect.defineProperty(foo, 'b' + 'ar', { value: function baz() {} })

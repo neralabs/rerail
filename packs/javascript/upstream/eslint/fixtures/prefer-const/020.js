@@ -1,1 +1,0 @@
-let a; while (a = foo());

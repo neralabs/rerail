@@ -7,7 +7,7 @@ Commit: `2b1504adc4291daaf080b2e932962b134da1a69a`
 The candidate policies implement behavior from `scripts/lint_*.py` at this revision.
 The original test modules run in a separate checkout.
 The recorder preserves their fixtures and assertions, then records analyzer inputs and results.
-The generated replay corpora are in `fixtures/host/data-layer-port/batch-01-recording.json` through `batch-06-recording.json`.
+The generated replay corpora are in `fixtures/host/data-layer-port/batch-01-recording.json`, `batch-02-recording.json`, and `batch-03-recording.json`.
 `batch-02-probes.json` adds source cases evaluated by the pinned analyzers and actual plugin reporters.
 These probes are separate from the original pytest corpus.
 They contain test-generated inputs and oracle results, with pinned provenance.
@@ -30,10 +30,6 @@ See [the third-batch report](../../docs/data-layer-batch-three.md).
 
 The fourth batch records nine available original pytest modules and mechanically translates literal classifier inputs.
 Its Rust check has no upstream test module at this pin.
-`batch-04-probes.json` supplies positive and clean Rust cases.
-The completed fourth batch passes its combined detection gate; retained I/O and duplicate-owner ambiguities remain documented.
+`batch-04-probes.json` provides positive and clean Rust cases and preserves unresolved native failures.
+This batch does not have complete detection parity.
 See [the fourth-batch report](../../docs/data-layer-batch-four.md).
-
-The fifth and sixth batches also have passing historical source-detection evidence.
-Their original recordings, supplemental probes, incremental checks, and retained integration contracts are described in their batch reports.
-The [restart plan](../../docs/data-layer-port-restart.md) distinguishes this historical evidence from fresh validation on a selected engine.

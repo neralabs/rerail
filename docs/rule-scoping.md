@@ -22,23 +22,23 @@ Rerail is off until it is started. Each repository and each checkout has a start
 
 ## Set-up
 
-A repository is **Not set up** until its first configuration. Starting Rerail in a repository that is not set up runs set-up there: it asks before reading the repository, recommends rule packs with the reason for each, and asks you to confirm. "Start" sets the repository up with the recommended packs, each attached at the folder the recommendation names, and starts it: a language or framework pack at the folder holding everything that matched it (for example `web` when only `web/` has TypeScript), a repository pack for the whole repository. "I'll pick rule packs myself" (`--answer pick-myself`) sets the repository up with no packs and reads no code. "Review them first" opens the dashboard's review page (`#rule-packs?review=1`, scoped to the repository and checkout) and set-up asks again rather than waiting on the browser. In the review the recommended packs show switched on until the first change; the first change adds the packs kept on, which sets the repository up without starting it, and later switches add or remove one pack. "Start Rerail with the rule packs you kept on" then starts the repository with those attachments; picking rule packs yourself after a review removes the packs the review added. Set-up remembers that it offered the review until Rerail is first started or stopped in the repository, and only a set-up made in the dashboard keeps that offer: a repository set up any other way (`rerail rules add` or `/rerail-create`, a coding agent adding rules or packs, `rerail rules import`) is set up, so starting it just starts it with what is attached. Set-up run again in a repository that is set up never asks again: it shows the summary, or says Rerail is stopped there. Set-up never adds rules created by you; you add them yourself.
+A repository is **Not set up** until its first configuration. Starting Rerail in a repository that is not set up runs set-up there: it asks before reading the repository, recommends rule packs with the reason for each, and asks you to confirm. "Start" installs the recommended packs ([Installing packs](rule-packs.md#installing-packs)), sets the repository up with them, each attached at the folder the recommendation names, and starts it: a language or framework pack at the folder holding everything that matched it (for example `web` when only `web/` has TypeScript), a repository pack for the whole repository. "Not now" (`--answer not-now`) installs, connects and turns on nothing. "Skip, I'll pick packs" at the question before it (`--answer pick-myself`) reads no code: it lists every rule pack set-up fetched, installs the ones you pick and attaches each for the whole repository, taking nothing from the lint config; "None for now" (`--packs none`) sets the repository up with no packs. A repository where an earlier version of set-up offered the dashboard's review, and nothing was changed there, goes straight to the confirm question. A repository set up any way (in the dashboard, `rerail rules add` or `/rerail-create`, a coding agent adding rules or packs, `rerail rules import`) is set up, so starting it just starts it with what is attached, asking nothing. Set-up run again in a repository that is set up never asks again: it shows the summary, or says Rerail is stopped there. Set-up never adds rules created by you; you add them yourself.
 
-A repository that is set up runs only what is attached to it. The rules that ship with Rerail run only in repositories that add them. Nothing else runs: there are no rule files in the working tree.
+A repository that is set up runs only what is attached to it. The rules of the installed rule packs run only in repositories that add them. Nothing else runs: there are no rule files in the working tree.
 
 ## Rules: attachments and settings
 
 Rules come from two places:
 
-- **By Rerail**: the rules and rule packs that ship with Rerail. They are read from the package, never copied into the database.
-- **Created by you**: the library, rules people wrote, stored once per machine. A library rule can't take a By Rerail rule's id, and one id keeps one kind (`code` or `conversation`). If a later release ships a rule with a library rule's id, the library rule wins and the By Rerail rule is reported as unavailable.
+- **By Rerail**: the rules of the rule packs installed from npm (`$RERAIL_HOME/packs`). They are read from the installed packs, never copied into the database.
+- **Created by you**: the library, rules people wrote, stored once per machine. A library rule can't take a By Rerail rule's id, and one id keeps one kind (`code` or `conversation`). If an installed pack later ships a rule with a library rule's id, the library rule wins and the By Rerail rule is reported as unavailable.
 
 A **rule attachment** adds a rule pack, a By Rerail rule or a library rule to a repository, in a folder (`""` is the whole repository; folders are relative to the repository root, POSIX, without `.` or `..`). A rule that is in an attached pack belongs to that pack even if it is also attached on its own. An attachment whose target no longer exists is reported as unavailable, never thrown.
 
 A **rule setting** changes, for one rule or one whole pack in a folder, any of:
 
 - `on`;
-- `mode` (Log, Steer or Block);
+- `mode` (Log, Steer or Block; Block is in [internal testing](../README.md#internal-testing) and is delivered like Steer);
 - `suppressions`: `honour` or `ignore` linters' suppression comments (`// eslint-disable-next-line`, `# noqa`, `# nosec`, ...). A ported rule reads the comments of the linter it ports, where its document's `suppress` names them. Under `ignore`, no linter's comment silences it;
 - `config`: the option values of one code rule by Rerail, by option name. They replace the defaults its document's `define.options` declare, and the document is resolved again with them. `config` is set on a rule (not a pack) for the whole repository (folder `""`), because one compiled rule runs in every folder of a checkout. Your library rules take no `config`: edit the rule instead. Each option must be one the document declares, with a value its declaration allows; anything else is refused with `400 invalid-setting`.
 
@@ -61,7 +61,7 @@ So `config` merges per option: a checkout that sets `{ "option": "type" }` keeps
 
 Every effective rule reports what decided each field: `repository_rules_get` returns it as `onSource`, `modeSource`, `suppressionsSource`, and `configSource`, which names the setting that decided each option (this checkout's or a containing checkout's setting, the repository's setting, the pack's starting value, or the rule's default). If a stored `config` no longer applies to the rule's document (a later release removed the option), `configError` says why, and the rule runs nowhere: it is quarantined with that reason.
 
-Conversation rules are resolved the same way for the folder the session started in.
+Conversation rules, which are in [internal testing](../README.md#internal-testing), are resolved the same way for the folder the session started in.
 
 ## Which checkout judges a file
 
@@ -77,7 +77,7 @@ The HTTP API (`/api`) is for people; MCP callers (`/mcp`) are coding agents. The
 
 Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, or starts and stops a whole repository.
 
-**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders, and a repository setting switches the original off there. The original stays a reference to the package.
+**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders, and a repository setting switches the original off there. The original stays a reference to its installed pack.
 
 ## Management surfaces
 
@@ -101,10 +101,10 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 
 **MCP caller.** The MCP bridge sends `x-rerail-caller-cwd` on every request: the URI-encoded real path of the folder its session started in. The daemon resolves it to the caller's checkout and folder; a malformed header is a JSON-RPC `-32602` error. A direct MCP client without the header must name a target.
 
-**Dashboard.** The rules page for a repository is `<origin>/?repository=<key>&checkout=<path>#rules`; `rerail manage`, `/rerail-manage` and the status line build it. Without a scope the dashboard lists repositories to pick from.
+**Dashboard.** The dashboard link for a repository is `<origin>/?repository=<key>&checkout=<path>#rules`, which opens its Overview (`#rules` is the pre-v8 name the dashboard still resolves; its own is `#overview`); `rerail manage`, `/rerail-manage` and the status line build it. Without a scope the dashboard lists repositories to pick from.
 
 ## Export and import
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset` deletes only the current repository's execution history.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
 
 Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `suppressions`, `onFrom`, `modeFrom` and `suppressionsFrom` for each folder (audits recorded before `suppressions` existed lack those two). Later edits don't rewrite past audits.

@@ -1,1 +1,0 @@
-var obj = { '\u1885': function foo() {} };

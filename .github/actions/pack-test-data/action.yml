@@ -1,0 +1,125 @@
+name: Pack test data
+description: >-
+  Puts the packs' test data (every file PACK_FIXTURE_PATTERNS in scripts/s3/pack-fixtures.mjs matches under
+  packs/<pack>/upstream/<tool>/) into the checkout: for each selected tool-pack, the archive its test-data.lock names by
+  sha256 (CONTRIBUTING.md, "Pack test data"), verified against the lock and extracted, with a pull request's tracked
+  copies winning (`fixtures:pull`). The archives come from the Actions cache, keyed by the locks, and reach it from
+  s3://nera-test-fixtures/rerail/archives/ under the repository's OIDC read role. Nothing is derived here: a pin change
+  reaches CI only as the archives and locks the nightly producer's pull request commits. Use it right after
+  `actions/checkout`, once per tool-pack or once for all of them, in one of two kinds of job. The fetching job
+  (`fetch: "true"`) only fills the cache: it looks the key up without restoring it and, on a miss, pulls the archives
+  from S3 and saves them; it needs `id-token: write` and `contents: read` (a reusable workflow's caller must grant
+  them too), restores no cache entry and runs nothing but this commit's scripts/s3/pack-fixtures.mjs (the recordings
+  warm-up of port-readiness.yml's test-data job too), and runs only for pushes and same-repository pull requests, since
+  GitHub gives a fork's or Dependabot's pull request no OIDC token. The AWS credentials reach the pull step alone, never
+  the job's environment. The consuming job (`fetch: "false"`) restores the cache entry the fetching job of the same
+  workflow run saved, verifies each archive against its lock and extracts it; it holds no `id-token`, never assumes a
+  role and never saves, and a miss fails. So a job with `id-token: write` never extracts a cache entry, whoever wrote
+  it, and a job that extracts one, or runs upstream's code (the recorder, the generators), holds no token to mint.
+  Consumers verify what they restore.
+
+inputs:
+  pack:
+    description: The pack id (packs/<id>/); empty for every pack.
+    required: false
+    default: ""
+  tool:
+    description: The tool (packs/<pack>/upstream/<tool>/), with `pack`; empty for every tool of the selected packs.
+    required: false
+    default: ""
+  fetch:
+    description: >-
+      "true": the fetching job. Look the key up without restoring it; on a miss, download the archives from S3 under
+      the read role (the job needs `id-token: write`) and save them to the cache. Nothing from the cache reaches the
+      checkout. "false": the consuming job. Restore the cache entry an earlier job of the same workflow run saved with
+      "true", verify and extract it; a miss fails, and the job needs no `id-token`.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # The script needs Node 22.15 or newer (zlib's zstd) and no npm packages.
+    - name: Set up Node.js v24
+      uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+        package-manager-cache: false
+
+    # The key names the locked sha256s alone, so it changes exactly when an archive does.
+    - id: entry
+      name: Key the cache by the test-data locks
+      shell: bash
+      env:
+        PACK: ${{ inputs.pack }}
+        TOOL: ${{ inputs.tool }}
+      run: |
+        set -euo pipefail
+        args=()
+        if [ -n "$PACK" ]; then args+=(--pack "$PACK"); fi
+        if [ -n "$TOOL" ]; then args+=(--tool "$TOOL"); fi
+        node scripts/s3/pack-fixtures.mjs cache "${args[@]}" | node -e '
+          const { appendFileSync, readFileSync } = require("node:fs");
+          const { key, paths } = JSON.parse(readFileSync(0, "utf8"));
+          appendFileSync(process.env.GITHUB_OUTPUT, `key=${key}\npaths<<EOF\n${paths.join("\n")}\nEOF\n`);
+        '
+
+    # The fetching job only asks whether the entry exists: what a cache entry holds never reaches a job with a token.
+    - id: cache
+      name: Restore the locked archives (fetching, only look them up)
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.entry.outputs.paths }}
+        key: ${{ steps.entry.outputs.key }}
+        lookup-only: ${{ inputs.fetch == 'true' }}
+
+    # A job that does not fetch (fetch: "false") holds no OIDC token, so the cache must already hold the archives: saved
+    # by the job of this run that fetched them, or by an earlier run.
+    - name: Require the archives a fetching job saved
+      if: inputs.fetch != 'true' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        KEY: ${{ steps.entry.outputs.key }}
+      run: |
+        echo "::error::the Actions cache holds no $KEY: this job does not fetch the test data (fetch: \"false\"), so the job that fetches it (.github/actions/pack-test-data with the same pack and tool, and fetch: \"true\") must run first in this workflow run"
+        exit 1
+
+    # The role reads the bucket; it is assumed with the job's OIDC token, so no AWS secret is stored here. The
+    # credentials are this step's outputs, not exported, so only the pull step below holds them.
+    - id: credentials
+      name: Assume the test data read role
+      if: inputs.fetch == 'true' && steps.cache.outputs.cache-hit != 'true'
+      uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+      with:
+        role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
+        aws-region: us-east-2
+        output-credentials: true
+        output-env-credentials: false
+
+    # Consuming: every archive was restored into the cache directory and verifies against its lock, so the pull reads no
+    # S3 (and has no credentials to). Fetching, on a miss: nothing was restored, so the pull downloads each archive from
+    # S3 (or reads the copy an earlier pull of this job downloaded) and verifies it before anything is extracted. A
+    # fetching job whose key the cache holds skips this step and the next.
+    - name: Verify and extract the archives (fetching, from S3 on a miss)
+      if: inputs.fetch != 'true' || steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PACK: ${{ inputs.pack }}
+        TOOL: ${{ inputs.tool }}
+        AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
+        AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
+        AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
+        AWS_REGION: us-east-2
+      run: |
+        set -euo pipefail
+        args=()
+        if [ -n "$PACK" ]; then args+=(--pack "$PACK"); fi
+        if [ -n "$TOOL" ]; then args+=(--tool "$TOOL"); fi
+        node scripts/s3/pack-fixtures.mjs pull "${args[@]}"
+
+    - name: Save the archives
+      if: inputs.fetch == 'true' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.entry.outputs.paths }}
+        key: ${{ steps.entry.outputs.key }}

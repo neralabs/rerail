@@ -1,11 +1,22 @@
 import { z } from "zod/v4";
+import { STEER_STRATEGIES } from "../adapter-contract.js";
 
-export const auditSettingsSchema = z.strictObject({
+const auditSettingsShape = {
   scope: z.enum(["repository", "touched-files", "ai-output"]),
   mode: z.enum(["log", "steer"]),
+  steerStrategy: z.enum(STEER_STRATEGIES),
+};
+/** A row saved before `steerStrategy` existed reads as `message`, the strategy Rerail always used. */
+export const auditSettingsSchema = z.strictObject({
+  ...auditSettingsShape,
+  steerStrategy: auditSettingsShape.steerStrategy.default("message"),
 });
 export type AuditSettings = z.infer<typeof auditSettingsSchema>;
-export const auditSettingsPatchSchema = auditSettingsSchema.partial().strict();
+/** Automatic audits report what an edit generated (`ai-output`), steer, and send the steer as its own message. */
+export const DEFAULT_AUDIT_SETTINGS: Readonly<AuditSettings> = { scope: "ai-output", mode: "steer", steerStrategy: "message" };
+/** Only the keys a patch names change: no default fills a key it leaves out. */
+export const auditSettingsPatchSchema = z.strictObject(auditSettingsShape).partial().strict();
+export type AuditSettingsPatch = z.infer<typeof auditSettingsPatchSchema>;
 export const repositoryAuditSchema = z.strictObject({
   sessionId: z.string(),
   auditId: z.string().nullable(),

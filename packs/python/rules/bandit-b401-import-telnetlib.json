@@ -3,7 +3,7 @@
   "id": "bandit-b401-import-telnetlib",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of the insecure telnetlib module.",
+  "description": "Remove imports of telnetlib; Telnet sends credentials and data unencrypted, so use SSH or another encrypted protocol.",
   "scope": {
     "include": [
       "**/*.py"
@@ -34,7 +34,7 @@
       "violation": {
         "code": "B401",
         "anchor": "witness.span",
-        "message": "A telnet-related module is being imported. Telnet is insecure; use SSH or another encrypted protocol.",
+        "message": "Remove this telnetlib import and use SSH or another encrypted protocol instead.",
         "suppress": {
           "nosec": {
             "codes": [

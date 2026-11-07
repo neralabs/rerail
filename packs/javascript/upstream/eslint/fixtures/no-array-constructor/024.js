@@ -1,1 +1,0 @@
-a = new (Array) && (foo);

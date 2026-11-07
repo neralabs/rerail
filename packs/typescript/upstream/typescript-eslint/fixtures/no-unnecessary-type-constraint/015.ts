@@ -1,1 +1,0 @@
-function data<T, U extends any>() {}

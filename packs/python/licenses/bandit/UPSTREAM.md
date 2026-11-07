@@ -14,6 +14,7 @@ Paths are relative to the pack directory, `packs/python/`.
 
 | File | Upstream path | Copy |
 |---|---|---|
+| `upstream/bandit/fixtures/__init__.py` | `examples/__init__.py` | verbatim |
 | `upstream/bandit/fixtures/assert.py` | `examples/assert.py` | verbatim |
 | `upstream/bandit/fixtures/binding.py` | `examples/binding.py` | verbatim |
 | `upstream/bandit/fixtures/cipher-modes.py` | `examples/cipher-modes.py` | verbatim |
@@ -38,9 +39,12 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/bandit/fixtures/imports-function.py` | `examples/imports-function.py` | verbatim |
 | `upstream/bandit/fixtures/imports-with-importlib.py` | `examples/imports-with-importlib.py` | verbatim |
 | `upstream/bandit/fixtures/imports.py` | `examples/imports.py` | verbatim |
+| `upstream/bandit/fixtures/init-py-test/__init__.py` | `examples/init-py-test/__init__.py` | verbatim |
+| `upstream/bandit/fixtures/init-py-test/subdirectory-okay.py` | `examples/init-py-test/subdirectory-okay.py` | verbatim |
 | `upstream/bandit/fixtures/jinja2_templating.py` | `examples/jinja2_templating.py` | verbatim |
 | `upstream/bandit/fixtures/jsonpickle.py` | `examples/jsonpickle.py` | verbatim |
 | `upstream/bandit/fixtures/logging_config_insecure_listen.py` | `examples/logging_config_insecure_listen.py` | verbatim |
+| `upstream/bandit/fixtures/long_set.py` | `examples/long_set.py` | verbatim |
 | `upstream/bandit/fixtures/mako_templating.py` | `examples/mako_templating.py` | verbatim |
 | `upstream/bandit/fixtures/mark_safe.py` | `examples/mark_safe.py` | verbatim |
 | `upstream/bandit/fixtures/mark_safe_insecure.py` | `examples/mark_safe_insecure.py` | verbatim |
@@ -52,10 +56,14 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/bandit/fixtures/mktemp.py` | `examples/mktemp.py` | verbatim |
 | `upstream/bandit/fixtures/multiline_statement.py` | `examples/multiline_statement.py` | verbatim |
 | `upstream/bandit/fixtures/new_candidates-all.py` | `examples/new_candidates-all.py` | verbatim |
+| `upstream/bandit/fixtures/new_candidates-none.py` | `examples/new_candidates-none.py` | verbatim |
 | `upstream/bandit/fixtures/new_candidates-nosec.py` | `examples/new_candidates-nosec.py` | verbatim |
 | `upstream/bandit/fixtures/new_candidates-some.py` | `examples/new_candidates-some.py` | verbatim |
 | `upstream/bandit/fixtures/no_host_key_verification.py` | `examples/no_host_key_verification.py` | verbatim |
+| `upstream/bandit/fixtures/nonsense.py` | `examples/nonsense.py` | verbatim |
+| `upstream/bandit/fixtures/nonsense2.py` | `examples/nonsense2.py` | verbatim |
 | `upstream/bandit/fixtures/nosec.py` | `examples/nosec.py` | verbatim |
+| `upstream/bandit/fixtures/okay.py` | `examples/okay.py` | verbatim |
 | `upstream/bandit/fixtures/os-chmod.py` | `examples/os-chmod.py` | verbatim |
 | `upstream/bandit/fixtures/os-exec.py` | `examples/os-exec.py` | verbatim |
 | `upstream/bandit/fixtures/os-popen.py` | `examples/os-popen.py` | verbatim |
@@ -68,6 +76,7 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/bandit/fixtures/pickle_deserialize.py` | `examples/pickle_deserialize.py` | verbatim |
 | `upstream/bandit/fixtures/popen_wrappers.py` | `examples/popen_wrappers.py` | verbatim |
 | `upstream/bandit/fixtures/pycrypto.py` | `examples/pycrypto.py` | verbatim |
+| `upstream/bandit/fixtures/pycryptodome.py` | `examples/pycryptodome.py` | verbatim |
 | `upstream/bandit/fixtures/pyghmi.py` | `examples/pyghmi.py` | verbatim |
 | `upstream/bandit/fixtures/pytorch_load.py` | `examples/pytorch_load.py` | verbatim |
 | `upstream/bandit/fixtures/random_module.py` | `examples/random_module.py` | verbatim |
@@ -83,6 +92,7 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/bandit/fixtures/tarfile_extractall.py` | `examples/tarfile_extractall.py` | verbatim |
 | `upstream/bandit/fixtures/telnetlib.py` | `examples/telnetlib.py` | verbatim |
 | `upstream/bandit/fixtures/trojansource.py` | `examples/trojansource.py` | verbatim |
+| `upstream/bandit/fixtures/trojansource_latin1.py` | `examples/trojansource_latin1.py` | verbatim |
 | `upstream/bandit/fixtures/try_except_continue.py` | `examples/try_except_continue.py` | verbatim |
 | `upstream/bandit/fixtures/try_except_pass.py` | `examples/try_except_pass.py` | verbatim |
 | `upstream/bandit/fixtures/unverified_context.py` | `examples/unverified_context.py` | verbatim |

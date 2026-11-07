@@ -3,7 +3,7 @@
   "id": "ruff-f622-multiple-starred-expressions",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F622 (multiple-starred-expressions, a semantic syntax error) with default settings: a tuple or list assignment target (assignment, `for`, comprehension `for`, `with ... as`), at any nesting, with two or more starred elements of its own. Reported on the target tuple or list, parentheses included.",
+  "description": "Use at most one starred element in each Python unpacking target; two in the same target is a syntax error.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

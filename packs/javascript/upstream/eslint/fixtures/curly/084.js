@@ -1,1 +1,0 @@
-if (a) { lbl:if (b) foo(); } else bar();

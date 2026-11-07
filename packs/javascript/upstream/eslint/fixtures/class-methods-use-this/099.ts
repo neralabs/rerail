@@ -1,1 +1,0 @@
-class Foo { protected override property = () => {} }

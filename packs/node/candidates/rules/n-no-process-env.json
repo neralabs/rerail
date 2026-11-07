@@ -1,0 +1,97 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-process-env",
+  "revision": 3,
+  "mode": "steer",
+  "description": "Avoid reading process.env directly; pass configuration in explicitly so dependencies on the environment stay visible and testable.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^process$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^env$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^process$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "kind": "string",
+                      "has": {
+                        "kind": "string_fragment",
+                        "regex": "^env$"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-process-env",
+        "message": "Pass this value in as configuration instead of reading process.env here.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-process-env"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-process-env"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noProcessEnv"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

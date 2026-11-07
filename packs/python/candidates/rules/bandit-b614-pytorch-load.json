@@ -3,7 +3,7 @@
   "id": "bandit-b614-pytorch-load",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect unsafe PyTorch model loading",
+  "description": "Load PyTorch files with weights_only=True or use safetensors; a full torch.load unpickles the file and can run arbitrary code.",
   "scope": {
     "include": [
       "**/*.py"

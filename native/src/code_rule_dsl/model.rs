@@ -136,6 +136,8 @@ pub(super) struct ViolationSpec {
     /// The message's `$NAME` references; `None` when it is literal text.
     pub(super) message_template: Option<Template>,
     pub(super) fix: Option<Arc<FixPlan>>,
+    /// The source fix template for relational output rendering.
+    pub(super) fix_template: Option<Template>,
     /// Per dialect, the rule's regexes with named groups that test the witness node itself.
     pub(super) node_regexes: Vec<(GrammarDialect, Vec<Regex>)>,
     /// `each`: an ast query's capture, one violation per distinct binding of it at a root.
@@ -334,6 +336,17 @@ impl Template {
         self.vars().next().is_none()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::code_rule_dsl) fn parts(&self) -> impl Iterator<Item = TemplatePart<'_>> {
+        self.segments.iter().map(|segment| match segment {
+            Segment::Text(text) => TemplatePart::Text(text),
+            Segment::Var { name, multi } => TemplatePart::Var {
+                name,
+                multi: *multi,
+            },
+        })
+    }
+
     /// Each referenced metavariable and whether it is referenced as `$$$NAME`.
     pub(super) fn vars(&self) -> impl Iterator<Item = (&str, bool)> {
         self.segments.iter().filter_map(|segment| match segment {
@@ -361,6 +374,12 @@ impl Template {
 
 /// `${NAME}` or `$$${NAME}` at the start of `source`: the name, whether it is a multi-capture, and
 /// the length read.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(in crate::code_rule_dsl) enum TemplatePart<'a> {
+    Text(&'a str),
+    Var { name: &'a str, multi: bool },
+}
+
 fn braced_var(source: &str) -> Option<(String, bool, usize)> {
     let (multi, rest) = match source.strip_prefix("$$${") {
         Some(rest) => (true, rest),
@@ -460,6 +479,8 @@ pub(super) struct FactQuery {
 }
 
 impl FactQuery {
+    // Read by P's relational compiler (test-only, open item O18).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn retain_projected_fields(&mut self, fields: Option<&BTreeSet<String>>) {
         let needed = |p: &Projection| fields.is_some_and(|f| f.contains(&p.field));
         if self.project.iter().any(|p| !needed(p)) {
@@ -489,7 +510,7 @@ pub(super) struct AstRelation {
     pub(super) domain: Option<CodeRuleScope>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum RegexSource {
     Content,
     Path,
@@ -648,7 +669,6 @@ impl Terms {
 #[derive(Clone)]
 pub(super) enum ClauseKind {
     Forbid(Query),
-    Relational(super::relational::Plan),
     RequireEach {
         subject: FactQuery,
         evidence: FactQuery,
@@ -661,12 +681,19 @@ pub(super) enum ClauseKind {
         distinct: Vec<String>,
     },
     Llm,
+    /// P's relational clause, compiled only under test (`residency::admission::relational`,
+    /// open item O18).
+    #[cfg(test)]
+    Relational(crate::code_rule_dsl::residency::admission::relational::Plan),
 }
 
 impl ClauseKind {
+    /// The query whose `calls` terms the clause holds (P's; a relational clause's reference query
+    /// is P's test-only stage, O18).
     pub(super) fn calls_query(&self) -> Option<&Query> {
         match self {
             Self::Forbid(query) => Some(query),
+            #[cfg(test)]
             Self::Relational(plan) => plan.references.as_ref().map(|reference| &reference.query),
             _ => None,
         }
@@ -682,6 +709,9 @@ pub(super) struct CompiledClause {
     /// A synthetic leaf under a `select_when`'s `exists` side: one witness answers it, so a file's
     /// evaluation stops at its first witness.
     pub(super) decision: bool,
+    /// D's plan for a relational clause, compiled by D's compiler beside P's (test-only, O19).
+    #[cfg(test)]
+    pub(super) data_layer: Option<std::sync::Arc<crate::code_rule_dsl::waves::relational::Plan>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -716,7 +746,7 @@ pub(super) struct CompiledCodeRule {
     /// Report the rule's combined findings only when their count exceeds this ceiling.
     pub(super) report_count_gt: Option<usize>,
     pub(super) rule_mode: RuleMode,
-    pub(super) canonical: Arc<str>,
+    pub(super) canonical: String,
     pub(super) digest: String,
     pub(super) required_capabilities: String,
     pub(super) scope: CodeRuleScope,
@@ -733,11 +763,12 @@ impl CompiledCodeRule {
                 subject.ast.query.reads_server_graph() || evidence.ast.query.reads_server_graph()
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_server_graph(),
+            ClauseKind::Llm => false,
+            #[cfg(test)]
             ClauseKind::Relational(plan) => plan
                 .inputs
                 .iter()
                 .any(|(_, input)| input.ast.query.reads_server_graph()),
-            ClauseKind::Llm => false,
         })
     }
 }
@@ -747,8 +778,6 @@ pub(super) struct FileInput {
     pub(super) path: String,
     pub(super) language: String,
     pub(super) source: Arc<String>,
-    /// Exact input byte length, retained when the source buffer is released or evicted.
-    pub(super) source_bytes: usize,
     /// A Python file's module path: the host's (`module`), else the file's stem.
     pub(super) module: Option<Arc<ModulePath>>,
     /// An ECMA file's nearest `package.json` (`package`); `None` without one.
@@ -784,7 +813,6 @@ impl FileInput {
         Ok(Self {
             path,
             language,
-            source_bytes: source.len(),
             source,
             module: module.map(Arc::new),
             package,
@@ -883,10 +911,6 @@ pub(super) struct Metrics {
     pub(super) files: usize,
     pub(super) visited_nodes: usize,
     pub(super) witnesses: usize,
-    pub(super) python_ast_parses: usize,
-    pub(super) python_ast_module_walks: usize,
-    pub(super) syntax_loads: usize,
-    pub(super) relational_materializations: std::collections::BTreeMap<String, usize>,
     pub(super) line_index_nanoseconds: u64,
     pub(super) regex_nanoseconds: u64,
     pub(super) ast_parse_nanoseconds: u64,
@@ -920,27 +944,10 @@ pub(super) struct Metrics {
 }
 
 impl Metrics {
-    pub(super) fn observe_native_work(&mut self, other: &Self) {
-        self.python_ast_parses += other.python_ast_parses;
-        self.python_ast_module_walks += other.python_ast_module_walks;
-        self.syntax_loads += other.syntax_loads;
-        for (name, count) in &other.relational_materializations {
-            *self
-                .relational_materializations
-                .entry(name.clone())
-                .or_default() += count;
-        }
-    }
     pub(super) fn merge(&mut self, other: Self) {
         self.files += other.files;
         self.visited_nodes += other.visited_nodes;
         self.witnesses += other.witnesses;
-        self.python_ast_parses += other.python_ast_parses;
-        self.python_ast_module_walks += other.python_ast_module_walks;
-        self.syntax_loads += other.syntax_loads;
-        for (name, count) in other.relational_materializations {
-            *self.relational_materializations.entry(name).or_default() += count;
-        }
         self.line_index_nanoseconds += other.line_index_nanoseconds;
         self.regex_nanoseconds += other.regex_nanoseconds;
         self.ast_parse_nanoseconds += other.ast_parse_nanoseconds;

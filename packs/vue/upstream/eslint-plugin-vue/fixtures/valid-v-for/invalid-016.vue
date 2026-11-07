@@ -1,1 +1,0 @@
-<template><div><div v-for="(item, index) in suggestions" :key></div></div></template>

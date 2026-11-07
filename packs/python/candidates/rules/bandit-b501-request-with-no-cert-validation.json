@@ -3,7 +3,7 @@
   "format": "rerail.policy/v1",
   "revision": 4,
   "mode": "steer",
-  "description": "Detect requests HTTP-verb calls and httpx request/stream/client calls whose verify keyword is the literal False (or the string 'False'), reading the callee's root as Bandit's call qualname does: through the head's import alias, with relative imports named by their module text and the dots ignored, and otherwise by the head's own text.",
+  "description": "Don't turn off TLS certificate verification in requests or httpx calls; it exposes traffic to man-in-the-middle attacks.",
   "scope": {
     "include": [
       "**/*.py"
@@ -381,7 +381,7 @@
         }
       },
       "violation": {
-        "message": "Certificate verification is explicitly disabled",
+        "message": "Remove verify=False so TLS certificates are checked, passing a CA bundle path if needed; otherwise traffic is open to interception.",
         "anchor": "capture.VERIFY",
         "code": "B501",
         "suppress": {

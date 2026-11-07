@@ -1,1 +1,0 @@
-var foo = "foo \400 bar";

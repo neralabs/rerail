@@ -1,11 +1,11 @@
 /**
- * The pack validation contract (docs/pack-format.md, "The validation contract"): checks 1 to 6 over one
+ * The pack validation contract (docs/pack-format.md, "The validation contract"): checks 1 to 8 over one
  * `packs/<id>/` directory. Test support, not runtime: test/engine/catalog/packs.test.ts calls it for every pack, and it reuses the
  * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
+import { basename, dirname, join, matchesGlob, posix, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import {
   languageFor,
@@ -21,9 +21,12 @@ import {
   type RulePackFile,
   compareDeterministicStrings,
   LANGUAGE_REGISTRY,
+  RULE_PACK_LIST,
 } from "../src/engine/index.js";
+import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
+import { packFixtureAbsence } from "../scripts/s3/pack-fixtures.mjs";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -34,6 +37,8 @@ export const PACK_CHECKS = [
   { number: 4, name: "ports" },
   { number: 5, name: "package" },
   { number: 6, name: "licences" },
+  { number: 7, name: "manifest" },
+  { number: 8, name: "text" },
 ] as const;
 export type PackCheckName = (typeof PACK_CHECKS)[number]["name"];
 
@@ -66,6 +71,12 @@ export interface ValidatePackOptions {
   corpora?: boolean;
   /** Corpus checkouts, `<corpusRoot>/<corpus name>`; default the nearest `.rerail/corpora/<pack>`. */
   corpusRoot?: string;
+  /**
+   * Whether the pack must be in core's generated pack list (`src/engine/catalog/pack-list.generated.ts`), and that
+   * list current. Default: when `directory` is one of the repository's `packs/` directories, the packs Rerail
+   * publishes; a fixture pack elsewhere is published nowhere, so no list names it.
+   */
+  listed?: boolean;
 }
 
 /** Validation material: kept in the repository, never published. */
@@ -74,6 +85,10 @@ const VALIDATION_MATERIAL = [CONFORMANCE_FILE, "divergences.json", "upstream", "
 const RERAIL_LICENSE = "Apache-2.0";
 const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
 const UPSTREAM_ROW = /^\|\s*`([^`]+)`/u;
+/** A row's upstream path, its second column. */
+const UPSTREAM_SOURCE = /^\|\s*`[^`]+`\s*\|\s*`([^`]+)`/u;
+/** An upstream path prefix an UPSTREAM.md declares nothing may be copied from (a copyleft project's material). */
+const NOT_COPIED = /^- Not copied: `([^`]+)`/gmu;
 
 let allowlist: ReadonlySet<string> | undefined;
 /** The repository's licence allowlist, the one `scripts/check/check-licenses.mjs` enforces. */
@@ -376,35 +391,124 @@ function readLicences(directory: string): Licences {
     const licence = UPSTREAM_LICENSE.exec(text)?.[1];
     if (licence === undefined) failures.push(`${record}: no "License: <SPDX id>" line`);
     else recorded.set(project, licence);
+    const notCopied = [...text.matchAll(NOT_COPIED)].map(match => match[1]!);
     for (const line of text.split("\n")) {
       const file = UPSTREAM_ROW.exec(line)?.[1];
       if (file !== undefined && !listed.has(file)) listed.set(file, record);
+      const source = UPSTREAM_SOURCE.exec(line)?.[1];
+      const refused = source === undefined ? undefined : notCopied.find(prefix => source.startsWith(prefix));
+      if (refused !== undefined) failures.push(`${record} lists ${file} as copied from ${source}, under ${refused}, which it lists as not copied`);
     }
   }
   return { recorded, listed, failures };
 }
 
 /**
+ * The failures for listed files (file, the UPSTREAM.md listing it) the pack directory lacks. Pack test data is not in
+ * git, so a checkout without it lacks every listed copy: one failure per record says to pull and derive it.
+ */
+function missingListed(directory: string, listed: Iterable<readonly [file: string, record: string]>): string[] {
+  const failures: string[] = [];
+  const absent = new Map<string, string[]>();
+  for (const [file, record] of listed) {
+    const path = join(directory, file);
+    if (existsSync(path)) continue;
+    if (packFixtureAbsence(path) !== undefined) absent.set(record, [...(absent.get(record) ?? []), file]);
+    else failures.push(`${record} lists ${file}, which does not exist`);
+  }
+  for (const [record, files] of absent) {
+    const more = files.length === 1 ? "" : ` (and ${files.length - 1} more listed file(s))`;
+    failures.push(`${record} lists ${files[0]}${more}: ${packFixtureAbsence(join(directory, files[0]!))}`);
+  }
+  return failures;
+}
+
+/**
  * Files Rerail wrote under `upstream/<tool>/` subdirectories (a corpus authored for the tool to score), as the tool's own
- * `upstream/<tool>/UPSTREAM.md` lists them, pack-relative. A record may list only its tool's files.
+ * `upstream/<tool>/UPSTREAM.md` lists them, pack-relative, and every file under `upstream/<tool>/authored/`, the place
+ * of a contributor's corpus and its ground truth (AUTHORED_CORPUS_PATTERN, scripts/s3/pack-fixtures.mjs). A record may
+ * list only its tool's files.
  */
 function readAuthored(directory: string): { authored: Set<string>; failures: string[] } {
   const authored = new Set<string>();
   const failures: string[] = [];
+  const missing: [file: string, record: string][] = [];
   const upstream = join(directory, "upstream");
   if (!existsSync(upstream)) return { authored, failures };
   for (const tool of readdirSync(upstream, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareDeterministicStrings)) {
+    for (const file of filesUnder(directory, join(upstream, tool, "authored"))) authored.add(file);
     const record = `upstream/${tool}/UPSTREAM.md`;
     if (!existsSync(join(directory, record))) continue;
     for (const line of readFileSync(join(directory, record), "utf8").split("\n")) {
       const file = UPSTREAM_ROW.exec(line)?.[1];
       if (file === undefined) continue;
       if (!file.startsWith(`upstream/${tool}/`)) failures.push(`${record} lists ${file}, which is not under upstream/${tool}/`);
-      else if (!existsSync(join(directory, file))) failures.push(`${record} lists ${file}, which does not exist`);
+      else if (!existsSync(join(directory, file))) missing.push([file, record]);
       else authored.add(file);
     }
   }
+  failures.push(...missingListed(directory, missing));
   return { authored, failures };
+}
+
+const PACK_LIST_MODULE = "src/engine/catalog/pack-list.generated.ts";
+
+/** The longest description, for people browsing the catalog (docs/pack-format.md, "Rule text"). */
+export const DESCRIPTION_CHARS = 200;
+/** Upstream tools a rule's text must not name; a tool's plugins share its name (`eslint-plugin-react`, `typescript-eslint`). */
+const TOOL_NAMES = /\b(?:eslint|oxlint|biome|ruff|bandit|pylint|flake8|clippy|sqlfluff|phpstan|psalm|phpcs|tlint|bladestan|lizard)\b/iu;
+/** A sentence end inside the text: a full stop or question mark, then a capital. */
+const SENTENCE_BREAK = /[.?]\s+\p{Lu}/u;
+/** Text the rule quotes, a configured value or code, which may hold any word. */
+const QUOTED = /'[^']*'|`[^`]*`/gu;
+/** Abbreviations whose full stop ends no sentence. */
+const ABBREVIATION = /\b(?:e\.g|i\.e|etc|vs)\./giu;
+
+/**
+ * Check 8 (text): a rule document's description meets the description criteria a machine can check. It is one
+ * sentence ending in a period, at most DESCRIPTION_CHARS, with no backticks and no tool name. Violation messages are
+ * left to review (docs/pack-format.md, "Message"): no check reads them.
+ */
+export function textFailures(file: string, text: string): string[] {
+  let document: unknown;
+  try {
+    document = JSON.parse(text);
+  } catch {
+    return []; // Check 1 reports a document that does not parse.
+  }
+  const failures: string[] = [];
+  const sentence = (what: string, value: string, limit: number, form: boolean): void => {
+    const plain = value.replace(QUOTED, "''").replace(ABBREVIATION, "");
+    if (value.length > limit) failures.push(`${file}: ${what} is ${value.length} characters, over ${limit}: ${value}`);
+    if (form && !value.endsWith(".")) failures.push(`${file}: ${what} does not end with a period: ${value}`);
+    if (form && SENTENCE_BREAK.test(plain)) failures.push(`${file}: ${what} is more than one sentence: ${value}`);
+    if (TOOL_NAMES.test(plain)) failures.push(`${file}: ${what} names an upstream tool: ${value}`);
+  };
+  const description = (document as { description?: unknown }).description;
+  if (typeof description !== "string" || description.trim() === "") failures.push(`${file}: has no description`);
+  else {
+    sentence("description", description, DESCRIPTION_CHARS, true);
+    if (description.includes("`")) failures.push(`${file}: description holds code (backticks): ${description}`);
+  }
+  return failures;
+}
+
+/**
+ * Check 7 (manifest): `pack.json` has a `match`, so set-up can recommend the pack; and, when `listed`, core's
+ * generated pack list is current and names the pack.
+ */
+function manifestFailures(directory: string, packJson: unknown, listed: boolean): string[] {
+  const failures: string[] = [];
+  const id = basename(directory);
+  if (listed) {
+    if (readFileSync(PACK_LIST_MODULE_PATH, "utf8") !== renderPackListModule()) failures.push(`${PACK_LIST_MODULE} is stale; run npm run generate:packs`);
+    if (!RULE_PACK_LIST.some(entry => entry.id === id)) failures.push(`${PACK_LIST_MODULE} does not list ${id}; run npm run generate:packs`);
+  }
+  if (packJson === undefined) return [...failures, "pack.json does not parse; see check 1"];
+  const raw = z.looseObject({ match: z.unknown() }).safeParse(packJson);
+  if (!raw.success || raw.data.match === undefined) return [...failures, "pack.json has no match: set-up could never recommend this pack"];
+  if (!rulePackFileSchema.shape.match.safeParse(raw.data.match).success) return [...failures, "pack.json: match does not pass the schema; see check 1"];
+  return failures;
 }
 
 /**
@@ -413,7 +517,7 @@ function readAuthored(directory: string): { authored: Set<string>; failures: str
  */
 export async function validatePack(directory: string, options: ValidatePackOptions = {}): Promise<PackValidation> {
   const id = basename(directory);
-  const checks: Record<PackCheckName, string[]> = { rules: [], proof: [], examples: [], ports: [], package: [], licences: [] };
+  const checks: Record<PackCheckName, string[]> = { rules: [], proof: [], examples: [], ports: [], package: [], licences: [], manifest: [], text: [] };
   /** Failures per pack.json rule id, for the rule's status. */
   const ruleFailures = new Map<string, string[]>();
   const fail = (check: PackCheckName, text: string, rule?: string): void => {
@@ -424,11 +528,14 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document is named for its id, exists,
   // carries the listed id and compiles against core's capabilities; candidates and ports follow the same id rule.
   let pack: RulePackFile | undefined;
+  /** pack.json as JSON, before the schema: check 7 reads its `match` even when another field fails check 1. */
+  let packJson: unknown;
   const packPath = join(directory, "pack.json");
   if (!existsSync(packPath)) fail("rules", "pack.json is missing");
   else {
     try {
-      const parsed = rulePackFileSchema.safeParse(parseJsonWithoutDuplicateKeys(readFileSync(packPath, "utf8"), "pack.json"));
+      packJson = parseJsonWithoutDuplicateKeys(readFileSync(packPath, "utf8"), "pack.json");
+      const parsed = rulePackFileSchema.safeParse(packJson);
       if (parsed.success) pack = parsed.data;
       else fail("rules", `pack.json: ${z.prettifyError(parsed.error)}`);
     } catch (error) {
@@ -621,8 +728,9 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
   }
 
-  // Check 6: licences. Every copied file is listed in an UPSTREAM.md, every listed file exists, and every recorded
-  // licence is on the repository allowlist. Under upstream/<tool>/, the recordings and the recorder (files directly in
+  // Check 6: licences. Every copied file is listed in an UPSTREAM.md, every listed file exists, no listed file is
+  // copied from an upstream path its UPSTREAM.md lists as "Not copied" (readLicences), and every recorded licence is
+  // on the repository allowlist. Under upstream/<tool>/, the recordings and the recorder (files directly in
   // it) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool, unless the tool's
   // own upstream/<tool>/UPSTREAM.md lists it as Rerail's.
   for (const failure of licences.failures) fail("licences", failure);
@@ -636,8 +744,18 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (file.split("/").length > 3 && !licences.listed.has(file) && !authored.has(file))
       fail("licences", `${file} is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it`);
   }
-  for (const [file, record] of licences.listed) {
-    if (!existsSync(join(directory, file))) fail("licences", `${record} lists ${file}, which does not exist`);
+  for (const failure of missingListed(directory, licences.listed)) fail("licences", failure);
+
+  // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it.
+  for (const failure of manifestFailures(directory, packJson, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);
+
+  // Check 8: text. Every rule document's description, shipped and candidate, meets the parts of the description
+  // criteria a machine can check; violation messages are left to review. Probes are facts the ports are built on, read
+  // by no one, so are left out.
+  const listedBy = new Map((pack?.rules ?? []).map(rule => [rule.document, rule.id]));
+  const documents = [...filesUnder(directory, join(directory, "rules")), ...candidateDocuments(directory, filesUnder(directory, join(directory, "candidates"))).filter(file => !file.startsWith("candidates/probes/"))];
+  for (const file of documents) {
+    for (const failure of textFailures(file, readFileSync(join(directory, file), "utf8"))) fail("text", failure, listedBy.get(file));
   }
 
   const rules = (pack?.rules ?? []).map((rule): PackRuleResult => {

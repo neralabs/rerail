@@ -21,12 +21,13 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 1;
+pub(super) const SCHEMA_VERSION: i64 = 3;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v1.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at.
-const STORE_FILE_FLOOR: i64 = 1;
+pub const STORE_FILE_NAME: &str = "content-v3.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 3: atoms stored as segments of the arena
+/// (decision 0049); 2 was the prefilter vocabulary keyed by atom.
+const STORE_FILE_FLOOR: i64 = 3;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -84,6 +85,23 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS tape_objects_by_hash ON tape_objects(canonical_hash_id);
+-- The documents a file derives from its own (an embedded program, a generated one), keyed by the
+-- primary document's tape: documents are a function of source, grammar version and tape format,
+-- not of a path. Each derived document's text is an ordinary source and its tape an ordinary
+-- tape row; a row keeps that tape (and so its source) alive and dies with the primary tape.
+-- Ordinal 0 is the primary itself and has no row; a single-language file has none.
+CREATE TABLE IF NOT EXISTS file_documents (
+    tape_id INTEGER NOT NULL REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal > 0),
+    parent_ordinal INTEGER NOT NULL CHECK(parent_ordinal >= 0 AND parent_ordinal < ordinal),
+    role_id INTEGER NOT NULL CHECK(role_id > 0),
+    via_id INTEGER NOT NULL,
+    document_tape_id INTEGER NOT NULL REFERENCES tape_objects(tape_id),
+    source_map BLOB NOT NULL,
+    host_errors BLOB NOT NULL,
+    PRIMARY KEY (tape_id, ordinal)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS file_documents_by_document ON file_documents(document_tape_id);
 
 -- A tree is complete only when its row says so and it still has the entry count its publication
 -- wrote, so a partial entry set is republished whichever writer left it.
@@ -235,8 +253,367 @@ CREATE TABLE IF NOT EXISTS search_index_sets (
 CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_fts USING fts5(
     token, content='', contentless_delete=1, detail=full, tokenize='ascii'
 );
+-- Physical rule planning reads exact term frequencies from SQL instead of estimating them in Rust.
+CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_vocab USING fts5vocab(search_kind_fts, 'row');
 CREATE TRIGGER IF NOT EXISTS delete_tape_search_index BEFORE DELETE ON tape_objects BEGIN
     DELETE FROM search_kind_fts WHERE rowid=OLD.tape_id;
+END;
+
+-- The facts engine's memo (facts_memo.rs): per-file clause results keyed by content (a source),
+-- fact schema version, plan digest and, for a clause that reads the path, the path ('' for a
+-- content-pure one). Additive: every row cascades from its source and names no other shared row
+-- (hashes, strings, paths), so an older binary's collection can delete sources under it without
+-- orphaning or misreading a row, and the floor stays.
+CREATE TABLE IF NOT EXISTS facts_plan_sets (
+    set_digest BLOB NOT NULL CHECK(length(set_digest) = 32),
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    PRIMARY KEY (set_digest, ordinal)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS facts_results (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    fact_schema INTEGER NOT NULL CHECK(fact_schema >= 0),
+    path TEXT NOT NULL,
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    codec_id INTEGER NOT NULL,
+    raw_length INTEGER NOT NULL,
+    frame BLOB NOT NULL,
+    PRIMARY KEY (source_id, fact_schema, path, plan_digest)
+) STRICT, WITHOUT ROWID;
+-- Bit i of `words` (little-endian u64s): the set's clause i ran with nothing to report; its
+-- counts are in the `counts` frame. A clear bit is unknown, never absent.
+CREATE TABLE IF NOT EXISTS facts_completions (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    fact_schema INTEGER NOT NULL CHECK(fact_schema >= 0),
+    path TEXT NOT NULL,
+    set_digest BLOB NOT NULL CHECK(length(set_digest) = 32),
+    words BLOB NOT NULL,
+    codec_id INTEGER NOT NULL,
+    raw_length INTEGER NOT NULL,
+    counts BLOB NOT NULL,
+    PRIMARY KEY (source_id, fact_schema, path, set_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
+
+-- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read
+-- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose
+-- manifest matches an earlier one of its root only moves that one's `last_run`. `corpus_live` is the union of the
+-- kept manifests' (source, grammar version, tape format): collection keeps those sources and tapes. A plan in
+-- `corpus_plans` that no kept manifest names (`live` 0) has its memo rows collected. Additive: an older binary's
+-- collection ignores these tables, which costs a corpus run a cache miss, never a wrong result.
+CREATE TABLE IF NOT EXISTS corpus_roots (
+    root_id INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE
+) STRICT;
+CREATE TABLE IF NOT EXISTS corpus_manifests (
+    manifest_id INTEGER PRIMARY KEY,
+    root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
+    last_run INTEGER NOT NULL,
+    last_time INTEGER NOT NULL,
+    grammar_version INTEGER NOT NULL,
+    tape_format INTEGER NOT NULL,
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    sources BLOB NOT NULL,
+    UNIQUE (root_id, digest)
+) STRICT;
+CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
+CREATE TABLE IF NOT EXISTS corpus_live (
+    source_id INTEGER NOT NULL,
+    grammar_version INTEGER NOT NULL,
+    tape_format INTEGER NOT NULL,
+    PRIMARY KEY (source_id, grammar_version, tape_format)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS corpus_plans (
+    plan_digest BLOB PRIMARY KEY CHECK(length(plan_digest) = 32),
+    live INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS corpus_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    run INTEGER NOT NULL,
+    history_bytes INTEGER NOT NULL,
+    due INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1, 0, 0, 0);
+-- A root's stat index (corpus_runs.rs), as git's: a file's size, mtime and inode when its source was last read, and
+-- the source. A run trusts an entry whose stat matches and whose mtime is over two seconds before `recorded_ns` (an
+-- edit in the same tick as the recording could otherwise keep its stat), and then neither reads nor hashes the file.
+-- An entry whose source was collected is not trusted. Additive: an older binary ignores it.
+CREATE TABLE IF NOT EXISTS corpus_stats (
+    root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
+    path TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mtime_ns INTEGER NOT NULL,
+    inode INTEGER NOT NULL,
+    source_id INTEGER NOT NULL,
+    recorded_ns INTEGER NOT NULL,
+    PRIMARY KEY (root_id, path)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
+
+-- The single interner (atoms.rs, decision 0049): dense, append-only; atom 0 is the empty string.
+-- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,
+-- relative to the row's bytes) and their bytes. SQL reads atoms through the `atoms` virtual table
+-- over the process's arena; a row that names an atom commits with or after its segment.
+CREATE TABLE IF NOT EXISTS atom_segment (
+    first INTEGER PRIMARY KEY CHECK(first >= 0),
+    ends BLOB NOT NULL,
+    bytes BLOB NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO atom_segment(first,ends,bytes) VALUES (0,x'00000000',x'');
+
+-- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
+-- derivation's inputs with the digest it read. A derivation's output is a name too, so an
+-- unchanged output rebinds nothing (early cutoff). Additive: older binaries never read these tables.
+CREATE TABLE IF NOT EXISTS name_bindings (
+    name_atom INTEGER PRIMARY KEY,
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    revision INTEGER NOT NULL CHECK(revision >= 0)
+) STRICT;
+CREATE TABLE IF NOT EXISTS derivations (
+    output_atom INTEGER PRIMARY KEY,
+    producer BLOB NOT NULL CHECK(length(producer) = 32),
+    status INTEGER NOT NULL,
+    cost INTEGER NOT NULL CHECK(cost >= 0)
+) STRICT;
+CREATE TABLE IF NOT EXISTS derivation_inputs (
+    output_atom INTEGER NOT NULL REFERENCES derivations(output_atom) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    name_atom INTEGER,
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    PRIMARY KEY (output_atom, ordinal)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS derivation_inputs_by_name ON derivation_inputs(name_atom);
+-- A push in progress (open-items O1): the row is committed before a push writes anything and
+-- deleted after its last write reaches SQLite, so a store that holds it may hold a prefix of a
+-- push's writes and is recovered before the next push.
+CREATE TABLE IF NOT EXISTS push_pending (
+    pending INTEGER PRIMARY KEY CHECK(pending = 1)
+) STRICT;
+-- Collection keeps pages some binding names (tree_pages.rs).
+CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
+
+-- Per-directory result pages (tree_pages.rs, from Tempo's tree_result_segments), keyed by what the
+-- directory's result depends on; `digest` is the page derivation's output digest.
+CREATE TABLE IF NOT EXISTS tree_pages (
+    page_key BLOB NOT NULL CHECK(length(page_key) = 32),
+    page_index INTEGER NOT NULL CHECK(page_index >= 0),
+    page_count INTEGER NOT NULL CHECK(page_count > 0),
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    codec_id INTEGER NOT NULL,
+    raw_length INTEGER NOT NULL CHECK(raw_length >= 0),
+    file_count INTEGER NOT NULL CHECK(file_count >= 0 AND file_count <= 64),
+    frame BLOB NOT NULL,
+    PRIMARY KEY (page_key, page_index)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
+
+-- The prefilter's per-tape access paths (prefilter.rs, from Pulling-it-all-together's anchor
+-- store): kind positions, case-exact term postings and the nodes terms do not cover, each keyed by
+-- tape and dying with it. Kinds are atoms (tape tag * 1024 + kind code). Postings are delta-varint
+-- preorder lists (`nera_postings`). The frequency tables count over every tape that has a set.
+CREATE TABLE IF NOT EXISTS prefilter_sets (
+    tape_id INTEGER PRIMARY KEY REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK(version >= 0),
+    nodes INTEGER NOT NULL CHECK(nodes >= 0),
+    edges BLOB NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS tape_kind_counts (
+    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
+    kind INTEGER NOT NULL,
+    n INTEGER NOT NULL CHECK(n > 0),
+    size INTEGER NOT NULL CHECK(size >= 0),
+    postings BLOB NOT NULL,
+    PRIMARY KEY (tape_id, kind)
+) STRICT, WITHOUT ROWID;
+-- Ingestion statistics (stats/ingest.rs, from Typing-support's `stats.py`): nodes of each kind
+-- and the sum of their descendants, and direct edges by (parent kind, child kind, field; 0 is
+-- none). A tape's own edges are its set's `edges` segment (`nera_edges`), subtracted when it goes.
+CREATE TABLE IF NOT EXISTS kind_size (
+    kind INTEGER PRIMARY KEY,
+    n INTEGER NOT NULL,
+    size INTEGER NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS edge_freq (
+    pkind INTEGER NOT NULL,
+    ckind INTEGER NOT NULL,
+    field INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    PRIMARY KEY (pkind, ckind, field)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS edge_freq_by_child ON edge_freq(ckind);
+-- Fact relations' column statistics, merged per batch of documents (`ingest::merge_facts`):
+-- per column, rows, distinct values, the sum of squared value counts corpus-wide (`sq`) and
+-- within a document (`sqd`); per value of a value column, its count, documents and `sqd`.
+CREATE TABLE IF NOT EXISTS fact_stats (
+    tbl TEXT NOT NULL,
+    col TEXT NOT NULL,
+    rows INTEGER NOT NULL,
+    ndv INTEGER NOT NULL,
+    sq INTEGER NOT NULL,
+    sqd INTEGER NOT NULL,
+    PRIMARY KEY (tbl, col)
+) STRICT, WITHOUT ROWID;
+-- Compiled plans (stats/plans.rs): decisions and programs under the plan's identity, each
+-- statistic a decision read with the interval over which the decision stays valid, and the
+-- observed selectivity and cost per root of each plan per backend.
+CREATE TABLE IF NOT EXISTS compiled_plans (
+    plan BLOB PRIMARY KEY CHECK(length(plan) = 32),
+    compiler INTEGER NOT NULL,
+    decisions TEXT NOT NULL,
+    program BLOB NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS compiled_plan_reads (
+    plan BLOB NOT NULL REFERENCES compiled_plans(plan) ON DELETE CASCADE,
+    stat TEXT NOT NULL,
+    lo INTEGER NOT NULL,
+    hi INTEGER NOT NULL,
+    PRIMARY KEY (plan, stat)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS plan_feedback (
+    plan BLOB NOT NULL,
+    backend TEXT NOT NULL,
+    selectivity REAL NOT NULL,
+    ns_per_root REAL NOT NULL,
+    samples INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (plan, backend)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS fact_value_stats (
+    tbl TEXT NOT NULL,
+    col TEXT NOT NULL,
+    val ANY,
+    n INTEGER NOT NULL,
+    docs INTEGER NOT NULL,
+    sqd INTEGER NOT NULL,
+    PRIMARY KEY (tbl, col, val)
+) STRICT, WITHOUT ROWID;
+-- Every `term` column below is the term's atom (`atoms`): its text is stored once.
+CREATE TABLE IF NOT EXISTS term_postings (
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL,
+    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
+    kind INTEGER NOT NULL,
+    n INTEGER NOT NULL CHECK(n > 0),
+    postings BLOB NOT NULL,
+    PRIMARY KEY (lang, term, tape_id, kind)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS term_postings_by_tape ON term_postings(tape_id);
+CREATE TABLE IF NOT EXISTS term_freq (
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    PRIMARY KEY (lang, term)
+) STRICT, WITHOUT ROWID;
+-- Planner statistics (stats/inputs.rs, from Data-layer-rule-expressivity's `value_frequency`
+-- and `value_kind_frequency`): nodes per (term, kind) and covered nodes per kind, over every
+-- tape with a set. A kind's uncovered nodes are `kind_size.n - term_kind_freq.n`.
+CREATE TABLE IF NOT EXISTS term_node_freq (
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL,
+    kind INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    PRIMARY KEY (lang, term, kind)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS term_kind_freq (
+    kind INTEGER PRIMARY KEY,
+    n INTEGER NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS term_coverage (
+    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
+    kind INTEGER NOT NULL,
+    bad INTEGER NOT NULL,
+    residue INTEGER NOT NULL,
+    missing BLOB NOT NULL,
+    PRIMARY KEY (tape_id, kind)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS term_coverage_residue ON term_coverage(kind) WHERE residue > 0;
+-- Publication adds the counts in one statement per table; removal, including a cascade from a
+-- collected tape, counts down here.
+CREATE TRIGGER IF NOT EXISTS tape_kind_count_delete AFTER DELETE ON tape_kind_counts BEGIN
+    UPDATE kind_size SET n=n-OLD.n, size=size-OLD.size WHERE kind=OLD.kind;
+    DELETE FROM kind_size WHERE kind=OLD.kind AND n<=0;
+END;
+CREATE TRIGGER IF NOT EXISTS prefilter_set_delete AFTER DELETE ON prefilter_sets BEGIN
+    UPDATE edge_freq SET n=edge_freq.n-e.n FROM nera_edges(OLD.edges) e
+        WHERE edge_freq.pkind=e.pkind AND edge_freq.ckind=e.ckind AND edge_freq.field=e.field;
+    DELETE FROM edge_freq WHERE n<=0;
+END;
+CREATE TRIGGER IF NOT EXISTS term_posting_delete AFTER DELETE ON term_postings BEGIN
+    UPDATE term_freq SET n=n-1 WHERE lang=OLD.lang AND term=OLD.term;
+    DELETE FROM term_freq WHERE lang=OLD.lang AND term=OLD.term AND n<=0;
+    UPDATE term_node_freq SET n=n-OLD.n WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind;
+    DELETE FROM term_node_freq WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind AND n<=0;
+    UPDATE term_kind_freq SET n=n-OLD.n WHERE kind=OLD.kind;
+    DELETE FROM term_kind_freq WHERE kind=OLD.kind AND n<=0;
+END;
+
+-- The prefilter's regex vocabulary (vocabulary.rs, from Pulling-it-all-together's
+-- `vocabulary.sql`): each registered predicate's matching terms, filled in SQL when a candidate
+-- statement first names it and kept current by the terms each publication adds. A term that
+-- leaves `term_freq` leaves every predicate's set by cascade.
+CREATE TABLE IF NOT EXISTS vocabulary_predicate (
+    lang INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    ready INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (lang, expression)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS vocabulary_term (
+    lang INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    term INTEGER NOT NULL,
+    PRIMARY KEY (lang, expression, term),
+    FOREIGN KEY (lang, expression) REFERENCES vocabulary_predicate(lang, expression) ON DELETE CASCADE,
+    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS vocabulary_term_deleted ON vocabulary_term(lang, term);
+-- An exact literal set (`^(?:a|b)$`) matches exactly its literals: a join, not a regex per term.
+-- A literal is text: it need not be a term (or an atom) yet.
+CREATE TABLE IF NOT EXISTS vocabulary_literal (
+    lang INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    term TEXT NOT NULL,
+    PRIMARY KEY (lang, term, expression),
+    FOREIGN KEY (lang, expression) REFERENCES vocabulary_predicate(lang, expression) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS vocabulary_literal_expression ON vocabulary_literal(lang, expression);
+CREATE TABLE IF NOT EXISTS vocabulary_pending (
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL,
+    PRIMARY KEY (lang, term),
+    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+-- An upsert that only counts an existing term up is an UPDATE: only new terms are pending.
+CREATE TRIGGER IF NOT EXISTS vocabulary_added AFTER INSERT ON term_freq BEGIN
+    INSERT OR IGNORE INTO vocabulary_pending VALUES(NEW.lang, NEW.term);
+END;
+-- The text layer's vocabulary (code_rule_dsl/text, decision 0042): each kept plan's matching
+-- terms by the plan's key. A key is filled over the whole vocabulary when first seen, then over
+-- the terms added since: `text_pending` is a log of added terms in order, and `upto` the last
+-- entry a key has read. Entries every key has read are dropped.
+CREATE TABLE IF NOT EXISTS text_matcher (
+    lang INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    plan TEXT NOT NULL,
+    upto INTEGER NOT NULL,
+    PRIMARY KEY (lang, key)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS text_term (
+    lang INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    term INTEGER NOT NULL,
+    PRIMARY KEY (lang, key, term),
+    FOREIGN KEY (lang, key) REFERENCES text_matcher(lang, key) ON DELETE CASCADE,
+    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS text_term_deleted ON text_term(lang, term);
+CREATE TABLE IF NOT EXISTS text_pending (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS text_vocabulary_added AFTER INSERT ON term_freq BEGIN
+    INSERT INTO text_pending(lang, term) VALUES(NEW.lang, NEW.term);
 END;
 "#;
 
@@ -244,24 +621,21 @@ impl ContentStore {
     /// Configures `connection` and brings its store up to SCHEMA. A store at this floor that holds
     /// every SCHEMA object is only read, so opening it never waits for another process's writer;
     /// creation, a floor raise or a missing object (an index this build added) takes the
-    /// exclusive lock and applies SCHEMA.
-    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<()> {
+    /// exclusive lock and applies SCHEMA. Returns whether it created the store.
+    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<bool> {
         configure_connection(connection)?;
         if compatible_version(connection)? == SCHEMA_VERSION && holds_schema_objects(connection)? {
-            return Ok(());
+            return Ok(false);
         }
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
         // Another open may have created the store since the read above.
         let version = compatible_version(&transaction)?;
-        if version == 0 {
-            transaction.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
-        }
         transaction.execute_batch(SCHEMA)?;
         if version != SCHEMA_VERSION {
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
         transaction.commit()?;
-        Ok(())
+        Ok(version == 0)
     }
 }
 
@@ -271,6 +645,13 @@ fn compatible_version(connection: &Connection) -> StoreResult<i64> {
     if version > SCHEMA_VERSION {
         return Err(StoreError::Invalid(format!(
             "database schema version {version} is newer than supported version {SCHEMA_VERSION}: update Rerail"
+        )));
+    }
+    // A store is never upgraded (STORE_FILE_NAME): an older floor's `atoms` table would hide the
+    // `atoms` virtual table (decision 0049).
+    if version != 0 && version < STORE_FILE_FLOOR {
+        return Err(StoreError::Invalid(format!(
+            "database schema version {version} is older than this build's floor {STORE_FILE_FLOOR}: the store is a cache; delete it"
         )));
     }
     Ok(version)

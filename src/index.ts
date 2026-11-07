@@ -37,6 +37,7 @@ export {
   type AdapterSession,
   type RerailEventLoop,
   type RerailHost,
+  type SteerRule,
 } from "./engine/adapter-contract.js";
 export { claudeHookEvents, createClaudeEventHandler, type ClaudeHookInput } from "./hosts/claude/claude-event-adapter.js";
 export { codexHookEvents, createCodexEventHandler, type CodexHookInput } from "./hosts/codex/codex-event-adapter.js";
@@ -207,7 +208,7 @@ export {
   folderContains,
   normalizeFolder,
   type ApiCaller,
-  type BundledCatalog,
+  type RuleCatalog,
   type CheckoutContext,
   type CheckoutRecord,
   type CheckoutRuleSet,
@@ -228,7 +229,7 @@ export {
   type RemoteAddress,
   type RepositoryIdentityLocation,
 } from "./engine/catalog/repository-identity.js";
-export { loadBundledCatalog } from "./engine/catalog/bundled-rules.js";
+export { loadRuleCatalog } from "./engine/catalog/rule-catalog.js";
 export { GitUnavailableError } from "./engine/git.js";
 export {
   ApiError,
@@ -267,7 +268,7 @@ export { RerailRuntime, type RerailRuntimeOptions } from "./runtime/runtime.js";
 export { setRepositoryStarted } from "./runtime/repository-start.js";
 export { startDaemon, stopDaemon } from "./runtime/daemon-control.js";
 export { RULE_MODES, steers, type RuleMode } from "./engine/catalog/rule-mode.js";
-export { loadBundledRules } from "./engine/catalog/bundled-rule-documents.js";
+export { loadPackRuleDocuments } from "./engine/catalog/rule-documents.js";
 export { codeRuleSchema, type CodeRule } from "./engine/code-rule/code-rule-schema.js";
 export {
   CONVERSATION_RULE_DOCUMENT_VERSION,
@@ -299,6 +300,8 @@ export {
   type NativeHealth,
   type NativeCodeRuleDslRuntimeConstructor,
   type NativeCodeRuleDslEditor,
+  type NativeCodeRuleSqlExecutor,
+  type NativeCodeRuleSqlExecutorConstructor,
   type NativeSample as ConversationSample,
   type CodeRuleDslEvaluationMode,
   type CodeRuleDslSourceFormat,

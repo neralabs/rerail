@@ -1,0 +1,141 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.input doc, node, child, field, text, name, line, syntax_error
+.decl k0(kind: symbol)
+k0("attribute"). k0("call"). k0("identifier").
+.decl k1(kind: symbol)
+k1("comparison_operator").
+.decl k2(kind: symbol)
+k2("concatenated_string"). k2("string").
+.decl in_scope(d: number)
+.decl m10(n: node)
+.decl m100(n: node)
+.decl m101(n: node)
+.decl m107(n: node)
+.decl m113(n: node)
+.decl m118(n: node)
+.decl m119(n: node)
+.decl m120(n: node)
+.decl m125(n: node)
+.decl m134(n: node)
+.decl m137(n: node)
+.decl m139(n: node)
+.decl m144(n: node)
+.decl m15(n: node)
+.decl m153(n: node)
+.decl m160(n: node)
+.decl m169(n: node)
+.decl m25(n: node)
+.decl m30(n: node)
+.decl m31(n: node)
+.decl m32(n: node)
+.decl m37(n: node)
+.decl m38(n: node)
+.decl m44(n: node)
+.decl m49(n: node)
+.decl m5(n: node)
+.decl m50(n: node)
+.decl m51(n: node)
+.decl m54(n: node)
+.decl m59(n: node)
+.decl m64(n: node)
+.decl m71(n: node)
+.decl m76(n: node)
+.decl m77(n: node)
+.decl m83(n: node)
+.decl m89(n: node)
+.decl m95(n: node)
+.decl out_scope(d: number)
+.decl u161(n: node)
+.decl u20(n: node)
+.decl u67(n: node)
+.decl u91(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2065_plan_core/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2066_plan_optimizer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/optimizers/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/strategies/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l7300_sql_versioned_transactions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l9700_sql_graph_query/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2070_batching/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/base_server_plan.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+m5(n) :- node(v3, n, _, _, _), doc(v3, v4, _), (v4 = "impl/common/l2070_server_plan/backend_profiles.py" ; v4 = "impl/common/l2070_server_plan/backend_traits.py").
+m10(n) :- node(v8, n, _, _, _), doc(v8, v9, _), v9 = "impl/common/l2070_server_plan/base_server_plan.py".
+violation("data-layer-serverplan-dispatch-architecture", "backend-family", "SPD001", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), !m5(n), node(_, n, "attribute", _, _), field(n, "attribute", v6), node(_, v6, "identifier", _, _), text(v6, v7), (v7 = "is_document_backend" ; v7 = "is_graph_backend" ; v7 = "is_mysql_family" ; v7 = "is_sql_backend"), !m10(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m15(n) :- node(v13, n, _, _, _), doc(v13, v14, _), (v14 = "impl/common/l2070_server_plan/backend_profiles.py" ; v14 = "impl/common/l2070_server_plan/backend_traits.py").
+m25(n) :- field(n, "attribute", v22), node(_, v22, "identifier", _, _), text(v22, v23), v23 = "backend_type".
+m25(n) :- field(n, "object", v24), u20(v24).
+m30(n) :- node(_, n, "identifier", _, _), text(n, v27), (v27 = "backend_type_for" ; v27 = "get_backend_type" ; v27 = "get_backend_type_async").
+m30(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v28), node(_, v28, "identifier", _, _), text(v28, v29), (v29 = "backend_type_for" ; v29 = "get_backend_type" ; v29 = "get_backend_type_async").
+m31(n) :- node(_, n, "identifier", _, _), text(n, v21), v21 = "backend_type".
+m31(n) :- node(_, n, "attribute", _, _), m25(n).
+m31(n) :- node(_, n, "call", _, _), field(n, "function", v26), m30(v26).
+u20(n) :- m31(n).
+m32(n) :- field(n, "attribute", v17), node(_, v17, "identifier", _, _), text(v17, v18), v18 = "backend_type".
+m32(n) :- field(n, "object", v19), u20(v19).
+m37(n) :- node(_, n, "identifier", _, _), text(n, v34), (v34 = "backend_type_for" ; v34 = "get_backend_type" ; v34 = "get_backend_type_async").
+m37(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v35), node(_, v35, "identifier", _, _), text(v35, v36), (v36 = "backend_type_for" ; v36 = "get_backend_type" ; v36 = "get_backend_type_async").
+m38(n) :- node(_, n, "identifier", _, _), text(n, v16), v16 = "backend_type".
+m38(n) :- node(_, n, "attribute", _, _), m32(n).
+m38(n) :- node(_, n, "call", _, _), field(n, "function", v33), m37(v33).
+m44(n) :- field(n, "attribute", v41), node(_, v41, "identifier", _, _), text(v41, v42), v42 = "backend_type".
+m44(n) :- field(n, "object", v43), u20(v43).
+m49(n) :- node(_, n, "identifier", _, _), text(n, v46), (v46 = "backend_type_for" ; v46 = "get_backend_type" ; v46 = "get_backend_type_async").
+m49(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v47), node(_, v47, "identifier", _, _), text(v47, v48), (v48 = "backend_type_for" ; v48 = "get_backend_type" ; v48 = "get_backend_type_async").
+m50(n) :- node(_, n, "identifier", _, _), text(n, v40), v40 = "backend_type".
+m50(n) :- node(_, n, "attribute", _, _), m44(n).
+m50(n) :- node(_, n, "call", _, _), field(n, "function", v45), m49(v45).
+m51(n) :- m38(n).
+m51(n) :- inside(v39, n, k1), m50(v39).
+m54(n) :- node(_, n, "string", _, _).
+m54(n) :- node(_, n, "concatenated_string", _, _).
+m59(n) :- node(v57, n, _, _, _), doc(v57, v58, _), (v58 = "impl/common/l2070_server_plan/backend_profiles.py" ; v58 = "impl/common/l2070_server_plan/backend_traits.py").
+m64(n) :- node(_, n, "identifier", _, _), text(n, v61), v61 = "isinstance".
+m64(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v62), node(_, v62, "identifier", _, _), text(v62, v63), v63 = "isinstance".
+m71(n) :- node(_, n, "identifier", _, _), text(n, v70), (v70 = "CompiledStep" ; v70 = "IntentStep" ; v70 = "ServerPlanStep").
+m76(n) :- node(_, n, "identifier", _, _), text(n, v75), (v75 = "CompiledStep" ; v75 = "IntentStep" ; v75 = "ServerPlanStep").
+m77(n) :- node(_, n, "identifier", _, _), name(n, v69), (glob("ConditionalStep", v69) ; glob("PhysicalStatementGroup", v69) ; glob("[A-Z_a-z]*Intent", v69) ; glob("[A-Z_a-z]*Step", v69) ; glob("[A-Z_a-z]*Strategy", v69)), !m71(n).
+m77(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v72), name(v72, v74), (glob("ConditionalStep", v74) ; glob("PhysicalStatementGroup", v74) ; glob("[A-Z_a-z]*Intent", v74) ; glob("[A-Z_a-z]*Step", v74) ; glob("[A-Z_a-z]*Strategy", v74)), !m76(v72).
+m83(n) :- node(v81, n, _, _, _), doc(v81, v82, _), (v82 = "impl/common/l2070_server_plan/backend_profiles.py" ; v82 = "impl/common/l2070_server_plan/backend_traits.py").
+m89(n) :- node(_, n, "identifier", _, _), text(n, v86), v86 = "type".
+m89(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v87), node(_, v87, "identifier", _, _), text(v87, v88), v88 = "type".
+m95(n) :- node(_, n, "identifier", _, _), text(n, v94), (v94 = "CompiledStep" ; v94 = "IntentStep" ; v94 = "ServerPlanStep").
+m100(n) :- node(_, n, "identifier", _, _), text(n, v99), (v99 = "CompiledStep" ; v99 = "IntentStep" ; v99 = "ServerPlanStep").
+m101(n) :- node(_, n, "identifier", _, _), name(n, v93), (glob("ConditionalStep", v93) ; glob("PhysicalStatementGroup", v93) ; glob("[A-Z_a-z]*Intent", v93) ; glob("[A-Z_a-z]*Step", v93) ; glob("[A-Z_a-z]*Strategy", v93)), !m95(n).
+m101(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v96), name(v96, v98), (glob("ConditionalStep", v98) ; glob("PhysicalStatementGroup", v98) ; glob("[A-Z_a-z]*Intent", v98) ; glob("[A-Z_a-z]*Step", v98) ; glob("[A-Z_a-z]*Strategy", v98)), !m100(v96).
+m107(n) :- node(v105, n, _, _, _), doc(v105, v106, _), (v106 = "impl/common/l2070_server_plan/backend_profiles.py" ; v106 = "impl/common/l2070_server_plan/backend_traits.py").
+m113(n) :- node(_, n, "identifier", _, _), text(n, v112), (v112 = "CompiledStep" ; v112 = "IntentStep" ; v112 = "ServerPlanStep").
+m118(n) :- node(_, n, "identifier", _, _), text(n, v117), (v117 = "CompiledStep" ; v117 = "IntentStep" ; v117 = "ServerPlanStep").
+m119(n) :- node(_, n, "identifier", _, _), name(n, v111), (glob("ConditionalStep", v111) ; glob("PhysicalStatementGroup", v111) ; glob("[A-Z_a-z]*Intent", v111) ; glob("[A-Z_a-z]*Step", v111) ; glob("[A-Z_a-z]*Strategy", v111)), !m113(n).
+m119(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v114), name(v114, v116), (glob("ConditionalStep", v116) ; glob("PhysicalStatementGroup", v116) ; glob("[A-Z_a-z]*Intent", v116) ; glob("[A-Z_a-z]*Step", v116) ; glob("[A-Z_a-z]*Strategy", v116)), !m118(v114).
+m120(n) :- node(_, n, "dotted_name", _, _), text(n, v109), (glob("*.ConditionalStep", v109) ; glob("*.PhysicalStatementGroup", v109) ; glob("*.[A-Z_a-z]*Intent", v109) ; glob("*.[A-Z_a-z]*Step", v109) ; glob("*.[A-Z_a-z]*Strategy", v109) ; glob("ConditionalStep", v109) ; glob("PhysicalStatementGroup", v109) ; glob("[A-Z_a-z]*Intent", v109) ; glob("[A-Z_a-z]*Step", v109) ; glob("[A-Z_a-z]*Strategy", v109)).
+m120(n) :- m119(n).
+violation("data-layer-serverplan-dispatch-architecture", "step-class-match", "SPD002", p, l) :- node(v103, n, _, _, _), doc(v103, v104, _), !m107(n), node(_, n, "class_pattern", _, _), child(n, v108, _), m120(v108), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m125(n) :- node(v123, n, _, _, _), doc(v123, v124, _), (v124 = "impl/common/l2070_server_plan/backend_profiles.py" ; v124 = "impl/common/l2070_server_plan/backend_traits.py").
+m134(n) :- node(_, n, "identifier", _, _), text(n, v131), v131 = "type".
+m134(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v132), node(_, v132, "identifier", _, _), text(v132, v133), v133 = "type".
+m137(n) :- node(_, n, "call", _, _), field(n, "function", v130), m134(v130).
+m137(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v135), node(_, v135, "identifier", _, _), text(v135, v136), v136 = "__class__".
+m139(n) :- node(_, n, "string", _, _).
+m139(n) :- node(_, n, "concatenated_string", _, _).
+m144(n) :- node(v142, n, _, _, _), doc(v142, v143, _), (v143 = "impl/common/l2070_server_plan/backend_profiles.py" ; v143 = "impl/common/l2070_server_plan/backend_traits.py").
+m153(n) :- node(_, n, "identifier", _, _), text(n, v150), v150 = "getattr".
+m153(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v151), node(_, v151, "identifier", _, _), text(v151, v152), v152 = "getattr".
+m160(n) :- node(v158, n, _, _, _), doc(v158, v159, _), (v159 = "impl/common/l2070_server_plan/backend_profiles.py" ; v159 = "impl/common/l2070_server_plan/backend_traits.py").
+m169(n) :- node(_, n, "identifier", _, _), text(n, v166), v166 = "getattr".
+m169(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v167), node(_, v167, "identifier", _, _), text(v167, v168), v168 = "getattr".
+.output violation

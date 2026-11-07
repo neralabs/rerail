@@ -119,6 +119,10 @@ pub(super) fn profile_result(
     }
     let mut value: Value = serde_json::from_str(&result.text).map_err(json_error)?;
     value.as_object_mut().expect("workspace result").insert(
+        "phaseClock".to_owned(),
+        crate::code_rule_dsl::phase_clock::snapshot(),
+    );
+    value.as_object_mut().expect("workspace result").insert(
         "workspaceProfile".to_owned(),
         json!({
             "lineIndexNanoseconds": metrics.line_index_nanoseconds,
@@ -127,10 +131,6 @@ pub(super) fn profile_result(
             "astMatchNanoseconds": metrics.ast_match_nanoseconds,
             "serializationNanoseconds": serialization.as_nanos() as u64,
             "astMatcherCalls": metrics.ast_matcher_calls,
-            "pythonAstParses": metrics.python_ast_parses,
-            "pythonAstModuleWalks": metrics.python_ast_module_walks,
-            "syntaxLoads": metrics.syntax_loads,
-            "relationalMaterializations": metrics.relational_materializations,
             "storageRetries": metrics.storage_retries,
             "storageRetryWaitNanoseconds": metrics.storage_retry_wait_nanoseconds,
             "storageUnpublishedFiles": metrics.storage_unpublished_files,
@@ -247,14 +247,16 @@ pub(super) fn evicted_file_states(
         .flat_map(|(_, key, stamped)| std::iter::once(*key).chain(*stamped))
         .collect::<Vec<_>>();
 
+    let catalog = candidate_catalog(&state.code_rules)?;
     #[cfg(test)]
-    if super::TEST_EVICTED_READ_FAILURE.get() {
-        return Err(invalid("injected evicted-result storage failure"));
-    }
-    let results = storage
-        .store
-        .local_check_results_by_key(&keys, candidate_catalog(&state.code_rules)?)
-        .map_err(|error| invalid(error.to_string()))?;
+    let injected = super::TEST_EVICTED_READ_FAILURE.get();
+    #[cfg(not(test))]
+    let injected = false;
+    // A store read that fails reports each file's clauses as unavailable, as `api.rs` does for a
+    // resident file: the stored results remain, so a later read answers them (O22).
+    let results = (!injected)
+        .then(|| storage.store.local_check_results_by_key(&keys, catalog).ok())
+        .flatten();
     let mut candidate_sets = CandidateSets::new();
     evicted
         .into_iter()
@@ -286,6 +288,17 @@ pub(super) fn evicted_file_states(
                     file.witnesses.insert(id, Vec::new());
                 }
             }
+            let Some(results) = &results else {
+                for &id in file.candidates.regex.iter().chain(&file.candidates.ast) {
+                    if !file.witnesses.contains_key(&id) {
+                        file.failures
+                            .insert(id, ("adapter-error", super::STORED_RESULT_UNAVAILABLE));
+                        file.unstored.insert(id);
+                    }
+                }
+                file.transient_failure = true;
+                return Ok(file);
+            };
             let mut persisted = results
                 .get(&key)
                 .map_or_else(Vec::new, |results| results.to_vec());

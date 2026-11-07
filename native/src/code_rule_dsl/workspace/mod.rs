@@ -9,8 +9,7 @@
 //! - `persisted` and `storage`: stored results and the content store.
 //! - `results` and `memory`: reporting and memory accounting.
 
-mod api;
-pub(in crate::code_rule_dsl) use api::CodeRuleDslWorkspace;
+pub(in crate::code_rule_dsl) mod api;
 mod calls_state;
 mod crossfile;
 mod documents;
@@ -20,6 +19,7 @@ mod index;
 mod ingest;
 mod memory;
 mod persisted;
+pub(in crate::code_rule_dsl) use persisted::grammar_version;
 mod results;
 mod storage;
 
@@ -278,7 +278,9 @@ struct FileState {
     input: FileInput,
     source_digest: [u8; 32],
     source_revision: u32,
-    tape: Option<(u32, tape::TapeImage)>,
+    /// The documents of this source revision (`tape::FileImage`): its own tape, and the ones it
+    /// derives.
+    tape: Option<(u32, tape::FileImage)>,
     /// The scope tables `resolves` built for this source revision (one per grammar and annotation
     /// reading), reused by later evaluations.
     scopes: Option<(u32, Vec<Arc<ScopeTable>>)>,
@@ -397,6 +399,9 @@ impl std::ops::DerefMut for Witnesses {
 
 #[derive(Default)]
 struct WorkspaceState {
+    /// P's anchor corpus (`matcher::p_anchors`), for P's relational clauses and the
+    /// `p-anchor-corpus` path (test-only, open items O18 and O20).
+    #[cfg(test)]
     anchor_corpus: Arc<crate::code_rule_dsl::matcher::Corpus>,
     code_rules: Vec<Arc<CompiledCodeRule>>,
     candidate_sets: CandidateSets,
@@ -408,6 +413,8 @@ struct WorkspaceState {
     /// or the budget's query.
     relation_plans: BTreeMap<(usize, String), Vec<ClauseId>>,
     /// File-partitioned relations cache final findings, rather than repository-sized syntax rows.
+    /// P's per-file relational results (test-only, open item O18).
+    #[cfg(test)]
     file_relation_results: BTreeMap<(usize, String, String), (documents::FileVersion, Evaluation)>,
     /// Per synthetic clause, the files it has evidence in: witnesses, or unknown. It outlives the
     /// files' residency, so eviction keeps cross-file clauses answerable.

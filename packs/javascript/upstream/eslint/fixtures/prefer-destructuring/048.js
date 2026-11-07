@@ -1,1 +1,0 @@
-class Foo extends Bar { static foo() {var bar = super.foo.bar} }

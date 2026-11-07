@@ -1,0 +1,20 @@
+.policy "ruff-pd012-pandas-use-of-dot-read-table" revision 2
+.description "Use pandas read_csv instead of read_table for comma-separated data; read_csv already defaults to a comma separator."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PD012 (pandas-vet): `pandas.read_table(…, sep=",")`, which is `read_csv` spelled the long way. The
+// separator must be the string literal `","` exactly. Reported at the callee, in a file that imports pandas.
+//   pd.read_table("data.csv", sep=",")         ← PD012
+//   pd.read_table("data.tsv", sep=", ")        not reported
+//   pd.read_table("data.tsv")                  not reported
+#include "python/ruff.rr"
+#include "python/misc-seen.rr"
+
+.violation PD012(at: node) code "PD012"
+    "Replace `read_table` with `read_csv` (import it if needed) and drop `sep=\",\"`; `read_csv` splits on commas by default and takes the same other arguments."
+    suppress ruff "PD012"
+PD012(f) :- call_q(c, "pandas.read_table"), call_kwarg(c, "sep", v), unparen(v, s), plain_str(s, ","),
+    field(c, "function", f), docof(c, d), seen_module(d, "pandas").
+seen_ask("pandas").

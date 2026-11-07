@@ -1,8 +1,0 @@
-{
-  "name": "emotion-app",
-  "private": true,
-  "dependencies": {
-    "@emotion/react": "11.14.0",
-    "react": "19.2.0"
-  }
-}

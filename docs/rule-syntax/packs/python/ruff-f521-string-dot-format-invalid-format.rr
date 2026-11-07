@@ -1,0 +1,19 @@
+.policy "ruff-f521-string-dot-format-invalid-format" revision 2
+.description "Keep str.format() strings well-formed, with balanced braces and valid fields and format specs; a malformed one raises ValueError at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F521 (pyflakes): `S.format(…)` where the str literal S is not a valid format string: a lone `}`, an
+// unclosed `{`, an empty `.` or `[]` part in a field name, a conversion other than `!r`, `!s`, `!a`, or a spec
+// nested two deep. Python raises ValueError.
+//   "{".format(1)                 ← F521
+//   "{foo..bar}".format(foo=1)    ← F521
+//   "{:{}}".format(1, 2)          not reported: one level of nesting is allowed
+#include "python/pyflakes-format.rr"
+//   format_call(c, v)  c is `S.format(…)`, S a plain str literal with value v
+//   brace_ok(v)        v parses as a format string
+
+.violation F521(at: node) code "F521" "`.format` call has invalid format string"
+    suppress ruff "F521"
+F521(c) :- format_call(c, v), !brace_ok(v).

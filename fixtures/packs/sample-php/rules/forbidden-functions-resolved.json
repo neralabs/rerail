@@ -3,7 +3,7 @@
   "id": "forbidden-functions-resolved",
   "revision": 1,
   "mode": "steer",
-  "description": "Sample port of PHP_CodeSniffer's Generic.PHP.ForbiddenFunctions through name resolution: a call PHP resolves to sizeof or delete. Unsound under syntax errors (an error region could hide a declaration), so it skips such files.",
+  "description": "Avoid calls that PHP resolves to sizeof or delete; files with syntax errors are skipped, since an error could hide a declaration.",
   "scope": {
     "include": [
       "**/*"
@@ -33,7 +33,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
-        "message": "The use of this function is forbidden"
+        "message": "Replace this call to a forbidden function."
       }
     }
   ]

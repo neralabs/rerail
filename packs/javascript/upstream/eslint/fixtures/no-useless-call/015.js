@@ -1,1 +1,0 @@
-obj.foo.call();

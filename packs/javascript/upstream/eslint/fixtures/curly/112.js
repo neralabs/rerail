@@ -1,1 +1,0 @@
-if (a) { if (b) console.log(1); else console.log(2) } else console.log(3)

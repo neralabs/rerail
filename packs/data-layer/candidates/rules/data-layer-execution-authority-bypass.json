@@ -49,37 +49,54 @@
                   "rule": {
                     "all": [
                       {
-                        "kind": "function_definition"
-                      },
-                      {
-                        "pattern": "$DECL"
-                      },
-                      {
-                        "has": {
-                          "pattern": "$NAME",
-                          "stopBy": "neighbor",
-                          "field": "name"
-                        }
-                      },
-                      {
-                        "any": [
+                        "all": [
                           {
-                            "inside": {
-                              "all": [
-                                {
-                                  "kind": "decorated_definition"
-                                },
-                                {
-                                  "pattern": "$WRAPPER"
-                                }
-                              ],
-                              "stopBy": "neighbor"
+                            "kind": "function_definition"
+                          },
+                          {
+                            "pattern": "$DECL"
+                          },
+                          {
+                            "has": {
+                              "pattern": "$NAME",
+                              "stopBy": "neighbor",
+                              "field": "name"
                             }
                           },
                           {
-                            "pattern": "$_"
+                            "any": [
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "decorated_definition"
+                                    },
+                                    {
+                                      "pattern": "$WRAPPER"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
                           }
                         ]
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "module"
+                            },
+                            {
+                              "regex": "_legacy_boundary_var|_explicit_authority_var|explicit_execution_authority|execution_boundary"
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
                       }
                     ]
                   }
@@ -101,37 +118,54 @@
                   "rule": {
                     "all": [
                       {
-                        "kind": "class_definition"
-                      },
-                      {
-                        "pattern": "$DECL"
-                      },
-                      {
-                        "has": {
-                          "pattern": "$NAME",
-                          "stopBy": "neighbor",
-                          "field": "name"
-                        }
-                      },
-                      {
-                        "any": [
+                        "all": [
                           {
-                            "inside": {
-                              "all": [
-                                {
-                                  "kind": "decorated_definition"
-                                },
-                                {
-                                  "pattern": "$WRAPPER"
-                                }
-                              ],
-                              "stopBy": "neighbor"
+                            "kind": "class_definition"
+                          },
+                          {
+                            "pattern": "$DECL"
+                          },
+                          {
+                            "has": {
+                              "pattern": "$NAME",
+                              "stopBy": "neighbor",
+                              "field": "name"
                             }
                           },
                           {
-                            "pattern": "$_"
+                            "any": [
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "decorated_definition"
+                                    },
+                                    {
+                                      "pattern": "$WRAPPER"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
                           }
                         ]
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "module"
+                            },
+                            {
+                              "regex": "_legacy_boundary_var|_explicit_authority_var|explicit_execution_authority|execution_boundary"
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
                       }
                     ]
                   }

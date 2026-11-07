@@ -1,9 +1,9 @@
 {
  "format": "rerail.policy/v1",
  "id": "ruff-async210-blocking-http-call-in-async-function",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC210 (blocking-http-call-in-async-function): a call to `urllib.request.urlopen`, `urllib3.request` or an `httpx`/`requests` module-level HTTP method inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Don't make blocking HTTP calls with requests, httpx, urllib or urllib3 inside async functions; they stall the event loop.",
  "scope": {
   "include": [
    "**/*"
@@ -147,7 +147,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC210",
-    "message": "Async functions should not call blocking HTTP methods",
+    "message": "Use an existing async client, or `await asyncio.to_thread(helper, ...)` for the request and response handling; preserve the API and options.",
     "suppress": {
       "noqa": {
         "codes": [

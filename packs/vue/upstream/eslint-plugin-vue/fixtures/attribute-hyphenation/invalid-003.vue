@@ -1,1 +1,0 @@
-<template><div><custom :MyProp="prop"></custom></div></template>

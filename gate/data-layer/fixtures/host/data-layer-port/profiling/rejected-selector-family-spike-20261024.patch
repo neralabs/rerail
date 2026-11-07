@@ -1,0 +1,1121 @@
+Rejected prototype; not installed in the engine. Last lab snapshot uses zero grouping units to isolate the private-owner projection comparison. Historical SQL captures and binary hashes identify the earlier timed variants. This zero-context patch requires git apply --unidiff-zero against 66f6a522.
+
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/capture.rs b/native/src/code_rule_dsl/matcher/anchors/sql/capture.rs
+--- a/native/src/code_rule_dsl/matcher/anchors/sql/capture.rs
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/capture.rs
+@@ -127 +127 @@
+-    let output = serde_json::json!({"format":"rerail.candidate-replay/v2","variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"parameters":parameters,"admissions":statement.admissions,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
++    let output = serde_json::json!({"format":"rerail.candidate-replay/v2","variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"selectorOwners":statement.selector_owners,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"parameters":parameters,"admissions":statement.admissions,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/lower/audit.rs b/native/src/code_rule_dsl/matcher/anchors/sql/lower/audit.rs
+--- a/native/src/code_rule_dsl/matcher/anchors/sql/lower/audit.rs
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/lower/audit.rs
+@@ -44 +44 @@
+-            variants.push(json!({"order":name,"plans":plans.len(),"stages":stages.len(),"physicalBuilds":statement.stages.iter().filter(|s|s.temporary).count(),"producerSha256":hex_digest(&serde_json::to_vec(&statement.graph).expect("producer graph")),"stageSha256":hex_digest(&serde_json::to_vec(&stages).expect("stage metadata")),"parametersSha256":hex_digest(&serde_json::to_vec(&parameters).expect("bound values")),"admissions":admissions,"resultQueries":statement.queries.len(),"peakLiveRelations":statement.schedule.peak_relations}));
++            variants.push(json!({"order":name,"plans":plans.len(),"stages":stages.len(),"physicalBuilds":statement.stages.iter().filter(|s|s.temporary).count(),"selectorOwnersSha256":hex_digest(&serde_json::to_vec(&statement.selector_owners).expect("physical selector owners")),"producerSha256":hex_digest(&serde_json::to_vec(&statement.graph).expect("producer graph")),"stageSha256":hex_digest(&serde_json::to_vec(&stages).expect("stage metadata")),"parametersSha256":hex_digest(&serde_json::to_vec(&parameters).expect("bound values")),"admissions":admissions,"resultQueries":statement.queries.len(),"peakLiveRelations":statement.schedule.peak_relations}));
+@@ -48,0 +49 @@
++                "selectorOwnersSha256",
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/lower/families/flat.rs b/native/src/code_rule_dsl/matcher/anchors/sql/lower/families/flat.rs
+new file mode 100644
+--- /dev/null
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/lower/families/flat.rs
+@@ -0,0 +1,173 @@
++//! Parameterize compatible generated scalar SELECTs. Values remain typed SQLite bindings.
++use std::sync::LazyLock;
++
++#[derive(Clone)]
++pub(super) struct Template {
++    pub key: String,
++    projection: String,
++    tail: String,
++    parameters: Vec<String>,
++}
++
++pub(super) fn template(cte: &str) -> Option<Template> {
++    let body = cte.split_once(" AS ")?.1;
++    let body = body
++        .strip_prefix("MATERIALIZED (")
++        .or_else(|| body.strip_prefix("NOT MATERIALIZED ("))?
++        .strip_suffix(')')?;
++    if !body.starts_with("SELECT ") || body.starts_with("SELECT DISTINCT ") {
++        return None;
++    }
++    // This compiler-owned subset has no nested SELECT, grouping, choice, set operator,
++    // ordering or window. Their domains and duplicate behavior need separate operators.
++    let upper = body[7..].to_ascii_uppercase();
++    if [
++        "SELECT ",
++        " UNION ",
++        " INTERSECT ",
++        " EXCEPT ",
++        " GROUP ",
++        " HAVING ",
++        " LIMIT ",
++        " ORDER ",
++        " OVER",
++        "WITH ",
++    ]
++    .iter()
++    .any(|s| upper.contains(s))
++    {
++        return None;
++    }
++    let lower = body
++        .chars()
++        .filter(|c| !c.is_whitespace())
++        .collect::<String>()
++        .to_ascii_lowercase();
++    if [
++        "count(",
++        "sum(",
++        "min(",
++        "max(",
++        "avg(",
++        "total(",
++        "group_concat(",
++        "string_agg(",
++        "json_group",
++    ]
++    .iter()
++    .any(|name| lower.contains(name))
++    {
++        return None;
++    }
++    static PARAMETERS: LazyLock<regex::Regex> =
++        LazyLock::new(|| regex::Regex::new(r"\?[0-9]+").expect("generated parameter"));
++    let mut parameters = Vec::new();
++    let mut key = String::new();
++    let mut start = 0;
++    for p in PARAMETERS.find_iter(body) {
++        key.push_str(&body[start..p.start()]);
++        key.push_str(&format!("rr_input.p{}", parameters.len()));
++        parameters.push(p.as_str().to_owned());
++        start = p.end();
++    }
++    if parameters.is_empty() {
++        return None;
++    }
++    key.push_str(&body[start..]);
++    let (projection, tail) = key.strip_prefix("SELECT ")?.split_once(" FROM ")?;
++    Some(Template {
++        projection: projection.into(),
++        tail: tail.into(),
++        parameters,
++        key,
++    })
++}
++
++/// One SQL operator reads a producer-qualified request matrix. There is no host key loop.
++pub(super) fn render(members: &[(usize, &Template)], id: usize) -> (String, String) {
++    let first = members[0].1;
++    let name = format!("selector_args_{id}");
++    let columns = std::iter::once("producer".to_owned())
++        .chain((0..first.parameters.len()).map(|i| format!("p{i}")))
++        .collect::<Vec<_>>()
++        .join(",");
++    let values = members
++        .iter()
++        .map(|(slot, t)| format!("({slot},{})", t.parameters.join(",")))
++        .collect::<Vec<_>>()
++        .join(",");
++    (
++        format!("{name}({columns}) AS MATERIALIZED (VALUES {values})"),
++        format!(
++            "SELECT rr_input.producer,{} FROM {name} rr_input CROSS JOIN {}",
++            first.projection, first.tail
++        ),
++    )
++}
++
++#[cfg(test)]
++mod tests {
++    use super::super::super::render::Definitions;
++    use super::super::{Stage, pack};
++    use super::*;
++    use rusqlite::{Connection, Result, params_from_iter, types::Value};
++    #[test]
++    fn aggregate_choice_window_set_and_nested_domains_do_not_enter_scalar_fusion() {
++        for body in [
++            "SELECT fid,max(pre) FROM input WHERE pre=?1",
++            "SELECT fid,COUNT (pre) FROM input WHERE pre=?1",
++            "SELECT DISTINCT fid,pre FROM input WHERE pre=?1",
++            "SELECT fid,pre FROM input WHERE pre=?1 LIMIT 1",
++            "SELECT fid,pre FROM input WHERE pre=?1 ORDER BY pre",
++            "SELECT fid,pre FROM input WHERE pre=?1 UNION SELECT fid,pre FROM input",
++            "SELECT fid,pre FROM input WHERE EXISTS(select 1 FROM other WHERE pre=?1)",
++            "SELECT fid,max(pre) OVER () FROM input WHERE pre=?1",
++        ] {
++            assert!(
++                template(&format!("a(fid,pre) AS MATERIALIZED ({body})")).is_none(),
++                "{body}"
++            );
++        }
++    }
++    #[test]
++    fn one_scalar_operator_preserves_typed_requests_null_absence_and_projection_names() -> Result<()>
++    {
++        for affinity in ["", "TEXT"] {
++            let db = Connection::open_in_memory()?;
++            db.execute_batch(&format!("CREATE TABLE input(fid INTEGER,pre INTEGER,value {affinity});INSERT INTO input VALUES(1,10,7),(1,11,'7'),(1,12,NULL)"))?;
++            let mut graph = Vec::new();
++            let mut stages = Vec::new();
++            for (i, name) in ["a", "b", "c"].iter().enumerate() {
++                let body = format!("SELECT s.fid,s.pre+0 FROM input s WHERE s.value=?{}", i + 1);
++                graph.push(format!("{name}(fid,pre) AS MATERIALIZED ({body})"));
++                stages.push(Stage {
++                    name: (*name).into(),
++                    sql: format!("CREATE TEMP TABLE \"{name}\" AS SELECT fid,pre FROM {name}"),
++                    index: Some("fid,pre"),
++                    temporary: true,
++                    covering: false,
++                });
++            }
++            let p=pack(stages,vec!["SELECT 0,fid,pre FROM a UNION ALL SELECT 1,fid,pre FROM b UNION ALL SELECT 2,fid,pre FROM c ORDER BY 1,2,3".into()],&graph,&Definitions::new(graph.iter().cloned()));
++            assert_eq!(p.stages.len(), 1);
++            assert_eq!(p.stages[0].sql.matches("input s").count(), 1);
++            db.execute(
++                &p.stages[0].sql,
++                params_from_iter([Value::Integer(7), Value::Text("7".into()), Value::Null]),
++            )?;
++            let rows = db
++                .prepare(&p.queries[0])?
++                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(2)?)))?
++                .collect::<Result<Vec<_>>>()?;
++            assert_eq!(
++                rows,
++                if affinity.is_empty() {
++                    vec![(0, 10), (1, 11)]
++                } else {
++                    vec![(0, 10), (0, 11), (1, 10), (1, 11)]
++                }
++            );
++        }
++        Ok(())
++    }
++}
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/lower/families.rs b/native/src/code_rule_dsl/matcher/anchors/sql/lower/families.rs
+new file mode 100644
+--- /dev/null
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/lower/families.rs
+@@ -0,0 +1,617 @@
++//! Pack independent keyed selectors into SQL-owned, producer-qualified physical families.
++use super::{lifetime, render::Definitions, waves};
++#[path = "families/flat.rs"]
++mod flat;
++use std::collections::{BTreeMap, BTreeSet, HashMap};
++
++#[derive(Clone)]
++pub struct Stage {
++    pub name: String,
++    pub sql: String,
++    pub index: Option<&'static str>,
++    pub temporary: bool,
++    pub covering: bool,
++}
++
++#[derive(serde::Serialize)]
++pub struct Owner {
++    pub name: String,
++    pub members: Vec<String>,
++    pub depth: usize,
++}
++
++pub struct Packed {
++    pub stages: Vec<Stage>,
++    pub queries: Vec<String>,
++    pub owners: Vec<Owner>,
++}
++
++fn body(stage: &Stage) -> &str {
++    stage
++        .sql
++        .strip_prefix(&format!("CREATE TEMP TABLE \"{}\" AS ", stage.name))
++        .expect("generated CTAS")
++}
++
++// Generated aliases are globally unique inside this pinned program. A materialization's
++// own local definition shadows its future owner projection; earlier physical cuts do not.
++fn read(sql: &str, aliases: &HashMap<String, String>, own: Option<&str>) -> String {
++    let names: BTreeSet<_> = waves::identifiers(sql)
++        .filter(|name| Some(*name) != own && aliases.contains_key(*name))
++        .collect();
++    if names.is_empty() {
++        return sql.to_owned();
++    }
++    let views = names
++        .into_iter()
++        .map(|name| aliases[name].as_str())
++        .collect::<Vec<_>>()
++        .join(",");
++    let tail = sql
++        .strip_prefix("WITH RECURSIVE ")
++        .or_else(|| sql.strip_prefix("WITH "));
++    match tail {
++        Some(tail) => format!("WITH RECURSIVE {views},{tail}"),
++        None => format!("WITH RECURSIVE {views} {sql}"),
++    }
++}
++
++/// Only the declared (fid,pre) shape with its existing nonunique key index is packed.
++/// Other schemas and retained writes keep their current operators and ownership.
++pub fn pack(
++    stages: Vec<Stage>,
++    queries: Vec<String>,
++    graph: &[String],
++    definitions: &Definitions,
++) -> Packed {
++    let pairs: BTreeSet<_> = graph
++        .iter()
++        .filter_map(|cte| {
++            let (name, tail) = cte.split_once('(').expect("generated columns");
++            tail.starts_with("fid,pre) AS ").then_some(name)
++        })
++        .collect();
++    let physical: BTreeSet<_> = stages
++        .iter()
++        .filter(|s| s.temporary)
++        .map(|s| s.name.clone())
++        .collect();
++    let dependencies = lifetime::Dependencies::new(
++        &stages
++            .iter()
++            .map(|s| lifetime::Input {
++                name: &s.name,
++                sql: &s.sql,
++                temporary: s.temporary,
++            })
++            .collect::<Vec<_>>(),
++    );
++    let mut depths = vec![0; stages.len()];
++    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
++    for (i, stage) in stages.iter().enumerate() {
++        depths[i] = dependencies.prerequisites[i]
++            .iter()
++            .map(|&p| depths[p] + 1)
++            .max()
++            .unwrap_or(0);
++        if stage.temporary
++            && !stage.covering
++            && stage.index == Some("fid,pre")
++            && pairs.contains(stage.name.as_str())
++        {
++            groups.entry(depths[i]).or_default().push(i);
++        }
++    }
++    // Bound symbolic expansion per submitted statement, not per producer or file.
++    // AS MATERIALIZED does not bound SQLite's preparation expansion. A shared physical
++    // input resets that expansion; independent roots still add to one statement's cost.
++    const PREPARATION_UNITS: usize = 0;
++    let mut expansion = HashMap::new();
++    let mut costs = HashMap::new();
++    for cte in graph {
++        let name = cte.split_once('(').expect("generated columns").0;
++        let body = cte.split_once(" AS ").expect("generated body").1;
++        let cost = waves::identifiers(body)
++            .filter_map(|t| expansion.get(t))
++            .fold(1usize, |n, c| n.saturating_add(*c));
++        costs.insert(name, cost);
++        expansion.insert(name, if physical.contains(name) { 1 } else { cost });
++    }
++    let templates = graph
++        .iter()
++        .filter_map(|cte| {
++            flat::template(cte).map(|t| (cte.split_once('(').expect("generated columns").0, t))
++        })
++        .collect::<HashMap<_, _>>();
++    let mut bounded = Vec::new();
++    for (depth, members) in groups {
++        let mut batch = Vec::new();
++        let mut units = 0usize;
++        let mut operators = BTreeSet::new();
++        for i in members {
++            let name = stages[i].name.as_str();
++            let template = templates.get(name);
++            let mut cost = if template.is_some_and(|t| operators.contains(&t.key)) {
++                1
++            } else {
++                costs[name]
++            };
++            if !batch.is_empty() && units.saturating_add(cost) > PREPARATION_UNITS {
++                bounded.push((depth, std::mem::take(&mut batch)));
++                units = 0;
++                operators.clear();
++                cost = costs[name];
++            }
++            if let Some(t) = template {
++                operators.insert(t.key.clone());
++            }
++            batch.push(i);
++            units = units.saturating_add(cost);
++        }
++        if !batch.is_empty() {
++            bounded.push((depth, batch));
++        }
++    }
++    let mut owners = Vec::new();
++    let mut member_indices = Vec::new();
++    let mut aliases = HashMap::new();
++    let mut member_owner = BTreeMap::new();
++    for (depth, members) in bounded.into_iter().filter(|(_, members)| members.len() > 1) {
++        let name = format!("selector_family_{}", owners.len());
++        for (slot, &i) in members.iter().enumerate() {
++            aliases.insert(stages[i].name.clone(),format!("{}(fid,pre) AS NOT MATERIALIZED (SELECT fid,pre FROM {name} WHERE producer={slot})",stages[i].name));
++            member_owner.insert(i, owners.len());
++        }
++        member_indices.push(members.clone());
++        owners.push(Owner {
++            name,
++            members: members.iter().map(|&i| stages[i].name.clone()).collect(),
++            depth,
++        });
++    }
++    let stages = stages
++        .into_iter()
++        .map(|mut stage| {
++            if stage.temporary && pairs.contains(stage.name.as_str()) {
++                let before = format!("{}(fid,pre) AS MATERIALIZED ", stage.name);
++                let after = format!("{}(fid,pre) AS NOT MATERIALIZED ", stage.name);
++                stage.sql = stage.sql.replacen(&before, &after, 1);
++            }
++            stage
++        })
++        .collect::<Vec<_>>();
++    if owners.is_empty() {
++        return Packed {
++            stages,
++            queries,
++            owners,
++        };
++    }
++    // Earlier dependency levels must be published before a family reads their aliases.
++    // Retained RAW, WAR and WAW edges come from the scheduler's exact preparation graph.
++    let mut order: Vec<_> = (0..stages.len()).collect();
++    order.sort_by_key(|&i| (depths[i], i));
++    let mut source: Vec<_> = stages.into_iter().map(Some).collect();
++    let mut output = Vec::new();
++    for i in order {
++        let Some(mut stage) = source[i].take() else {
++            continue;
++        };
++        if let Some(&owner) = member_owner.get(&i) {
++            let members = &member_indices[owner];
++            let owner = &owners[owner];
++            let names: BTreeSet<_> = owner.members.iter().map(String::as_str).collect();
++            // One WITH scope per family. Re-render the trusted logical graph, stopping
++            // at existing physical cuts. Repeating member WITH scopes retains separate
++            // ephemeral trees and can multiply SQLite's heap peak even on empty inputs.
++            let mut operators: BTreeMap<&str, Vec<(usize, &flat::Template)>> = BTreeMap::new();
++            let mut arms = Vec::new();
++            let mut extra = Vec::new();
++            for (slot, name) in owner.members.iter().enumerate() {
++                if let Some(template) = templates.get(name.as_str()) {
++                    operators
++                        .entry(&template.key)
++                        .or_default()
++                        .push((slot, template));
++                } else {
++                    arms.push(format!("SELECT {slot} AS producer,fid,pre FROM {name}"));
++                }
++            }
++            for operator in operators.values() {
++                if operator.len() > 1 {
++                    let (cte, arm) = flat::render(operator, extra.len());
++                    extra.push(cte);
++                    arms.push(arm);
++                } else {
++                    let slot = operator[0].0;
++                    arms.push(format!(
++                        "SELECT {slot} AS producer,fid,pre FROM {}",
++                        owner.members[slot]
++                    ));
++                }
++            }
++            for &j in members {
++                if j != i {
++                    source[j].take().expect("one physical publication");
++                }
++            }
++            extra.push(format!(
++                "selector_rows(producer,fid,pre) AS NOT MATERIALIZED ({})",
++                waves::compound("producer,fid,pre", arms)
++            ));
++            let selection = "SELECT CAST(producer AS INTEGER) AS producer,CAST(fid AS INTEGER) AS fid,CAST(pre AS INTEGER) AS pre FROM selector_rows";
++            let sql = definitions.render_cuts(selection, &physical, &names, &aliases, &extra);
++            output.push(Stage {
++                name: owner.name.clone(),
++                sql: format!("CREATE TEMP TABLE \"{}\" AS {sql}", owner.name),
++                index: Some("producer,fid,pre"),
++                temporary: true,
++                covering: false,
++            });
++        } else {
++            stage.sql = if stage.temporary {
++                format!(
++                    "CREATE TEMP TABLE \"{}\" AS {}",
++                    stage.name,
++                    read(body(&stage), &aliases, Some(&stage.name))
++                )
++            } else {
++                read(&stage.sql, &aliases, None)
++            };
++            output.push(stage);
++        }
++    }
++    Packed {
++        stages: output,
++        queries: queries.iter().map(|q| read(q, &aliases, None)).collect(),
++        owners,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use rusqlite::{Connection, Result};
++    fn stage(name: &str, select: &str) -> Stage {
++        Stage {
++            name: name.into(),
++            sql: format!("CREATE TEMP TABLE \"{name}\" AS {select}"),
++            index: Some("fid,pre"),
++            temporary: true,
++            covering: false,
++        }
++    }
++    fn build(stages: Vec<Stage>, queries: Vec<String>) -> Packed {
++        let graph = stages
++            .iter()
++            .filter(|s| s.temporary)
++            .map(|s| format!("{}(fid,pre) AS MATERIALIZED ({})", s.name, body(s)))
++            .collect::<Vec<_>>();
++        pack(
++            stages,
++            queries,
++            &graph,
++            &Definitions::new(graph.iter().cloned()),
++        )
++    }
++    fn execute(db: &Connection, packed: &Packed) -> Result<Vec<(i64, i64, Option<i64>)>> {
++        let schedule = lifetime::Schedule::new(
++            &packed
++                .stages
++                .iter()
++                .map(|s| lifetime::Input {
++                    name: &s.name,
++                    sql: &s.sql,
++                    temporary: s.temporary,
++                })
++                .collect::<Vec<_>>(),
++            &packed.queries,
++        );
++        let tx = db.unchecked_transaction()?;
++        let mut rows = Vec::new();
++        for action in schedule.actions {
++            match action {
++                lifetime::Action::Prepare(i) => {
++                    let s = &packed.stages[i];
++                    tx.execute(&s.sql, [])?;
++                    if let Some(index) = s.index {
++                        tx.execute_batch(&format!(
++                            "CREATE INDEX temp.\"{}_keys\" ON \"{}\"({index})",
++                            s.name, s.name
++                        ))?;
++                    }
++                }
++                lifetime::Action::Query(q) => rows.extend(
++                    tx.prepare(&packed.queries[q])?
++                        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
++                        .collect::<Result<Vec<_>>>()?,
++                ),
++                lifetime::Action::Release(i) => {
++                    tx.execute_batch(&format!("DROP TABLE temp.\"{}\"", packed.stages[i].name))?
++                }
++            }
++        }
++        tx.commit()?;
++        Ok(rows)
++    }
++    #[test]
++    fn common_inline_producer_constructs_once_for_all_family_members() -> Result<()> {
++        use std::sync::{
++            Arc,
++            atomic::{AtomicUsize, Ordering},
++        };
++        let db = Connection::open_in_memory()?;
++        let calls = Arc::new(AtomicUsize::new(0));
++        let observed = calls.clone();
++        db.create_scalar_function(
++            c"produce",
++            0,
++            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
++            move |_| {
++                observed.fetch_add(1, Ordering::Relaxed);
++                Ok(7)
++            },
++        )?;
++        let graph = [
++            "seed(fid,pre) AS MATERIALIZED (SELECT 1,produce())".into(),
++            "a(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM seed)".into(),
++            "b(fid,pre) AS MATERIALIZED (SELECT fid,pre+1 FROM seed)".into(),
++        ];
++        let p = pack(
++            vec![
++                stage("a", "SELECT fid,pre FROM seed"),
++                stage("b", "SELECT fid,pre+1 AS pre FROM seed"),
++            ],
++            vec!["SELECT 0,fid,pre FROM a UNION ALL SELECT 1,fid,pre FROM b".into()],
++            &graph,
++            &Definitions::new(graph.iter().cloned()),
++        );
++        assert_eq!(p.stages[0].sql.matches("seed(fid,pre)").count(), 1);
++        assert!(p.stages[0].sql.contains("a(fid,pre) AS NOT MATERIALIZED"));
++        assert!(p.stages[0].sql.contains("b(fid,pre) AS NOT MATERIALIZED"));
++        assert_eq!(execute(&db, &p)?, vec![(0, 1, Some(7)), (1, 1, Some(8))]);
++        assert_eq!(
++            calls.load(Ordering::Relaxed),
++            1,
++            "one shared CTE construction, not independent copies in the batch"
++        );
++        Ok(())
++    }
++    #[test]
++    fn later_families_read_existing_owners_without_rebuilding_their_producers() -> Result<()> {
++        use std::sync::{
++            Arc,
++            atomic::{AtomicUsize, Ordering},
++        };
++        let db = Connection::open_in_memory()?;
++        let calls = Arc::new(AtomicUsize::new(0));
++        let observed = calls.clone();
++        db.create_scalar_function(
++            c"produce",
++            0,
++            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
++            move |_| {
++                observed.fetch_add(1, Ordering::Relaxed);
++                Ok(7)
++            },
++        )?;
++        let graph = [
++            "seed(fid,pre) AS MATERIALIZED (SELECT 1,produce())".into(),
++            "a(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM seed)".into(),
++            "b(fid,pre) AS MATERIALIZED (SELECT fid,pre+1 FROM seed)".into(),
++            "c(fid,pre) AS MATERIALIZED (SELECT fid,pre+1 FROM a)".into(),
++            "d(fid,pre) AS MATERIALIZED (SELECT fid,pre+1 FROM b)".into(),
++        ];
++        let p = pack(
++            vec![
++                stage("a", "SELECT fid,pre FROM seed"),
++                stage("b", "SELECT fid,pre+1 AS pre FROM seed"),
++                stage("c", "SELECT fid,pre+1 AS pre FROM a"),
++                stage("d", "SELECT fid,pre+1 AS pre FROM b"),
++            ],
++            vec!["SELECT 0,fid,pre FROM c UNION ALL SELECT 1,fid,pre FROM d".into()],
++            &graph,
++            &Definitions::new(graph.iter().cloned()),
++        );
++        assert_eq!(p.owners.len(), 2);
++        assert!(!p.stages[1].sql.contains("produce()"));
++        assert_eq!(execute(&db, &p)?, vec![(0, 1, Some(8)), (1, 1, Some(9))]);
++        assert_eq!(calls.load(Ordering::Relaxed), 1);
++        Ok(())
++    }
++    #[test]
++    fn incompatible_schemas_keep_their_existing_physical_representation() -> Result<()> {
++        let graph = [
++            "a(fid,pre) AS MATERIALIZED (SELECT 1,2)".into(),
++            "wide(fid,pre,extra) AS MATERIALIZED (SELECT 3,4,5)".into(),
++        ];
++        let p = pack(
++            vec![
++                stage("a", "SELECT 1 AS fid,2 AS pre"),
++                stage("wide", "SELECT 3 AS fid,4 AS pre,5 AS extra"),
++            ],
++            vec!["SELECT 0,fid,pre FROM a UNION ALL SELECT 1,fid,pre FROM wide".into()],
++            &graph,
++            &Definitions::new(graph.iter().cloned()),
++        );
++        assert!(p.owners.is_empty());
++        assert_eq!(p.stages.len(), 2);
++        assert_eq!(
++            execute(&Connection::open_in_memory()?, &p)?,
++            vec![(0, 1, Some(2)), (1, 3, Some(4))]
++        );
++        Ok(())
++    }
++    #[test]
++    fn two_packets_keep_bags_null_keys_empty_members_and_one_physical_owner() -> Result<()> {
++        let p = build(
++            vec![
++                stage(
++                    "a",
++                    "SELECT 1 AS fid,CAST(7 AS INTEGER) AS pre UNION ALL SELECT 1,7 UNION ALL SELECT 1,NULL",
++                ),
++                stage("b", "SELECT 2 AS fid,9 AS pre"),
++                stage("empty", "SELECT 0 AS fid,0 AS pre WHERE 0"),
++            ],
++            vec![
++                "SELECT 0,fid,pre FROM a".into(),
++                "SELECT 1,fid,pre FROM b UNION ALL SELECT 2,fid,pre FROM empty".into(),
++            ],
++        );
++        assert_eq!(p.stages.len(), 1);
++        assert_eq!(p.owners[0].members, vec!["a", "b", "empty"]);
++        let db = Connection::open_in_memory()?;
++        let mut rows = execute(&db, &p)?;
++        rows.sort();
++        assert_eq!(
++            rows,
++            vec![
++                (0, 1, None),
++                (0, 1, Some(7)),
++                (0, 1, Some(7)),
++                (1, 2, Some(9))
++            ]
++        );
++        assert_eq!(
++            db.query_row(
++                "SELECT count(*) FROM sqlite_temp_schema WHERE type='table'",
++                [],
++                |r| r.get::<_, i64>(0)
++            )?,
++            0
++        );
++        // Empty members also share completed construction; a second complete run has no stale storage.
++        assert_eq!(execute(&db, &p)?.len(), 4);
++        Ok(())
++    }
++    #[test]
++    fn dependencies_are_later_families_and_sql_probes_use_all_tagged_index_columns() -> Result<()> {
++        let p = build(
++            vec![
++                stage("a", "SELECT 1 AS fid,2 AS pre"),
++                stage("b", "SELECT 3 AS fid,4 AS pre"),
++                stage("c", "SELECT fid,pre+1 AS pre FROM a"),
++                stage("d", "SELECT fid,pre+1 AS pre FROM b"),
++            ],
++            vec!["SELECT 0,fid,pre FROM c UNION ALL SELECT 1,fid,pre FROM d".into()],
++        );
++        assert_eq!(p.owners.len(), 2);
++        assert_eq!(p.owners[0].depth, 0);
++        assert_eq!(p.owners[1].depth, 1);
++        let db = Connection::open_in_memory()?;
++        assert_eq!(execute(&db, &p)?, vec![(0, 1, Some(3)), (1, 3, Some(5))]);
++        db.execute(&p.stages[0].sql, [])?;
++        db.execute_batch(&format!(
++            "CREATE INDEX temp.keys ON \"{}\"(producer,fid,pre)",
++            p.stages[0].name
++        ))?;
++        let columns = db
++            .prepare(&format!("PRAGMA temp.table_info('{}')", p.stages[0].name))?
++            .query_map([], |r| r.get::<_, String>(2))?
++            .collect::<Result<Vec<_>>>()?;
++        assert!(columns[1..].iter().all(|t| t == "INT"), "{columns:?}");
++        let plan = db
++            .prepare(&format!(
++                "EXPLAIN QUERY PLAN SELECT pre FROM {} WHERE producer=0 AND fid=1 AND pre=2",
++                p.stages[0].name
++            ))?
++            .query_map([], |r| r.get::<_, String>(3))?
++            .collect::<Result<Vec<_>>>()?
++            .join(" ");
++        assert!(plan.contains("producer=? AND fid=? AND pre=?"), "{plan}");
++        Ok(())
++    }
++    #[test]
++    fn retained_reads_writes_and_snapshot_order_survive_grouping() -> Result<()> {
++        let db = Connection::open_in_memory()?;
++        db.execute_batch("CREATE TABLE facts(fid INTEGER,pre INTEGER)")?;
++        let p = build(
++            vec![
++                Stage {
++                    name: "fill".into(),
++                    sql: "INSERT INTO facts VALUES(1,10)".into(),
++                    index: None,
++                    temporary: false,
++                    covering: false,
++                },
++                stage("before", "SELECT fid,pre FROM facts"),
++                stage("other", "SELECT 2 AS fid,20 AS pre"),
++                Stage {
++                    name: "later".into(),
++                    sql: "INSERT INTO facts SELECT fid,pre FROM other".into(),
++                    index: None,
++                    temporary: false,
++                    covering: false,
++                },
++                stage("after", "SELECT fid,pre FROM facts"),
++            ],
++            vec![
++                "SELECT 0,fid,pre FROM before UNION ALL SELECT 1,fid,pre FROM after ORDER BY 1,2,3"
++                    .into(),
++            ],
++        );
++        assert_eq!(
++            execute(&db, &p)?,
++            vec![(0, 1, Some(10)), (1, 1, Some(10)), (1, 2, Some(20))]
++        );
++        Ok(())
++    }
++    #[test]
++    fn failed_member_rolls_back_the_family_and_retry_reconstructs_it_once() -> Result<()> {
++        use std::sync::{
++            Arc,
++            atomic::{AtomicBool, Ordering},
++        };
++        let db = Connection::open_in_memory()?;
++        let fail = Arc::new(AtomicBool::new(true));
++        let state = fail.clone();
++        db.create_scalar_function(
++            c"may_fail",
++            0,
++            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
++            move |_| {
++                if state.load(Ordering::Relaxed) {
++                    Err(rusqlite::Error::InvalidQuery)
++                } else {
++                    Ok(9)
++                }
++            },
++        )?;
++        let p = build(
++            vec![
++                stage("a", "SELECT 1 AS fid,2 AS pre"),
++                stage("b", "SELECT 3 AS fid,may_fail() AS pre"),
++            ],
++            vec!["SELECT 0,fid,pre FROM a UNION ALL SELECT 1,fid,pre FROM b".into()],
++        );
++        assert!(execute(&db, &p).is_err());
++        assert_eq!(
++            db.query_row(
++                "SELECT count(*) FROM sqlite_temp_schema WHERE type='table'",
++                [],
++                |r| r.get::<_, i64>(0)
++            )?,
++            0
++        );
++        fail.store(false, Ordering::Relaxed);
++        assert_eq!(execute(&db, &p)?, vec![(0, 1, Some(2)), (1, 3, Some(9))]);
++        Ok(())
++    }
++    #[test]
++    fn seven_hundred_ready_producers_use_bounded_batches_instead_of_per_producer_tables()
++    -> Result<()> {
++        let p = build(
++            (0..700)
++                .map(|n| stage(&format!("p{n}"), &format!("SELECT 1 AS fid,{n} AS pre")))
++                .collect(),
++            vec!["SELECT 0,fid,pre FROM p0 UNION ALL SELECT 1,fid,pre FROM p699".into()],
++        );
++        assert_eq!(p.stages.len(), 6);
++        assert_eq!(p.owners.iter().map(|o| o.members.len()).sum::<usize>(), 700);
++        assert_eq!(
++            execute(&Connection::open_in_memory()?, &p)?,
++            vec![(0, 1, Some(0)), (1, 1, Some(699))]
++        );
++        Ok(())
++    }
++}
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/lower/lifetime.rs b/native/src/code_rule_dsl/matcher/anchors/sql/lower/lifetime.rs
+--- a/native/src/code_rule_dsl/matcher/anchors/sql/lower/lifetime.rs
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/lower/lifetime.rs
+@@ -23,4 +23,10 @@
+-impl Schedule {
+-    /// Inputs contain compiler-generated SQL; user strings are bound parameters.
+-    /// Retained writes are ordered against both earlier readers and earlier writers.
+-    pub fn new(inputs: &[Input<'_>], queries: &[String]) -> Self {
++/// The same preparation graph supplies scheduling and compatible physical grouping.
++pub struct Dependencies<'a> {
++    pub prerequisites: Vec<Vec<usize>>,
++    consumers: Vec<Vec<usize>>,
++    names: HashMap<&'a str, usize>,
++    writers: HashMap<&'a str, usize>,
++}
++
++impl<'a> Dependencies<'a> {
++    pub fn new(inputs: &[Input<'a>]) -> Self {
+@@ -74,0 +81 @@
++                .filter(|name| names.contains_key(name) || resources.contains_key(name))
+@@ -98,0 +106,25 @@
++        Self {
++            prerequisites: dependencies,
++            consumers,
++            names,
++            writers: resources
++                .into_iter()
++                .filter_map(|(name, access)| access.writer.map(|writer| (name, writer)))
++                .collect(),
++        }
++    }
++}
++
++impl Schedule {
++    /// Inputs contain compiler-generated SQL; user strings are bound parameters.
++    /// Retained writes are ordered against both earlier readers and earlier writers.
++    pub fn new(inputs: &[Input<'_>], queries: &[String]) -> Self {
++        static IDENTIFIER: LazyLock<regex::Regex> = LazyLock::new(|| {
++            regex::Regex::new(r"[A-Za-z_][A-Za-z_0-9]*").expect("generated identifier")
++        });
++        let Dependencies {
++            prerequisites: dependencies,
++            consumers,
++            names,
++            writers,
++        } = Dependencies::new(inputs);
+@@ -109 +141 @@
+-                            .chain(resources.get(token.as_str()).and_then(|a| a.writer))
++                            .chain(writers.get(token.as_str()).copied())
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/lower/render.rs b/native/src/code_rule_dsl/matcher/anchors/sql/lower/render.rs
+--- a/native/src/code_rule_dsl/matcher/anchors/sql/lower/render.rs
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/lower/render.rs
+@@ -2 +1,0 @@
+-use std::collections::{BTreeSet, HashMap};
+@@ -3,0 +3,4 @@
++use std::{
++    borrow::Cow,
++    collections::{BTreeSet, HashMap},
++};
+@@ -41,0 +45,13 @@
++    }
++
++    pub fn replace(&mut self, sql: String) {
++        let name = sql.split_once('(').expect("generated columns").0;
++        let index = self.names[name];
++        let body = sql.split_once(" AS ").expect("generated body").1;
++        let dependencies = tokens(body)
++            .filter_map(|t| self.names.get(t).copied())
++            .filter(|&i| i < index)
++            .collect::<BTreeSet<_>>()
++            .into_iter()
++            .collect();
++        self.entries[index] = Entry { sql, dependencies };
+@@ -77,0 +94,55 @@
++    /// Render one family scope from the indexed logical graph. Physical boundaries stop
++    /// traversal; family members keep their definitions and earlier owners become views.
++    pub fn render_cuts(
++        &self,
++        body: &str,
++        physical: &BTreeSet<String>,
++        members: &BTreeSet<&str>,
++        aliases: &HashMap<String, String>,
++        extra: &[String],
++    ) -> String {
++        let mut pending: Vec<_> = tokens(body)
++            .chain(extra.iter().flat_map(|sql| tokens(sql)))
++            .filter_map(|t| self.names.get(t).copied())
++            .collect();
++        let mut seen = BTreeSet::new();
++        while let Some(index) = pending.pop() {
++            if seen.insert(index) {
++                let name = self.entries[index]
++                    .sql
++                    .split_once('(')
++                    .expect("generated columns")
++                    .0;
++                if !physical.contains(name) || members.contains(name) {
++                    pending.extend(&self.entries[index].dependencies);
++                }
++            }
++        }
++        let mut definitions = seen
++            .into_iter()
++            .filter_map(|index| {
++                let entry = &self.entries[index];
++                let name = entry.sql.split_once('(').expect("generated columns").0;
++                if physical.contains(name) && !members.contains(name) {
++                    aliases.get(name).map(|sql| Cow::Borrowed(sql.as_str()))
++                } else if members.contains(name) {
++                    // The physical owner is this root's materialization boundary. Keeping
++                    // another ephemeral copy inside CTAS adds storage without a consumer.
++                    Some(Cow::Owned(entry.sql.replacen(
++                        " AS MATERIALIZED ",
++                        " AS NOT MATERIALIZED ",
++                        1,
++                    )))
++                } else {
++                    Some(Cow::Borrowed(entry.sql.as_str()))
++                }
++            })
++            .collect::<Vec<_>>();
++        definitions.extend(extra.iter().map(|sql| Cow::Borrowed(sql.as_str())));
++        if definitions.is_empty() {
++            body.to_owned()
++        } else {
++            format!("WITH RECURSIVE {} {body}", definitions.join(","))
++        }
++    }
++
+@@ -94,0 +166,19 @@
++    #[test]
++    fn replacement_reuses_indexed_dependencies_without_retaining_the_old_source() {
++        let mut defs = Definitions::new([
++            "seed(x) AS MATERIALIZED (VALUES(1))".into(),
++            "other(x) AS MATERIALIZED (VALUES(2))".into(),
++            "selected(x) AS MATERIALIZED (SELECT x FROM seed)".into(),
++        ]);
++        defs.replace("selected(x) AS MATERIALIZED (SELECT x FROM other)".into());
++        let sql = defs.render("SELECT * FROM selected");
++        assert!(!sql.contains("seed(x)"));
++        assert!(sql.contains("other(x)"));
++        assert_eq!(
++            rusqlite::Connection::open_in_memory()
++                .unwrap()
++                .query_row(&sql, [], |r| r.get::<_, i64>(0))
++                .unwrap(),
++            2
++        );
++    }
+diff --git a/native/src/code_rule_dsl/matcher/anchors/sql/lower.rs b/native/src/code_rule_dsl/matcher/anchors/sql/lower.rs
+--- a/native/src/code_rule_dsl/matcher/anchors/sql/lower.rs
++++ b/native/src/code_rule_dsl/matcher/anchors/sql/lower.rs
+@@ -13,0 +14,2 @@
++mod families;
++pub(super) use families::Stage;
+@@ -36,0 +39 @@
++    pub selector_owners: Vec<families::Owner>,
+@@ -793,9 +795,0 @@
+-#[derive(Clone)]
+-pub(super) struct Stage {
+-    pub name: String,
+-    pub sql: String,
+-    pub index: Option<&'static str>,
+-    pub temporary: bool,
+-    pub covering: bool,
+-}
+-
+@@ -824,5 +818,2 @@
+-    let mut ctes: Vec<_> = Definitions::new(ctes)
+-        .live(&query)
+-        .into_iter()
+-        .cloned()
+-        .collect();
++    let mut definitions = Definitions::new(ctes);
++    let mut ctes: Vec<_> = definitions.live(&query).into_iter().cloned().collect();
+@@ -846,0 +838 @@
++            definitions.replace(all.clone());
+@@ -1007,0 +1000,5 @@
++    let families::Packed {
++        stages,
++        queries,
++        owners: selector_owners,
++    } = families::pack(stages, queries, &graph, &definitions);
+@@ -1025,0 +1023 @@
++        selector_owners,
+diff --git a/scripts/profiling/preparation/src/bin/repack.rs b/scripts/profiling/preparation/src/bin/repack.rs
+new file mode 100644
+--- /dev/null
++++ b/scripts/profiling/preparation/src/bin/repack.rs
+@@ -0,0 +1,13 @@
++fn main() -> Result<(), Box<dyn std::error::Error>> {
++    let args: Vec<_> = std::env::args().skip(1).collect();
++    if args.len() != 3 {
++        return Err(
++            "usage: repack <candidate.json> <producer-definitions.json> <output.json>".into(),
++        );
++    }
++    rerail_sql_preparation_lab::compiler::repack(
++        std::path::Path::new(&args[0]),
++        std::path::Path::new(&args[1]),
++        std::path::Path::new(&args[2]),
++    )
++}
+diff --git a/scripts/profiling/preparation/src/compiler.rs b/scripts/profiling/preparation/src/compiler.rs
+new file mode 100644
+--- /dev/null
++++ b/scripts/profiling/preparation/src/compiler.rs
+@@ -0,0 +1,75 @@
++//! Re-render captured candidate programs with the production physical planner; SQLite executes the result.
++use crate::{families, lifetime, render::Definitions};
++use serde_json::{Value, json};
++use std::path::Path;
++pub fn repack(
++    capture: &Path,
++    graph: &Path,
++    output: &Path,
++) -> Result<(), Box<dyn std::error::Error>> {
++    let mut data: Value = serde_json::from_slice(&std::fs::read(capture)?)?;
++    let graph: Vec<String> = serde_json::from_slice(&std::fs::read(graph)?)?;
++    let stages = data["stages"]
++        .as_array()
++        .ok_or("missing stages")?
++        .iter()
++        .map(|s| {
++            let index = match s["index"].as_str() {
++                None => None,
++                Some("fid,pre") => Some("fid,pre"),
++                Some("fid") => Some("fid"),
++                _ => return Err("unsupported captured index"),
++            };
++            Ok(families::Stage {
++                name: s["name"].as_str().ok_or("missing name")?.into(),
++                sql: s["sql"].as_str().ok_or("missing SQL")?.into(),
++                index,
++                temporary: s["temporary"] == true,
++                covering: false,
++            })
++        })
++        .collect::<Result<Vec<_>, &str>>()?;
++    let queries: Vec<String> = serde_json::from_value(data["queries"].clone())?;
++    let packed = families::pack(
++        stages,
++        queries,
++        &graph,
++        &Definitions::new(graph.iter().cloned()),
++    );
++    let schedule = lifetime::Schedule::new(
++        &packed
++            .stages
++            .iter()
++            .map(|s| lifetime::Input {
++                name: &s.name,
++                sql: &s.sql,
++                temporary: s.temporary,
++            })
++            .collect::<Vec<_>>(),
++        &packed.queries,
++    );
++    let parent = output.parent().ok_or("output needs parent")?;
++    std::fs::create_dir_all(parent)?;
++    let database = capture
++        .parent()
++        .ok_or("capture needs parent")?
++        .join(data["database"].as_str().ok_or("missing database")?);
++    let copy = parent.join("compiler-input.sqlite");
++    if !copy.exists() {
++        std::fs::copy(database, &copy)?;
++    }
++    data["database"] = "compiler-input.sqlite".into();
++    data["stages"] = json!(
++        packed
++            .stages
++            .iter()
++            .map(|s| json!({"name":s.name,"sql":s.sql,"index":s.index,"temporary":s.temporary}))
++            .collect::<Vec<_>>()
++    );
++    data["queries"] = json!(packed.queries);
++    data["selectorOwners"] = json!(packed.owners);
++    data["schedule"] = json!(schedule.actions);
++    data["peakLiveRelations"] = json!(schedule.peak_relations);
++    std::fs::write(output, serde_json::to_vec_pretty(&data)?)?;
++    Ok(())
++}
+diff --git a/scripts/profiling/preparation/src/lib.rs b/scripts/profiling/preparation/src/lib.rs
+--- a/scripts/profiling/preparation/src/lib.rs
++++ b/scripts/profiling/preparation/src/lib.rs
+@@ -31 +31 @@
+-#[cfg(test)]
++#[allow(dead_code)]
+@@ -53 +53 @@
+-#[cfg(test)]
++#[allow(dead_code)]
+@@ -65,0 +66,4 @@
++#[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/families.rs"]
++mod families;
++
++pub mod compiler;
+diff --git a/test/engine/native/frontier-determinism.test.ts b/test/engine/native/frontier-determinism.test.ts
+--- a/test/engine/native/frontier-determinism.test.ts
++++ b/test/engine/native/frontier-determinism.test.ts
+@@ -27 +27 @@
+-    for (const field of ["stageSha256", "producerSha256", "parametersSha256"])
++    for (const field of ["stageSha256", "producerSha256", "parametersSha256", "selectorOwnersSha256"])
+@@ -33,0 +34 @@
++      expect(variant.selectorOwnersSha256).toBe(first.selectorOwnersSha256);

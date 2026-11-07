@@ -1,0 +1,22 @@
+.policy "typescript-eslint-no-extra-non-null-assertion" revision 5
+.description "Remove repeated non-null assertions and ones placed before an optional chain; they add nothing."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   non_null(n, x), optional_on(p, x), estree_child(p, x)
+
+// typescript-eslint's no-extra-non-null-assertion: a `!` that asserts what is asserted already, or what an
+// optional link then tests for null anyway. Reported at the redundant assertion; the fix drops its `!`.
+//   a!!          the inner a!            (a!)!   the same: parentheses are not ESTree nodes
+//   a!?.b        a!?.[0]       a!?.()   the a! before the optional link
+//   a?.b!        fine: the assertion is after the link
+.violation no_extra_non_null_assertion(at: node) code "@typescript-eslint/no-extra-non-null-assertion"
+    "Forbidden extra non-null assertion."
+    suppress eslint "@typescript-eslint/no-extra-non-null-assertion"
+    suppress oxlint "no-extra-non-null-assertion"
+    suppress biome "lint/suspicious/noExtraNonNullAssertion"
+    fix safe drop_bang "Remove the extra `!`"
+no_extra_non_null_assertion(n) :- non_null(n, _), (non_null(p, _), estree_child(p, n) ; optional_on(_, n)).
+drop_bang(n) :- last_token(n, t) => delete(t).

@@ -1,1 +1,0 @@
-<template><div><div v-for="x in list" :key="x.foo"></div></div></template>

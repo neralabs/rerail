@@ -3,12 +3,39 @@ members = ["native"]
 exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation"]
 resolver = "2"
 
+[patch.crates-io]
+block = { path = "native/vendor/block-0.1.6" }
+# Language is Send and Sync on wasm too (native/vendor/tree-sitter-0.27.1/PATCHES.md).
+tree-sitter = { path = "native/vendor/tree-sitter-0.27.1" }
+
+# Dependencies (SQLite's C, tree-sitter, regex, cranelift, ast-grep) are optimized in dev and test
+# builds: they compile once and stay cached, while this crate keeps its fast unoptimized rebuilds.
+[profile.dev.package."*"]
+opt-level = 3
+
+# Dev and test builds keep file and line numbers (panics, backtraces) but not full debug info: the
+# test binary was ~300 MB, mostly DWARF, and linking it dominated each rebuild. For a debugger,
+# build with full debug info: `cargo test --profile debugging` (or `cargo build --profile debugging`).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+[profile.debugging.package."*"]
+opt-level = 3
+
+# Timings (`cargo test --profile profiling`): this crate optimized too, built incrementally and in
+# parallel rather than as a release (no LTO), so a measurement is of optimized code without a
+# release's link time. Unoptimized test builds run host code many times slower than shipped.
 [profile.profiling]
-inherits = "release"
-debug = 2
-strip = "none"
-lto = false
-codegen-units = 16
+inherits = "dev"
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+incremental = true
+codegen-units = 256
 
 [profile.release]
 lto = "thin"
@@ -17,10 +44,28 @@ codegen-units = 1
 # dyld rejects the cdylib ("mis-aligned LINKEDIT string pool"). Unstripped costs ~1 MB.
 strip = "none"
 
-# Parser generation runs inside the build script. Its debug build can exceed the bounded
-# profiling deadline before Rust compilation starts. This does not change engine optimization.
-[profile.release.package.tree-sitter-generate]
+# The build script generates the vendored grammars' parsers (native/build.rs): tree-sitter-generate runs several times
+# faster optimised (TypeScript's parser in 1 s rather than 7 s), and regenerating SQL's committed parser takes 7 to 10
+# minutes rather than half an hour.
+[profile.release.build-override]
 opt-level = 3
 
+# A debug build generates the same parsers; unoptimised generation can exceed the bounded profiling deadline.
 [profile.dev.package.tree-sitter-generate]
 opt-level = 3
+
+# Anchor-selection lab (`matcher/anchors/sql/lab.rs`): the crate stays incremental, dependencies
+# (SQLite above all) run optimised, so an iteration takes seconds instead of a release build.
+[profile.lab]
+inherits = "dev"
+
+[profile.lab.package."*"]
+opt-level = 3
+
+# The browser build (native/wasm): optimised for size, built in parallel and without LTO, so an iteration takes
+# minutes rather than release's single-unit thin LTO (10 minutes for wasm32 on a loaded machine).
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = false
+codegen-units = 16

@@ -1,6 +1,7 @@
 """Records Bladestan 0.11.7 (PHPStan 2.2.16 over the PHP illuminate/view 13.34.0 compiles a template to) for the
-Blade pack's ported PHPStan rules (rerail/packs/blade/conformance.json). Run offline, never in CI, with
-PHP 8.5.11, from a checkout of TomasVotruba/bladestan at tag 0.11.7 with its development dependencies installed and
+Blade pack's ported PHPStan rules (rerail/packs/blade/conformance.json). Run by `npm run fixtures:derive` (a
+maintainer, or the bump workflow for an upstream release; never pull request CI), with PHP 8.5.11, from a checkout of
+TomasVotruba/bladestan at tag 0.11.7 with its development dependencies installed and
 PHPStan pinned (`composer update && composer require --dev phpstan/phpstan:2.2.16 -W`; laravel/framework 13.34.0,
 larastan 3.12.3, livewire 4.4.7, orchestra/testbench 11.3.0, phpunit 12.5.38):
 

@@ -1,1 +1,0 @@
-<template><div><your-component v-for="x in list"></your-component></div></template>

@@ -1,1 +1,0 @@
-type Test = { readonly f?: <T>(a?: T) => T };

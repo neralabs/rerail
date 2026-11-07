@@ -1,1 +1,0 @@
-let a; const b = 0, c = 1; let d;

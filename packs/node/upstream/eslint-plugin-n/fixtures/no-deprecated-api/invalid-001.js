@@ -1,1 +1,0 @@
-new (require('buffer').Buffer)()

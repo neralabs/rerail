@@ -1,13 +1,15 @@
 // Shared by the ESLint-based packs' recorders (packs/<id>/upstream/<tool>/generate.mjs): pins, the corpus file set the
 // conformance runner scores, the guard that keeps the recording machine out of fixtures, and
 // ESLint's findings in the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
-// Run offline by a maintainer, never in CI.
+// Run, through them, by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never
+// pull request CI).
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, matchesGlob, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { recordingWritten } from "../../scripts/s3/pack-fixtures.mjs";
 
 export const REPOSITORY = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
@@ -165,6 +167,7 @@ export function writeRecording(path, tool, version, source, findings) {
   );
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify({ tool, version, source, findings: sorted }, null, 1)}\n`);
+  console.log(recordingWritten(path, source.kind));
 }
 
 /**

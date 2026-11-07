@@ -1,1 +1,0 @@
-<template><my-component v-slot="{ Comp }"><Comp /></my-component></template>

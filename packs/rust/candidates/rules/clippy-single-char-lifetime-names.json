@@ -3,7 +3,7 @@
   "id": "clippy-single-char-lifetime-names",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's single_char_lifetime_names: reports each single-character lifetime parameter where it is declared, a generic parameter list's or a `for<..>` binder's, not where a bound or a type names it. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.",
+  "description": "Give Rust lifetime parameters descriptive names instead of single letters; the name says what the borrow is tied to.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "clauses": [{ "id": "single-char-lifetime", "forbid": { "ast": { "language": "rust", "rule": { "kind": "lifetime", "regex": "^'[A-Za-z]$", "any": [{ "inside": { "kind": "lifetime_parameter", "field": "name" } }, { "inside": { "kind": "for_lifetimes" } }] } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::single_char_lifetime_names", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "single_char_lifetime_names", "message": "Clippy single_char_lifetime_names: single-character lifetime name" } }]
+  "clauses": [{ "id": "single-char-lifetime", "forbid": { "ast": { "language": "rust", "rule": { "kind": "lifetime", "regex": "^'[A-Za-z]$", "any": [{ "inside": { "kind": "lifetime_parameter", "field": "name" } }, { "inside": { "kind": "for_lifetimes" } }] } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::single_char_lifetime_names", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "single_char_lifetime_names", "message": "Rename this lifetime to say what it borrows from, e.g. 'input instead of 'a." } }]
 }

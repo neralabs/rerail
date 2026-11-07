@@ -1,1 +1,0 @@
-function f(Object) { return x !== -0; }

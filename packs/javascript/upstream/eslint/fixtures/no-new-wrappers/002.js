@@ -1,1 +1,0 @@
-var a = String('test'), b = String.fromCharCode(32);

@@ -7,6 +7,8 @@
 //     D (else under C's directory, else all of P) whose path contains a filter (when given), minus the
 //     string globs in P's `vitest.config.*` `exclude` array;
 //   - `node --test files…` runs those files; `pytest paths…` runs the test files under those paths;
+//   - `playwright test` in package P runs the test files under its config's `testDir` (`--config C`, else
+//     P's `playwright.config.*`; the config's directory when it names none);
 //   - `node [--import X] file`, `tsx file`, `python[3] file`, `bash|sh file` run `file` as an entry point.
 // Predicate:
 //   - every tracked test file (`*.test.*`/`*.spec.*` scripts, pytest `test_*.py`/`*_test.py`, PHPUnit
@@ -65,6 +67,7 @@ export function analyse(repo) {
     if (program === undefined) return [];
     if (program === "npm") return runNpm(cwd, args, stack);
     if (program === "vitest") return [vitest(cwd, args)];
+    if (program === "playwright" && args[0] === "test") return [playwright(cwd, args.slice(1))];
     if (program === "node" || program === "tsx") return runNode(cwd, args);
     if (program === "pytest" || ((program === "python" || program === "python3") && args[0] === "-m" && args[1] === "pytest")) {
       const paths = program === "pytest" ? args : args.slice(2);
@@ -76,6 +79,21 @@ export function analyse(repo) {
     }
     if (program.startsWith("./") || program.includes("/")) return [{ kind: "file", path: join(cwd, program) }];
     return [];
+  }
+
+  /** The directory `playwright test` collects specs from: the config's `testDir`, relative to the config. */
+  function playwright(cwd, args) {
+    let config = null;
+    for (let i = 0; i < args.length; i += 1) {
+      const [flag, inline] = args[i].includes("=") ? [args[i].slice(0, args[i].indexOf("=")), args[i].slice(args[i].indexOf("=") + 1)] : [args[i], null];
+      if (flag === "--config" || flag === "-c") config = join(cwd, inline ?? args[(i += 1)]);
+    }
+    config ??= ["playwright.config.ts", "playwright.config.mts", "playwright.config.js", "playwright.config.mjs"]
+      .map((name) => join(cwd, name))
+      .find((path) => repo.has(path)) ?? null;
+    if (config === null) return { kind: "tests", path: cwd };
+    const testDir = /testDir\s*:\s*["']([^"']+)["']/.exec(repo.text(config) ?? "")?.[1] ?? ".";
+    return { kind: "tests", path: join(dirname(config), testDir) };
   }
 
   function runNpm(cwd, args, stack) {

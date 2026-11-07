@@ -1,1 +1,0 @@
-({[null]: function foo() {}})

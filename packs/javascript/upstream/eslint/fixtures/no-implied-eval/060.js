@@ -1,1 +1,0 @@
-setTimeout(foobar, 'buzz')

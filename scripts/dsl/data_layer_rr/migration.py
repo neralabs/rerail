@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'scripts/dsl'))
 from data_layer_rule_audit import fixtures_path
 PIN = '2b1504adc4291daaf080b2e932962b134da1a69a'
-MANIFEST = Path('packs/data-layer/candidates/rr/migration.json')
-DESTINATION = Path('packs/data-layer/candidates/rr')
+MANIFEST = Path('gate/data-layer/packs/data-layer/candidates/rr/migration.json')
+DESTINATION = Path('gate/data-layer/packs/data-layer/candidates/rr')
 LIBRARY = Path('docs/rule-syntax/lib')
 
 
@@ -51,7 +51,7 @@ def targets(root):
     for batch in plan['batches'][:10]:
         for check in batch['checks']:
             name = 'data-layer-' + check.replace('_', '-') + '.json'
-            paths = [root / 'packs/data-layer' / directory / name
+            paths = [root / 'gate/data-layer/packs/data-layer' / directory / name
                      for directory in ['rules', 'candidates/rules']]
             found = [path for path in paths if path.is_file()]
             if len(found) != 1:

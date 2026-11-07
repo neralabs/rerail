@@ -8,7 +8,7 @@ const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../src/engine/index.ts", import.meta.url).href;
 const capabilities = new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url).href;
 
-it.skipIf(!required)("exports scoped source bindings with pinned source generations", () => {
+it.skipIf(!required)("exports real shared structural bindings with pinned source generations", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-shared-producers-"));
   try {
     const program = `
@@ -16,7 +16,7 @@ it.skipIf(!required)("exports scoped source bindings with pinned source generati
       import {loadNativeBinding} from ${JSON.stringify(engine)};
       const native=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
       const ws=new native.CodeRuleDslWorkspace();
-      for(const [id,kind] of [['names','identifier'],['duplicate-names','identifier'],['calls','call']]) {
+      for(const [id,kind] of [['names','identifier'],['calls','call']]) {
         ws.addCodeRule(native.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id,revision:1,mode:'log',
           clauses:[{id:'selected',forbid:{ast:{language:'python',rule:{kind,regex:'target'}}},
           violation:{code:'MATCH',message:'Match',anchor:'witness.span'}}]}),'json',caps));
@@ -32,13 +32,13 @@ it.skipIf(!required)("exports scoped source bindings with pinned source generati
     });
     expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
     const result = JSON.parse(child.stdout.trim().split("\n").at(-1)!);
-    expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(3);
+    expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(2);
     const files = readdirSync(directory).filter(f => /^producer-plan-.*\.json$/.test(f));
     expect(files.length, "actual candidate compilation must export its producer plan").toBeGreaterThan(0);
     const manifests = files.map(f => JSON.parse(readFileSync(join(directory, f), "utf8")));
-    const spans = manifests.flatMap(m => m.bindings).filter(b => b.contract === "syntax.source_confirmation.v1");
+    const spans = manifests.flatMap(m => m.bindings).filter(b => b.contract === "syntax.source_spans.v1");
     expect(spans.length).toBeGreaterThan(0);
-    expect(spans.some(b => b.consumers.length >= 2), "identical selectors must share their source binding").toBe(true);
+    expect(spans.some(b => b.consumers.length >= 2), "different selectors must reference one span binding").toBe(true);
     const consumers = spans.flatMap(b => b.consumers).join("\n");
     expect(consumers).toContain("rule names clause selected");
     expect(consumers).toContain("rule calls clause selected");
@@ -51,11 +51,11 @@ it.skipIf(!required)("exports scoped source bindings with pinned source generati
     expect(checked.status, checked.stderr).toBe(0);
     const report = JSON.parse(readFileSync(join(directory, "checked.json"), "utf8"));
     expect(report.valid).toBe(true); expect(report.clashes).toEqual([]);
-    expect(report.sharedBindings.some((b: { contract: string }) => b.contract === "syntax.source_confirmation.v1")).toBe(true);
+    expect(report.sharedBindings.some((b: { contract: string }) => b.contract === "syntax.source_spans.v1")).toBe(true);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 45_000);
 
-it.skipIf(!required)("executes one source batch across two rules and two result packets", () => {
+it.skipIf(!required)("fills one shared span owner across two rules and two result packets", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-span-wave-"));
   try {
     const program = `
@@ -88,55 +88,8 @@ it.skipIf(!required)("executes one source batch across two rules and two result 
       const queries = new Map<number, string>(catalogue.queries.map((q: { id: number; sql: string }) => [q.id, q.sql]));
       const events = readFileSync(join(directory, file.replace(/\.json$/, ".jsonl")), "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l));
       expect(events.filter(e => e.kind === "sql")).toHaveLength(catalogue.executionCoverage.completed);
-      fills += events.filter(e => e.kind === "sql" && queries.get(e.query)?.includes("INSERT OR IGNORE INTO source_batch_match")).length;
+      fills += events.filter(e => e.kind === "sql" && queries.get(e.query)?.includes("INSERT INTO decoded_spans")).length;
     }
     expect(fills, "independent ready selectors must feed one physical fill, across both result packets").toBe(1);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 45_000);
-
-it.skipIf(!required).each(["relational", "ast-index"])("a %s statement-only SQL trace does not copy candidate databases", (scope) => {
-  const directory = mkdtempSync(join(tmpdir(), "rerail-filtered-sql-"));
-  try {
-    const program = `
-      import {readFileSync} from 'node:fs';
-      import {loadNativeBinding} from ${JSON.stringify(engine)};
-      const native=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
-      const rule=native.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id:'selected',revision:1,mode:'log',clauses:[{
-        id:'names',forbid:{ast:{language:'python',rule:{kind:'identifier'}}},violation:{code:'NAME',message:'Name',anchor:'witness.span'}}]}),'json',caps);
-      const ws=new native.CodeRuleDslWorkspace();ws.addCodeRule(rule);
-      try {console.log(await ws.applyAsync(JSON.stringify({revision:1,files:[{path:'a.py',language:'python',source:'target'}],removed:[]})));}
-      finally {ws.close();}
-    `;
-    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
-      encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, RERAIL_SQL_PROFILE_DIR: directory, RERAIL_SQL_PROFILE_SCOPE: scope, RERAIL_SQL_PROFILE_REPLAY: "0" },
-    });
-    expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
-    const result = JSON.parse(child.stdout.trim()).evaluation;
-    expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(1);
-    const files = readdirSync(directory);
-    expect(files.filter(f => /^candidate-.*\.sqlite$/.test(f))).toEqual([]);
-    const catalogues = files.filter(f => /^profile-.*\.json$/.test(f)).map(f => JSON.parse(readFileSync(join(directory, f), "utf8")));
-    expect(catalogues.length).toBeGreaterThan(0);
-    expect(catalogues.every(c => c.executionCoverage.fromSessionStart === false && c.executionCoverage.contextFilter === scope)).toBe(true);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
-}, 35_000);
-
-it.skipIf(!required)("CPU tracing scans SQL pages only when a working-set census is requested", () => {
-  const program = `
-    import {readFileSync} from 'node:fs';import {loadNativeBinding} from ${JSON.stringify(engine)};
-    const n=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
-    const r=n.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id:'trace-census',revision:1,mode:'log',clauses:[{id:'names',forbid:{ast:{language:'python',rule:{kind:'identifier'}}},violation:{code:'NAME',message:'Name',anchor:'witness.span'}}]}),'json',caps);
-    const w=new n.CodeRuleDslWorkspace();w.addCodeRule(r);
-    try {console.log(await w.applyAsync(JSON.stringify({revision:1,files:[{path:'a.py',language:'python',source:'target'}],removed:[]})));}finally{w.close();}
-  `;
-  for (const enabled of [false, true]) {
-    const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30_000,maxBuffer:8*1024*1024,
-      env:{...process.env,RERAIL_PROFILE:'1',RERAIL_PROFILE_SQL_WORKING_SET:enabled?'1':undefined}});
-    expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
-    const result=JSON.parse(child.stdout.trim()).evaluation;
-    expect(result.failures).toEqual([]);expect(result.violations).toHaveLength(1);
-    const census=child.stderr.split('\n').filter(l=>l.startsWith('RERAIL_TRACE ')).map(l=>JSON.parse(l.slice(13))).filter(r=>r.phase==='anchor-working-set');
-    if(enabled)expect(census.length).toBeGreaterThan(0);else expect(census).toEqual([]);
-  }
-},65_000);

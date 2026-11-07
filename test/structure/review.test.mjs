@@ -104,4 +104,17 @@ describe("#24 harnesses in CI", () => {
     );
     expect(result.findings).toEqual([]);
   });
+
+  it("counts the specs under the Playwright config's testDir, and only those, as run by playwright test", () => {
+    const result = harnessesInCi(
+      memoryRepo({
+        ".github/workflows/ci.yml": ci("npx playwright install --with-deps chromium\nnpm run test:ui:e2e"),
+        "package.json": JSON.stringify({ scripts: { "test:ui:e2e": "playwright test" } }),
+        "playwright.config.ts": 'export default defineConfig({ testDir: "./e2e" });',
+        "e2e/smoke.spec.ts": "",
+        "browser/other.spec.ts": "",
+      }),
+    );
+    expect(paths(result)).toEqual(["browser/other.spec.ts"]);
+  });
 });

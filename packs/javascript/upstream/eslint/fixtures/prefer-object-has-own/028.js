@@ -1,1 +1,0 @@
-Object.prototype.foo.call(obj, prop)

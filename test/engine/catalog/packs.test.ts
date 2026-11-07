@@ -1,5 +1,5 @@
 /**
- * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 6, one test per
+ * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
  * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
  * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
  * corpus, a missing checkout failing; 0: none).
@@ -8,13 +8,13 @@
  * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
  * yet, and `empty`, whose ports are all candidates, passes with no rules.
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, packedFileFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
+import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 
@@ -206,7 +206,7 @@ describe("validatePack", () => {
       "a candidate whose id is not lowercase letters, digits and dashes, though its file is named for it",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", clauses: [] });
+        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", description: "Avoid alert().", clauses: [] });
       },
       { rules: ["candidates/rules/eslint:no-alert.json: id eslint:no-alert is not lowercase letters, digits and dashes"] },
     ],
@@ -214,7 +214,7 @@ describe("validatePack", () => {
       "a candidate with no id",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "rerail.policy/v1", clauses: [] });
+        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "rerail.policy/v1", description: "Remove pass statements.", clauses: [] });
       },
       { rules: ["candidates/rules/no-pass.json: has no id"] },
     ],
@@ -222,7 +222,7 @@ describe("validatePack", () => {
       "a candidate in an older document format",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", checks: [] });
+        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", description: "Remove pass statements.", checks: [] });
       },
       { rules: ["candidates/rules/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1"] },
     ],
@@ -347,9 +347,29 @@ describe("validatePack", () => {
       { licences: ["upstream/examplelint/fixtures/more.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
     ],
     [
+      "a file copied from an upstream path its UPSTREAM.md lists as not copied",
+      directory => appendFileSync(join(directory, "licenses", "examplelint", "UPSTREAM.md"), "\n- Not copied: `tests/` — a copyleft project, GPL-3.0-only\n"),
+      { licences: ["licenses/examplelint/UPSTREAM.md lists upstream/examplelint/fixtures/asserts.py as copied from tests/asserts.py, under tests/, which it lists as not copied"] },
+    ],
+    [
       "an authored file the tool's UPSTREAM.md does not list",
       directory => writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n"),
       { licences: ["upstream/examplelint/fixtures/clean.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
+    ],
+    [
+      "a description that names its tool and holds code",
+      directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({ ...document, description: "Port of Ruff's `PIE790`." })),
+      {
+        text: [
+          "rules/pass-statement.json: description names an upstream tool: Port of Ruff's `PIE790`.",
+          "rules/pass-statement.json: description holds code (backticks): Port of Ruff's `PIE790`.",
+        ],
+      },
+    ],
+    [
+      "a rule with no description",
+      directory => editJson(join(directory, "rules", "pass-statement.json"), ({ description: _description, ...document }) => document),
+      { text: ["rules/pass-statement.json: has no description"] },
     ],
   ];
 
@@ -357,6 +377,44 @@ describe("validatePack", () => {
     const validation = await validatePack(changed("valid", change), { corpora: false });
     expect(failing(validation)).toEqual(expected);
     expect(validation.pass).toBe(false);
+  });
+
+  it("passes a rule whatever its message says: messages are left to review", async () => {
+    const message = `NEVER keep this pass (pass-statement); Rerail flags it.${" Remove it.".repeat(20)}`;
+    const validation = await validatePack(
+      changed("valid", directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({
+        ...document,
+        clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message } })),
+      }))),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
+    expect(validation.rules.find(rule => rule.id === "pass-statement")?.status).toBe("ok");
+  });
+
+  describe("check 8: text", () => {
+    it("reads no sentence end in an abbreviation or quoted text, and no tool name in a quoted value", () => {
+      const document = { description: "Use field init shorthand, e.g. Point { x } for Point { x: x }, not 'eslint' style.", clauses: [] };
+      expect(textFailures("rules/x.json", JSON.stringify(document))).toEqual([]);
+    });
+  });
+
+  describe("check 7: manifest", () => {
+    it("fails a pack.json without match, as a manifest failure besides check 1's schema failure", async () => {
+      const validation = await validatePack(changed("valid", directory => editJson(join(directory, "pack.json"), ({ match: _match, ...pack }) => pack)), { corpora: false });
+      expect(failing(validation)).toEqual({
+        rules: ["pack.json: ✖ Invalid input: expected object, received undefined\n  → at match"],
+        proof: ["pack.json does not parse; see check 1"],
+        examples: ["pack.json does not parse; see check 1"],
+        manifest: ["pack.json has no match: set-up could never recommend this pack"],
+      });
+    });
+
+    it("fails a pack core's generated pack list does not name, when it must be listed", async () => {
+      const validation = await validatePack(join(FIXTURES, "valid"), { corpora: false, listed: true });
+      expect(failing(validation)).toEqual({ manifest: ["src/engine/catalog/pack-list.generated.ts does not list valid; run npm run generate:packs"] });
+    });
   });
 
   it("marks the rule a failure belongs to", async () => {
@@ -468,7 +526,8 @@ describe("validatePack", () => {
   });
 
   it("asks no suppress.biome of a port whose query language does not honour Biome's comments", async () => {
-    // Vue's registry entry honours eslint alone: a Vue query refuses suppress.biome.
+    // Vue's registry entry honours eslint alone: a Vue query, over the component's script program
+    // too, refuses suppress.biome.
     const vue = (directory: string) =>
       editJson(join(directory, "rules", "no-debugger.json"), document => ({
         ...document,
@@ -477,7 +536,7 @@ describe("validatePack", () => {
           .parse(document.clauses)
           .map(clause => ({
             ...clause,
-            forbid: { ...clause.forbid, ast: { ...clause.forbid.ast, language: "vue" } },
+            forbid: { ...clause.forbid, ast: { ...clause.forbid.ast, language: "vue", embedded: "script-block" } },
             violation: { ...clause.violation, suppress: { eslint: { rules: ["no-debugger"] } } },
           })),
       }));
@@ -500,14 +559,14 @@ describe("packedFileFailures", () => {
   });
 
   it("fails an entry files does not publish", () => {
-    expect(packedFileFailures(files, ["pack.json", "CHANGELOG.md", "checks/match.mjs"])).toEqual([
+    expect(packedFileFailures(files, ["pack.json", "CHANGELOG.md", "docs/notes.md"])).toEqual([
       "CHANGELOG.md: package.json files does not publish it",
-      "checks/match.mjs: package.json files does not publish it",
+      "docs/notes.md: package.json files does not publish it",
     ]);
   });
 
-  it("passes a directory a pack adds to files, such as checks/", () => {
-    expect(packedFileFailures([...files, "checks"], ["checks/match.mjs"])).toEqual([]);
+  it("passes a directory a pack adds to files, such as docs/", () => {
+    expect(packedFileFailures([...files, "docs"], ["docs/notes.md"])).toEqual([]);
   });
 
   it("passes files under a folder a glob entry matches, which npm publishes whole", () => {

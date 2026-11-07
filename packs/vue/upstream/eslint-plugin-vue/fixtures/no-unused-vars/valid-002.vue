@@ -1,1 +1,0 @@
-<template v-for="i in 5"><comp v-for="j in 10">{{i}}{{j}}</comp></template>

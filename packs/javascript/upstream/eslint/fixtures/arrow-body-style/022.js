@@ -1,1 +1,0 @@
-for (var f;f = () => { return a in c };);

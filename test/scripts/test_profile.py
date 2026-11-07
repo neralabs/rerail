@@ -20,73 +20,6 @@ from unittest.mock import patch
 
 
 class ProfileTests(unittest.TestCase):
-    def test_complete_memory_gate_uses_os_peak_even_when_close_exceeds_the_driver_sample(self):
-        from workloads.full_repository import measurement_result
-        parity = dict(files=9021, bytes=137924324, expected=24993, actual=24993,
-                      compilationMs=1820, coldMs=2095695, phaseCpuMs={'cold':{'userMs':1302995,'systemMs':591335}},
-                      peakRssBytes=6571507712, falsePositives=[], falseNegatives=[], failures=[])
-        resource = {'peakRssBytes':7372029952}
-        close = {'after':{'peakRssBytes':7372029952}}
-        result = measurement_result(parity, resource, close)
-        self.assertEqual(result['peakRssBytes'],7372029952)
-        self.assertEqual(result['driverPeakRssBytes'],6571507712)
-        self.assertEqual(result['close'],close)
-        self.assertEqual(parity['peakRssBytes'],6571507712)
-        self.assertNotIn('close',measurement_result(parity,resource))
-
-    def test_external_profile_targets_workload_child_instead_of_time_wrapper(self):
-        monitor=ProcessMonitor(10,Path('/unused'))
-        monitor.rows=[{'processes':[
-            dict(pid=10,parent=1,rssBytes=512*1024,cpuSeconds=0,command='/usr/bin/time'),
-            dict(pid=11,parent=10,rssBytes=4*2**30,cpuSeconds=100,command='node')]}]
-        self.assertEqual(monitor.profile_pid(),11)
-        monitor.rows=[]
-        self.assertEqual(monitor.profile_pid(),10)
-
-    def test_allocator_census_requires_explicit_memory_request(self):
-        from run import instrumentation_env
-        from types import SimpleNamespace
-        args=SimpleNamespace(sql_profile=False,query_plans=False,trace='on',memory_census=False)
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'RERAIL_PROFILE_MEMORY_CENSUS':'1'}):
-            self.assertIsNone(instrumentation_env(args,Path(directory)).get('RERAIL_PROFILE_MEMORY_CENSUS'))
-            args.memory_census=True
-            self.assertEqual(instrumentation_env(args,Path(directory))['RERAIL_PROFILE_MEMORY_CENSUS'],'1')
-
-    def test_cpu_attribution_subtracts_children_and_keeps_threads_separate(self):
-        from analysis.cpu import summarize
-        def event(start,wall,cpu,thread='one',rule='',clause='',phase='stage'):
-            return dict(startUnixUs=start,wallNs=wall*1000,cpuNs=cpu,thread=thread,
-                        rule=rule,clause=clause,phase=phase,name=phase,runPhase='cold')
-        events=[event(0,100,100,rule='r',clause='c',phase='parent'),
-                event(10,60,60,phase='child'),event(20,20,20,phase='grandchild'),
-                event(0,100,20,thread='two',phase='other')]
-        result=summarize(events)
-        self.assertEqual(result['observedCpuNs'],120)
-        self.assertEqual(result['unattributedCpuNs'],20)
-        self.assertEqual(sum(r['selfCpuNs'] for r in result['rows']),120)
-        self.assertEqual({r['name']:r['selfCpuNs'] for r in result['rows']},
-                         {'parent':40,'child':40,'grandchild':20,'other':20})
-        self.assertTrue(all(r['clause']=='c' for r in result['rows'] if r['name']!='other'))
-        missing=summarize([event(0,10,None)])
-        self.assertEqual(missing['missingCpuEvents'],1)
-        self.assertEqual(missing['observedCpuNs'],0)
-
-    def test_lowering_breakdown_keeps_parent_and_children_separate(self):
-        import report as profiling_report
-        events = [{"rule":"", "clause":"", "path":None, "name":"planning", "thread":"main",
-                   "startUnixUs":0, "detail":{}, "phase":phase, "wallNs":ms*1_000_000, "cpuNs":ms*1_000_000}
-                  for phase, ms in [("anchor-lower",10),("anchor-fragment",4),("anchor-ownership",6)]]
-        native, parsed = aggregate("\n".join("RERAIL_TRACE "+json.dumps(event) for event in events))
-        text = summary({"elapsedSeconds":1,"exitCode":0,"timedOut":False,"native":native,"samples":[]})
-        self.assertIn("Candidate lowering breakdown (ms; included in anchor-lower): anchor-fragment=4.000; anchor-ownership=6.000", text)
-        api = next(line for line in text.splitlines() if line.startswith("Candidate SQL API CPU"))
-        self.assertIn("anchor-lower=10.000", api)
-        self.assertNotIn("anchor-fragment", api)
-        leaves = profiling_report.sample_leaf_phases(parsed)
-        self.assertNotIn("anchor-lower", leaves)
-        self.assertIn("anchor-fragment", leaves)
-        self.assertIn("anchor-lower", profiling_report.sample_leaf_phases(parsed[:1]))
-
     def test_vmmap_keeps_residency_and_allocator_views_separate(self):
         result = vmmap_summary("""Physical footprint:         1.5G
 Physical footprint (peak):  2G
@@ -399,17 +332,6 @@ Total number in stack (recursive counted multiple, when >=5):
                                     capture_output=True, timeout=8)
             self.assertEqual(result.returncode, 124, result.stderr)
             self.assertTrue(json.loads((output / "profile.json").read_text())["timedOut"])
-
-    def test_statement_only_capture_controls_replay_without_losing_sql_capture(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "run"
-            result = subprocess.run([sys.executable, str(PROFILING / "run.py"), "--output", str(output),
-                "--deadline", "5", "--trace", "off", "--sql-profile", "--sql-trace-only", "--", sys.executable,
-                "-c", "import json,os;print(json.dumps([os.getenv('RERAIL_SQL_PROFILE_REPLAY'), bool(os.getenv('RERAIL_SQL_PROFILE_DIR'))]))"],
-                capture_output=True, timeout=8)
-            self.assertEqual(result.returncode, 1, result.stderr)  # The Python target has no SQL instrumentation.
-            self.assertEqual(json.loads((output / "stdout.log").read_text()), ["0", True])
-            self.assertTrue(json.loads((output / "profile.json").read_text())["sqlTraceOnly"])
 
     def test_sql_capture_requires_instrumented_execution_and_clears_inherited_capture(self):
         with tempfile.TemporaryDirectory() as temporary:

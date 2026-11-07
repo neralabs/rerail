@@ -1,1 +1,0 @@
-<x-profile :$message /> <x-profile :$message />

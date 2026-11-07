@@ -1,1 +1,0 @@
-ALTER TABLE foo ADD COLUMN bar TEXT;

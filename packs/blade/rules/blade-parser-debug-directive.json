@@ -1,0 +1,32 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "blade-parser-debug-directive",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Remove @dd and @dump directives from Blade templates; they stop rendering or leak debug output to users.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "kind": "directive_name",
+            "regex": "^@(dd|dump)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "DebugDirectiveValidator",
+        "message": "Remove this @dd or @dump directive; it stops rendering or shows debug output to users."
+      }
+    }
+  ]
+}

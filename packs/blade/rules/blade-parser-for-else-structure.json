@@ -1,0 +1,55 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "blade-parser-for-else-structure",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Give every Blade @forelse loop exactly one @empty directive; it holds what renders when the list is empty.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "kind": "directive_block",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "start",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "directive_name",
+                "regex": "^@forelse$"
+              }
+            },
+            "not": {
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "directive",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "directive_name",
+                    "regex": "^@empty$"
+                  }
+                },
+                "min": 1,
+                "max": 1
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ForElseStructureValidator",
+        "message": "Missing or too many [@empty] directives inside [@forelse]"
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
   "id": "ruff-sim105-suppressible-exception",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM105 (suppressible-exception) at target 3.14: a `try` with one simple statement (expression, assignment, `del`, `assert`, import or `pass`), exactly one `except` handler whose body is only `pass` or `...`, no `else` or `finally`, and whose handled types are all names or attribute chains (or none). Reported on the `try` statement.",
+  "description": "Use contextlib.suppress() instead of a try with a single statement whose only except handler just passes.",
   "scope": {
     "include": [
       "**/*"

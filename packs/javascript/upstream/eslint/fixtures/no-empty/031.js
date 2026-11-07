@@ -1,1 +1,0 @@
-switch /* empty */ (/* empty */ foo /* empty */) /* empty */ {} /* empty */

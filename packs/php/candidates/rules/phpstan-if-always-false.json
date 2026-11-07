@@ -3,7 +3,7 @@
   "id": "phpstan-if-always-false",
   "revision": 2,
   "mode": "steer",
-  "description": "PHPStan 2.2.16 if.alwaysFalse (IfConstantConditionRule): an if condition PHP's constant evaluation (variables followed through their one reaching binding) finds always falsy; not the comparisons, negations, ternaries, isset and empty PHPStan leaves to other rules, a condition in a trait, or an if an inline @var doc comment precedes (PHPStan reads the variable as the PHPDoc type). Diverges from PHPStan on a declaration stub: an if whose block holds only class, interface, trait, enum or function declarations and class_alias calls (with comments), such as Symfony's `if (false) { class Router {} }` deprecation stubs, which Composer's class map and IDEs read and which must not be deleted, is not reported (NER-1810).",
+  "description": "Remove PHP if statements whose condition is always false, except declaration stubs kept for autoloaders and IDEs; the block is dead code.",
   "scope": {
     "include": [
       "**/*.php"

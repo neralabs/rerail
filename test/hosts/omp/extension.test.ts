@@ -19,14 +19,15 @@ import {
   RULE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
   resetRepositoryHistory,
-  linkSteers,
   steerBlock,
   steerOrigin,
   type ConversationRule,
   type RuleMode,
   type AdapterDelivery,
+  type SteerRule,
   openRerailDatabase,
   setRuleSetting,
+  CodeRuleBridge,
 } from "../../../src/engine/index.js";
 import { createConversationRulesExtension } from "../../../src/hosts/omp/extension.js";
 import { NativeSessionClient } from "../../../src/harness/index.js";
@@ -36,9 +37,21 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/nat
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 
-/** The steer block a `mode` rule delivers, with its `Why?` link made absolute the way the OMP adapter does for `cwd`. */
-async function deliveredSteer(cwd: string, ruleId: string, guidance: string, mode: RuleMode = "steer"): Promise<string> {
-  return linkSteers(steerBlock(ruleId, guidance, { mode, origin: steerOrigin(ruleId) }), await steerDashboard(cwd));
+/** The steer block a `mode` conversation rule delivers for a step of the conversation. */
+function deliveredSteer(ruleId: string, guidance: string, mode: RuleMode = "steer"): string {
+  return steerBlock({ kind: "tool" }, [{ ruleId, mode, message: guidance }]);
+}
+
+/** The rules a `mode` rule's steer names, linked the way the OMP adapter links them for `cwd`. */
+async function deliveredRules(cwd: string, ruleId: string, mode: RuleMode = "steer"): Promise<SteerRule[]> {
+  const dashboard = await steerDashboard(cwd);
+  const origin = steerOrigin(ruleId);
+  return [{
+    id: ruleId,
+    state: mode === "log" ? "logged" : "steered",
+    ...(origin === undefined ? {} : { origin }),
+    ...(dashboard === undefined ? {} : { url: `${dashboard}#rule/${encodeURIComponent(ruleId)}` }),
+  }];
 }
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
@@ -167,9 +180,9 @@ describe("OMP conversation-rules extension", () => {
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements.", mode),
+          content: deliveredSteer("checkout", "Check checkout requirements.", mode),
           display: true,
-          details: { requested: mode, mechanism: "native-queue", sessionId: "omp-test-session" },
+          details: { requested: mode, mechanism: "native-queue", sessionId: "omp-test-session", rules: await deliveredRules(harness.context.cwd, "checkout", mode) },
         },
         options: { deliverAs: "steer" },
       },
@@ -253,7 +266,7 @@ describe("OMP conversation-rules extension", () => {
     );
 
     expect(harness.messages.map(sent => sent.message.content)).toEqual([
-      await deliveredSteer(harness.context.cwd, "checkout", "From the library."),
+      deliveredSteer("checkout", "From the library."),
     ]);
     expect(harness.entries.map(entry => (entry.data as { ruleId: string }).ruleId)).toEqual(["checkout"]);
   });
@@ -507,8 +520,8 @@ describe("OMP conversation-rules extension", () => {
     await emit("after-reset");
 
     expect(harness.messages.map(sent => sent.message.content)).toEqual([
-      await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
-      await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
+      deliveredSteer("checkout", "Check checkout requirements."),
+      deliveredSteer("checkout", "Check checkout requirements."),
     ]);
     const reader = new SqliteSessionReader(databasePath);
     try {
@@ -524,8 +537,8 @@ describe("OMP conversation-rules extension", () => {
 
   /**
    * A running daemon whose native sessions can be refused by name, whose next initialize can be held mid-flight, whose
-   * ingests `state.ingest` can hold or answer with deliveries, and which keeps the gaps it is asked to record and the
-   * events it took.
+   * ingests `state.ingest` and yields `state.yield` can hold or answer with deliveries, and which keeps the gaps it is
+   * asked to record and the events it took.
    */
   function flakyDaemon(cwd: string) {
     daemonRoute.start = async () => ({
@@ -537,6 +550,7 @@ describe("OMP conversation-rules extension", () => {
       down: new Set<string>(),
       hold: undefined as PromiseWithResolvers<void> | undefined,
       ingest: undefined as (() => Promise<readonly AdapterDelivery[]>) | undefined,
+      yield: undefined as (() => Promise<readonly AdapterDelivery[]>) | undefined,
     };
     const requests: Array<{ operation: string; sessionId: string }> = [];
     const gaps: unknown[] = [];
@@ -554,7 +568,8 @@ describe("OMP conversation-rules extension", () => {
       if (state.down.has(request.sessionId)) throw new TypeError("fetch failed");
       if (request.operation === "record-gap") gaps.push(z.object({ input: z.unknown() }).parse(body).input);
       if (request.operation === "ingest") ingested.push(z.object({ event: z.object({ json: z.unknown() }) }).parse(body).event.json);
-      const deliveries = request.operation === "ingest" && state.ingest !== undefined ? await state.ingest() : [];
+      const answer = request.operation === "ingest" ? state.ingest : request.operation === "yield" ? state.yield : undefined;
+      const deliveries = answer === undefined ? [] : await answer();
       return Response.json({ result: null, deliveries, entries: [] });
     });
     return { state, requests, gaps, ingested, initializes: (sessionId: string) => requests.filter(r => r.operation === "initialize" && r.sessionId === sessionId).length };
@@ -984,8 +999,9 @@ describe("OMP conversation-rules extension", () => {
           sessionId: "omp-test-session",
           requested: "steer",
           mechanism: "native-queue",
-          content: steerBlock("checkout", "Check checkout requirements.", { mode: "steer", origin: steerOrigin("checkout") }),
-          ruleIds: [],
+          content: deliveredSteer("checkout", "Check checkout requirements."),
+          ruleIds: ["checkout"],
+          rules: [{ id: "checkout", state: "steered" }],
         }];
       };
 
@@ -1004,9 +1020,194 @@ describe("OMP conversation-rules extension", () => {
       // Nothing is returned: the steer itself is queued, and OMP continues the run with it once the prompt unwinds.
       await expect(stop).resolves.toBeUndefined();
       expect(harness.messages.map(sent => sent.message.content)).toEqual([
-        await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
+        deliveredSteer("checkout", "Check checkout requirements."),
       ]);
       await ended;
+    });
+
+    it("sends the digest of the steers that missed their step at the end of the run, once the turn end has answered", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      const digested = Promise.withResolvers<void>();
+      const digest = steerBlock({ kind: "late" }, [{ ruleId: "checkout", mode: "steer", message: "Check checkout requirements.", location: "src/a.ts:2:7" }]);
+      daemon.state.yield = async () => {
+        await digested.promise;
+        return [{ sessionId: "omp-test-session", requested: "steer", mechanism: "native-queue", content: digest, ruleIds: ["checkout"], rules: [{ id: "checkout", state: "steered" }] }];
+      };
+      daemon.requests.length = 0;
+
+      const ended = harness.handlers.get("turn_end")!({
+        type: "turn_end",
+        message: { role: "assistant", timestamp: 100, responseId: "response-1", content: [{ type: "text", text: "Done." }] },
+      }, harness.context);
+      let stopped = false;
+      const stop = (harness.handlers.get("session_stop")!({ type: "session_stop", signal: new AbortController().signal }, harness.context) as Promise<unknown>)
+        .then(result => { stopped = true; return result; });
+      await vi.waitFor(() => expect(daemon.requests.map(request => request.operation)).toContain("yield"));
+      // Asked after the turn end, and the run is held until it answers.
+      expect(daemon.requests.map(request => request.operation).filter(operation => operation === "ingest" || operation === "yield")).toEqual(["ingest", "yield"]);
+      await settleIo();
+      expect(stopped).toBe(false);
+      expect(harness.messages).toEqual([]);
+
+      digested.resolve();
+      await expect(stop).resolves.toBeUndefined();
+      expect(harness.messages.map(sent => [sent.message.content, sent.options])).toEqual([
+        [digest, { deliverAs: "steer" }],
+      ]);
+      await ended;
+    });
+  });
+
+  describe("while the daemon indexes the repository", () => {
+    it("says so in the footer until it is done, while a prompt and its tool call go on at once, without code rules", async () => {
+      const opening = Promise.withResolvers<void>();
+      const open = CodeRuleBridge.prototype.openWorkspace;
+      const spy = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace").mockImplementationOnce(async function (this: CodeRuleBridge, sessionId: string) {
+        await opening.promise;
+        await open.call(this, sessionId);
+      });
+      const harness = await createHarness();
+      const footer: string[][] = [];
+      Object.assign(harness.context, {
+        hasUI: true,
+        mode: "tui",
+        ui: { setWidget: (_key: string, lines: string[] | undefined) => { footer.push(lines ?? []); } },
+      });
+      const indexingShown = () => footer.at(-1)?.some(line => line.endsWith("indexing")) === true;
+      try {
+        createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+        await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+        await vi.waitFor(() => expect(indexingShown()).toBe(true));
+
+        // Neither waits for indexing: both answer while the evaluator is still held in its open.
+        await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, harness.context);
+        await harness.handlers.get("tool_call")!({ type: "tool_call", toolCallId: "write-1", toolName: "write", input: { path: "a.ts", content: "x" } }, harness.context);
+        expect(indexingShown()).toBe(true);
+
+        opening.resolve();
+        await vi.waitFor(() => expect(indexingShown()).toBe(false));
+      } finally {
+        opening.resolve();
+        spy.mockRestore();
+      }
+    });
+  });
+
+  describe("steer strategies", () => {
+    const steer = (toolCallId: string): AdapterDelivery => ({
+      sessionId: "omp-test-session",
+      requested: "steer",
+      mechanism: "native-queue",
+      content: "Rerail found 1 problem in your last edit.",
+      ruleIds: ["no-any"],
+      rules: [{ id: "no-any", state: "steered" }],
+      strategy: "message",
+      toolCallId,
+    });
+    const rewound = (toolCallId: string): AdapterDelivery => ({
+      ...steer(toolCallId),
+      content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+      strategy: "rewind",
+      rewound: ["a.ts"],
+    });
+    const editResult = { type: "tool_result", toolCallId: "call-1", toolName: "edit", input: {}, content: [{ type: "text", text: "Edited a.ts" }], details: { diff: "+x" }, isError: false };
+
+    it("puts an edit's steer after what that call's result says, past OMP's steer queue, and counts it", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      // A steer that went to OMP's queue would be refused here: nothing ever lands in it.
+      Object.assign(harness.context, { hasPendingMessages: () => false });
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      daemon.state.ingest = async () => [steer("call-1")];
+
+      await expect(harness.handlers.get("tool_result")!(editResult, harness.context)).resolves.toEqual({
+        content: [{ type: "text", text: "Edited a.ts" }, { type: "text", text: "Rerail found 1 problem in your last edit." }],
+      });
+      expect(harness.messages).toEqual([]);
+      expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(1);
+    });
+
+    it("replaces a call's result with its rolled-back edit's steers, marked an error, with its other steers after", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      // A steer that went to OMP's queue would be refused here: nothing ever lands in it.
+      Object.assign(harness.context, { hasPendingMessages: () => false });
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      daemon.state.ingest = async () => [rewound("call-1"), steer("call-1"), { ...rewound("call-1"), content: "Second rule." }];
+
+      await expect(harness.handlers.get("tool_result")!(editResult, harness.context)).resolves.toEqual({
+        content: [
+          { type: "text", text: "Your edit of a.ts was rolled back. Redo it following the rule.\n\nSecond rule." },
+          { type: "text", text: "Rerail found 1 problem in your last edit." },
+        ],
+        isError: true,
+      });
+      expect(harness.messages).toEqual([]);
+      expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(3);
+    });
+
+    it("sends a steer for a call whose result is not being ingested as a message", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      daemon.state.ingest = async () => [steer("call-closed")];
+
+      await expect(harness.handlers.get("tool_result")!(editResult, harness.context)).resolves.toBeUndefined();
+      expect(harness.messages).toEqual([{
+        message: {
+          customType: RULE_MESSAGE_TYPE,
+          content: "Rerail found 1 problem in your last edit.",
+          display: true,
+          details: { requested: "steer", mechanism: "native-queue", sessionId: "omp-test-session", rules: await deliveredRules(harness.context.cwd, "no-any") },
+        },
+        options: { deliverAs: "steer" },
+      }]);
+      expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(1);
+    });
+  });
+
+  describe("compaction", () => {
+    /** OMP's preparation for a split turn whose prefix a Rerail steer leads, as `SessionMaintenance.compact` builds it. */
+    function steerLedPreparation() {
+      const prompt = { role: "user", content: [{ type: "text", text: "Add guest checkout." }], timestamp: 1 };
+      const steer = {
+        role: "custom", customType: RULE_MESSAGE_TYPE, content: [{ type: "text", text: "Rerail found 1 problem in src/cart.ts." }],
+        display: true, attribution: "agent", timestamp: 2,
+      };
+      const fix = { role: "assistant", content: [{ type: "toolCall", id: "call-2", name: "edit", arguments: {} }], timestamp: 3 };
+      return { prompt, steer, fix, preparation: { firstKeptEntryId: "entry-4", messagesToSummarize: [prompt], turnPrefixMessages: [steer, fix], recentMessages: [], isSplitTurn: true } };
+    }
+
+    it("summarizes a turn a steer leads as history with the person's prompt, the steer labelled as Rerail's", async () => {
+      const harness = await createHarness();
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      const { prompt, steer, fix, preparation } = steerLedPreparation();
+
+      expect(await harness.handlers.get("session_before_compact")!({ type: "session_before_compact", preparation }, harness.context)).toBeUndefined();
+      expect(preparation).toMatchObject({
+        messagesToSummarize: [
+          prompt,
+          { ...steer, content: [{ type: "text", text: "[Rerail: automated rule check sent to the agent, not a message from the user]\nRerail found 1 problem in src/cart.ts." }] },
+          fix,
+        ],
+        turnPrefixMessages: [],
+        isSplitTurn: false,
+      });
+    });
+
+    it("leaves OMP's speculative compaction on where Rerail never attaches", async () => {
+      const harness = await createHarness({ started: false });
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      expect(harness.handlers.has("session_before_compact")).toBe(false);
     });
   });
 });

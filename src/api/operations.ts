@@ -2,12 +2,12 @@ import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
-import { codeRuleValueSchema } from "../engine/code-rule/code-rule-schema.js";
 import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
 import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
+import { internalTesting } from "../engine/internal-testing.js";
 import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
@@ -17,7 +17,6 @@ import {
   auditRequestSchema,
 } from "../engine/audit/audit-control-schema.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
-import { loadRulePacks } from "../engine/catalog/rule-packs.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT } from "../runtime/session-store.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
@@ -62,7 +61,7 @@ const codeRuleViolationSchema: z.ZodType<CodeRuleViolation> = z.object({
   path: z.string().optional(),
   span: codeRuleSourceSpanSchema.optional(),
   captures: z.record(z.string(), z.array(codeRuleSourceSpanSchema)),
-  variables: z.record(z.string(), codeRuleValueSchema),
+  variables: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
   fix: codeRuleViolationFixSchema.optional(),
 }).strict();
 
@@ -361,9 +360,15 @@ export const operations: readonly Operation[] = [
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack that comes with Rerail: what it covers and its rules, each with a title, a group and the mode it starts in. Add a pack to a repository with repository_attachments_set.",
+    summary: "List every rule pack installed on this machine: what it covers, its version and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. Add a pack to a repository with repository_attachments_set.",
     output: rulePackListSchema,
-    handler: () => ({ packs: loadRulePacks().map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })) }),
+    handler: stores => {
+      const catalog = stores.ruleCatalog();
+      return {
+        packs: [...catalog.packs.values()].map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })),
+        skipped: [...catalog.skipped],
+      };
+    },
   }),
   defineOperation({
     id: "coding_agents_list",
@@ -410,7 +415,7 @@ export const operations: readonly Operation[] = [
     id: "audit_requests_create",
     method: "POST",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: "Queue an explicit audit for one session. Touched-file audits require paths.",
+    summary: internalTesting("Queue an explicit audit for one session. Touched-file audits require paths."),
     params: sessionId,
     body: auditRequestInputSchema,
     output: auditRequestSchema,
@@ -424,7 +429,7 @@ export const operations: readonly Operation[] = [
     id: "audit_requests_list",
     method: "GET",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: "List explicit audit requests and the ids of the audits each one produced for one session.",
+    summary: internalTesting("List explicit audit requests and the ids of the audits each one produced for one session."),
     params: sessionId,
     output: z.object({ auditRequests: z.array(auditRequestSchema) }),
     handler: (stores, input) => {
@@ -436,7 +441,7 @@ export const operations: readonly Operation[] = [
     id: "repository_audits_list",
     method: "GET",
     path: "/api/repository-audits",
-    summary: "List one full repository audit baseline per historically scanned repository.",
+    summary: internalTesting("List one full repository audit baseline per historically scanned repository."),
     query: repositoryAuditQuerySchema.extend(repositoryFilter),
     output: z.object({
       repositories: z.array(repositoryAuditSummarySchema),
@@ -448,7 +453,7 @@ export const operations: readonly Operation[] = [
     id: "repository_audit_entries_list",
     method: "GET",
     path: "/api/repository-audits/{auditId}/entries",
-    summary: "Query paginated violations and failures from one repository audit baseline.",
+    summary: internalTesting("Query paginated violations and failures from one repository audit baseline."),
     params: z.object({ auditId: z.string().min(1) }),
     query: repositoryAuditEntryQuerySchema,
     output: z.object({
@@ -521,6 +526,8 @@ export const operations: readonly Operation[] = [
     output: z.object({
       sessions: z.array(sessionSummarySchema.extend({
         violationCount: z.number().int().nonnegative().describe("Violations in the session's history, as `violations_list` with its `sessionId` counts them."),
+        steeredViolations: z.number().int().nonnegative().describe("Of violationCount, those no audit recorded in Log mode (steered, or blocked)."),
+        lastEventAt: z.number().int().nullable().describe("Epoch milliseconds the session's newest event was observed; null when it has none."),
       })),
       total: z.number().int().nonnegative(),
       nextCursor: nextCursorSchema,

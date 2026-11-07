@@ -1,1 +1,0 @@
-var React; <img />;

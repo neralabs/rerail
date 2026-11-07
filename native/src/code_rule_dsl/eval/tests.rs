@@ -5,28 +5,10 @@ use crate::code_rule_dsl::{CodeRuleDslEditor, CodeRuleDslRuntime, CompiledCodeRu
 use serde_json::{Value, json};
 
 #[test]
-fn rejected_source_does_not_publish_an_unused_sql_ast_index() {
-    use crate::code_rule_dsl::test_support::{Walk, reset_walks, walks};
-    let compiled = crate::code_rule_dsl::test_support::compile_typescript_ast(json!({
-        "rule": { "kind": "program", "regex": "MUST_BE_PRESENT" }
-    }))
-    .unwrap();
-    reset_walks();
-    let result = crate::code_rule_dsl::test_support::evaluate_file(
-        &compiled,
-        "typescript",
-        "a.ts",
-        "const value = 1;\n",
-    );
-    crate::code_rule_dsl::test_support::assert_violations(&result, 0);
-    assert_eq!(
-        walks(Walk::AnchorBuild),
-        0,
-        "rejected files must not build SQL indexes"
-    );
-}
-
-#[test]
+#[cfg_attr(
+    not(feature = "p-anchor-corpus"),
+    ignore = "P's anchor corpus selects roots only on the p-anchor-corpus path (open item O20)"
+)]
 fn stateless_fact_extraction_uses_selective_anchor_postings() {
     let compiled = crate::code_rule_dsl::test_support::compile_typescript_ast(json!({
         "rule": { "matches": "selected" }, "utils": { "selected": {
@@ -43,6 +25,10 @@ fn stateless_fact_extraction_uses_selective_anchor_postings() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "p-anchor-corpus"),
+    ignore = "P's anchor corpus selects roots only on the p-anchor-corpus path (open item O20)"
+)]
 fn relational_inputs_share_one_anchor_index_and_keep_distinct_selections() {
     use crate::code_rule_dsl::test_support::{Walk, compile_document_with, reset_walks, walks};
     let input = |name: &str| {

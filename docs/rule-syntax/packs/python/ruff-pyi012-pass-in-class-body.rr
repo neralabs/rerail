@@ -1,0 +1,15 @@
+.policy "ruff-pyi012-pass-in-class-body" revision 2
+.description "Remove pass statements from class bodies in stub files that already contain other statements; they do nothing there."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI012 (flake8-pyi), stubs only: `pass` in a class body that has other statements.
+//   class C:
+//       x: int
+//       pass               ← PYI012
+#include "python/typing.rr"
+
+.violation PYI012(at: node) code "PYI012" "Delete this `pass`; the class body already has other statements, so it is redundant in a stub."
+    suppress ruff "PYI012"
+PYI012(s) :- class_body(_, b), body_len(b, k), k > 1, body_stmt(b, s, _), pass_stmt(s), in_stub(s).

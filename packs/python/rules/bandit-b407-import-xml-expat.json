@@ -3,7 +3,7 @@
   "id": "bandit-b407-import-xml-expat",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of xml.dom.expatbuilder.",
+  "description": "Avoid importing xml.dom.expatbuilder to parse XML; it is open to XML attacks, so use defusedxml.",
   "scope": {
     "include": [
       "**/*.py"

@@ -1,0 +1,9 @@
+[project]
+name = "nera-rule-validation-upstream-ruff"
+version = "0"
+description = "Ruff as the validation gates run it: the release the ported documents name, as its PyPI wheel."
+requires-python = "==3.13.*"
+dependencies = ["ruff==0.16.9"]
+
+[tool.uv]
+package = false

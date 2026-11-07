@@ -3,7 +3,7 @@
  "id": "typescript-eslint-no-array-constructor",
  "revision": 4,
  "mode": "steer",
- "description": "Port of typescript-eslint's `no-array-constructor` rule (https://typescript-eslint.io/rules/no-array-constructor). Flags `Array(...)` / `new Array(...)` unless called with exactly one argument or type arguments (no scope check: typescript-eslint's version does not resolve `Array`), and fixes to an array literal. Comments inside the argument list are not carried by the `$$$A` capture, so those calls get no fix.",
+ "description": "Use an array literal instead of Array() or new Array() in TypeScript; the constructor treats a single number argument as a length.",
  "scope": {
   "include": [
    "**/*.ts",

@@ -166,7 +166,7 @@ export default async function playgroundHarness(api: ExtensionAPI): Promise<void
       { ThinkingLevel },
       { installReplayFixtures, replayTools, REPLAY_TOOL_NAMES },
     ] = await Promise.all([
-      import("@oh-my-pi/pi-ai"),
+      import("@oh-my-pi/pi-ai/providers/mock"),
       import("@oh-my-pi/pi-ai/utils/event-stream"),
       import("../../dist/index.js"),
       import("@oh-my-pi/pi-agent-core"),
@@ -369,6 +369,7 @@ export default async function playgroundHarness(api: ExtensionAPI): Promise<void
         mechanism: ADAPTER_CAPABILITIES.omp.delivery[ruleMode],
         content: guidance,
         ruleIds: [],
+        rules: [{ id: document.rule.id, state: "steered" }],
       });
       trace("delivered", `Production OMP queued ${ruleMode} guidance into the root session.`);
     };

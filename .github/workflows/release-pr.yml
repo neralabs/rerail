@@ -1,0 +1,133 @@
+name: Release pull request
+
+# On every push to main: releases core if main's package.json names a version not released yet, then opens or updates
+# the "Release" pull request with everything releasable (scripts/release/release-version.mjs):
+#   - packs: with changesets pending, `npm run version:packs`, each pack's version and CHANGELOG.md, written by
+#     changesets (docs/pack-format.md, "Release");
+#   - core: when anything core ships has changed since its last `v*` tag, the next patch version in package.json and
+#     package-lock.json, and CHANGELOG.md's unreleased section dated as that version (docs/distribution-model.md,
+#     "Release channels").
+# Merging it is the release: release-packs.yml publishes the packs, and this workflow's tag job tags core's version
+# `v<version>`, whose push starts release.yml, which builds and publishes core. With nothing releasable, an open
+# Release pull request is closed.
+#
+# Its own workflow, so it never waits behind a publish run, and only the latest push to main matters: each run
+# rewrites the whole pull request from main, so a newer push cancels an older run. A cancelled tag job loses nothing:
+# the next run tags the same commit.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-pr
+  cancel-in-progress: true
+
+env:
+  RELEASE_BRANCH: changeset-release/main
+
+jobs:
+  # The tag is created with the neralabs-ci app's token, not GITHUB_TOKEN: a tag GITHUB_TOKEN pushes starts no
+  # workflow, and release.yml must start on it.
+  tag-core:
+    name: Tag core's release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - id: app-token
+        name: Get the neralabs-ci app token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Tag core's version if it is not released
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/release/core-tag.mjs
+
+  # After tag-core, so a version it just tagged counts as released and core is bumped only for later changes. The
+  # pull request is opened with the app's token, not GITHUB_TOKEN, so CI runs on it. It runs even when tag-core fails, so
+  # a core tag that can't be created never stops the packs' releases: an untagged core version is left alone.
+  pull-request:
+    name: Release pull request
+    needs: tag-core
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - id: app-token
+        name: Get the neralabs-ci app token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      # tag-core's tag was created after the checkout.
+      - name: Fetch the release tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git fetch --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" 'refs/tags/v*:refs/tags/v*'
+
+      - id: version
+        name: Version every releasable package
+        run: node scripts/release/release-version.mjs "$RUNNER_TEMP/release-pr.md"
+
+      # The commit is the app's bot user's, as GitHub attributes it.
+      - name: Open or update the Release pull request
+        if: steps.version.outputs.releasable == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BOT: ${{ steps.app-token.outputs.app-slug }}[bot]
+        run: |
+          set -euo pipefail
+          git config user.name "$BOT"
+          id="$(gh api "/users/${BOT}" --jq .id)"
+          git config user.email "${id}+${BOT}@users.noreply.github.com"
+          git switch --force-create "$RELEASE_BRANCH"
+          git add --all
+          git commit --quiet --message "Release"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${RELEASE_BRANCH}"
+          number="$(gh pr list --head "$RELEASE_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "Release" --body-file "$RUNNER_TEMP/release-pr.md"
+          else
+            gh pr create --head "$RELEASE_BRANCH" --base main --title "Release" --body-file "$RUNNER_TEMP/release-pr.md"
+          fi
+
+      - name: Close the Release pull request, with nothing to release
+        if: steps.version.outputs.releasable != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --head "$RELEASE_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh pr close "$number" --delete-branch --comment "Nothing on main is releasable any more."
+          fi

@@ -539,7 +539,7 @@ function assertingHelper(utils) {
 const DOCUMENTS = {
   "vitest-expect-expect": {
     mode: "steer",
-    description: "A test whose function never calls `expect` or `assert`.",
+    description: "Add at least one expect or assert call to every Vitest test; a test without assertions passes no matter what the code does.",
     clauses: withDefine(utils => [
       {
         id: "no-assertion",
@@ -571,13 +571,13 @@ const DOCUMENTS = {
             },
           ],
         }),
-        violation: violation("expect-expect", "This test asserts nothing, so it passes whatever the code does. Add an expect."),
+        violation: violation("expect-expect", "Add an expect or assert call to this test; without one it passes whatever the code does."),
       },
     ]),
   },
   "vitest-no-disabled-tests": {
     mode: "log",
-    description: "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`.",
+    description: "Fix or delete disabled Vitest tests, such as skipped tests, x-prefixed tests, pending() or tests with no function; they silently never run.",
     clauses: withDefine(
       utils => [
         {
@@ -622,7 +622,7 @@ const DOCUMENTS = {
               },
             ],
           }),
-          violation: violation("no-disabled-tests", "This test is disabled. Fix it or delete it.", "capture.MODIFIER"),
+          violation: violation("no-disabled-tests", "Re-enable this disabled test and make it pass, or delete it; as is, it never runs.", "capture.MODIFIER"),
         },
         {
           id: "missing-function",
@@ -634,7 +634,7 @@ const DOCUMENTS = {
               { has: { field: "arguments", kind: "arguments", not: { has: { nthChild: 2 } } } },
             ],
           }),
-          violation: violation("no-disabled-tests", "This test has no function, so it never runs."),
+          violation: violation("no-disabled-tests", "Give this test a function body or delete it; without one it never runs."),
         },
       ],
       ["skip"],
@@ -642,7 +642,7 @@ const DOCUMENTS = {
   },
   "vitest-no-focused-tests": {
     mode: "steer",
-    description: "A focused test (`.only`), which makes Vitest skip every other test in the file.",
+    description: "Remove .only from Vitest tests and suites; a focused test makes Vitest skip every other test in the file.",
     clauses: withDefine(
       utils => [
         {
@@ -660,7 +660,7 @@ const DOCUMENTS = {
               },
             ],
           }),
-          violation: violation("no-focused-tests", "Remove .only: a focused test makes Vitest skip every other test.", "capture.MODIFIER"),
+          violation: violation("no-focused-tests", "Remove .only from this test; it makes every other test in the file skip.", "capture.MODIFIER"),
         },
       ],
       ["only"],

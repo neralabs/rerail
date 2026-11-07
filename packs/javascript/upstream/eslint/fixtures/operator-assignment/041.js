@@ -1,1 +1,0 @@
-this.x = foo.x + y

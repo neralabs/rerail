@@ -1,1 +1,0 @@
-A: while (a) { B: { continue A; } }

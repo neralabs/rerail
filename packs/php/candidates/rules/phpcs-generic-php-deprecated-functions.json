@@ -3,7 +3,7 @@
   "id": "phpcs-generic-php-deprecated-functions",
   "revision": 1,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.DeprecatedFunctions on PHP 8.5.11: a call PHP resolves to one of the 67 internal functions ReflectionFunction::isDeprecated() reports (the extensions PHP_CodeSniffer's PHP loads; rerail/packs/php/upstream/phpcs records the list).",
+  "description": "Replace calls to deprecated built-in PHP functions, such as strftime(), utf8_encode() and curl_close(); they raise deprecation notices and will be removed.",
   "scope": {
     "include": [
       "**/*.php"
@@ -100,7 +100,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "Generic.PHP.DeprecatedFunctions",
-        "message": "Function has been deprecated",
+        "message": "Replace this deprecated function with its current equivalent, or delete the call if it is now a no-op like curl_close().",
         "suppress": {
           "phpcs": {
             "sniffs": [

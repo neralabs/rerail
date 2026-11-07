@@ -1,3 +1,0 @@
-class B {@decorator() get foo(): string {
-    // empty
-}}

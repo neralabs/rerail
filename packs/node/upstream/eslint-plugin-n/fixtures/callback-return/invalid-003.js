@@ -1,1 +1,0 @@
-function a(callback) { if (typeof callback !== 'undefined') callback();  }

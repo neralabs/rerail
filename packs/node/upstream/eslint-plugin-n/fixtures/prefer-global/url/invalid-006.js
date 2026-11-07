@@ -1,1 +1,0 @@
-var { URL } = process.getBuiltinModule('node:url'); var b = new URL(s)

@@ -1,1 +1,0 @@
-test.only("foo", function () {})

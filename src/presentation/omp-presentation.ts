@@ -25,6 +25,8 @@ export interface OmpPresentation {
    * failing to attach); 0 once it stops. The daemon's health cannot say so: `/healthz` may well answer.
    */
   dropped(count: number): void;
+  /** Whether the daemon is still indexing the repository: code rules check nothing until it is done. */
+  indexing(on: boolean): void;
 }
 
 /** Presentation follows the runtime's session lifecycle, never its enforcement path. */
@@ -36,12 +38,15 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
   /** The daemon's status lines last shown, beneath which the dropped-events line is painted. */
   let status: string[] = [];
   let droppedCount = 0;
+  let indexingNow = false;
   /** The person chose `silent`: no ambient line at all, the dropped-events one included. Its gap is still recorded. */
   let silent = false;
 
   function paint(ctx: PresentationContext): void {
     const droppedLine = `Rerail: ${droppedCount} session event${droppedCount === 1 ? "" : "s"} dropped — daemon not answering`;
-    const lines = silent ? [] : droppedCount > 0 ? [...status, droppedLine] : status;
+    // Said on the status line itself, or alone until the daemon's first read has drawn one.
+    const statusLines = !indexingNow ? status : status.length > 0 ? [`${status[0]} · indexing`, ...status.slice(1)] : ["Rerail · indexing"];
+    const lines = silent ? [] : droppedCount > 0 ? [...statusLines, droppedLine] : statusLines;
     ctx.ui.setWidget(STATUS_KEY, lines.length === 0 ? undefined : lines, { placement: "belowEditor" });
   }
 
@@ -112,5 +117,11 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
     if (current?.hasUI) paint(current);
   }
 
-  return { start, stop, dropped };
+  function indexing(on: boolean): void {
+    if (on === indexingNow) return;
+    indexingNow = on;
+    if (current?.hasUI) paint(current);
+  }
+
+  return { start, stop, dropped, indexing };
 }

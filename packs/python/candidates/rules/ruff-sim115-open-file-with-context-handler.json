@@ -3,7 +3,7 @@
   "id": "ruff-sim115-open-file-with-context-handler",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM115 (open-file-with-context-handler): a call of a file-opening function (builtin `open`, `io.open`, `codecs.open`, `tempfile.TemporaryFile`, `tarfile.open`, `dbm.*.open`, ... from Ruff's table) or of `open` on a `pathlib.Path`/`zipfile.ZipFile`/`lzma.LZMAFile`/`tarfile.TarFile` instance created in place, outside a `with` or `return` statement, not immediately `.close()`d, not passed to `enter_context` under `with contextlib.ExitStack()` (or the async variant) or to unittest's `enterContext`, and not directly in `__enter__`. Names resolve through the file's imports and the builtin scope (`resolve_qualified_name`). Reported on the callee.",
+  "description": "Open files and archives in a with statement rather than calling open() or similar functions bare; the with block guarantees they get closed.",
   "scope": {
     "include": [
       "**/*"

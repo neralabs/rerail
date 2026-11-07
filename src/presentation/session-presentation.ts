@@ -9,12 +9,11 @@ import {
   type RulesDashboardScope,
   type sessionResponseSchema,
 } from "../api/session-contracts.js";
-import { repositoryContextSchema } from "../api/repository-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { DAEMON_STATE_FILE, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/schema.js";
-import { linkSteers, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -190,16 +189,18 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
 }
 
 /**
- * Deliveries with their steers' `Why?` links made absolute for `cwd`'s dashboard, scoped to its repository. The runtime keeps
- * links relative; each coding agent's adapter links them as it hands them over.
+ * Deliveries with each of their rules linked to its page on `cwd`'s dashboard, scoped to its repository: the link the
+ * person's `why?` opens. The runtime records no link; each coding agent's adapter links the rules as it hands them over,
+ * and without a dashboard leaves them unlinked.
  */
 export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
   const dashboard = cwd === undefined ? undefined : await steerDashboard(cwd);
-  return deliveries.map(delivery => ({ ...delivery, content: linkSteers(delivery.content, dashboard) }));
+  if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
+  return deliveries.map(delivery => ({ ...delivery, rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })) }));
 }
 
 /**
- * The dashboard `Why?` links point into for `cwd`: the origin scoped to `cwd`'s repository and checkout
+ * The dashboard a steer's `why?` links point into for `cwd`: the origin scoped to `cwd`'s repository and checkout
  * (`?repository=&checkout=`) when the daemon names them, else the bare origin. Never starts anything.
  */
 export async function steerDashboard(cwd: string): Promise<string | undefined> {
@@ -214,9 +215,18 @@ export async function steerDashboard(cwd: string): Promise<string | undefined> {
   }
 }
 
+/**
+ * The part of `repository_context_get` the dashboard link needs. Not the operation's own strict schema: a daemon of
+ * another version may answer with more or fewer repository fields, and the link needs none of them.
+ */
+const dashboardScopeSchema = z.object({
+  repository: z.object({ repositoryKey: z.string() }),
+  checkout: z.object({ checkoutPath: z.string() }).nullable(),
+});
+
 /** The repository and checkout the daemon records for the verified checkout; null when it cannot say. */
 async function dashboardScope(daemon: VerifiedDaemon): Promise<RulesDashboardScope | null> {
-  return get(daemon.origin, `/api/repository?${new URLSearchParams({ checkout: daemon.workspace })}`, repositoryContextSchema)
+  return get(daemon.origin, `/api/repository?${new URLSearchParams({ checkout: daemon.workspace })}`, dashboardScopeSchema)
     .then(context => ({ repositoryKey: context.repository.repositoryKey, checkoutPath: context.checkout?.checkoutPath ?? null }))
     .catch(() => null);
 }

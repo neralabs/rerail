@@ -1,0 +1,39 @@
+.policy "ruff-ruf005-collection-literal-concatenation" revision 2
+.description "Prefer iterable unpacking over adding a list or tuple literal to another collection with the plus operator; it reads better and accepts any iterable."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF005: `+` between a list or tuple literal and something to splat, which `[*a, 1]` says better.
+// Ruff folds each side first (a nested `+` that folds becomes one literal). A literal on the left then sets
+// the type, else one on the right; the other side must be a name, attribute, call, one slice `x[a:b]`, or a
+// literal of the same type. Anything else (a `+` that does not fold, `x[1:2, 3]`, a different literal type)
+// stops the fold. Reported at the outermost `+`: one under `*` or `|` counts, one under `+` does not.
+//   bar = [1, 2] + foo                ← RUF005  `[1, 2, *foo]`
+//   x = [1] + foo + [2]               ← RUF005 once, at the whole chain
+//   a = [1, 2] + (3, 4)               not reported: list and tuple
+//   a = foo + bar + [1]               not reported: `foo + bar` does not fold
+#include "python/ruff.rr"
+
+// folds(e, t): e is, after folding, a literal of type t ("list" or "tuple"): a literal, or a `+` that folds.
+.decl folds(e: node, t: symbol)
+folds(e, t) :- list_like(e, t), (t = "list" ; t = "tuple").
+// The left side decides first; a splattable left never folds itself, so the right decides only then.
+folds(e, t) :- unparen(e, b), plus(b, l, r), (folds(l, t), splat_ok(r, t) ; folds(r, t), unparen(l, m), splattable(m)).
+// splat_ok(e, t): what Ruff splats into a literal of type t.
+.decl splat_ok(e: node, t: symbol)
+splat_ok(e, t) :- plus(_, _, e), unparen(e, m), splattable(m), (t = "list" ; t = "tuple").
+splat_ok(e, t) :- plus(_, _, e), folds(e, t).
+.decl splattable(m: node)
+splattable(m) :- kind(m, k), (k = "identifier" ; k = "attribute" ; k = "call").
+splattable(m) :- kind(m, "subscript"), field(m, "subscript", s), kind(s, "slice"), count : { field(m, "subscript", _) } = 1.
+.decl plus(b: node, l: node, r: node)
+plus(b, l, r) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", l), field(b, "right", r).
+
+.violation RUF005(at: node) code "RUF005"
+    "Write one literal with unpacking, such as `[*a, 1, *b]` or `(*a, 1)`, instead of adding collections with `+`. Keep `+` if an operand defines its own `__add__`."
+    suppress ruff "RUF005"
+// Ruff skips a `+` whose parent is a `+`.
+RUF005(b) :- plus(b, _, _), folds(b, _), !outer_binop(b).
+.decl outer_binop(b: node)
+outer_binop(b) :- plus(b, _, _), ast_up(b, p), plus(p, _, _).

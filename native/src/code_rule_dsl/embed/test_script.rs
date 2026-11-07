@@ -1,9 +1,9 @@
 //! Tests' own embedding (`Via::TestScript`, `language::test_embeds`): an HTML file's `<script>`
 //! texts, then its `on*` event handlers, as one TypeScript, TSX or JavaScript program. A handler
 //! runs after every script, so the program reads it after them, wherever it stands in the file: the
-//! program's nodes stand out of host order, as a Vue template expression's do. Its first script's
+//! program's text stands out of host order, as a Vue template expression's does. Its first script's
 //! `lang` names the dialect (`ts`, `tsx`, else JavaScript). The program is read from the host's
-//! recovered tree, apart from it (`Embedder::APART`).
+//! recovered tree: the host's syntax errors are not its own.
 
 use super::segments::SegmentMap;
 use super::{Embedder, Program};
@@ -15,15 +15,15 @@ use std::ops::Range;
 use std::sync::Arc;
 use tree_sitter::Node as TsNode;
 
-/// The tape of the HTML file `source`, persisted and restored: the file's tree and the program its
-/// scripts and handlers make.
+/// The documents of the HTML file `source`, persisted as the store keeps them and restored: the
+/// file's tree and the program its scripts and handlers make.
 pub(crate) fn html(source: &str) -> AstGrep<TapeDoc> {
     let grammar = Grammar::new(GrammarDialect::Html).expect("grammar");
     let image = TapeImage::parse(&grammar, source, &|| false)
         .expect("parses")
-        .expect("encodes");
-    let image =
-        TapeImage::from_bytes(&image.to_bytes().expect("persists"), &grammar).expect("reads back");
+        .expect("encodes")
+        .round_trip(&grammar)
+        .expect("persists and reads back");
     AstGrep::doc(
         TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
             .expect("restores"),
@@ -33,21 +33,8 @@ pub(crate) fn html(source: &str) -> AstGrep<TapeDoc> {
 /// The embedder of `Via::TestScript`.
 pub(crate) struct TestScript;
 
-/// The program an HTML file's scripts and handlers make.
-pub(crate) struct Script {
-    dialect: GrammarDialect,
-    tree: tree_sitter::Tree,
-    segments: SegmentMap,
-    /// The host file's length: the program's root stands for the whole file.
-    host_len: usize,
-}
-
 impl Embedder for TestScript {
-    type Program = Script;
-
-    const APART: bool = true;
-
-    fn build(root: TsNode<'_>, source: &str) -> Option<Self::Program> {
+    fn build(root: TsNode<'_>, source: &str) -> Option<Program> {
         let mut scripts = Vec::new();
         let mut handlers = Vec::new();
         let mut cursor = root.walk();
@@ -112,11 +99,13 @@ impl Embedder for TestScript {
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&dialect.get_ts_language()).ok()?;
         let tree = parser.parse(&text, None)?;
-        Some(Script {
+        segments.index();
+        Some(Program {
             dialect,
             tree,
+            text,
             segments,
-            host_len: source.len(),
+            host_errors: Vec::new(),
         })
     }
 }
@@ -138,26 +127,4 @@ fn lang<'s>(script: TsNode<'_>, source: &'s str) -> Option<&'s str> {
         let value = value.named_child(0).unwrap_or(value);
         (&source[name.byte_range()] == "lang").then(|| &source[value.byte_range()])
     })
-}
-
-impl Program for Script {
-    fn dialect(&self) -> GrammarDialect {
-        self.dialect
-    }
-
-    fn root(&self) -> TsNode<'_> {
-        self.tree.root_node()
-    }
-
-    fn span(&self, node: TsNode<'_>) -> Range<usize> {
-        if node.id() == self.tree.root_node().id() {
-            0..self.host_len
-        } else {
-            self.segments.span(node)
-        }
-    }
-
-    fn omitted(&self, _: TsNode<'_>) -> bool {
-        false
-    }
 }

@@ -1,1 +1,0 @@
-foo.flatMap((a) => <Foo key={a} />)

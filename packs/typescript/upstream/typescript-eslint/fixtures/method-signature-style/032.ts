@@ -1,5 +1,0 @@
-
-interface MyInterface {
-  methodReturningImplicitAny();
-}
-      

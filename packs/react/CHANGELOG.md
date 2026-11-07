@@ -1,5 +1,20 @@
 # @neralabs/rerail-pack-react
 
+## 0.1.4
+
+### Patch Changes
+
+- e06db22: React pack: messages whose rewrite only changed the voice are back to their original wording; in an eval with a coding agent, the original and rewritten messages steered it equally well.
+- e06db22: React pack: every rule description now says in one plain sentence what the rule wants; the exact matching detail moved to the pack README.
+- e06db22: React pack: every violation message now says in one sentence what to change in the flagged code, without tool names or rule codes.
+
+## 0.1.3
+
+### Patch Changes
+
+- 3049ced: The match definition names its npm dependencies in the new form, `{ "dependencies": { "ecosystem": "npm", "names": [...] } }`, which core reads alongside PyPI and Composer dependencies. Which repositories the pack fits is unchanged.
+- ac01449: React pack: every rule skips files whose JSX belongs to another library (an `@jsx`/`@jsxImportSource` pragma naming it, `h` or `createElement` imported from Stencil, Preact, Vue, Solid, Hyperapp or Mithril, or a package that depends on Vue, Preact or another such library and not on React), so Stencil components no longer get `jsx-key` and `react-in-jsx-scope` findings and Vue's `useId` is no longer a React Hook.
+
 ## 0.1.2
 
 ### Patch Changes

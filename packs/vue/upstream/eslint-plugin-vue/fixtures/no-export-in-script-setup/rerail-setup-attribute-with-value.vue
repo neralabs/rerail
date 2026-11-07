@@ -1,5 +1,0 @@
-<script
-  setup="yes"
->
-export const a = 1
-</script>

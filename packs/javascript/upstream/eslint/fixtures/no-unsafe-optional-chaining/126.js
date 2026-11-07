@@ -1,1 +1,0 @@
-var a = class A extends obj?.foo {}

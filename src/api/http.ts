@@ -76,9 +76,10 @@ const jsonContent = (schema: z.ZodType, description: string) => ({
 });
 
 /**
- * GET operations answered entirely from the database, so its change token dates them without running the
- * handler. Conditional requests are an HTTP concern, so they live here rather than in the shared operation
- * shape that MCP tools also read.
+ * GET operations answered entirely from the database and the rule catalog, so the database's change token and the
+ * catalog's digest date them without running the handler. The catalog changes when packs are installed or removed,
+ * with or without a database write. Conditional requests are an HTTP concern, so they live here rather than in the
+ * shared operation shape that MCP tools also read.
  */
 const DATABASE_ETAG_OPERATIONS: ReadonlySet<string> = new Set([
   "repositories_list", "repository_rules_get", "library_rules_list", "library_rules_get", "rerail_rules_list",
@@ -269,12 +270,15 @@ export function createRerailApi(
         if (DATABASE_ETAG_OPERATIONS.has(operation.id)) {
           // `dataVersion()` is a `PRAGMA data_version` read plus a local write counter, so it
           // catches commits from other processes as well as this daemon's own, at constant cost.
-          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion()));
+          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion(), stores.ruleCatalog().digest));
           if (unchanged !== undefined) return unchanged;
         }
         if (RESULT_ETAG_OPERATIONS.has(operation.id)) {
           const key = `${operation.id}\u0000${normalizedInput(input)}`;
-          const version = stores.historyVersion();
+          // The history a result reads, and the rule catalog (`rules_activity` lists the installed packs' rules), so
+          // a pack installed or removed shows without waiting for a session to write.
+          const history = stores.historyVersion();
+          const version = history === undefined ? undefined : `${history}\u0000${stores.ruleCatalog().digest}`;
           const known = remembered.get(key);
           if (known !== undefined && known.version === version) {
             return conditional(known.etag) ?? context.json(known.result, 200);

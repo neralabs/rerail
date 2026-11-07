@@ -1,0 +1,110 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-am09-ambiguous-order-by-limit",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Add ORDER BY to any SQL query that uses LIMIT or OFFSET; without it, which rows come back is not deterministic.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "limit-without-order-by",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "limit",
+            "not": {
+              "any": [
+                {
+                  "follows": {
+                    "kind": "order_by",
+                    "stopBy": "end"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "from",
+                    "stopBy": "neighbor",
+                    "inside": {
+                      "kind": "set_operation",
+                      "stopBy": "neighbor"
+                    },
+                    "not": {
+                      "precedes": {
+                        "regex": "(?s)."
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "AM09",
+        "message": "LIMIT and OFFSET are used without ORDER BY, which may lead to non-deterministic results.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "AM09",
+              "all",
+              "ambiguous",
+              "ambiguous.order_by_limit"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "offset-without-limit-or-order-by",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "select",
+            "has": {
+              "all": [
+                {
+                  "pattern": "$OFFSET",
+                  "kind": "offset"
+                },
+                {
+                  "not": {
+                    "kind": "limit"
+                  }
+                },
+                {
+                  "not": {
+                    "kind": "order_by"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.OFFSET",
+        "code": "AM09",
+        "message": "LIMIT and OFFSET are used without ORDER BY, which may lead to non-deterministic results.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "AM09",
+              "all",
+              "ambiguous",
+              "ambiguous.order_by_limit"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

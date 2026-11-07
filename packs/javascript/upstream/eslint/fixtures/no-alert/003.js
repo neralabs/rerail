@@ -1,1 +1,0 @@
-foo.confirm(foo)

@@ -1,1 +1,0 @@
-import type * as Foobar from "async";

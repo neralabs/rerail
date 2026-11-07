@@ -1,1 +1,0 @@
-(function(Object) {return foo.hasOwnProperty('bar');})

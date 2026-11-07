@@ -717,6 +717,32 @@
       "id": "executor-provenance",
       "relational": {
         "inputs": {
+          "dispatch_gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "^impl/common/l2070_server_plan/base_server_plan\\.py$"
+                        }
+                      },
+                      {
+                        "kind": "module"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
           "syntax_0": {
             "evidence": {
               "as": "row",
@@ -765,6 +791,19 @@
                           {
                             "filePath": {
                               "regex": "^impl/common/l2070_server_plan/base_server_plan\\.py$"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
                             }
                           },
                           {
@@ -913,6 +952,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -927,9 +994,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -1007,6 +1130,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -1152,6 +1288,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -1166,9 +1330,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -1246,6 +1466,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -1391,6 +1624,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -1405,9 +1666,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -1485,6 +1802,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -1630,6 +1960,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -1644,9 +2002,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -1724,6 +2138,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -1869,6 +2296,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -1883,9 +2338,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -1963,6 +2474,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -2108,6 +2632,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -2122,9 +2674,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -2202,6 +2810,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -2347,6 +2968,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -2361,9 +3010,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -2441,6 +3146,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -2586,6 +3304,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -2600,9 +3346,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -2687,6 +3489,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -2832,6 +3647,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -2846,9 +3689,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -2938,6 +3837,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -3083,6 +3995,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -3097,9 +4037,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -3193,6 +4189,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -3338,6 +4347,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -3352,9 +4389,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -3429,6 +4522,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -3574,6 +4680,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -3588,9 +4722,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -3671,6 +4861,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -3816,6 +5019,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -3830,9 +5061,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -3914,6 +5201,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -4059,6 +5359,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -4073,9 +5401,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -4150,6 +5534,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -4295,6 +5692,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -4309,9 +5734,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -4393,6 +5874,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -4538,6 +6032,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -4552,9 +6074,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -4635,6 +6213,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -4780,6 +6371,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -4794,9 +6413,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -4880,6 +6555,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -5025,6 +6713,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -5039,9 +6755,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -5116,6 +6888,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -5261,6 +7046,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -5275,9 +7088,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -5393,6 +7262,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -5538,6 +7420,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -5552,9 +7462,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -5667,6 +7633,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -5812,6 +7791,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -5826,9 +7833,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -5944,6 +8007,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -6089,6 +8165,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -6103,9 +8207,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -6199,6 +8359,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -6344,6 +8517,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -6358,9 +8559,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -6491,6 +8748,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -6636,6 +8906,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -6650,9 +8948,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -6889,6 +9243,19 @@
                             }
                           },
                           {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "class BaseServerPlan\\b"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
                             "pattern": "$NODE"
                           },
                           {
@@ -7034,6 +9401,34 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$BODY",
+                                  "stopBy": "neighbor",
+                                  "field": "body"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$PARAMETERS",
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$RETURN_TYPE",
                                   "stopBy": "neighbor",
                                   "field": "return_type"
@@ -7048,9 +9443,65 @@
                             "any": [
                               {
                                 "has": {
+                                  "pattern": "$CONDITION",
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
                                   "pattern": "$SUBJECT",
                                   "stopBy": "neighbor",
                                   "field": "subject"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$CONSEQUENCE",
+                                  "stopBy": "neighbor",
+                                  "field": "consequence"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$ALIAS",
+                                  "stopBy": "neighbor",
+                                  "field": "alias"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "pattern": "$MODULE_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
                               },
                               {
@@ -7388,6 +9839,7 @@
           "identity"
         ],
         "code": "issue",
+        "requireNonemptyInput": "dispatch_gate",
         "partitionBy": "file"
       },
       "violation": {

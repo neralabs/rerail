@@ -2,6 +2,7 @@ mod semantic;
 
 use super::compare::{count_bounds, parse_comparison};
 use super::dialect::grammar_gap;
+use super::documents::Side;
 use super::nth_child::{compile_nth_child, validate_nth_child};
 use super::order::{all_order_conflicts, order_by_captures};
 use super::utils::{UtilIds, UtilScope, is_metavariable_name};
@@ -10,14 +11,16 @@ use crate::code_rule_dsl::json::{
 };
 use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
 use crate::code_rule_dsl::matcher::{
-    AstMatcher, CallArgs, CompareText, Count, FieldRelation, Reading, Related, StopBy, UtilCall,
-    UtilRef,
+    AstMatcher, CallArgs, CompareText, Count, EmbeddedTest, FieldRelation, HostTest, Reading,
+    Related, Semantic, StopBy, UtilCall, UtilRef, parse_exported,
 };
 use crate::code_rule_dsl::model::Limits;
 use ast_grep_core::Language;
 use ast_grep_core::matcher::{KindMatcher, Pattern, PatternNode};
 use napi::Result;
+use regex::Regex;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 #[cfg(not(test))]
 const AST_RULE_KEYS: &[&str] = &[
@@ -45,6 +48,8 @@ const AST_RULE_KEYS: &[&str] = &[
     "layout",
     "filePath",
     "calls",
+    "embedded",
+    "host",
 ];
 /// Tests add `testUnknown`, a leaf whose verdict is unknown where its regex matches the node's text.
 #[cfg(test)]
@@ -73,6 +78,8 @@ const AST_RULE_KEYS: &[&str] = &[
     "layout",
     "filePath",
     "calls",
+    "embedded",
+    "host",
     "testUnknown",
 ];
 
@@ -99,11 +106,6 @@ pub(super) fn validate_ast_rule(
     utils: &UtilIds,
 ) -> Result<()> {
     let rule = object(value, path)?;
-    if rule.contains_key("host") {
-        return Err(invalid(format!(
-            "{path}/host: host tests the literal a parse holds; use it inside parse"
-        )));
-    }
     reject_unknown(rule, AST_RULE_KEYS, path)?;
     if !AST_RULE_KEYS.iter().any(|key| rule.contains_key(*key)) {
         return Err(invalid(format!(
@@ -148,7 +150,7 @@ pub(super) fn validate_ast_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        super::regex_cache::compile(source)
+        Regex::new(source)
             .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
     }
     if let Some(nth) = rule.get("nthChild") {
@@ -191,6 +193,12 @@ pub(super) fn validate_ast_rule(
     }
     if let Some(not) = rule.get("not") {
         validate_ast_rule(not, &format!("{path}/not"), limits, utils)?;
+    }
+    // Where `embedded` and `host` may stand is `documents::check_sides`'s.
+    for key in ["embedded", "host"] {
+        if let Some(inner) = rule.get(key) {
+            validate_ast_rule(inner, &format!("{path}/{key}"), limits, utils)?;
+        }
     }
     if let Some(compare) = rule.get("compare") {
         parse_comparison(compare, &format!("{path}/compare"))?;
@@ -411,8 +419,8 @@ pub(crate) fn compile_ast_rule(
             )
         };
         terms.push(match rule_pattern(source, language) {
-            Ok((compiled, parsed_as)) if !compiled.has_error() => {
-                match literal_dollar_name(&compiled, written, parsed_as) {
+            Ok(compiled) if !compiled.has_error() => {
+                match literal_dollar_name(&compiled, written, language) {
                     Some(name) => grammar_gap(
                         gaps,
                         format!(
@@ -432,35 +440,26 @@ pub(crate) fn compile_ast_rule(
     }
     if let Some(kind) = rule.get("kind").and_then(Value::as_str) {
         terms.push(match KindMatcher::try_new(kind, language) {
-            // A supertype names a symbol no node carries: ast-grep accepts it and never matches.
-            Ok(_) if is_supertype(kind, language) => grammar_gap(
-                gaps,
-                format!(
-                    "{path}/kind: `{kind}` is an abstract kind (a grammar supertype) that no node \
-                     carries; list its concrete kinds under `any`"
+            // A supertype names a symbol no node carries, so ast-grep's kind test never matches
+            // it: it matches the nodes the parser reported as its members (the tape's).
+            Ok(_) if is_supertype(kind, language) => AstMatcher::Supertype(crate::code_rule_dsl::matcher::Supertype::new(language.kind_to_id(kind), language)),
+            Ok(matcher) => match language.kinds().kind_ids(kind).as_slice() {
+                [_] => AstMatcher::Kind(matcher),
+                ids => AstMatcher::Any(
+                    ids.iter()
+                        .copied()
+                        .map(KindMatcher::from_id)
+                        .map(AstMatcher::Kind)
+                        .collect(),
                 ),
-            ),
-            Ok(_) => {
-                let ids = language.kinds().kind_ids(kind);
-                match ids.as_slice() {
-                    [id] => AstMatcher::Kind(KindMatcher::from_id(*id)),
-                    ids => AstMatcher::Any(
-                        ids.iter()
-                            .copied()
-                            .map(KindMatcher::from_id)
-                            .map(AstMatcher::Kind)
-                            .collect(),
-                    ),
-                }
-            }
+            },
             Err(error) => grammar_gap(gaps, format!("{path}/kind: {error}")),
         });
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(
-            super::regex_cache::compile(regex)
-                .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?,
-        ));
+        terms.push(AstMatcher::Regex(Regex::new(regex).map_err(|_| {
+            invalid(format!("{path}/regex: Parsing text matcher fails."))
+        })?));
     }
     if let Some(capture) = rule.get("capture") {
         terms.push(
@@ -644,6 +643,79 @@ pub(crate) fn compile_ast_rule(
             group_paths.push(relation_path);
         }
     }
+    // A rule over the file's other document (`embed`): from a host node, its embedded program's
+    // nodes standing for bytes the node spans; from a program's node, the host's node spanning the
+    // bytes it stands for. Each compiles in that document's grammar, with its utilities.
+    if let Some(inner) = rule.get("embedded") {
+        let embedded_path = format!("{path}/embedded");
+        let documents = utils.documents.ok_or_else(|| {
+            invalid(format!(
+                "{embedded_path}: this query's language embeds no program"
+            ))
+        })?;
+        let mut rules = Vec::new();
+        // The rule must be whole in some dialect the program may be in, as a query's must be in
+        // one of its own (`compile_query`): a gap left in every one (a misspelt kind compiles to
+        // `Never`, which a `not` reads as true) is the query's.
+        let mut whole = false;
+        let mut first_gap = None;
+        for (dialect, table) in &documents.guests {
+            let scope = utils.on(table.clone(), Side::Guest);
+            let mut dialect_gaps = Vec::new();
+            let compiled =
+                compile_ast_rule(inner, *dialect, &embedded_path, &mut dialect_gaps, &scope)?;
+            match dialect_gaps.into_iter().next() {
+                None => whole = true,
+                Some(gap) => {
+                    first_gap.get_or_insert(gap);
+                }
+            }
+            if !matches!(compiled, AstMatcher::Never) {
+                rules.push((*dialect, compiled));
+            }
+        }
+        if !whole && let Some(gap) = first_gap {
+            gaps.push(gap);
+        }
+        terms.push(if rules.is_empty() {
+            grammar_gap(
+                gaps,
+                format!(
+                    "{embedded_path}: the rule matches in none of the embedded program's grammars"
+                ),
+            )
+        } else {
+            let mut exports = BTreeSet::new();
+            for (_, rule) in &rules {
+                parse_exported(rule, &mut exports);
+            }
+            AstMatcher::Semantic(Semantic::Embedded(Box::new(EmbeddedTest {
+                via: documents.via,
+                rules,
+                exports: exports.into_iter().collect(),
+            })))
+        });
+        group_paths.push(embedded_path);
+    }
+    if let Some(inner) = rule.get("host") {
+        let host_path = format!("{path}/host");
+        let documents = utils.documents.ok_or_else(|| {
+            invalid(format!(
+                "{host_path}: host tests the literal a parse holds; use it inside parse"
+            ))
+        })?;
+        let (dialect, table) = &documents.host;
+        let scope = utils.on(table.clone(), Side::Host);
+        terms.push(
+            match compile_ast_rule(inner, *dialect, &host_path, gaps, &scope)? {
+                AstMatcher::Never => AstMatcher::Never,
+                compiled => {
+                    AstMatcher::Semantic(Semantic::Host(Box::new(HostTest { rule: compiled })))
+                }
+            },
+        );
+        group_paths.push(host_path);
+    }
     // A binding's sub-rules may bind, like a relation's; comparisons after it read them.
     if let Some(resolves) = rule.get("resolves")
         && let Some(compiled) = semantic::compile_key(
@@ -800,10 +872,9 @@ pub(crate) fn compile_ast_rule(
     }
     #[cfg(test)]
     if let Some(regex) = rule.get("testUnknown").and_then(Value::as_str) {
-        terms.push(AstMatcher::TestUnknown(
-            super::regex_cache::compile(regex)
-                .map_err(|_| invalid(format!("{path}/testUnknown: Parsing text matcher fails.")))?,
-        ));
+        terms.push(AstMatcher::TestUnknown(Regex::new(regex).map_err(
+            |_| invalid(format!("{path}/testUnknown: Parsing text matcher fails.")),
+        )?));
     }
     // Name resolution binds and reads nothing, so it may run last, after every cheaper term.
     if let Some(resolves) = rule.get("resolves")
@@ -1052,39 +1123,29 @@ mod tests {
     }
 
     #[test]
-    fn abstract_kinds_are_rejected() {
+    fn abstract_kinds_match_the_nodes_the_parser_reported_as_members() {
         // A supertype (`expression`, `statement`, ...) resolves to a symbol no node carries, so
-        // ast-grep 0.45.3 accepts it and it never matches.
-        for kind in [
-            "expression",
-            "statement",
-            "declaration",
-            "primary_expression",
-            "pattern",
-        ] {
-            let reason = rejection(compile_typescript_rule(json!({ "kind": kind })));
-            assert_eq!(
-                reason,
-                format!(
-                    "/clauses/0/forbid/ast/rule/kind: `{kind}` is an abstract kind (a grammar supertype) that no node carries; list its concrete kinds under `any` (typescript, tsx, javascript grammars)"
-                ),
-            );
+        // ast-grep's kind test never matches it. Rerail matches the nodes the parser reported as
+        // its members, which the tape stores per node (decision 0025): membership is contextual,
+        // so the assigned `a` is a `pattern`, not an `expression`, while `b` is one.
+        for kind in ["expression", "statement", "declaration", "primary_expression", "pattern"] {
+            compile_typescript_rule(json!({ "kind": kind })).unwrap_or_else(|error| panic!("{kind}: {}", error.reason));
         }
+        let source = "a = b;\n";
+        let expression = compile_typescript_rule(json!({ "kind": "expression" })).unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&expression, "typescript", "a.ts", source);
+        assert_eq!(matched_texts(&result, source), ["a = b", "b"]);
+        let statement = compile_typescript_rule(json!({ "kind": "statement" })).unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&statement, "typescript", "a.ts", source);
+        assert_eq!(matched_texts(&result, source), ["a = b;"]);
+        // Under a relation too.
         let python = clause_document(json!({
             "id": "c",
-            "forbid": { "ast": { "language": "python", "rule": { "kind": "identifier", "has": { "kind": "expression" } } } },
+            "forbid": { "ast": { "language": "python", "rule": { "kind": "assignment", "has": { "kind": "expression" } } } },
             "violation": violation(),
         }));
-        let reason = rejection(compile_document_with(
-            python,
-            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
-        ));
-        assert!(
-            reason.starts_with(
-                "/clauses/0/forbid/ast/rule/has/kind: `expression` is an abstract kind"
-            ),
-            "{reason}"
-        );
+        compile_document_with(python, &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"))
+            .unwrap_or_else(|error| panic!("{}", error.reason));
         // Concrete kinds, including ones named like a keyword, still compile.
         for kind in ["expression_statement", "await_expression", "identifier"] {
             compile_typescript_rule(json!({ "kind": kind }))

@@ -1,1 +1,0 @@
-<template><ol v-for="i in data"><li v-for="f in i">{{ f.bar.baz }}</li></ol></template>

@@ -1,1 +1,0 @@
-function foo() { 'use strict'; return; } var bar = function() { return; };

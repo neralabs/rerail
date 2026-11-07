@@ -1,1 +1,0 @@
-a.b.c.foo.call(a.b.c, 1, 2);

@@ -14,7 +14,7 @@ import {
   readRulesDashboard,
   readSummaryState,
 } from "../../src/presentation/session-presentation.js";
-import { type RepositoryStartState, sessionStartNote, steerBlock } from "../../src/engine/index.js";
+import { type AdapterDelivery, type RepositoryStartState, sessionStartNote } from "../../src/engine/index.js";
 import type { presentationResponseSchema, sessionResponseSchema } from "../../src/api/index.js";
 import { hookRerailStarted } from "../../src/harness/index.js";
 import type { z } from "zod";
@@ -259,19 +259,22 @@ describe("installed session presentation", () => {
 });
 
 describe("dashboard links", () => {
-  const steer = { sessionId: "s", requested: "steer" as const, mechanism: "additional-context" as const, content: steerBlock("a:b", "Fix it.", { mode: "steer" }), ruleIds: ["a:b"] };
+  const steer = {
+    sessionId: "s", requested: "steer" as const, mechanism: "additional-context" as const, content: "Rerail found 1 problem in your last edit:",
+    ruleIds: ["a:b"], rules: [{ id: "a:b", state: "steered" as const }],
+  };
 
-  it("links steers to the Rerail home daemon when it is bound to loopback", async () => {
+  it("links steers' rules to the Rerail home daemon when it is bound to loopback, and leaves the agent's text as it is", async () => {
     expect(await dashboardOrigin(cwd)).toBe("http://127.0.0.1:4737/");
     const [linked] = await linkDeliveries([steer], cwd);
-    expect(linked?.content).toContain("Why? → http://127.0.0.1:4737/#rule/a%3Ab");
+    expect(linked).toEqual({ ...steer, rules: [{ id: "a:b", state: "steered", url: "http://127.0.0.1:4737/#rule/a%3Ab" }] });
   });
 
-  it("keeps links relative for a daemon bound to 0.0.0.0, which no browser should be sent to", async () => {
+  it("leaves rules unlinked for a daemon bound to 0.0.0.0, which no browser should be sent to", async () => {
     await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, host: "0.0.0.0", url: "http://0.0.0.0:4737/" }));
     expect(await dashboardOrigin(cwd)).toBeUndefined();
     const [linked] = await linkDeliveries([steer], cwd);
-    expect(linked?.content).toContain("Why? → #rule/a%3Ab");
+    expect(linked).toEqual(steer);
   });
 });
 
@@ -349,14 +352,16 @@ describe("rules page", () => {
     expect(sessionStartNote(await dashboardOrigin(cwd), "omp", "s1", { setUp: true, ruleCount: 1 })).toContain(page.href);
   });
 
-  it("scopes steers' Why? links to the checkout's repository when the daemon knows it", async () => {
+  it("scopes steers' why? links to the checkout's repository when the daemon knows it", async () => {
     const port = await listen();
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
-    const steer = { sessionId: "s", requested: "steer" as const, mechanism: "additional-context" as const, content: steerBlock("a:b", "Fix it.", { mode: "steer" }), ruleIds: ["a:b"] };
+    const steer: AdapterDelivery = {
+      sessionId: "s", requested: "steer", mechanism: "additional-context", content: "Fix it.", ruleIds: ["a:b"], rules: [{ id: "a:b", state: "steered" }],
+    };
     const rulePage = (await scoped(`http://127.0.0.1:${port}`)).replace("#rules", "#rule/a%3Ab");
-    expect((await linkDeliveries([steer], cwd))[0]?.content).toContain(`Why? → ${rulePage}`);
+    expect((await linkDeliveries([steer], cwd))[0]?.rules[0]?.url).toBe(rulePage);
     knownCheckout = false;
-    expect((await linkDeliveries([steer], cwd))[0]?.content).toContain(`Why? → http://127.0.0.1:${port}/#rule/a%3Ab`);
+    expect((await linkDeliveries([steer], cwd))[0]?.rules[0]?.url).toBe(`http://127.0.0.1:${port}/#rule/a%3Ab`);
   });
 
   it("reads the repository's start state from a live daemon, and nothing from a dead one", async () => {

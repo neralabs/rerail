@@ -1,0 +1,456 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-v-text-v-html-on-component",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't use v-text or v-html on a Vue component; they replace the content the component renders.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-svg-ctx": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "matches": "svg-children"
+                  }
+                }
+              }
+            },
+            "tag-math-ctx": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "matches": "math-children"
+                  }
+                }
+              }
+            },
+            "parent-annotation-xml": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^annotation-xml$"
+                    }
+                  }
+                }
+              }
+            },
+            "parent-text-integration": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^(?:mi|mo|mn|ms|mtext)$"
+                    }
+                  }
+                }
+              }
+            },
+            "parent-math-ns": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "matches": "ns-math"
+                  }
+                }
+              }
+            },
+            "svg-children": {
+              "all": [
+                {
+                  "matches": "ns-svg"
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^(?:foreignObject|desc|title)$"
+                    }
+                  }
+                }
+              ]
+            },
+            "math-children": {
+              "all": [
+                {
+                  "matches": "ns-math"
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^(?:mi|mo|mn|ms|mtext)$"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "annotation-html"
+                  }
+                }
+              ]
+            },
+            "annotation-html": {
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "tag_name",
+                    "regex": "^annotation-xml$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "attribute",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "attribute_name",
+                          "regex": "(?i)^encoding$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "attribute_value",
+                          "regex": "^(?:text/html|application/xhtml\\+xml)$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "ns-svg": {
+              "any": [
+                {
+                  "matches": "tag-svg-ctx"
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "regex": "^svg$"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "not": {
+                            "matches": "tag-math-ctx"
+                          }
+                        },
+                        {
+                          "matches": "parent-annotation-xml"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "ns-math": {
+              "any": [
+                {
+                  "matches": "tag-math-ctx"
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "regex": "^math$"
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "tag-svg-ctx"
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "tag-math-ctx"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "regex": "^(?:mglyph|malignmark)$"
+                      }
+                    },
+                    {
+                      "matches": "parent-text-integration"
+                    },
+                    {
+                      "matches": "parent-math-ns"
+                    }
+                  ]
+                }
+              ]
+            },
+            "custom-tag": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "attribute",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "attribute_name",
+                          "regex": "(?i)^is$"
+                        }
+                      },
+                      {
+                        "kind": "directive_attribute",
+                        "regex": "(?i)^(?:(?:v-bind:|[:.])is(?:[.=\\s]|$)|v-is(?:[:.=\\s]|$))"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "regex": "^<[^\\s/>.]+\\."
+                },
+                {
+                  "all": [
+                    {
+                      "not": {
+                        "matches": "ns-svg"
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "ns-math"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "not": {
+                          "regex": "^(?:a|abbr|address|area|article|aside|audio|b|base|bdi|bdo|blockquote|body|br|button|camera|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|geolocation|h1|h2|h3|h4|h5|h6|head|header|hgroup|hr|html|i|iframe|img|input|ins|install|kbd|label|legend|li|link|main|map|mark|menu|meta|meter|microphone|model|nav|noscript|object|ol|optgroup|option|output|p|picture|pre|progress|q|rp|rt|ruby|s|samp|script|search|section|select|selectedcontent|slot|small|source|span|strong|style|sub|summary|sup|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|usermedia|var|video|wbr)$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "ns-svg"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "not": {
+                          "regex": "^(?:a|animate|animateMotion|animateTransform|circle|clipPath|defs|desc|ellipse|feBlend|feColorMatrix|feComponentTransfer|feComposite|feConvolveMatrix|feDiffuseLighting|feDisplacementMap|feDistantLight|feDropShadow|feFlood|feFuncA|feFuncB|feFuncG|feFuncR|feGaussianBlur|feImage|feMerge|feMergeNode|feMorphology|feOffset|fePointLight|feSpecularLighting|feSpotLight|feTile|feTurbulence|filter|foreignObject|g|image|line|linearGradient|marker|mask|metadata|mpath|path|pattern|polygon|polyline|radialGradient|rect|script|set|stop|style|svg|switch|symbol|text|textPath|title|tspan|use|view)$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "ns-math"
+                    },
+                    {
+                      "not": {
+                        "matches": "ns-svg"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "not": {
+                          "regex": "^(?:math|maction|annotation|annotation-xml|menclose|merror|mfenced|mfrac|mi|mmultiscripts|mn|mo|mover|mpadded|mphantom|mprescripts|mroot|mrow|ms|semantics|mspace|msqrt|mstyle|msub|msup|msubsup|mtable|mtd|mtext|mtr|munder|munderover)$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "checked-tag": {
+              "any": [
+                {
+                  "matches": "custom-tag"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "tag_name",
+                    "regex": "^slot$"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "directive_attribute",
+            "regex": "^v-(?<NAME>text|html)(?:[:.=\\s]|$)",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "start_tag",
+                  "matches": "custom-tag"
+                },
+                {
+                  "kind": "self_closing_tag",
+                  "matches": "custom-tag"
+                }
+              ],
+              "inside": {
+                "stopBy": "end",
+                "kind": "template_element"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-v-text-v-html-on-component",
+        "message": "Remove v-${NAME} from this component and pass the content through a slot or prop instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-v-text-v-html-on-component"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

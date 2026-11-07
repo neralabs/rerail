@@ -1,0 +1,46 @@
+.policy "typescript-eslint-max-params" revision 4
+.description "Keep TypeScript functions, methods and function types at 3 parameters or fewer; pass an options object instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-functions.rr"
+//   function_node, fn_param, this_param, fn_name_kind, fn_head, limit
+
+// typescript-eslint's max-params: ESLint's rule, also run on overload and `declare` signatures and on
+// function types. More than `max` parameters (default 3; `max`, `maximum` or the number form) is reported.
+//   function f(a, b, c, d) {}            → Function 'f' has too many parameters (4). Maximum allowed is 3.
+//   declare function f(a, b, c, d): void;   type T = (a, b, c, d) => void;        → reported too
+//   interface I { m(a, b, c, d): void }  fine: a method signature is not checked, nor a class overload
+// A first parameter `this: void` is not counted unless `countVoidThis: true`. The JSON's `countThis` (ESLint
+// 10's form) is honoured as well: "never" leaves out any `this` parameter, "always" counts it.
+.violation max_params(at: loc, name: symbol, k: number, m: number) code "@typescript-eslint/max-params"
+    "{name} has too many parameters ({k}). Maximum allowed is {m}; group them into one options object."
+    suppress eslint "@typescript-eslint/max-params"
+    suppress oxlint "max-params"
+    suppress biome "lint/complexity/useMaxParams"
+max_params(at, s, k, m) :- checked(f, s, at), most(m), uncounted(f, u), k = count : { fn_param(f, _, _) } - u, k > m.
+.decl most(m: number)  // `maximum` wins over `max` (ESLint reads `option.maximum || option.max`)
+most(m) :- option("maximum", _), limit("maximum", 3, m).
+most(m) :- !option("maximum", _), limit("max", 3, m).
+limit_rule("max", 3). limit_rule("maximum", 3).
+
+// checked(f, s, at): a function as ESLint names and places it, or a signature: `function f(…);` (at its
+// `declare`, if any) and a function type `(…) => T`, named "Function 'f'" and "Function".
+.decl checked(f: node, s: symbol, at: loc)
+checked(f, s, at) :- function_node(f), fn_name_kind(f, s), fn_head(f, at).
+checked(f, cat("Function '", cat(x, "'")), at) :- kind(f, "function_signature"), field(f, "name", n), text(n, x),
+    (child(at, f, _), kind(at, "ambient_declaration") ; !declared(f), at = f).
+checked(f, "Function", f) :- kind(f, "function_type").
+.decl declared(f: node)
+declared(f) :- child(a, f, _), kind(a, "ambient_declaration").
+
+// uncounted(f, k): 1 when f's first parameter is a `this` the options leave out, else 0.
+.decl uncounted(f: node, k: number)
+uncounted(f, 1) :- fn_param(f, p, 0), this_param(p, v), skip_this(v).
+uncounted(f, 0) :- checked(f, _, _), !skipped_first(f).
+.decl skipped_first(f: node)
+skipped_first(f) :- fn_param(f, p, 0), this_param(p, v), skip_this(v).
+.decl skip_this(v: number)  // `this: void` (v = 1) or any other `this` (0) is left out
+skip_this(1) :- !option("countThis", "always"), !option("countVoidThis", "true").
+skip_this(0) :- option("countThis", "never").

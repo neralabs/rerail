@@ -23,121 +23,11 @@ def resolve(value, entry, oracle=False):
 
 
 class SharedSqlTests(unittest.TestCase):
-    def test_projection_scope_candidates_are_read_once_per_file(self):
-        policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json').read_text())
-        plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'state-projection-recovery-2')
-        query = plan['query']['cases']['all']['cases']['true']
-        query = query[:query.index(' AND EXISTS(SELECT 1 FROM descendants d JOIN nodes atom')]
-        scope = next((s for s in plan['stages'] if s['name'] == 'projection_scopes'), None)
-        if scope:
-            query = 'WITH projection_scopes AS MATERIALIZED (' + scope['query'] + ') ' + query
-        db = sqlite3.connect(':memory:')
-        self.addCleanup(db.close)
-        db.create_function('rx_matches', 2, lambda value, pattern: __import__('re').search(pattern, value or '') is not None)
-        db.execute('CREATE TABLE payload(data)')
-        nodes = [dict(__path='query_builder.py',id=i,__start=i,__end=i+1,kind='identifier',name_source='') for i in range(2000)]
-        nodes += [dict(__path='query_builder.py',id=3000+i,__start=3000+i,__end=3001+i,kind='if_statement',name_source='') for i in range(200)]
-        nodes += [dict(__path='query_builder.py',id=4000,__start=2999,__end=3100,kind='function_definition',name_source='project_rows'),
-                  dict(__path='query_builder.py',id=4001,__start=3150,__end=3180,kind='class_definition',name_source='alias_rows'),
-                  dict(__path='query_builder.py',id=4002,__start=3180,__end=3200,kind='function_definition',name_source='unrelated')]
-        db.execute('INSERT INTO payload VALUES(?)', (json.dumps(nodes),))
-        reads = 0
-        def kind(value):
-            nonlocal reads
-            reads += 1
-            return value
-        db.create_function('node_kind', 1, kind)
-        cols=['__path','id','__start','__end','name_source']
-        db.execute('CREATE VIEW nodes AS SELECT '+','.join("json_extract(j.value,'$."+c+"') AS "+c for c in cols)+",node_kind(json_extract(j.value,'$.kind')) AS kind FROM payload,json_each(payload.data) j")
-        found = {row[1] for row in db.execute(query)}
-        self.assertEqual(found, set(range(3000,3100)) | set(range(3151,3180)))
-        self.assertLess(reads, 10000, 'ancestor kind and name demand must not rescan every source node for each conditional')
-
-    def test_module_string_binding_scans_identifier_text_once(self):
-        policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json').read_text())
-        plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'state-projection-recovery-2')
-        query = next(s['query'] for s in plan['stages'] if s['name'] == 'string_values')
-        db = sqlite3.connect(':memory:')
-        self.addCleanup(db.close)
-        db.executescript("""
-            CREATE TABLE assignments(__path,id,parent,right_start,right_end,target_text,target_kind);
-            CREATE TABLE raw_strings_0(__path,__start,__end,value);
-            CREATE TABLE raw_strings_1(__path,__start,__end,value);
-            CREATE TABLE raw_strings_2(__path,__start,__end,value);
-            CREATE TABLE payload(data);
-        """)
-        nodes = [{'__path':'a.py','id':0,'kind':'module','parent':None,'text':'','__start':0,'__end':100000}]
-        for i in range(80):
-            nodes.append({'__path':'a.py','id':i+1,'kind':'expression_statement','parent':0,'text':'','__start':i,'__end':i+1})
-        nodes += [{'__path':'a.py','id':1000+i,'kind':'identifier','parent':0,'text':'K'+str(i%80),'__start':1000+i,'__end':1001+i} for i in range(800)]
-        db.execute('INSERT INTO payload VALUES(?)', (json.dumps(nodes),))
-        reads = 0
-        def text(value):
-            nonlocal reads
-            reads += 1
-            return value
-        db.create_function('node_text', 1, text)
-        cols = ['__path','id','kind','parent','__start','__end']
-        db.execute('CREATE VIEW nodes AS SELECT '+','.join("json_extract(j.value,'$."+c+"') AS "+c for c in cols)+",node_text(json_extract(j.value,'$.text')) AS text FROM payload,json_each(payload.data) j")
-        db.executemany('INSERT INTO assignments VALUES(?,?,?,?,?,?,?)', [('a.py',2000+i,i+1,i,i+1,'K'+str(i),'identifier') for i in range(80)])
-        db.executemany('INSERT INTO raw_strings_0 VALUES(?,?,?,?)', [('a.py',i,i+1,'row' if i%2 else 'rows') for i in range(80)])
-        # Same identifier spelling in a different file must not inherit the constant.
-        nodes.append({'__path':'b.py','id':9000,'kind':'identifier','parent':None,'text':'K0','__start':0,'__end':1})
-        db.execute('UPDATE payload SET data=?',(json.dumps(nodes),))
-        rows = set(db.execute(query))
-        expected = {('a.py',i,i+1,'row' if i%2 else 'rows') for i in range(80)}
-        expected |= {('a.py',1000+i,1001+i,'row' if i%80%2 else 'rows') for i in range(800)}
-        self.assertEqual(rows, expected)
-        self.assertLess(reads, 2000, 'module constants must not rescan every identifier for each binding')
-
-    def test_import_identifiers_bound_work_to_exact_subtrees_and_preserve_file_scope(self):
-        policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
-        plans = [c['relational'] for c in policy['clauses'] if 'relational' in c and any(s['name']=='import_identifiers' for s in c['relational'].get('stages',[]))]
-        self.assertEqual(len(plans), 2)
-        db = sqlite3.connect(':memory:')
-        self.addCleanup(db.close)
-        db.executescript('''
-            CREATE TABLE nodes(__path TEXT,id INTEGER,kind TEXT,__start INTEGER,__end INTEGER);
-            CREATE INDEX node_kind ON nodes(kind);
-            CREATE INDEX node_id ON nodes(__path,id);
-            CREATE TABLE edges(__path TEXT,src INTEGER,dst INTEGER);
-            CREATE INDEX edge_src ON edges(__path,src);
-        ''')
-        rows = []
-        for i in range(500):
-            rows.extend([('a.py', 2*i, 'import_from_statement', 10*i, 10*i+8),
-                         ('a.py', 2*i+1, 'identifier', 10*i+3, 10*i+4)])
-        rows.extend(('a.py', 10000+i, 'identifier', 10000+i, 10001+i) for i in range(5000))
-        rows.append(('b.py', 1, 'identifier', 0, 1))
-        db.executemany('INSERT INTO nodes VALUES(?,?,?,?,?)', rows)
-        db.executemany('INSERT INTO edges VALUES(?,?,?)', [('a.py', 2*i, 2*i+1) for i in range(500)])
-        # The SQL binding of the same native producer supplies a closed reference.
-        roots = "SELECT __path,id FROM nodes WHERE kind IN ('import_statement','import_from_statement')"
-        db.execute('CREATE TABLE import_descendants AS WITH RECURSIVE walk(__path,root,node) AS ('
-            'SELECT __path,id,id FROM (' + roots + ') UNION SELECT w.__path,w.root,e.dst FROM walk w '
-            'JOIN edges e ON e.__path=w.__path AND e.src=w.node) SELECT * FROM walk')
-        db.execute('ANALYZE')
-        for plan in plans:
-            stages = {s['name']:s for s in plan['stages']}
-            query = stages['import_identifiers']['query']
-            if 'import_ranges' in stages:
-                query = 'WITH import_ranges AS MATERIALIZED (' + stages['import_ranges']['query'] + ') ' + query
-            steps = 0
-    
-            def limit():
-                nonlocal steps
-                steps += 1000
-                return steps > 1_000_000
-    
-            db.set_progress_handler(limit, 1000)
-            self.assertEqual(set(db.execute(query)), {('a.py', 2*i+1) for i in range(500)})
-            self.assertLessEqual(steps, 1_000_000)
-
     def test_state_frontends_use_native_syntax_and_explicit_empty_admission(self):
         path = Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json'
         policy = json.loads(path.read_text())
         expected = {'state-signatures-1': (1, 18, 'file'), 'state-flow-1': (5, 25, 'file'),
-                    'state-projection-recovery-2': (4, 8, 'file'), 'state-flow-project-1': (5, 27, 'repository')}
+                    'state-projection-recovery-2': (4, 7, 'file'), 'state-flow-project-1': (5, 27, 'repository')}
         for clause in policy['clauses']:
             if clause['id'] not in expected:
                 continue
@@ -177,34 +67,26 @@ class SharedSqlTests(unittest.TestCase):
 
     def test_conditional_declaration_keys_preserve_shadowing_and_class_ownership(self):
         policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
-        clause = next(c for c in policy['clauses'] if c.get('id') == 'quality-conditional-1')
+        clause = next(c for c in policy['clauses'] if c.get('id') == 'conditional-architecture')
         stages = {s['name']: s['query'] for s in clause['relational']['stages'] if 'query' in s}
         db = sqlite3.connect(':memory:')
-        db.executescript('CREATE TABLE classes (__path,id,name,__start); CREATE TABLE functions (__path,id,name,__start); CREATE TABLE ownership (__path,id,cls); CREATE TABLE module_names (__path,qualified);')
-        db.executemany('INSERT INTO classes VALUES (?,?,?,?)', [('a.py','c1','C',1),('a.py','c2','C',10),('a.py','d1','D',20)])
-        db.executemany('INSERT INTO functions VALUES (?,?,?,?)', [('a.py','m1','run',11),('a.py','m2','run',12),('a.py','m3','run',21),('a.py','g1','g',30),('a.py','g2','g',40)])
-        db.executemany('INSERT INTO ownership VALUES (?,?,?)', [('a.py','m1','c2'),('a.py','m2','c2'),('a.py','m3','d1'),('a.py','g1',None),('a.py','g2',None)])
+        db.executescript('CREATE TABLE classes (__path,__start,__end,name); CREATE TABLE fns (__path,__start,__end,name); CREATE TABLE module_names (__path,qualified); CREATE TABLE derived (name);')
+        # C is redefined; the later C owns both `run` methods, the later of which shadows the first.
+        db.executemany('INSERT INTO classes VALUES (?,?,?,?)', [('a.py',1,9,'C'),('a.py',10,19,'C'),('a.py',20,29,'D')])
+        db.executemany('INSERT INTO fns VALUES (?,?,?,?)', [('a.py',11,12,'run'),('a.py',13,14,'run'),('a.py',21,22,'run'),('a.py',30,31,'g'),('a.py',40,41,'g')])
         db.execute("INSERT INTO module_names VALUES ('a.py','pkg')")
-        for table in ['classes','functions']:
-            for col in ['__end','body_start','body_end','body_kind','parameters_start','parameters_end','parameters_kind']:
-                db.execute('ALTER TABLE '+table+' ADD COLUMN '+col)
-        for name in ['conditional_classes','conditional_methods','conditional_functions']:
-            stage=next(s for s in clause['relational']['stages'] if s['name']==name)
-            stored=name+'_stored' if stage.get('deferred') else name
-            db.execute('CREATE TABLE ' + stored + ' AS ' + stages[name])
-            if stage.get('deferred'):
-                columns=','.join(expr+' AS "'+col+'"' for col,expr in stage['deferred'].items())
-                db.execute('CREATE VIEW '+name+' AS SELECT *,'+columns+' FROM '+stored)
-        self.assertEqual(db.execute('SELECT id,qualified_name FROM conditional_classes ORDER BY id').fetchall(), [('c2','pkg.C'),('d1','pkg.D')])
-        self.assertEqual(db.execute('SELECT id,cls FROM conditional_methods ORDER BY id').fetchall(), [('m2','c2'),('m3','d1')])
-        self.assertEqual(db.execute('SELECT id,qualified_name FROM conditional_functions').fetchall(), [('g2','pkg.g')])
+        for name in ['class_spans','fn_spans','cclasses','fn_owner','cmethods','cfunctions']:
+            db.execute('CREATE TABLE ' + name + ' AS ' + stages[name])
+        self.assertEqual(db.execute('SELECT __start,qualified_name FROM cclasses ORDER BY __start').fetchall(), [(10,'pkg.C'),(20,'pkg.D')])
+        self.assertEqual(db.execute('SELECT __start,cls FROM cmethods ORDER BY __start').fetchall(), [(13,10),(21,20)])
+        self.assertEqual(db.execute('SELECT __start,qualified_name FROM cfunctions').fetchall(), [(40,'pkg.g')])
         db.close()
 
     def test_ast_ordinals_sort_narrow_rows_without_changing_node_values(self):
         from data_layer_six.ast_relations import ast_stages, narrow_ast_ordinals
         original = {'relational': {'stages': ast_stages()[:1]}}
         candidate = copy.deepcopy(original)
-        narrow_ast_ordinals(candidate, ['block'])
+        narrow_ast_ordinals(candidate)
         columns = ['__path', '__start', '__end', 'kind', 'parent_start', 'parent_end', 'parent_kind', 'ancestor_start', 'ancestor_end', 'ancestor_kind']
         columns += ['payload_' + str(i) for i in range(40)]
         rows = [('a.py', i, i + 1, 'identifier', i // 10, 10000, 'block', i // 10, 10000, 'block', *['payload'] * 40) for i in range(1000)]
@@ -229,33 +111,6 @@ class SharedSqlTests(unittest.TestCase):
         actual, new_steps = evaluate(candidate)
         self.assertEqual(actual, expected)
         self.assertLess(new_steps, old_steps)
-
-    def test_conditional_ordinals_materialize_only_demanded_parent_partitions(self):
-        policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
-        plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'quality-conditional-1')
-        stages = {stage['name']: stage for stage in plan['stages']}
-        db = sqlite3.connect(':memory:')
-        self.addCleanup(db.close)
-        for name, source in plan['inputs'].items():
-            fields = ['__path', '__start', '__end', *source['evidence']['project']]
-            db.execute('CREATE TABLE "' + name + '" (' + ','.join('"' + field + '"' for field in fields) + ')')
-        parents = ['typed_parameter', 'default_parameter', 'typed_default_parameter', 'conditional_expression']
-        data = [('a.py', i, i+1, 'identifier', 'module', 0, 1000000) for i in range(5000)]
-        expected = []
-        for group, parent in enumerate(parents):
-            for ordinal in range(3):
-                start = 10000 + group*100 + ordinal
-                data.append(('a.py', start, start+1, 'identifier', parent, 10000+group*100, 10099+group*100))
-                expected.append((start, ordinal))
-        db.executemany('INSERT INTO syntax_0(__path,__start,__end,kind,parent_kind,parent_start,parent_end) VALUES(?,?,?,?,?,?,?)', data)
-        for stage in plan['stages']:
-            if stage['name'].startswith('syntax_rows_'):
-                db.execute('CREATE VIEW "' + stage['name'] + '" AS ' + stage['query'])
-        db.execute('CREATE TABLE node_ordinals AS ' + stages['node_ordinals']['query'])
-        self.assertEqual(db.execute('SELECT __start,ordinal FROM node_ordinals ORDER BY __start').fetchall(), expected)
-        db.execute('CREATE TABLE nodes AS ' + stages['nodes']['query'])
-        self.assertEqual(db.execute('SELECT count(*) FROM nodes').fetchone()[0], len(data))
-        self.assertEqual(db.execute('SELECT count(*) FROM nodes WHERE __start<10000 AND ordinal IS NOT NULL').fetchone()[0], 0)
 
     def test_shared_syntax_eliminates_reconstruction_and_preserves_gates(self):
         clause = relational("quality-contracts-1", [S("calls", "SELECT n.*,f.id AS callee FROM nodes n JOIN nodes f ON f.id=n.function_kind||':'||n.function_start||':'||n.function_end"), S("descendants", "unused")], "SELECT * FROM calls")

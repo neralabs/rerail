@@ -1,0 +1,75 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-pg02-postgres-not-valid-foreign-key",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Add PostgreSQL foreign keys with NOT VALID and validate them in a separate step; checking existing rows at once locks the table.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "foreign-key-without-not-valid",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "alter_table",
+            "has": {
+              "kind": "add_constraint",
+              "has": {
+                "kind": "constraint",
+                "has": {
+                  "kind": "keyword_foreign"
+                }
+              },
+              "not": {
+                "has": {
+                  "kind": "keyword_valid"
+                }
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "PG02",
+        "message": "Add this foreign key with NOT VALID and run VALIDATE CONSTRAINT as a separate step, so the table isn't locked.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "PG02",
+              "all",
+              "postgres",
+              "postgres.not_valid_foreign_key"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

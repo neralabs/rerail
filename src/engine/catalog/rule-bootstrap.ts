@@ -1,7 +1,7 @@
 import { dirname, join, resolve } from "node:path";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { parseRuleDocument } from "./bundled-rule-documents.js";
+import { parseRuleDocument } from "./rule-documents.js";
 import { validateCodeRule } from "../rules.js";
 import { codeRuleValueSchema } from "../code-rule/code-rule-schema.js";
 import {
@@ -11,7 +11,7 @@ import {
   ruleSettings,
 } from "../storage/schema.js";
 import type { RerailDatabase } from "../storage/database.js";
-import { normalizeFolder, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS, type BundledCatalog } from "./repository-model.js";
+import { normalizeFolder, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS, type RuleCatalog } from "./repository-model.js";
 import { listLibraryRules, quarantinedLibraryRules, validateLibraryDocument, writeLibraryRule } from "./rule-library.js";
 import { RULE_MODES } from "./rule-mode.js";
 import type { RuleDocument } from "./rule-store.js";
@@ -146,7 +146,7 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
  * are replaced and its set-up time kept, while this machine's start state is left alone; a repository this machine
  * knows under another key or an alias receives them, and keeps every key as an alias.
  */
-export function importRulesDump(db: RerailDatabase, bundle: BundledCatalog, value: unknown, now = Date.now()): RulesDumpImportReport {
+export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, value: unknown, now = Date.now()): RulesDumpImportReport {
   const version = typeof value === "object" && value !== null ? (value as { version?: unknown }).version : undefined;
   if (version !== RULES_DUMP_VERSION) {
     throw new Error(`a v${String(version)} rules dump can't be imported; export it again with this Rerail (v${RULES_DUMP_VERSION})`);
@@ -161,7 +161,7 @@ export function importRulesDump(db: RerailDatabase, bundle: BundledCatalog, valu
   assertDumpCompiles("rules dump", documents.map(({ document }) => document));
   db.transaction(tx => {
     for (const { document, entry } of documents) {
-      writeLibraryRule(tx, bundle, document, {
+      writeLibraryRule(tx, ruleCatalog, document, {
         revision: entry.revision,
         copiedFromRuleId: entry.copiedFromRuleId,
         createdAt: entry.createdAt,

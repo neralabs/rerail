@@ -1,1 +1,0 @@
-(obj = new new OuterObj().InnerObj).Name! == c;

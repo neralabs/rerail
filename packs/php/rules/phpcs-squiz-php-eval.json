@@ -1,0 +1,45 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpcs-squiz-php-eval",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid eval() in PHP; running strings as code is a security risk and hard to debug.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "kind": "name",
+              "regex": "^(?i:eval)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "Squiz.PHP.Eval",
+        "message": "Replace this eval() with direct PHP code, such as a callable or a lookup array; evaluating strings invites code injection.",
+        "suppress": {
+          "phpcs": {
+            "sniffs": [
+              "Squiz.PHP.Eval.Discouraged"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

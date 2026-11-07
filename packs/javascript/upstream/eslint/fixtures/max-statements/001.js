@@ -1,1 +1,0 @@
-function foo() { var bar = 1; function qux () { var noCount = 2; } return 3; }

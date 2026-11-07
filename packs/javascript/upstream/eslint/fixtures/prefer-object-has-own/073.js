@@ -1,1 +1,0 @@
-const hasProperty = {}.hasOwnProperty.call(object, property);

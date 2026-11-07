@@ -3,7 +3,7 @@
   "id": "bandit-b413-import-pycrypto",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of deprecated pyCrypto namespaces.",
+  "description": "Avoid importing the pyCrypto package; it is unmaintained and has known vulnerabilities, so use the cryptography package instead.",
   "scope": {
     "include": [
       "**/*.py"

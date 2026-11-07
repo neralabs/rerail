@@ -1,1 +1,0 @@
-var foo = '0 backslashes: ${bar}' + baz;

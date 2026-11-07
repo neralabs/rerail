@@ -6,7 +6,7 @@ import { z } from "zod";
 import { libraryUpsertBodySchema } from "../api/repository-contracts.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import {
   IGNORED_DIRECTORIES,
   languageFor,
@@ -424,13 +424,13 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
   const database = openRerailDatabase(databasePath);
   try {
     const checkout = recordCheckout(database, repo);
-    const bundle = loadBundledCatalog();
+    const ruleCatalog = loadRuleCatalog();
     // A rule by Rerail is never overwritten by one the person drafts.
-    if (bundle.documents.has(draft.rule.id)) {
+    if (ruleCatalog.documents.has(draft.rule.id)) {
       throw new RuleDraftError(`${draft.rule.id} is a rule by Rerail, so it was not replaced. Give the new rule another id.`);
     }
     try {
-      upsertLibraryRule(database, bundle, draft.rule, draft.kind);
+      upsertLibraryRule(database, ruleCatalog, draft.rule, draft.kind);
     } catch (error) {
       if (error instanceof EngineUnavailableError) throw new RuleDraftError(`the Engine is unavailable, so rule ${draft.rule.id} cannot be checked`);
       throw new RuleDraftError(errorMessage(error));

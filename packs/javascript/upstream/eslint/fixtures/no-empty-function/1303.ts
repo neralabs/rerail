@@ -1,1 +1,0 @@
-const A = class {protected static foo() {}}; // allow: setters

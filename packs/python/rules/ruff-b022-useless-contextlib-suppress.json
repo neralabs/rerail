@@ -3,7 +3,7 @@
   "id": "ruff-b022-useless-contextlib-suppress",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B022 (useless-contextlib-suppress): a call to `contextlib.suppress` with no positional arguments, reported on the call. The callee (parentheses transparent) resolves to `contextlib.suppress` with `resolves` (imports and shadowing as Ruff's semantic model sees them).",
+  "description": "Pass at least one exception type to contextlib.suppress(); with none it suppresses nothing.",
   "scope": {
     "include": [
       "**/*"

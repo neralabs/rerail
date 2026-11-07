@@ -17,6 +17,7 @@ pub(crate) mod rust_format;
 pub(crate) mod scanf;
 pub(crate) mod semantic;
 
+use crate::code_rule_dsl::embed::segments::FileRanges;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::Position;
@@ -353,9 +354,39 @@ pub(crate) struct SubTree {
     base: usize,
 }
 
+/// A parsed tree's bytes are the literal's decoded text: a node stands for the source bytes of its
+/// characters (`HostMap`), in the document the literal was parsed from.
+impl crate::code_rule_dsl::origin::Origin for SubTree {
+    /// A literal's characters stand in source order, so a node stands for one source range.
+    fn of_node(&self, id: usize, _: Range<usize>) -> Option<FileRanges> {
+        let rec = self.nodes.get(self.index_of(id)?)?;
+        Some(FileRanges::one(
+            self.map_range(rec.start as usize..rec.end as usize),
+        ))
+    }
+
+    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
+        Some(FileRanges::one(self.map_range(self.decoded(range)?)))
+    }
+
+    fn bounds(&self, id: usize, range: Range<usize>) -> Option<Range<usize>> {
+        Some(self.of_node(id, range)?.primary())
+    }
+
+    /// Only an exact literal's bytes are copied: elsewhere decoding rewrote them.
+    fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
+        let range = self.decoded(range)?;
+        matches!(self.map, HostMap::Exact(_)).then(|| self.map_range(range))
+    }
+}
+
 /// Node ids of sub-trees have the top bit set; tapes use small indices, tree-sitter addresses.
 /// Blade trees (`blade::forte::tree`) draw their ids from the same counter.
-pub(crate) const ID_FLAG: usize = 1 << 63;
+/// On wasm32 (the browser build) the top bit is bit 31, which leaves 7 bits of tree counter above a tree's 24
+/// bits of nodes: enough for an explorer's few files, not for a corpus (wasm/README.md).
+pub(crate) const ID_FLAG: usize = 1 << (usize::BITS - 1);
+/// The tree counter's bits between `ID_FLAG` and a tree's 24 bits of nodes: 39 on 64-bit targets, 7 on wasm32.
+pub(crate) const TREE_MASK: usize = (1 << (usize::BITS - 25)) - 1;
 pub(crate) static NEXT_TREE: AtomicUsize = AtomicUsize::new(0);
 
 impl SubTree {
@@ -408,7 +439,7 @@ impl SubTree {
                 stack.push((child, index));
             }
         }
-        let tree = NEXT_TREE.fetch_add(1, Ordering::Relaxed) & ((1 << 39) - 1);
+        let tree = NEXT_TREE.fetch_add(1, Ordering::Relaxed) & TREE_MASK;
         Self {
             lang: SubLang(grammar),
             source: SubSource { text, offset },
@@ -425,19 +456,33 @@ impl SubTree {
             .filter(|index| *index < self.nodes.len())
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// The grammar kind of the parsed root.
+    pub(crate) fn root_kind(&self) -> u16 {
+        self.nodes[0].kind
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// The grammar kind of the node with this id.
+    pub(crate) fn node_kind(&self, node_id: usize) -> Option<u16> {
+        self.nodes
+            .get(self.index_of(node_id)?)
+            .map(|node| node.kind)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     /// The source range of the node with this id.
     pub(crate) fn host_range(&self, node_id: usize) -> Option<Range<usize>> {
         let rec = self.nodes.get(self.index_of(node_id)?)?;
         Some(self.map_range(rec.start as usize..rec.end as usize))
     }
 
-    /// The source range of a range of this tree's nodes (offset included): a capture a nested
-    /// tree exported.
-    pub(crate) fn host_span(&self, range: Range<usize>) -> Option<Range<usize>> {
+    /// A range of this tree's nodes (offset included) as decoded bytes.
+    fn decoded(&self, range: Range<usize>) -> Option<Range<usize>> {
         let offset = self.source.offset;
         let start = range.start.checked_sub(offset)?;
         let end = range.end.checked_sub(offset)?;
-        (end <= self.source.text.len()).then(|| self.map_range(start..end))
+        (end <= self.source.text.len()).then_some(start..end)
     }
 
     /// The source range of decoded bytes `range`.
@@ -533,6 +578,8 @@ impl Language for SubLang {
 pub(crate) struct SubDoc {
     pub(crate) tree: Arc<SubTree>,
 }
+
+impl SubDoc {}
 
 impl Doc for SubDoc {
     type Source = SubSource;
@@ -909,7 +956,13 @@ mod tests {
             chars[2].parent().map(|node| node.kind().into_owned()),
             Some("text".into())
         );
-        let host = tree.host_range(chars[1].node_id()).expect("mapped");
+        let host = crate::code_rule_dsl::origin::Origin::of_node(
+            &*tree,
+            chars[1].node_id(),
+            chars[1].range(),
+        )
+        .expect("mapped")
+        .primary();
         assert_eq!(&source[host], "\\x62");
         assert_eq!(
             tree.value(chars[2].node_id()),

@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../src/engine/index.ts", import.meta.url).href;
 const caps = new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url).href;
-const policy = new URL("../../../packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json", import.meta.url).href;
+const policy = new URL("../../../gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json", import.meta.url).href;
 
 it.skipIf(!required)("keeps admission and physical producers identical for permutations of the same data-layer plans", () => {
   const program = `

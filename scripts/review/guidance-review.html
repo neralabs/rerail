@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guidance review</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e3e2dd; --soft: #f0efea;
+  --accent: #3b5bdb; --ok: #2b8a3e; --ok-bg: #e6f4ea; --warn: #c2410c; --warn-bg: #fdecdf; --stale: #8a6d00; --stale-bg: #fbf3d0;
+  --code-bg: #f4f3ef; --hit: #fde68a; --upline: #3b82f6;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615; --panel: #1f1f1d; --ink: #ecebe6; --muted: #9b9a93; --line: #34332f; --soft: #2a2a27;
+    --accent: #8ca2ff; --ok: #69db7c; --ok-bg: #1e3326; --warn: #ffa26b; --warn-bg: #3a2418; --stale: #ffd43b; --stale-bg: #3a3214;
+    --code-bg: #262624; --hit: #5c4a12; --upline: #60a5fa;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 5; display: flex; gap: 16px; align-items: center; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 15px; margin: 0; }
+header .meta { color: var(--muted); font-size: 12px; }
+header nav { display: flex; gap: 4px; margin-left: 8px; }
+header nav a { padding: 4px 10px; border-radius: 6px; color: var(--ink); text-decoration: none; }
+header nav a.on { background: var(--soft); font-weight: 600; }
+header .grow { flex: 1; }
+.progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.bar { display: flex; width: 160px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--soft); }
+.bar span { display: block; height: 100%; }
+.bar .a { background: var(--ok); } .bar .c { background: var(--warn); } .bar .s { background: var(--stale); }
+main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+input[type=search] { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); width: 280px; }
+.chip { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.chip[aria-pressed=true] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; cursor: pointer; }
+.card:hover { border-color: var(--accent); }
+.card h3 { margin: 0 0 2px; font-size: 14px; }
+.card .sub { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.card .bar { width: 100%; margin: 6px 0; }
+.card .nums { display: flex; gap: 10px; font-size: 12px; color: var(--muted); }
+.pack { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+.pack > summary { list-style: none; cursor: pointer; padding: 10px 14px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid var(--line); }
+.pack > summary::-webkit-details-marker { display: none; }
+.pack > summary h2 { font-size: 14px; margin: 0; }
+.pack > summary .sub { color: var(--muted); font-size: 12px; }
+table { width: 100%; border-collapse: collapse; }
+td, th { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 13px; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; background: var(--soft); }
+tr.row { cursor: pointer; } tr.row:hover td { background: var(--soft); }
+td.id { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+td.title { color: var(--muted); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+td.note { color: var(--muted); font-size: 12px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.status.pending { background: var(--soft); color: var(--muted); }
+.status.approved { background: var(--ok-bg); color: var(--ok); }
+.status.changes { background: var(--warn-bg); color: var(--warn); }
+.status.stale { background: var(--stale-bg); color: var(--stale); }
+.tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px; background: var(--soft); color: var(--muted); margin-left: 4px; }
+.review { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
+.side { position: sticky; top: 64px; max-height: calc(100vh - 84px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.side .grp { padding: 8px 12px 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; background: var(--soft); position: sticky; top: 0; }
+.side a { display: flex; gap: 6px; align-items: center; padding: 4px 12px; color: var(--ink); text-decoration: none; font-family: var(--mono); font-size: 11.5px; border-left: 3px solid transparent; }
+.side a:hover { background: var(--soft); }
+.side a.cur { border-left-color: var(--accent); background: var(--soft); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--line); }
+.dot.approved { background: var(--ok); } .dot.changes { background: var(--warn); } .dot.stale { background: var(--stale); }
+.side a span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+.rule h2 { margin: 0 0 4px; font-size: 18px; }
+.rule .rid { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+dl { display: grid; grid-template-columns: 130px 1fr; gap: 4px 12px; margin: 14px 0 0; font-size: 13px; }
+dt { color: var(--muted); } dd { margin: 0; }
+dd code, .msg code { font-family: var(--mono); font-size: 12px; }
+.msgs { margin: 6px 0 0; padding: 0; list-style: none; }
+.msgs li { font-family: var(--mono); font-size: 12.5px; background: var(--code-bg); padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; }
+h3.sec { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 22px 0 8px; }
+.case { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
+.case .head { display: flex; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--soft); font-size: 12px; }
+.case .head .path { font-family: var(--mono); color: var(--muted); }
+.kind { font-weight: 600; font-size: 11px; padding: 1px 8px; border-radius: 999px; }
+.kind.example, .kind.caught { background: var(--ok-bg); color: var(--ok); }
+.kind.extra { background: var(--warn-bg); color: var(--warn); }
+.kind.missed { background: var(--stale-bg); color: var(--stale); }
+.kind.passes { background: var(--soft); color: var(--muted); border: 1px solid var(--line); }
+.case .body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.case .body > div { min-width: 0; }
+.case .label { font-size: 11px; color: var(--muted); padding: 6px 14px 0; }
+pre { margin: 0; padding: 8px 14px 12px; font: 12px/1.55 var(--mono); overflow: auto; white-space: pre; }
+pre.src .ln { display: inline-block; width: 3.2em; color: var(--muted); user-select: none; }
+pre.src .hit { background: var(--hit); display: inline-block; min-width: 100%; }
+pre.src .up { box-shadow: inset 3px 0 var(--upline); display: inline-block; min-width: 100%; }
+pre.guide { white-space: pre-wrap; border-left: 1px solid var(--line); background: var(--code-bg); height: 100%; }
+.none { color: var(--muted); font-style: italic; padding: 8px 14px; font-size: 12px; }
+.fails { color: var(--warn); font-size: 12px; padding: 0 14px 8px; font-family: var(--mono); }
+.case textarea { width: calc(100% - 28px); margin: 0 14px 12px; min-height: 34px; }
+textarea { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); resize: vertical; }
+.decide { position: sticky; bottom: 0; z-index: 4; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 10px; box-shadow: 0 -6px 18px rgba(0,0,0,.06); }
+.decide textarea { width: 100%; min-height: 48px; }
+.decide .tags { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.chip.tagchip[aria-pressed=true] { background: var(--warn); border-color: var(--warn); color: #fff; }
+.decide .btns { display: flex; flex-direction: column; gap: 6px; }
+button { font: inherit; border-radius: 6px; padding: 6px 14px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; white-space: nowrap; }
+button.approve { background: var(--ok); color: #fff; border-color: var(--ok); }
+button.changes { background: var(--warn); color: #fff; border-color: var(--warn); }
+button:disabled { opacity: .45; cursor: default; }
+.saved { font-size: 11px; color: var(--muted); }
+.keys { font-size: 11px; color: var(--muted); margin-top: 6px; }
+kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; background: var(--soft); }
+.stale-note { background: var(--stale-bg); color: var(--stale); border-radius: 6px; padding: 6px 10px; font-size: 12px; margin-top: 10px; }
+@media (max-width: 900px) { .review { grid-template-columns: 1fr; } .side { position: static; max-height: 240px; } .case .body { grid-template-columns: 1fr; } pre.guide { border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Guidance review</h1>
+  <span class="meta" id="meta"></span>
+  <nav><a href="#/" id="navOverview">Overview</a><a href="#/review" id="navReview">Review</a></nav>
+  <span class="grow"></span>
+  <span class="progress" id="progress"></span>
+</header>
+<main id="main"><p class="none">Loading…</p></main>
+<script>
+"use strict";
+const KIND = {
+  example: ["Example", "pack.json's caught example"],
+  caught: ["Caught", "Rerail and the upstream tool both flag it"],
+  extra: ["Only Rerail", "Rerail flags it; the upstream tool doesn't"],
+  missed: ["Only upstream", "the upstream tool flags it; Rerail doesn't"],
+  passes: ["Passes", "nothing is flagged"],
+};
+/** Preset feedback, picked above the comment; any of them is enough to request changes. */
+const FEEDBACK = [
+  "Steering unclear",
+  "Likely to distract the agent",
+  "Too strongly worded",
+  "Too vague to act on",
+  "Doesn't say how to fix it",
+  "Doesn't say why it matters",
+  "Too long",
+  "Upstream jargon",
+  "Wrong or misleading",
+  "Flags code it shouldn't",
+  "Should be Log, not Steer",
+  "Should start off",
+];
+const STATUS = { pending: "Pending", approved: "Approved", changes: "Changes requested", stale: "Changed since review" };
+const state = { data: null, decisions: { version: 1, rules: {} }, rules: [], byId: new Map(), filter: { q: "", status: "all", candidates: true, offRules: true } };
+
+const esc = text => String(text).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const $ = sel => document.querySelector(sel);
+
+function decisionOf(rule) {
+  const d = state.decisions.rules[rule.id];
+  return { tags: [], ...(d ?? { status: "pending", comment: "", cases: {}, digest: rule.digest, at: "" }) };
+}
+function statusOf(rule) {
+  const d = state.decisions.rules[rule.id];
+  if (d === undefined || d.status === "pending") return "pending";
+  return d.digest !== rule.digest ? "stale" : d.status;
+}
+function tally(rules) {
+  const t = { approved: 0, changes: 0, stale: 0, pending: 0 };
+  for (const r of rules) t[statusOf(r)]++;
+  return t;
+}
+function barHtml(t, total) {
+  const pct = n => total === 0 ? 0 : (100 * n / total);
+  return `<span class="bar"><span class="a" style="width:${pct(t.approved)}%"></span><span class="c" style="width:${pct(t.changes)}%"></span><span class="s" style="width:${pct(t.stale)}%"></span></span>`;
+}
+function visible(rule) {
+  const f = state.filter;
+  if (!f.candidates && rule.candidate) return false;
+  if (!f.offRules && !rule.on) return false;
+  if (f.status !== "all" && statusOf(rule) !== f.status) return false;
+  if (f.q) {
+    const q = f.q.toLowerCase();
+    const d = decisionOf(rule);
+    const hay = `${rule.id} ${rule.title} ${rule.description} ${rule.messages.join(" ")} ${d.tags.join(" ")} ${d.comment}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function renderProgress() {
+  const t = tally(state.rules);
+  $("#progress").innerHTML = `${barHtml(t, state.rules.length)} ${t.approved + t.changes} of ${state.rules.length} reviewed · ${t.approved} approved · ${t.changes} changes${t.stale ? ` · ${t.stale} changed since` : ""}`;
+}
+
+function controlsHtml() {
+  const f = state.filter;
+  const chip = (key, value, label) => `<button class="chip" data-f="${key}" data-v="${value}" aria-pressed="${String(f[key]) === String(value)}">${label}</button>`;
+  return `<div class="controls">
+    <input type="search" id="q" placeholder="Search ids, titles, messages" value="${esc(f.q)}">
+    ${chip("status", "all", "All")}${chip("status", "pending", "Pending")}${chip("status", "approved", "Approved")}${chip("status", "changes", "Changes requested")}${chip("status", "stale", "Changed since review")}
+    <span style="width:12px"></span>
+    <button class="chip" data-toggle="candidates" aria-pressed="${f.candidates}">Candidates</button>
+    <button class="chip" data-toggle="offRules" aria-pressed="${f.offRules}">Rules that start off</button>
+  </div>`;
+}
+function wireControls(rerender) {
+  const q = $("#q");
+  q.addEventListener("input", () => { state.filter.q = q.value; rerender(true); });
+  document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => { state.filter[b.dataset.f] = b.dataset.v; rerender(); }));
+  document.querySelectorAll("[data-toggle]").forEach(b => b.addEventListener("click", () => { state.filter[b.dataset.toggle] = !state.filter[b.dataset.toggle]; rerender(); }));
+}
+
+function renderOverview(keepFocus) {
+  const packs = state.data.packs;
+  const cards = packs.map(p => {
+    const t = tally(p.rules);
+    const shipped = p.rules.filter(r => !r.candidate).length;
+    return `<div class="card" data-pack="${esc(p.id)}">
+      <h3>${esc(p.name)}</h3>
+      <div class="sub">${shipped} shipped · ${p.rules.length - shipped} candidates</div>
+      ${barHtml(t, p.rules.length)}
+      <div class="nums"><span>${t.approved} approved</span><span>${t.changes} changes</span><span>${t.pending} pending</span>${t.stale ? `<span>${t.stale} changed</span>` : ""}</div>
+    </div>`;
+  }).join("");
+  const tables = packs.map(p => {
+    const rows = p.rules.filter(visible);
+    if (rows.length === 0) return "";
+    const t = tally(p.rules);
+    return `<details class="pack" open id="pack-${esc(p.id)}"><summary><h2>${esc(p.name)}</h2><span class="sub">${rows.length} shown of ${p.rules.length} · ${t.approved} approved · ${t.changes} changes · ${t.pending} pending</span></summary>
+      <table><thead><tr><th>Status</th><th>Rule</th><th>Title</th><th>Starts</th><th title="Rerail and upstream both flag / only Rerail / only upstream, over the fixtures">Caught · only Rerail · missed</th><th>Cases</th><th>Comment</th></tr></thead><tbody>
+      ${rows.map(r => {
+        const s = statusOf(r), d = decisionOf(r);
+        return `<tr class="row" data-rule="${esc(r.id)}"><td><span class="status ${s}">${STATUS[s]}</span></td>
+          <td class="id">${esc(r.id)}${r.candidate ? '<span class="tag">candidate</span>' : ""}</td>
+          <td class="title">${esc(r.title)}</td>
+          <td class="num">${r.on ? "on" : "off"} · ${esc(r.mode)}</td>
+          <td class="num">${r.counts.caught} · ${r.counts.extra} · ${r.counts.missed}</td>
+          <td class="num">${r.cases.length}</td>
+          <td class="note" title="${esc([...d.tags, d.comment].filter(Boolean).join(" · "))}">${esc([...d.tags, d.comment].filter(Boolean).join(" · "))}</td></tr>`;
+      }).join("")}</tbody></table></details>`;
+  }).join("");
+  $("#main").innerHTML = `<div class="cards">${cards}</div>${controlsHtml()}${tables || '<p class="none">No rules match.</p>'}`;
+  wireControls(focus => { renderOverview(focus); });
+  if (keepFocus) { const q = $("#q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  document.querySelectorAll(".card").forEach(c => c.addEventListener("click", () => document.getElementById(`pack-${c.dataset.pack}`)?.scrollIntoView({ behavior: "smooth" })));
+  document.querySelectorAll("tr.row").forEach(tr => tr.addEventListener("click", () => { location.hash = `#/rule/${encodeURIComponent(tr.dataset.rule)}`; }));
+}
+
+function sourceHtml(c) {
+  const lines = c.snippet.split("\n");
+  return lines.map((text, i) => {
+    const n = c.firstLine + i;
+    const cls = [c.flagged.includes(n) ? "hit" : "", c.upstream.includes(n) ? "up" : ""].filter(Boolean).join(" ");
+    const row = `<span class="ln">${n}</span>${esc(text)}`;
+    return cls ? `<span class="${cls}">${row}</span>` : row;
+  }).join("\n");
+}
+
+function visibleList() { return state.rules.filter(visible); }
+
+function renderReview(id, keepFocus) {
+  const sideTop = document.querySelector(".side")?.scrollTop ?? 0;
+  const list = visibleList();
+  const rule = state.byId.get(id) ?? list[0] ?? state.rules[0];
+  if (!rule) return;
+  if (location.hash !== `#/rule/${encodeURIComponent(rule.id)}`) history.replaceState(null, "", `#/rule/${encodeURIComponent(rule.id)}`);
+  const pack = state.data.packs.find(p => p.id === rule.pack);
+  let side = "", lastPack = "";
+  for (const r of list) {
+    if (r.pack !== lastPack) { side += `<div class="grp">${esc(state.data.packs.find(p => p.id === r.pack).name)}</div>`; lastPack = r.pack; }
+    side += `<a href="#/rule/${encodeURIComponent(r.id)}" class="${r.id === rule.id ? "cur" : ""}" title="${esc(r.title)}"><span class="dot ${statusOf(r)}"></span><span class="t">${esc(r.id)}</span></a>`;
+  }
+  const d = decisionOf(rule);
+  const s = statusOf(rule);
+  const cases = rule.cases.map(c => `<div class="case">
+      <div class="head"><span class="kind ${c.kind}" title="${esc(KIND[c.kind][1])}">${KIND[c.kind][0]}</span><span class="path">${esc(c.path)}</span><span class="grow"></span>
+        <span class="saved">${c.flagged.length ? `Rerail: line ${c.flagged.join(", ")}` : ""}${c.flagged.length && c.upstream.length ? " · " : ""}${c.upstream.length ? `upstream: line ${c.upstream.join(", ")}` : ""}</span></div>
+      <div class="body">
+        <div><div class="label">Code <span title="yellow: Rerail flags the line; a blue edge: the upstream tool does">(yellow: Rerail flags · blue edge: upstream flags)</span></div><pre class="src">${sourceHtml(c)}</pre></div>
+        <div><div class="label">What the coding agent reads</div>${c.guidance ? `<pre class="guide">${esc(c.guidance)}</pre>` : `<div class="none">No steer: Rerail flags nothing here.</div>`}</div>
+      </div>
+      ${c.failures.length ? `<div class="fails">${c.failures.map(esc).join("<br>")}</div>` : ""}
+      <textarea data-case="${esc(c.id)}" placeholder="Comment on this case (optional)">${esc(d.cases[c.id] ?? "")}</textarea>
+    </div>`).join("");
+  $("#main").innerHTML = `${controlsHtml()}<div class="review">
+    <nav class="side" id="side">${side || '<p class="none">No rules match.</p>'}</nav>
+    <section>
+      <div class="rule">
+        <span class="status ${s}">${STATUS[s]}</span>
+        <h2>${esc(rule.title)}</h2>
+        <div class="rid">${esc(rule.id)} · ${esc(pack.name)}${rule.candidate ? '<span class="tag">candidate</span>' : ""}</div>
+        <dl>
+          <dt>Starts</dt><dd>${rule.on ? "On" : "Off"}, in ${esc(rule.mode[0].toUpperCase() + rule.mode.slice(1))}</dd>
+          ${rule.upstream ? `<dt>Ports</dt><dd><code>${esc(rule.upstream.rule)}</code> (${esc(rule.upstream.tool)})</dd>` : ""}
+          <dt>Applies to</dt><dd><code>${esc(rule.scope.include.join(", ") || "every file")}</code>${rule.scope.exclude.length ? ` except <code>${esc(rule.scope.exclude.join(", "))}</code>` : ""}</dd>
+          <dt>On the fixtures</dt><dd>${rule.counts.caught} caught by both · ${rule.counts.extra} only Rerail · ${rule.counts.missed} only upstream, over ${rule.counts.units} fixture units</dd>
+          <dt>Document</dt><dd><code>${esc(rule.document)}</code></dd>
+          <dt>Description</dt><dd>${esc(rule.description) || '<span class="none">none</span>'}</dd>
+          <dt>Messages</dt><dd><ul class="msgs">${rule.messages.map(m => `<li>${esc(m)}</li>`).join("") || '<li>none</li>'}</ul></dd>
+        </dl>
+        ${rule.compileError ? `<div class="stale-note">Does not compile: ${esc(rule.compileError)}</div>` : ""}
+        ${s === "stale" ? `<div class="stale-note">The wording or guidance changed after this was ${d.status === "approved" ? "approved" : "reviewed"}. Review it again.</div>` : ""}
+      </div>
+      <h3 class="sec">Cases (${rule.cases.length})</h3>
+      ${cases || '<p class="none">No cases: no example in pack.json and no fixture this rule covers.</p>'}
+      <div class="decide">
+        <div class="tags" id="tags">${FEEDBACK.map(t => `<button class="chip tagchip" aria-pressed="${d.tags.includes(t)}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div>
+        <textarea id="comment" rows="2" placeholder="What should change? Pick feedback above, add detail here (optional for approval)">${esc(d.comment)}</textarea>
+        <div class="btns">
+          <button class="approve" id="approve">Approve</button>
+          <button class="changes" id="changes">Request changes</button>
+          <button id="clear" ${d.status === "pending" ? "disabled" : ""}>Clear</button>
+          <span class="saved" id="saved">${d.at ? `Saved ${new Date(d.at).toLocaleString()}` : ""}</span>
+        </div>
+        <div class="keys"><kbd>a</kbd> approve · <kbd>r</kbd> request changes · <kbd>↓</kbd>/<kbd>↑</kbd> or <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>c</kbd> comment · <kbd>o</kbd> overview</div>
+      </div>
+    </section></div>`;
+  wireControls(focus => renderReview(rule.id, focus));
+  if (keepFocus) { const q = $("#q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  keepInSide(sideTop);
+  const save = status => saveDecision(rule, status ?? decisionOf(rule).status);
+  $("#approve").addEventListener("click", () => { save("approved"); next(1); });
+  document.querySelectorAll(".tagchip").forEach(b => b.addEventListener("click", () => {
+    b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true"));
+    save();
+  }));
+  $("#changes").addEventListener("click", () => { if (!$("#comment").value.trim() && pickedTags().length === 0) { $("#comment").focus(); $("#comment").placeholder = "Pick feedback above or say what should change, then press Request changes again"; return; } save("changes"); next(1); });
+  $("#clear").addEventListener("click", () => { $("#comment").value = ""; document.querySelectorAll(".tagchip").forEach(b => b.setAttribute("aria-pressed", "false")); save("pending"); renderReview(rule.id); });
+  let timer;
+  const later = () => { clearTimeout(timer); timer = setTimeout(() => save(), 600); };
+  $("#comment").addEventListener("input", later);
+  document.querySelectorAll("textarea[data-case]").forEach(t => t.addEventListener("input", later));
+  window.scrollTo(0, 0);
+}
+
+// The list is rebuilt on every render: put it back where it was, and move it only as far as it takes to show the
+// current rule, inside the list (scrollIntoView would also scroll the page).
+function keepInSide(top) {
+  const side = document.querySelector(".side"), cur = side?.querySelector("a.cur");
+  if (!side) return;
+  side.scrollTop = top;
+  if (!cur) return;
+  const head = side.querySelector(".grp")?.offsetHeight ?? 0;
+  const y = cur.getBoundingClientRect().top - side.getBoundingClientRect().top + side.scrollTop;
+  if (y - head < side.scrollTop) side.scrollTop = y - head;
+  else if (y + cur.offsetHeight > side.scrollTop + side.clientHeight) side.scrollTop = y + cur.offsetHeight - side.clientHeight;
+}
+
+function pickedTags() { return [...document.querySelectorAll(".tagchip[aria-pressed=true]")].map(b => b.dataset.tag); }
+
+async function saveDecision(rule, status) {
+  const cases = {};
+  document.querySelectorAll("textarea[data-case]").forEach(t => { if (t.value.trim()) cases[t.dataset.case] = t.value; });
+  const comment = $("#comment")?.value ?? "";
+  const keepDigest = status === decisionOf(rule).status && state.decisions.rules[rule.id] && statusOf(rule) === "stale";
+  const tags = pickedTags();
+  const decision = { status, comment, tags, cases, digest: keepDigest ? state.decisions.rules[rule.id].digest : rule.digest, at: new Date().toISOString() };
+  const response = await fetch(`/decisions/${encodeURIComponent(rule.id)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(decision) });
+  if (!response.ok) { alertSave(`Not saved: ${await response.text()}`); return; }
+  if (status === "pending" && !comment.trim() && tags.length === 0 && Object.keys(cases).length === 0) delete state.decisions.rules[rule.id];
+  else state.decisions.rules[rule.id] = decision;
+  renderProgress();
+  const saved = $("#saved"); if (saved) saved.textContent = `Saved ${new Date().toLocaleTimeString()}`;
+  const link = document.querySelector(`.side a[href="#/rule/${encodeURIComponent(rule.id)}"] .dot`);
+  if (link) link.className = `dot ${statusOf(rule)}`;
+}
+function alertSave(text) { const saved = $("#saved"); if (saved) { saved.textContent = text; saved.style.color = "var(--warn)"; } }
+
+function currentId() { const m = /^#\/rule\/(.+)$/.exec(location.hash); return m ? decodeURIComponent(m[1]) : null; }
+function next(step) {
+  const list = visibleList();
+  const i = list.findIndex(r => r.id === currentId());
+  const target = list[Math.min(list.length - 1, Math.max(0, i + step))];
+  if (target) location.hash = `#/rule/${encodeURIComponent(target.id)}`;
+}
+
+function route() {
+  const id = currentId();
+  $("#navOverview").classList.toggle("on", !location.hash.startsWith("#/r"));
+  $("#navReview").classList.toggle("on", location.hash.startsWith("#/r"));
+  if (location.hash.startsWith("#/review")) {
+    const firstPending = visibleList().find(r => statusOf(r) === "pending" || statusOf(r) === "stale") ?? visibleList()[0];
+    if (firstPending) { location.hash = `#/rule/${encodeURIComponent(firstPending.id)}`; return; }
+  }
+  if (id) renderReview(id); else renderOverview();
+}
+
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const typing = /^(TEXTAREA|INPUT)$/.test(document.activeElement?.tagName ?? "");
+  if (typing) { if (e.key === "Escape") document.activeElement.blur(); return; }
+  if (!currentId()) return;
+  if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); next(1); }
+  else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); next(-1); }
+  else if (e.key === "a") $("#approve")?.click();
+  else if (e.key === "r") $("#changes")?.click();
+  else if (e.key === "c") { e.preventDefault(); $("#comment")?.focus(); }
+  else if (e.key === "o") location.hash = "#/";
+});
+window.addEventListener("hashchange", route);
+
+(async () => {
+  const [data, decisions] = await Promise.all([fetch("/data.json").then(r => r.json()), fetch("/decisions.json").then(r => r.json())]);
+  state.data = data;
+  state.decisions = decisions;
+  state.rules = data.packs.flatMap(p => p.rules);
+  state.byId = new Map(state.rules.map(r => [r.id, r]));
+  $("#meta").textContent = `${state.rules.length} rules in ${data.packs.length} packs · ${data.commit} · generated ${new Date(data.generatedAt).toLocaleString()}`;
+  renderProgress();
+  route();
+})();
+</script>
+</body>
+</html>

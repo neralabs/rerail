@@ -1,0 +1,75 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.input doc, node, child, field, text, name, line, syntax_error
+.decl k0(kind: symbol)
+k0("string").
+.decl k1(kind: symbol)
+k1("return_statement").
+.decl in_scope(d: number)
+.decl m19(n: node)
+.decl m29(n: node)
+.decl m35(n: node)
+.decl m37(n: node)
+.decl m48(n: node)
+.decl m54(n: node)
+.decl m56(n: node)
+.decl m69(n: node)
+.decl out_scope(d: number)
+.decl t13(s: symbol)
+.decl t24(s: symbol)
+.decl t43(s: symbol)
+.decl t5(s: symbol)
+.decl t62(s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+t5(s) :- doc(_, s, _), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+t5(s) :- doc(_, _, s), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+violation("data-layer-history-serverplan-projection", "from-imports", "HSP-001", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), (prefix("impl/", v2) ; prefix("l7200_versioned_transactions/", v2)), node(v3, n, _, _, _), doc(v3, v4, _), !t5(v4), node(_, n, "import_from_statement", _, _), field(n, "module_name", v6), name(v6, v8), v8 = "impl.common.l2070_server_plan.steps.history_runtime_projection", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t13(s) :- doc(_, s, _), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+t13(s) :- doc(_, _, s), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+m19(n) :- child(n, v14, _), node(_, v14, "dotted_name", _, _), text(v14, v15), suffix("history_runtime_projection", v15).
+m19(n) :- child(n, v16, _), node(_, v16, "aliased_import", _, _), field(v16, "name", v17), node(_, v17, "dotted_name", _, _), text(v17, v18), suffix("history_runtime_projection", v18).
+violation("data-layer-history-serverplan-projection", "imports", "HSP-001", p, l) :- node(v9, n, _, _, _), doc(v9, v10, _), (prefix("impl/", v10) ; prefix("l7200_versioned_transactions/", v10)), node(v11, n, _, _, _), doc(v11, v12, _), !t13(v12), node(_, n, "import_statement", _, _), m19(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t24(s) :- doc(_, s, _), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+t24(s) :- doc(_, _, s), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+m29(n) :- node(_, n, "set", _, _).
+m29(n) :- node(_, n, "tuple", _, _).
+m29(n) :- node(_, n, "list", _, _).
+m35(n) :- node(_, n, "identifier", _, _), text(n, v32), v32 = "frozenset".
+m35(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v33), node(_, v33, "identifier", _, _), text(v33, v34), v34 = "frozenset".
+m37(n) :- child(n, v27, _), node(_, v27, "string", _, _).
+m37(n) :- child(n, v28, _), m29(v28).
+m37(n) :- child(n, v30, _), node(_, v30, "call", _, _), field(v30, "function", v31), m35(v31), field(v30, "function", v36), node(_, v36, "identifier", _, _).
+t43(s) :- doc(_, s, _), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+t43(s) :- doc(_, _, s), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+m48(n) :- node(_, n, "set", _, _).
+m48(n) :- node(_, n, "tuple", _, _).
+m48(n) :- node(_, n, "list", _, _).
+m54(n) :- node(_, n, "identifier", _, _), text(n, v51), v51 = "frozenset".
+m54(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v52), node(_, v52, "identifier", _, _), text(v52, v53), v53 = "frozenset".
+m56(n) :- child(n, v46, _), node(_, v46, "string", _, _).
+m56(n) :- child(n, v47, _), m48(v47).
+m56(n) :- child(n, v49, _), node(_, v49, "call", _, _), field(v49, "function", v50), m54(v50), field(v49, "function", v55), node(_, v55, "identifier", _, _).
+t62(s) :- doc(_, s, _), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+t62(s) :- doc(_, _, s), (glob("**/test_*", s) ; glob("**/tests/**", s)).
+m69(n) :- node(_, n, "identifier", _, _), text(n, v66), v66 = "CompiledStep".
+m69(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v67), node(_, v67, "identifier", _, _), text(v67, v68), v68 = "CompiledStep".
+violation("data-layer-history-serverplan-projection", "post-op-refs", "HSP-004", p, l) :- node(v58, n, _, _, _), doc(v58, v59, _), (prefix("impl/", v59) ; prefix("l7200_versioned_transactions/", v59)), node(v60, n, _, _, _), doc(v60, v61, _), !t62(v61), node(v63, n, _, _, _), doc(v63, v64, _), (glob("impl/common/l2070_server_plan/steps/*/**/*/*history*.py", v64) ; glob("impl/common/l2070_server_plan/steps/*/*history*.py", v64) ; glob("impl/common/l2070_server_plan/steps/*history*.py", v64)), node(_, n, "call", _, _), field(n, "function", v65), m69(v65), field(n, "arguments", v70), child(v70, v71, _), node(_, v71, "keyword_argument", _, _), field(v71, "name", v72), node(_, v72, "identifier", _, _), text(v72, v73), v73 = "post_op_with_refs", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+.output violation

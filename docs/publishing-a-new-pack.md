@@ -10,7 +10,8 @@ Allow about 30 minutes; most of it is the native build.
 ## Before you start
 
 - The pack is merged on `main`, added at `0.1.0` with a `patch` changeset (see "Versioning and release" in
-  [pack-format.md](pack-format.md)).
+  [pack-format.md](pack-format.md)), and listed in `src/engine/catalog/pack-list.generated.ts` (`npm run
+  generate:packs`; check 7 fails a pack that is not), so set-up fetches it.
 - `npm whoami` prints your account, a member of the `neralabs` org with publish rights. If not, run `npm login`. It
   must be an interactive login with 2FA, because a token that bypasses 2FA cannot set up a trusted publisher.
 - `gh auth status` shows a login with write access to `neralabs/rerail`. The publish script creates the release tag.
@@ -53,7 +54,7 @@ node scripts/release/packs-publish.mjs /tmp/rule-packs
 
 - npm prints "Authenticate your account at: <url>". Open the URL and approve it. One approval covers every pack in
   the run.
-- For each pack the script publishes it as restricted under the `next` dist-tag, checks that an anonymous reader
+- For each pack the script publishes it as restricted under the `latest` dist-tag, checks that an anonymous reader
   can't see it, and pushes the release tag to GitHub.
 - It's safe to run again after a failure. A version that's already tagged is skipped. A version npm already has but
   that has no tag is checked and tagged, not published again.
@@ -61,15 +62,29 @@ node scripts/release/packs-publish.mjs /tmp/rule-packs
 ## 4. Check the result
 
 ```sh
-npm dist-tag ls @neralabs/rerail-pack-<id>        # latest: <version>, next: <version>
+npm dist-tag ls @neralabs/rerail-pack-<id>        # latest: <version>
 npm access get status @neralabs/rerail-pack-<id>  # private
 git ls-remote --tags origin "refs/tags/@neralabs/rerail-pack-<id>@*"
 ```
 
-- `latest` is set as well as `next`. npm sets `latest` on a package's first publish, whatever `--tag` says, so the
-  first version goes straight to `latest`. Later versions go to `next` until they're promoted.
+- Later versions go to `latest` too, published by the release workflow when the Release pull request that bumps
+  them is merged.
 - `npm view` can keep returning 404 for several minutes after a first publish. Use `npm dist-tag ls` instead, which
   sees the package straight away.
+
+Whoever can read core must be able to read every pack, or set-up fails to fetch it for them. Give the new package
+the teams core has, with the same permission (today `developers`, read-write, as on every pack), and compare the two
+lists:
+
+```sh
+npm access grant read-write neralabs:developers @neralabs/rerail-pack-<id>
+npm access list collaborators @neralabs/rerail
+npm access list collaborators @neralabs/rerail-pack-<id>
+```
+
+CI's **Rule packs installed from npm** job reads the packs with the repository secret `NPM_PACKS_READ_TOKEN`, a
+read-only granular token. If that token names its packages one by one rather than the whole `@neralabs` scope, add the
+new package to it on npmjs.com.
 
 ## 5. Set up the trusted publisher
 
@@ -102,13 +117,13 @@ access setting, so check that one on the web page.
 ## 6. Let a publish use it within 2 days
 
 A trusted publisher setting expires unless a publish uses it within 2 days. The workflow publishes a pack only when a
-**Version packs** pull request that bumps it is merged.
+**Release** pull request that bumps it is merged.
 
-- If an open Version packs pull request already bumps the pack, merge it within the 2 days.
+- If an open Release pull request already bumps the pack, merge it within the 2 days.
 - If not (for example, the version you published by hand is already the one on `main`), add a `patch` changeset that
-  names the pack (`npx changeset`), merge it, then merge the Version packs pull request it updates.
+  names the pack (`npx changeset`), merge it, then merge the Release pull request it updates.
 - When the release run asks for approval of the `release` environment, approve it. Then check that the **Publish to
-  npmjs** job published the new version and that `npm dist-tag ls` shows `next` at that version.
+  npmjs** job published the new version and that the **Published dist-tags** job passed: `latest` is that version.
 - If the 2 days pass first, delete the setting on npmjs.com and add it again just before you merge.
 
 ## 7. Clean up

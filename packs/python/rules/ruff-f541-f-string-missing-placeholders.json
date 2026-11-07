@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-f541-f-string-missing-placeholders",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's F541 (f-string-missing-placeholders) with default settings: every f-string part of a string expression (an implicit concatenation counts as one expression) when no f-string part of that expression has a replacement field. `{{`/`}}` escapes are not placeholders; nested f-strings inside a replacement field or format spec are their own expressions.",
+  "description": "Remove the f prefix from Python f-strings that have no placeholders; it suggests interpolation that never happens.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
@@ -38,7 +38,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F541",
-        "message": "f-string without any placeholders",
+        "message": "Remove the `f` prefix and unescape doubled braces to keep this string's runtime value unchanged.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -1,1 +1,0 @@
-Object.hasOwnProperty.call.foo(obj, prop)

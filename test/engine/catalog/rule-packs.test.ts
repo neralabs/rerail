@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,21 +13,20 @@ import {
   rulePackRecommendationsSchema,
   DatabaseApiStores,
 } from "../../../src/api/index.js";
-import { languageFor } from "../../../src/engine/code-rule/code-rule-enforcer.js";
-import { loadNativeBinding } from "../../../src/engine/native/native.js";
-import { globPattern, signalEvidence } from "../../../src/engine/catalog/rule-pack-matcher.js";
+import { globPattern, scanRepository, signalEvidence } from "../../../src/engine/catalog/rule-pack-matcher.js";
 import {
   cachedRecommendRulePacks,
-  loadRulePacks,
   RECOMMENDATION_CACHE_MS,
   readRulePacks,
   recommendRulePacks,
   type RulePack,
 } from "../../../src/engine/catalog/rule-packs.js";
-import { corePackDirectories, loadBundledRules } from "../../../src/engine/catalog/bundled-rule-documents.js";
+import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
+import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
+import { repositoryPath } from "../../support/oracles.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -47,14 +46,9 @@ function writeFiles(root: string, files: Record<string, string>): void {
   }
 }
 
-const packs = loadRulePacks();
-const bundled = loadBundledRules();
-const pack = (id: string): RulePack => packs.find(candidate => candidate.id === id)!;
-const ids = (found: RulePack) => found.rules.map(rule => rule.id).sort();
-const complexity = pack("complexity");
-const complexityIds = ["complexity-cyclomatic-javascript", "complexity-cyclomatic-python", "complexity-cyclomatic-typescript"];
-/** A shipped code rule the synthetic packs below reuse under their own ids. */
-const typescriptRule = bundled.find(document => document.rule.id === "complexity-cyclomatic-typescript")!;
+const complexityDirectory = repositoryPath("packs", "complexity");
+/** A code rule of this repository's complexity pack, which the synthetic packs below reuse under their own ids. */
+const typescriptRule = loadPackRuleDocuments([complexityDirectory]).find(document => document.rule.id === "complexity-cyclomatic-typescript")!;
 
 /**
  * A pack directory (`<root>/<id>/pack.json`, documents in `<id>/rules/`) written from a definition and its documents.
@@ -69,9 +63,8 @@ function writePack(root: string, definition: { readonly id: string } & Readonly<
 }
 
 /**
- * The shipped packs plus a TypeScript language pack, `lang-ts`, matched as a TypeScript pack is, and with
- * `repository` a neutral repository pack, `acme-api`; each has one example rule. No pack core ships has a match
- * definition, so the recommendation tests bring their own.
+ * A TypeScript language pack, `lang-ts`, matched as a TypeScript pack is, and with `repository` a neutral repository
+ * pack, `acme-api`; each has one example rule.
  */
 async function withTestPacks(repository = false): Promise<readonly RulePack[]> {
   const root = await temporaryDirectory("rerail-test-packs-");
@@ -80,7 +73,7 @@ async function withTestPacks(repository = false): Promise<readonly RulePack[]> {
     covers: "TypeScript sources.", reason: "matches TypeScript",
     match: {
       any: [
-        { npmDependencies: ["typescript"] },
+        { dependencies: { ecosystem: "npm", names: ["typescript"] } },
         { files: ["**/*.ts", "**/*.mts", "**/*.cts"], exclude: ["**/*.d.ts"], label: "*.ts files" },
         { files: ["**/*.tsx"], label: "*.tsx files" },
       ],
@@ -93,49 +86,8 @@ async function withTestPacks(repository = false): Promise<readonly RulePack[]> {
     match: { any: [{ files: ["api/acme_api/**"], label: "the acme_api package" }] },
     rules: [{ id: "acme-api-cyclomatic", document: "rules/acme-api-cyclomatic.json", title: "Keep functions simple", group: "api" }],
   }, { "rules/acme-api-cyclomatic.json": { ...typescriptRule.rule, id: "acme-api-cyclomatic" } });
-  return readRulePacks([...corePackDirectories(), typescript, ...(repository ? [acme] : [])]);
+  return readRulePacks([typescript, ...(repository ? [acme] : [])]);
 }
-
-const capabilities = readFileSync(fileURLToPath(new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url)), "utf8");
-const evaluationSchema = z.object({ violations: z.array(z.object({ ruleId: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
-
-/** Whether the code rule `ruleId`, evaluated on `text` at `path`, reports a violation. */
-function fires(ruleId: string, path: string, text: string): boolean {
-  const document = bundled.find(candidate => candidate.rule.id === ruleId)!;
-  const compiled = loadNativeBinding().CodeRuleDslRuntime!.compile(JSON.stringify(document.rule), "json", capabilities);
-  expect(compiled.inScope(path), `${ruleId} example ${path} is outside the rule's scope`).toBe(true);
-  const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: [{ language: languageFor(path) ?? "text", path, source: text }] });
-  const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
-  expect(result.failures).toEqual([]);
-  return result.violations.some(violation => violation.ruleId === ruleId);
-}
-
-describe("shipped rule packs", () => {
-  it("are the complexity pack alone, with no match definition, so none is ever recommended", () => {
-    expect(packs.map(candidate => candidate.id)).toEqual(["complexity"]);
-    expect(ids(complexity)).toEqual(complexityIds);
-    expect(bundled.map(document => document.rule.id).sort()).toEqual(complexityIds);
-    expect(complexity.match).toBeUndefined();
-  });
-
-  it("start every rule in the mode its own document has", () => {
-    for (const rule of packs.flatMap(found => found.rules)) {
-      expect(rule.mode, rule.id).toBe(bundled.find(document => document.rule.id === rule.id)!.rule.mode);
-    }
-  });
-
-  const exampled = packs.flatMap(found => found.rules).filter(rule => rule.examples !== undefined && rule.kind === "code");
-  it.each(exampled.map(rule => [rule.id, rule] as const))("%s catches its caught example and lets its passing example pass", (id, rule) => {
-    const { caught, passes } = rule.examples!;
-    expect(fires(id, caught.path!, caught.text)).toBe(true);
-    expect(fires(id, passes.path!, passes.text)).toBe(false);
-  });
-
-  it("are the packs core ships, whose rules are exactly the documents seeded disabled", () => {
-    expect(corePackDirectories()).toEqual([fileURLToPath(new URL("../../../packs/complexity", import.meta.url))]);
-    expect(packs.flatMap(found => found.rules).every(rule => bundled.some(document => document.rule.id === rule.id))).toBe(true);
-  });
-});
 
 describe("rule pack definitions", () => {
   const conversation = { ...MOCK_CONVERSATION_RULES[0]!, id: "talk" };
@@ -222,7 +174,7 @@ describe("globPattern", () => {
 describe("the Python pack's match", () => {
   const pack = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packs/python/pack.json", import.meta.url)), "utf8"));
   const [signal] = pack.match.any;
-  const scan = (files: string[]) => ({ files, npmDependencies: new Map<string, string[]>() });
+  const scan = (files: string[]) => ({ root: "/", files, dependencies: new Map() });
 
   it.each([
     ["src/app/models.py", true],
@@ -247,6 +199,67 @@ describe("the Python pack's match", () => {
   });
 });
 
+describe("dependency manifests", () => {
+  it("reads npm, PyPI and Composer dependencies, each named as its ecosystem compares names, and a manifest it cannot read names nothing", async () => {
+    const root = await temporaryDirectory("rerail-manifests-");
+    writeFiles(root, {
+      "web/package.json": JSON.stringify({ devDependencies: { typescript: "^5.9.0" } }),
+      "web/composer.json": JSON.stringify({ require: { "Laravel/Framework": "^11.0", php: "^8.3" }, "require-dev": { "pestphp/pest": "^3" } }),
+      "api/requirements-dev.txt": "# tools\n-r requirements.txt\n--index-url https://example.invalid\nDjango_REST.framework>=3.15 ; python_version > '3.9'  # api\n\n",
+      "api/pyproject.toml": "[project]\nname = \"api\"\ndependencies = [\n  \"FastAPI>=0.115\",  # web\n]\n\n[project.optional-dependencies]\ntest = [\"pytest\"]\n",
+      "worker/pyproject.toml": "[tool.poetry.dependencies]\npython = \"^3.12\"\ncelery = { version = \"^5.4\", extras = [\"redis\"] }\n\n[tool.poetry.group.dev.dependencies]\n\"Ruff\" = \"*\"\n",
+      // Poetry before 1.2 keeps development tools here.
+      "legacy/pyproject.toml": "[tool.poetry.dependencies]\npython = \"^3.9\"\n\n[tool.poetry.dev-dependencies]\nDjango-Stubs = \"^4.2\"\n",
+      "broken/pyproject.toml": "[project\ndependencies = [\"numpy\"]\n",
+    });
+
+    const { dependencies } = scanRepository(root);
+    expect(Object.fromEntries(dependencies.get("pypi")!)).toEqual({
+      "django-rest-framework": ["api/requirements-dev.txt"],
+      fastapi: ["api/pyproject.toml"],
+      pytest: ["api/pyproject.toml"],
+      celery: ["worker/pyproject.toml"],
+      ruff: ["worker/pyproject.toml"],
+      "django-stubs": ["legacy/pyproject.toml"],
+    });
+    expect(Object.fromEntries(dependencies.get("composer")!)).toEqual({
+      "laravel/framework": ["web/composer.json"], php: ["web/composer.json"], "pestphp/pest": ["web/composer.json"],
+    });
+    expect(Object.fromEntries(dependencies.get("npm")!)).toEqual({ typescript: ["web/package.json"] });
+  });
+
+  it("matches a dependency signal by the name its ecosystem compares, naming the manifest, at that manifest's folder", async () => {
+    const root = await temporaryDirectory("rerail-pypi-match-");
+    writeFiles(root, { "api/requirements.txt": "django-rest-framework==3.15.2\n", "api/app.py": "app = None\n" });
+    const directory = writePack(await temporaryDirectory("rerail-pypi-pack-"), {
+      format: "rerail.rule-pack/v1", id: "drf", name: "Django REST framework", category: "framework", covers: "c", reason: "r",
+      match: { any: [{ dependencies: { ecosystem: "pypi", names: ["Django_REST_Framework"] } }] },
+      rules: [{ id: "drf-cyclomatic", document: "rules/drf-cyclomatic.json", title: "t", group: "g" }],
+    }, { "rules/drf-cyclomatic.json": { ...typescriptRule.rule, id: "drf-cyclomatic" } });
+
+    expect(recommendRulePacks(root, readRulePacks([directory])).map(({ reason, folder }) => [reason, folder]))
+      .toEqual([["matches the Django_REST_Framework dependency in api/requirements.txt", "api"]]);
+  });
+});
+
+describe("the complexity pack's match", () => {
+  const [complexity] = readRulePacks([complexityDirectory]);
+  it.each([
+    [{ "app/grade.py": "def grade(): pass\n" }, "matches *.py files in app", "app"],
+    [{ "src/index.ts": "export {};\n", "lib/util.js": "module.exports = {};\n" }, "matches *.ts files in src and *.js files in lib", ""],
+  ])("fits Python, TypeScript and JavaScript source: %j", async (files, reason, folder) => {
+    const root = await temporaryDirectory("rerail-complexity-match-");
+    writeFiles(root, files);
+    expect(recommendRulePacks(root, [complexity!]).map(found => [found.reason, found.folder])).toEqual([[reason, folder]]);
+  });
+
+  it("does not fit a repository whose only such files are tests", async () => {
+    const root = await temporaryDirectory("rerail-complexity-tests-");
+    writeFiles(root, { "tests/test_grade.py": "def test(): pass\n", "src/index.test.ts": "export {};\n", "main.go": "package main\n" });
+    expect(recommendRulePacks(root, [complexity!])).toEqual([]);
+  });
+});
+
 describe("recommendRulePacks", () => {
   const reasons = (root: string, from: readonly RulePack[]) =>
     recommendRulePacks(root, from).map(({ pack: found, ruleCount, reason, folder }) => [found.name, ruleCount, reason, folder]);
@@ -263,8 +276,6 @@ describe("recommendRulePacks", () => {
     execFileSync("git", ["init", "-q", root]);
 
     expect(reasons(root, await withTestPacks())).toEqual([["TypeScript", 1, "matches the typescript dependency in package.json and *.ts files in src", ""]]);
-    // Of the packs core ships, none fits even a TypeScript repository.
-    expect(reasons(root, packs)).toEqual([]);
   });
 
   it("picks a repository pack only for the repository it matches, after the language packs, for the whole repository", async () => {
@@ -316,7 +327,7 @@ describe("recommendRulePacks", () => {
     expect(recommendRulePacks(root, from).map(({ folder }) => folder)).toEqual([""]);
   });
 
-  it("recommends nothing for a stack no matching pack covers, not even the hand-picked complexity pack, outside Git and ignoring dependency folders", async () => {
+  it("recommends nothing for a stack no matching pack covers, outside Git and ignoring dependency folders", async () => {
     const root = await temporaryDirectory("rerail-python-");
     writeFiles(root, { "app/main.py": "print(1)\n", "pyproject.toml": "[project]\n", ".venv/lib/site.ts": "export {};\n", "go.mod": "module shop\n" });
     expect(recommendRulePacks(root, await withTestPacks())).toEqual([]);
@@ -372,6 +383,18 @@ describe("recommendRulePacks", () => {
     expect(cachedRecommendRulePacks(root, 2 * RECOMMENDATION_CACHE_MS - 1)).toBe(rescanned);
   });
 
+  it("scans again within the minute once a pack is installed", async () => {
+    const root = await temporaryDirectory("rerail-recommend-installed-");
+    writeFiles(root, { "app/main.ts": "export const one = 1;\n" });
+    try {
+      expect(cachedRecommendRulePacks(root, 0)).toEqual([]);
+      installPack("typescript");
+      expect(cachedRecommendRulePacks(root, 1).map(found => found.pack.id)).toEqual(["typescript"]);
+    } finally {
+      removeInstalledPacks();
+    }
+  });
+
   it("reads no package.json that is a symlink, outside the repository or to a device, and none larger than 1 MiB", async () => {
     const parent = await temporaryDirectory("rerail-manifest-guard-");
     const typescriptManifest = JSON.stringify({ devDependencies: { typescript: "5.9.0" } });
@@ -397,7 +420,7 @@ describe("recommendRulePacks", () => {
 });
 
 describe("rule pack API", () => {
-  it("lists the packs, recommends none of them for a TypeScript checkout, and tags By Rerail rules with their pack", async () => {
+  it("lists the installed packs with their versions, recommends an installed TypeScript pack for a TypeScript checkout, and tags their rules with their pack", async () => {
     const root = realpathSync(await temporaryDirectory("rerail-rule-pack-api-"));
     const checkout = join(root, "web-app");
     writeFiles(checkout, { "src/main.ts": "export {};\n" });
@@ -417,24 +440,38 @@ describe("rule pack API", () => {
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const rerailRules = z.object({ rules: z.array(z.object({ rule: z.object({ id: z.string() }), packId: z.string().nullable() })) });
     const get = async <T>(url: string, schema: z.ZodType<T>): Promise<T> => schema.parse(await (await app.request(url)).json());
+    const recommendations = `/api/rule-packs/recommendations?checkout=${encodeURIComponent(checkout)}`;
     try {
-      const listed = await get("/api/rule-packs", rulePackListSchema);
-      expect(listed.packs.map(found => [found.id, found.category, found.rules.length]))
-        .toEqual([["complexity", "language", complexityIds.length]]);
-      const cyclomatic = complexity.rules.find(rule => rule.id === "complexity-cyclomatic-typescript")!;
-      expect(listed.packs.find(found => found.id === "complexity")!.rules.find(rule => rule.id === "complexity-cyclomatic-typescript"))
-        .toEqual({ id: "complexity-cyclomatic-typescript", kind: "code", title: cyclomatic.title, group: "Complexity", mode: "steer", on: true, examples: cyclomatic.examples });
-      expect(cyclomatic.examples).toBeDefined();
+      // Core ships no packs: before any is installed there is nothing to list, recommend or run.
+      expect(await get("/api/rule-packs", rulePackListSchema)).toEqual({ packs: [], skipped: [] });
+      expect((await get(recommendations, rulePackRecommendationsSchema)).recommendations).toEqual([]);
+      expect((await get("/api/rerail-rules", rerailRules)).rules).toEqual([]);
 
-      const recommended = await get(`/api/rule-packs/recommendations?checkout=${encodeURIComponent(checkout)}`, rulePackRecommendationsSchema);
-      expect(recommended).toEqual({
+      installPack("typescript");
+      installPack("complexity");
+      const [typescript, complexity] = ["typescript", "complexity"].map(id => readRulePacks([repositoryPath("packs", id)])[0]!);
+      const version = (id: string): string => (JSON.parse(readFileSync(repositoryPath("packs", id, "package.json"), "utf8")) as { version: string }).version;
+
+      const listed = await get("/api/rule-packs", rulePackListSchema);
+      expect(listed.skipped).toEqual([]);
+      expect(listed.packs.map(found => [found.id, found.version, found.rules.length]))
+        .toEqual([["complexity", version("complexity"), complexity!.rules.length], ["typescript", version("typescript"), typescript!.rules.length]]);
+      const cyclomatic = complexity!.rules.find(rule => rule.id === "complexity-cyclomatic-typescript")!;
+      expect(listed.packs[0]!.rules.find(rule => rule.id === "complexity-cyclomatic-typescript"))
+        .toEqual({ id: "complexity-cyclomatic-typescript", kind: "code", title: cyclomatic.title, group: "Complexity", mode: "steer", on: true, examples: cyclomatic.examples });
+
+      expect(await get(recommendations, rulePackRecommendationsSchema)).toEqual({
         repositoryKey, checkoutPath: checkout,
-        recommendations: [],
+        recommendations: [
+          { packId: "complexity", ruleCount: 3, reason: "matches *.ts files in src", folder: "src" },
+          { packId: "typescript", ruleCount: typescript!.rules.filter(rule => rule.on).length, reason: "matches *.ts files in src", folder: "src" },
+        ],
       });
 
       const { rules } = await get("/api/rerail-rules", rerailRules);
       const packOf = Object.fromEntries(rules.map(listedRule => [listedRule.rule.id, listedRule.packId]));
       expect(packOf["complexity-cyclomatic-typescript"]).toBe("complexity");
+      expect(packOf[typescript!.rules[0]!.id]).toBe("typescript");
     } finally {
       stores.close();
     }

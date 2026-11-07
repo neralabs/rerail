@@ -1,1 +1,0 @@
-setTimeout(function() { return 'foobar'; }, 10)

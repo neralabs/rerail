@@ -8,6 +8,7 @@ const ruleExampleSchema = z.object({ path: z.string().optional(), text: z.string
 export const rulePackSchema = z.object({
   id: z.string(),
   name: z.string(),
+  version: z.string().nullable().describe("The installed version of the pack's npm package, @neralabs/rerail-pack-<id>."),
   category: z.enum(RULE_PACK_CATEGORIES),
   covers: z.string(),
   reason: z.string().describe("The pack's own summary of what makes it fit; the reason for a repository comes from the recommendations."),
@@ -24,7 +25,17 @@ export const rulePackSchema = z.object({
   }).strict()),
 }).strict();
 
-export const rulePackListSchema = z.object({ packs: z.array(rulePackSchema) });
+export const skippedRulePackSchema = z.object({
+  path: z.string().describe("The installed pack's directory."),
+  packageName: z.string().nullable(),
+  version: z.string().nullable(),
+  reason: z.string().describe("Why the pack was left out, e.g. a core range that excludes this Rerail, or a rule the engine rejects."),
+}).strict();
+
+export const rulePackListSchema = z.object({
+  packs: z.array(rulePackSchema),
+  skipped: z.array(skippedRulePackSchema).describe("Installed packs left out because they failed a check; the others load."),
+});
 
 export const rulePackRecommendationsSchema = z.object({
   repositoryKey: z.string(),

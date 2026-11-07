@@ -15,6 +15,11 @@ pub(super) fn describe_matcher(semantic: &Semantic, language: GrammarDialect) ->
             json!({ "parse": { "grammar": test.grammar.name(), "exports": &test.exports } })
         }
         Semantic::Host(test) => json!({ "host": super::describe_matcher(&test.rule, language) }),
+        Semantic::Embedded(test) => json!({ "embedded": {
+            "via": test.via.id(),
+            "rules": test.rules.iter().map(|(dialect, rule)| super::describe_matcher(rule, *dialect)).collect::<Vec<_>>(),
+            "exports": &test.exports,
+        } }),
         Semantic::Capture(name) => json!({ "capture": name }),
         Semantic::FormatArgs(test) => json!({ "formatArgs": {
             "style": format!("{:?}", test.style), "string": &test.string, "args": &test.args,

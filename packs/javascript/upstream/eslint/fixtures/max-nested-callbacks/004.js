@@ -1,1 +1,0 @@
-fn(() => {}, function(){}, function(){});

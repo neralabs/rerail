@@ -3,7 +3,7 @@
   "id": "unicorn-no-array-for-each",
   "revision": 1,
   "mode": "log",
-  "description": "A `.forEach()` call; a `for\u2026of` loop reads better and can `break`, `return` and `await`.",
+  "description": "Use a for\u2026of loop instead of .forEach() calls in JavaScript; a loop can break, return early and await.",
   "scope": {
     "include": [
       "**/*.js",
@@ -55,7 +55,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "unicorn/no-array-for-each",
-        "message": "Use for\u2026of instead of .forEach().",
+        "message": "Replace this .forEach() call with a for\u2026of loop.",
         "suppress": {
           "eslint": {
             "rules": [

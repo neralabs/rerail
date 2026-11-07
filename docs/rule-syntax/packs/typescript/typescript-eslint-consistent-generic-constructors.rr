@@ -1,0 +1,61 @@
+.policy "typescript-eslint-consistent-generic-constructors" revision 5
+.description "Put generic type arguments on the constructor call rather than the type annotation when initializing with new."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   deparen
+#include "tsx/eslint-a-globals.rr"
+//   free_ref(r, x)
+
+// typescript-eslint's consistent-generic-constructors: where a constructed value's type arguments go, when a
+// variable, class field or default parameter is initialised with `new C(…)` and annotated with C or nothing.
+//   "constructor" (the default):  const a: Map<K, V> = new Map();   → const a = new Map<K, V>();
+//   "type-annotation":            const a = new Map<K, V>();         → const a: Map<K, V> = new Map();
+//   const a: Foo<T> = new Bar();   fine: different names     const a: Foo<T> = new Foo<T>();  fine either way
+// A global typed array (Int8Array, …, Float64Array) on the left is left alone, as is everything when the parser
+// option isolatedDeclarations is on (constructor mode). Reported at the declarator, field or parameter.
+.violation consistent_generic_constructors(at: node, id: symbol, msg: symbol)
+    code "@typescript-eslint/consistent-generic-constructors" "{msg}"
+    suppress eslint "@typescript-eslint/consistent-generic-constructors"
+    suppress oxlint "consistent-generic-constructors"
+    fix safe move_arguments "Move the type arguments"
+consistent_generic_constructors(h, "preferConstructor",
+    "The generic type arguments should be specified as part of the constructor type arguments.") :-
+    !option("option", "type-annotation"), !option("isolatedDeclarations", "true"), init_new(h, _, n, _),
+    annotated(h, _, a), !field(n, "type_arguments", _).
+consistent_generic_constructors(h, "preferTypeAnnotation",
+    "The generic type arguments should be specified as part of the type annotation.") :-
+    option("option", "type-annotation"), init_new(h, _, n, _), !field(h, "type", _), field(n, "type_arguments", _).
+
+// init_new(h, id, n, c): holder h (a declarator, a class field, or a parameter of a function declaration or
+// expression, not a parameter property) is initialised with `new c…` (n), c a plain identifier; id is the
+// name the annotation hangs on.
+.decl init_new(h: node, id: node, n: node, c: node)
+init_new(h, id, n, c) :- holder(h, id), field(h, "value", v), deparen(v, n), kind(n, "new_expression"),
+    field(n, "constructor", c), kind(c, "identifier").
+.decl holder(h: node, id: node)
+holder(h, id) :- kind(h, "variable_declarator"), field(h, "name", id).
+holder(h, id) :- kind(h, "public_field_definition"), field(h, "name", id).
+holder(h, id) :- kind(h, "required_parameter"), !param_property(h), field(h, "pattern", id), child(ps, h, _),
+    field(f, "parameters", ps), (kind(f, "function_declaration") ; kind(f, "function_expression") ;
+    kind(f, "generator_function_declaration") ; kind(f, "generator_function") ; kind(f, "method_definition")).
+// annotated(h, t, a): h's annotation is `c<a>` for its constructor c (t the generic type), unless c is a typed array.
+.decl annotated(h: node, t: node, a: node)
+annotated(h, t, a) :- init_new(h, _, _, c), text(c, x), field(h, "type", ta), child(ta, t, _), kind(t, "generic_type"),
+    field(t, "name", m), kind(m, "type_identifier"), text(m, x), field(t, "type_arguments", a), !typed_array(c, x).
+.decl typed_array(c: node, x: symbol)  // the plugin's isBuiltInArray: a typed array's global constructor
+typed_array(c, x) :- free_ref(c, x), (x = "Int8Array" ; x = "Uint8Array" ; x = "Uint8ClampedArray" ;
+    x = "Int16Array" ; x = "Uint16Array" ; x = "Int32Array" ; x = "Uint32Array" ; x = "Float32Array" ;
+    x = "Float64Array").
+// A typed annotation without arguments, `const a: Foo = new Foo<T>()`, is neither: in type-annotation mode the
+// plugin wants no annotation at all, and in constructor mode no arguments on the left.
+
+// The fixes: the arguments move to the other side, as text.
+move_arguments(h, "preferConstructor", _) :- annotated(h, _, a), field(h, "type", ta), init_new(h, _, n, c),
+    field(n, "arguments", _) => delete(ta), insert_after(c, `$a`).
+move_arguments(h, "preferConstructor", _) :- annotated(h, _, a), field(h, "type", ta), init_new(h, _, n, c),
+    !field(n, "arguments", _) => delete(ta), insert_after(c, `$a()`).
+move_arguments(h, "preferTypeAnnotation", _) :- init_new(h, id, n, c), field(n, "type_arguments", a)
+    => delete(a), insert_after(id, `: $c$a`).

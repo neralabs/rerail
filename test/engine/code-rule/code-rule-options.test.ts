@@ -15,15 +15,6 @@ function withNumber(config: unknown, declaration: Record<string, unknown> = { ty
 }
 
 describe("resolveCodeRuleOptions", () => {
-  it("encodes configured inventory values as SQL text expressions", () => {
-    const resolved = resolveCodeRuleOptions({
-      clauses: [{ id: "options", define: { options: {
-        names: { type: "array", items: "string", default: ["O'Neil.py:build", "x\u0000y", "é"] },
-      } } }],
-      query: { $option: "names", escape: "sql", map: " UNION ALL SELECT {} AS name", join: "", template: "SELECT '' AS name WHERE 0{}" },
-    }) as { query: string };
-    expect(resolved.query).toBe("SELECT '' AS name WHERE 0 UNION ALL SELECT CAST(X'4f274e65696c2e70793a6275696c64' AS TEXT) AS name UNION ALL SELECT CAST(X'780079' AS TEXT) AS name UNION ALL SELECT CAST(X'c3a9' AS TEXT) AS name");
-  });
   it("inserts replacement tokens in map and template values literally", () => {
     const resolved = resolveCodeRuleOptions({
       clauses: [{

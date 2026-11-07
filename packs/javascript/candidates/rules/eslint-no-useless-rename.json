@@ -3,7 +3,7 @@
   "id": "eslint-no-useless-rename",
   "revision": 5,
   "mode": "steer",
-  "description": "ESLint 10.11.0 no-useless-rename, default options. Port of ESLint's `no-useless-rename` rule (https://eslint.org/docs/latest/rules/no-useless-rename). Reports a destructuring property, import or export specifier renamed to its own name. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "description": "Don't rename a destructured property, import or export to its own name; the rename adds noise and changes nothing.",
   "scope": {
     "include": [
       "**/*.ts",

@@ -3,7 +3,7 @@
   "id": "bandit-b605-start-process-with-a-shell",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect configured APIs that inherently spawn a command shell",
+  "description": "Avoid shell-spawning APIs such as os.system, os.popen and the commands module; use subprocess with an argument list to prevent shell injection.",
   "scope": {
     "include": [
       "**/*.py"
@@ -44,7 +44,7 @@
       "violation": {
         "code": "B605",
         "anchor": "witness.span",
-        "message": "Command is executed through a shell-spawning API",
+        "message": "Replace this shell-spawning call with subprocess.run and an argument list; running the command through a shell allows injection.",
         "suppress": {
           "nosec": {
             "codes": [

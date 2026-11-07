@@ -324,9 +324,6 @@
 //                   Inside `!` or `count : { … }`, groups bind only there, like any variable.
 //                 e.g. match("use_(?<x>.*)", "use_foo") binds x = "foo".
 // match_all("re", s)  one row per non-overlapping match of re anywhere in s, with that match's groups bound.
-// match_all("re", s, ordinal, start, end) over a symbol also binds zero-based occurrence and character offsets.
-//                 start is inclusive and end exclusive. Equal captures retain separate occurrences.
-//                 This positional form runs each regex once per demanded distinct text, in the same batch.
 //
 // User functors, declared as in Soufflé and written @name(…). They compute a symbol from symbols.
 .functor dot(a: symbol, b: symbol): symbol               // "a.b" ("" . b gives b): @dot("os", "path") = "os.path"

@@ -1,0 +1,59 @@
+.policy "data-layer:unknown-contract-defaults" revision 1
+.description "Three-state contract fields (None = nothing declared) are not folded into empty."
+.language python
+.mode block
+.scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
+.scope tests false
+// Python linter: scripts/lint_unknown_contract_defaults.py. On source_tables, relation_role and auxiliary_query, None
+// means "nothing has declared this"; reading them as falsy loses that third state. Any attribute with one of those
+// names counts, whatever its receiver (the Python linter cannot resolve it either):
+//   UNKNOWN_DEFAULTED  `ref.source_tables or ()`: an or-operand followed directly by an empty value: (), [], {},
+//                      "", or dict() / frozenset() / list() / set() / tuple() with no arguments
+//   UNKNOWN_AS_FALSY   `not ref.relation_role`, and `bool(ref.relation_role)` with exactly one positional argument
+// `ref.source_tables is None` and `ref.source_tables or default_tables` are fine.
+
+#include "python/ast.rr"    // bool_part, unparen, str_const; attr_of from python/names
+
+.decl ucd_field(x: symbol)
+ucd_field("auxiliary_query"). ucd_field("relation_role"). ucd_field("source_tables").
+.decl ucd_builder(x: symbol)
+ucd_builder("dict"). ucd_builder("frozenset"). ucd_builder("list"). ucd_builder("set"). ucd_builder("tuple").
+.decl ucd_display(k: symbol)
+ucd_display("tuple"). ucd_display("list"). ucd_display("dictionary"). ucd_display("set").
+
+// ucd_reads(e, x): e, parentheses aside, is `….x` for a three-state field x.
+.decl ucd_reads(e: node, x: symbol)
+ucd_reads(e, x) :- unparen(e, a), attr_of(a, _, x), ucd_field(x).
+
+// ucd_empty(e): e is an empty container or the empty string.
+.decl ucd_empty(e: node)
+ucd_empty(e) :- unparen(e, v), kind(v, k), ucd_display(k), count : { child(v, c, _), !kind(c, "comment") } = 0.
+ucd_empty(e) :- unparen(e, v), str_const(v, "").
+ucd_empty(e) :- unparen(e, v), kind(v, "call"), field(v, "function", f), kind(f, "identifier"), text(f, b),
+    ucd_builder(b), field(v, "arguments", al), kind(al, "argument_list"),
+    count : { child(al, c, _), !kind(c, "comment") } = 0.
+
+// ucd_or_pair(t, l, r): l and r are adjacent operands of the `or` chain t (`a or b or c` is one BoolOp, a, b, c).
+// Tree-sitter nests the chain to the left: each `or` node pairs its right operand with the last operand on its left.
+.decl ucd_or_link(t: node, x: node)
+ucd_or_link(t, t) :- bool_top(t, "or").
+ucd_or_link(t, x) :- bool_part(t, x), same_bool(x, "or").
+.decl ucd_or_pair(t: node, l: node, r: node)
+ucd_or_pair(t, l, r) :- ucd_or_link(t, x), field(x, "left", a), field(x, "right", r),
+    ( same_bool(a, "or"), field(a, "right", l) ; !same_bool(a, "or"), l = a ).
+
+// One finding per `or` chain, at its first operand (the BoolOp's line).
+.violation UNKNOWN_DEFAULTED(at: node, field: symbol)
+    "``or`` with an empty value treats an undeclared '{field}' as empty; branch on ``is None``"
+UNKNOWN_DEFAULTED(t, x) :- ucd_or_pair(t, l, r), ucd_reads(l, x), ucd_empty(r).
+
+.violation UNKNOWN_AS_FALSY(at: node, field: symbol)
+    "a truth test treats an undeclared '{field}' as empty; branch on ``is None``"
+UNKNOWN_AS_FALSY(n, x) :- kind(n, "not_operator"), field(n, "argument", a), ucd_reads(a, x).
+UNKNOWN_AS_FALSY(c, x) :- kind(c, "call"), field(c, "function", f), kind(f, "identifier"), text(f, "bool"),
+    field(c, "arguments", al), ucd_positional(al, a), ucd_reads(a, x), count : { ucd_positional(al, _) } = 1.
+// ucd_positional(al, a): a is a positional argument in list al, `*xs` included (ast's Call.args); keywords and
+// `**kw` are not.
+.decl ucd_positional(al: node, a: node)
+ucd_positional(al, a) :- kind(al, "argument_list"), child(al, a, _), !kind(a, "comment"), !kind(a, "keyword_argument"),
+    !kind(a, "dictionary_splat").

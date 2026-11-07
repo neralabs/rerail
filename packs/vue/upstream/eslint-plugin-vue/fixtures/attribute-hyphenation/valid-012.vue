@@ -1,1 +1,0 @@
-<template><div><custom :my-name.sync="prop"></custom></div></template>

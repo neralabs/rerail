@@ -3,7 +3,7 @@
   "id": "unicorn-no-null",
   "revision": 1,
   "mode": "log",
-  "description": "A `null` literal, except in `Object.create(null)`, `useRef(null)` and `===`/`!==` comparisons.",
+  "description": "Use undefined instead of null in JavaScript, except in Object.create(null), useRef(null) and strict equality checks.",
   "scope": {
     "include": [
       "**/*.js",

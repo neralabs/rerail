@@ -3,7 +3,7 @@
   "id": "react-no-array-index-key",
   "revision": 1,
   "mode": "steer",
-  "description": "A `key` built from the index parameter of an array method's callback.",
+  "description": "Use a stable id from the item, not the array index, as a list key; index keys mix up state and rendering when items are reordered, inserted or removed.",
   "scope": {
     "include": [
       "**/*.ts",

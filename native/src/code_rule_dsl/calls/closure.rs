@@ -530,6 +530,7 @@ pub(crate) fn path_module(path: &str) -> Option<String> {
 }
 
 #[derive(Clone)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct ReferenceEdge {
     pub(crate) path: Arc<str>,
     pub(crate) source: super::summary::Def,
@@ -539,12 +540,14 @@ pub(crate) struct ReferenceEdge {
     pub(crate) target_name: Name,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct ReferenceRows {
     pub(crate) edges: Vec<ReferenceEdge>,
     pub(crate) incomplete: BTreeSet<Arc<str>>,
 }
 
 impl Graph {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reference_rows(&self) -> ReferenceRows {
         let mut rows = ReferenceRows {
             edges: Vec::new(),

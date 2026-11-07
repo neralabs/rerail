@@ -1,0 +1,105 @@
+/*
+ * The sheet's content (render/panel.js, render/pack-panel.js): a rule's or a rule pack's detail. The sheet column
+ * itself (where it sits, when it floats) is in base.css. `.pbody`, `.pintro` and `.cmd` also set the Create a rule
+ * page (create.css), which reads as a sheet laid on the page.
+ */
+
+.pwrap{display:flex;flex-direction:column;min-height:0;height:100%}
+.phead{padding:18px 20px 20px;background:var(--sheet-bg);flex:none}
+.phead .ptop{display:flex;align-items:flex-start;gap:10px}
+.phead .ptop > div{flex:1;min-width:0}
+.phead .ptop .picon{margin-top:2px}
+.phead .eyebrow{font-size:12px;letter-spacing:.02em;color:var(--muted-foreground);font-weight:600}
+/* The title clamps at two lines; the full title is its tooltip. Without an eyebrow it sits flush at the top. */
+.phead h2{margin:0;font-size:17px;line-height:1.3;font-weight:600;color:var(--header-primary);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.phead .eyebrow + h2{margin-top:4px}
+.phead .x{margin-left:auto;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted-foreground);flex:none}
+.phead .x:hover{background:var(--subtle)}
+.phead .back{display:none}
+.phead .back.show{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--brand-foreground);margin-bottom:4px}
+.pact{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:12px;font-size:13px}
+.pact .grow{flex:1}
+.pact .muted{font-size:12.5px}
+.pask{margin-top:12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--box);padding:10px 12px}
+.pask .lbl{font-size:12px;font-weight:600;color:var(--muted-foreground);margin:0 0 8px}
+.pask .why{margin:12px 0 0;font-size:13px;color:var(--muted-foreground);max-width:none}
+.pask textarea{display:block;width:100%;min-height:74px;resize:vertical;font-family:var(--font-mono);font-size:12.5px;line-height:1.5;color:var(--foreground);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-md);padding:8px 10px}
+.pask .foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;margin-top:10px;font-size:12px;color:var(--muted-foreground)}
+.pask .foot .btns{margin-left:auto;display:inline-flex;gap:8px}
+/* Edit with coding agent: opens at the top of the body, closes with its ✕ or the header button. */
+.pbody > .pask.sask{position:relative;margin:12px 0 16px;border:0;border-radius:var(--radius-xl);background:var(--subtle);padding:20px 18px}
+.pask.sask > .x{position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted-foreground)}
+.pask.sask > .x:hover{background:var(--muted)}
+.pask.sask .lbl{font-size:14px;color:var(--foreground);margin:0 0 12px;padding-right:32px}
+.pask.sask .why.top{margin:-6px 0 12px;padding-right:32px}
+.pask.sask .chips{margin:0 0 12px}
+.pask.sask .chip[aria-pressed="true"]{background:transparent;border-color:var(--foreground);color:var(--foreground)}
+.pask.sask .cmd{align-items:flex-start;margin:0;background:var(--card)}
+.pask.sask .cmd textarea{flex:1;min-height:0;border:0;padding:3px 0;background:none;resize:none;field-sizing:content}
+.btn.open{background:var(--brand-subtle);color:var(--brand-foreground);border-color:var(--brand)}
+.btn.open:hover{background:var(--brand-subtle)}
+.pbody{overflow:auto;padding:4px 20px 24px;flex:1;min-height:0}
+.pbody p{margin:0;max-width:52ch;font-size:14px;line-height:1.55;color:var(--foreground)}
+.pbody .mono{font-size:13px}
+.pbody .muted{color:var(--muted-foreground)}
+.psec .h3row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 8px}
+.pbody .psec .h3row h3{margin:0}
+.psec .h3row .btn{margin:-6px 0}
+.pbody .note2{margin-top:6px;font-size:13px}
+.sees-edit{margin-top:0}
+.enf{margin:0 0 24px;padding:24px 18px;border-radius:var(--radius-xl);background:var(--inset)}
+.enf .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground);margin-bottom:14px}
+.enf .modes{display:flex;width:max-content}
+.enf .modes button:disabled{cursor:default}
+.enf .modes button[data-v="block"]{opacity:.55}
+.enf .modes button[aria-pressed="true"][data-v="log"] .ico{color:var(--logged)}
+.enf .modes button[aria-pressed="true"][data-v="steer"] .ico{color:var(--steered)}
+.pbody .enf > p{margin:14px 0 0;font-size:13px;line-height:1.5;color:var(--muted-foreground)}
+/* Three separate cards. */
+.pstats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:6px}
+.pstats div{padding:12px 14px;min-width:0;background:var(--inset);border-radius:var(--radius-xl)}
+.pstats b{display:block;font-size:18px;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pstats span{display:block;font-size:12px;color:var(--muted-foreground);margin-top:2px}
+.psec{margin-top:38px}
+.pbody .psec h3{margin:0 0 8px;font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground)}
+.desc{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:5;overflow:hidden}
+.kv{display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px 14px;font-size:14px;margin:0}
+.kv dt{color:var(--muted-foreground);font-size:12.5px;padding-top:1px}
+.kv dd{margin:0;overflow-wrap:anywhere}
+.said2{display:block;padding:6px 10px;border-left:2px solid var(--brand);background:var(--brand-subtle);border-radius:0 var(--radius-md) var(--radius-md) 0;font-size:13.5px}
+/* Recent history: what the agent was told (when it differs), file and session, folder and when. */
+.ract{display:flex;flex-direction:column}
+.ract .rrow{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:3px;align-items:baseline;padding:10px 0;font-size:13px}
+.ract > .rrow:first-child{padding-top:0}
+.ract > .rrow + .rrow{border-top:1px solid var(--border)}
+.ract .m{grid-column:1 / -1;font-size:13px;color:var(--foreground);line-height:1.45}
+.ract .file{font-family:var(--font-mono);font-size:12.5px;color:var(--foreground);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ract .file.muted{font-family:inherit;color:var(--muted-foreground)}
+.ract .dir{font-family:var(--font-mono);font-size:11.5px;color:var(--muted-foreground);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ract .when{font-size:11.5px;color:var(--muted-foreground);white-space:nowrap;justify-self:end}
+.ract .open{font-family:var(--font-mono);font-size:11.5px;color:var(--brand-foreground);justify-self:end;white-space:nowrap}
+/* Delete: a footer pinned to the sheet's bottom while the content runs past it, resting at the end when it does not. */
+.pbody:has(> .pfoot:not([hidden])){display:flex;flex-direction:column;padding-bottom:0}
+.pbody:has(> .pfoot:not([hidden])) > *{flex:none}
+.pbody .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--sheet-bg)}
+.pbody > :has(+ .pfoot:not([hidden])){margin-bottom:32px}
+.pfoot .pask{margin-top:0}
+.pdelbox{border-color:var(--danger)}
+.pdelbox .lbl{font-size:13px;color:var(--foreground)}
+.pdelbox ul{margin:0 0 4px;padding-left:18px;font-size:13px;line-height:1.55;color:var(--foreground)}
+.btn.danger.quiet{background:transparent;color:var(--muted-foreground)}
+.btn.danger.quiet:hover,.btn.danger.quiet:focus-visible{background:var(--danger-subtle);color:var(--danger-foreground);filter:none}
+.btn.danger.solid{background:var(--danger-subtle);color:var(--danger-foreground);border-color:var(--danger-foreground)}
+.pintro{margin:12px 0 0;font-size:13.5px;line-height:1.5}
+.pbody > .pintro:first-child{margin-top:20px}
+.pbody .pintro + .pintro{margin-top:12px}
+.cmd{display:flex;align-items:center;gap:10px;margin:10px 0 0;padding:8px 8px 8px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--box)}
+.cmd code{flex:1;min-width:0;background:none;padding:0;font-size:13px;overflow-wrap:anywhere}
+.cmd + .pintro{margin-top:22px}
+.pgrp{border:1px solid var(--border);border-radius:var(--radius-lg);margin-top:12px;overflow:hidden}
+.prow{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:8px 14px 8px 36px;border-top:1px solid var(--border);font-size:13px}
+.prow .t{flex:1;text-align:left;line-height:1.4}
+button.t:hover{text-decoration:underline;text-underline-offset:3px}
+.prow .mono{flex:none;font-size:11.5px;color:var(--muted-foreground);max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .m{flex:none;font-size:11.5px;color:var(--muted-foreground);white-space:nowrap}
+.rmask{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;font-size:12.5px;color:var(--foreground)}

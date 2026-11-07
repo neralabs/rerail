@@ -1,0 +1,52 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-cv04-convention-count-rows",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use COUNT(*) instead of COUNT(1) or COUNT(0) to count rows in SQL; it states the intent directly.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "count-literal",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "invocation",
+            "regex": "^(?i:count)\\s*\\(\\s*[01]\\s*\\)$",
+            "has": {
+              "field": "parameter",
+              "kind": "term",
+              "has": {
+                "field": "value",
+                "kind": "literal"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "CV04",
+        "message": "Use COUNT(*) to count rows.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "CV04",
+              "L047",
+              "all",
+              "convention",
+              "convention.count_rows",
+              "core"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

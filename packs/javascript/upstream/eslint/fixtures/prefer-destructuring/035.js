@@ -1,1 +1,0 @@
-using foo = array[0];

@@ -13,13 +13,27 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Real-session jobs call hosted models with repository secrets. GitHub withholds secrets from fork and
-# Dependabot pull requests, so those jobs run on pushes and same-repository pull requests only; there a
-# missing secret or variable is a configuration error and fails the job.
+# Real-session jobs call hosted models with repository secrets, and the installed-packs job reads the restricted
+# rule packs from npm with one. GitHub withholds secrets from fork and Dependabot pull requests, so those jobs run on
+# pushes and same-repository pull requests only; there a missing secret or variable is a configuration error and
+# fails the job. The jobs that read the packs' test data (the Rust tests, unit tests, conformance harnesses and port
+# readiness) are guarded the same way: the archives the tool-packs' test-data.lock files name reach the Actions cache
+# from S3 under an OIDC token, which GitHub does not give those pull requests either. A test-data job holds that token
+# and only fills the cache (.github/actions/pack-test-data, `fetch: "true"`); the jobs that read the data hold none,
+# and restore, verify and extract what it saved (`fetch: "false"`). The data reaches CI only as the archives the locks
+# name (CONTRIBUTING.md, "Pack test data"). A pull request that changes a lock is also checked twice: S3 must hold every
+# archive and recording the locks name (test-data-in-s3, so nothing merges that main cannot read), and each tool-pack
+# whose test-data.lock it changes is derived again from its pins with no credentials and must come out byte for byte as
+# the archive (test-data-reproduces).
 #
-# The Version packs pull request (changeset-release/main, from version-packs.yml) changes only pack versions,
-# changelogs and package-lock.json, and is rewritten on every push to main. It runs the licence and lint jobs only:
-# release-packs.yml validates and packs every pack on it, and main runs everything once it is merged.
+# GitHub reports a job skipped because a job it needs failed as skipped, and a skipped required check passes. So the
+# one required check is ci-result ("CI result"), which needs every job and fails when any failed or was cancelled; a
+# job skipped by its own condition (forks, Dependabot, the Release pull request, the path filters) does not fail it.
+#
+# The Release pull request (changeset-release/main, from release-pr.yml) changes only versions (the packs', and
+# core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main. It runs the
+# licence and lint jobs only: release-packs.yml validates and packs every pack on it, main runs everything once it is
+# merged, and release.yml builds and smokes core again on its tag.
 
 jobs:
   licenses:
@@ -77,7 +91,16 @@ jobs:
   # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
   # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
   # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
-  # engine embeds. Pushes to main run everything (the filter step is skipped and the output is empty).
+  # engine embeds. Pushes to main always run the Rust jobs.
+  #
+  # The filters see only the git diff. The packs' test data is not in git (CONTRIBUTING.md): a change to it is a change
+  # to a tool-pack's test-data.lock, which is under packs/**, and a pull request that checks data in adds it there too.
+  #
+  # Port readiness is filtered on pushes to main as well, against the push's previous head (main takes squash merges
+  # only and no force pushes, so a push is one commit), but only when CI finished green on that head. Otherwise (it
+  # failed, so a shipped rule may still be failing; it was cancelled while queued, so its change was never judged; or
+  # nothing can be found) the push runs port readiness whatever it touches, so main cannot read green past either. A
+  # checkout, lookup or filter that fails on a push runs everything too.
   changes:
     name: Detect engine changes
     runs-on: ubuntu-24.04
@@ -85,19 +108,46 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
+      rust: ${{ github.event_name == 'pull_request' && steps.filter.outputs.rust || 'true' }}
+      port-readiness: ${{ (github.event_name != 'push' || steps.previous.outputs.green == 'true') && steps.filter.outcome == 'success' && steps.filter.outputs.port-readiness || 'true' }}
     steps:
+      # The concurrency group lets a push run start only once the previous one finished or was replaced while queued,
+      # so the previous head's run has its conclusion by now.
+      - id: previous
+        name: Check CI finished green on the previous head
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          conclusion="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$BEFORE&event=push&per_page=1" --jq '.workflow_runs[0].conclusion // ""')"
+          echo "CI on $BEFORE: ${conclusion:-no finished run}"
+          if [ "$conclusion" = "success" ]; then echo "green=true" >> "$GITHUB_OUTPUT"; else echo "green=false" >> "$GITHUB_OUTPUT"; fi
+
+      # paths-filter lists a pull request's files through the API but diffs a push with git, which needs a checkout;
+      # depth 2 holds the push's previous head. A failed checkout fails the filter below, which then runs everything.
+      - name: Checkout repository
+        if: github.event_name == 'push'
+        continue-on-error: ${{ github.event_name == 'push' }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # No `base`: on a push to the default branch paths-filter compares with the payload's `before` (an all-zeros
+      # `before` lists every file as added).
       - id: filter
-        if: github.event_name == 'pull_request'
+        continue-on-error: ${{ github.event_name == 'push' }}
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
             rust:
               - 'native/**'
               - 'conformance/**'
-              - 'scripts/dsl/**'
-              - 'test/conformance/data-layer/**'
               - 'fixtures/**'
               - 'packs/**'
               - 'languages/**'
@@ -117,13 +167,13 @@ jobs:
               - 'test/scripts/test_native_sql_plan.py'
               - 'scripts/profiling/producer-shape.mjs'
               - 'scripts/profiling/sql-budget.mjs'
+              - 'fixtures/host/data-layer-port/sql-budget-recording.json'
               - 'fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json'
               - 'scripts/profiling/sql-report.mjs'
               - 'benchmark/sql-profile/**'
               - 'test/scripts/sql-execution-budget.test.mjs'
               - 'test/engine/native/relational-batch.test.ts'
               - 'test/engine/native/relational-completed.test.ts'
-              - 'test/engine/native/recovery/anchor-planning.test.ts'
               - 'test/engine/native/candidate-admission.test.ts'
               - 'test/engine/native/candidate-publication.test.ts'
               - 'test/engine/native/compiler-schema.test.ts'
@@ -131,7 +181,6 @@ jobs:
               - 'test/engine/native/frontier-determinism.test.ts'
               - 'test/engine/native/recovery/child-demand.test.ts'
               - 'test/engine/native/recovery/relational-storage.test.ts'
-              - 'test/engine/native/recovery/execution-owner.test.ts'
               - 'test/engine/native/recovery/input-admission.test.ts'
               - 'test/engine/native/recovery/eponymous-sources.test.ts'
               - 'test/engine/native/recovery/state-syntax-domain.test.ts'
@@ -143,15 +192,309 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.gitattributes'
               - '.github/actions/lfs/**'
+              - '.github/actions/pack-test-data/**'
+              - 'scripts/s3/**'
+            # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
+            port-readiness:
+              - 'packs/**'
+              - 'conformance/**'
+              - 'native/**'
+              - 'languages/**'
+              - 'src/engine/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/port-readiness.yml'
+              - '.github/actions/**'
+              - 'scripts/s3/**'
 
-  # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
-  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts.
-  rust:
-    name: Rust engine (${{ matrix.name }})
-    needs: changes
-    if: needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main'
+  # Fills the Actions cache with every key the jobs below restore (.github/actions/pack-test-data, `fetch: "true"`): every
+  # tool-pack's archives for the unit and conformance jobs, and the three tool-packs the Rust tests read, each its own
+  # key. It holds the OIDC token, which only a miss uses, runs nothing but the pull (scripts/s3/pack-fixtures.mjs, this
+  # commit's code), and never extracts a cache entry; the jobs that read the data restore it holding no token. The
+  # Release pull request reads none. Port readiness has a test-data job of its own (port-readiness.yml).
+  test-data:
+    name: Pack test data
+    if: >-
+      ${{
+        github.head_ref != 'changeset-release/main' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # id-token: the archives from S3 on a cache miss, with credentials only the action's pull step holds.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Every tool-pack first: on a miss the single tool-packs below then read the archives it downloaded, not S3.
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "true"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: python
+          tool: ruff
+          fetch: "true"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: sql
+          tool: sqlfluff
+          fetch: "true"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: vue
+          tool: eslint-plugin-vue
+          fetch: "true"
+
+  # S3 holds every archive each test-data.lock names and every recording each recording.lock names
+  # (scripts/s3/pack-fixtures.mjs `check`, head-object only, downloading nothing). A pull request that changes a lock
+  # fails here until a maintainer has pushed what it names (the error says how), so it cannot merge with data that only
+  # its own cache scope holds: main's runs read S3 and never record. Nothing needs this job, so the others still report.
+  # It runs this commit's script alone, under the read role, where the test-data job does.
+  test-data-in-s3:
+    name: Pack test data is in S3
+    if: >-
+      ${{
+        github.head_ref != 'changeset-release/main' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # id-token: the read role, whose credentials only the check step holds.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The script needs no npm packages.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      # As in .github/actions/pack-test-data: the credentials are this step's outputs, not exported.
+      - id: credentials
+        name: Assume the test data read role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
+          aws-region: us-east-2
+          output-credentials: true
+          output-env-credentials: false
+
+      - name: Check S3 holds every locked archive and recording
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
+          AWS_REGION: us-east-2
+        run: node scripts/s3/pack-fixtures.mjs check
+
+  # The tool-packs whose test-data.lock a pull request changes, for test-data-reproduces: against the merge commit's
+  # first parent and against the event's base commit (the same commit unless the base moved), each compared with the
+  # merge commit, so a lock counts as changed when either differs. A lock the pull request deletes names no tool-pack
+  # left to derive. Pull requests only; it runs no code from the checkout.
+  test-data-locks:
+    name: Find the changed test data locks
+    if: >-
+      ${{
+        github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main' &&
+        github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tool-packs: ${{ steps.locks.outputs.tool-packs }}
+    steps:
+      # The merge commit and its first parent.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # The checkout keeps no credentials, so the event's base commit is fetched with the token, as port readiness's
+      # report job fetches.
+      - id: locks
+        name: List the tool-packs whose test-data.lock changed
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          refs=()
+          parent="$(git rev-parse -q --verify 'HEAD^1' || true)"
+          if [ -n "$parent" ]; then refs+=("$parent"); fi
+          if [ -n "$EVENT_BASE" ] && [ "$EVENT_BASE" != "$parent" ]; then
+            auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+            if git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$EVENT_BASE"; then
+              refs+=("$EVENT_BASE")
+            else
+              echo "::warning::could not fetch the pull request's base $EVENT_BASE: comparing the locks with ${parent:-nothing} only"
+            fi
+          fi
+          if [ "${#refs[@]}" -eq 0 ]; then
+            echo "::error::the pull request has no base commit to compare its test-data.lock files with"
+            exit 1
+          fi
+          locks="$(for ref in "${refs[@]}"; do git diff --name-only --no-renames "$ref" HEAD -- 'packs/*/upstream/*/test-data.lock'; done | LC_ALL=C sort -u)"
+          tool_packs='[]'
+          while IFS= read -r lock; do
+            [[ "$lock" =~ ^packs/([a-z0-9-]+)/upstream/([a-z0-9._-]+)/test-data\.lock$ ]] || continue
+            git cat-file -e "HEAD:$lock" 2> /dev/null || continue
+            tool_packs="$(jq -c --arg pack "${BASH_REMATCH[1]}" --arg tool "${BASH_REMATCH[2]}" '. + [{ pack: $pack, tool: $tool }]' <<< "$tool_packs")"
+          done <<< "$locks"
+          echo "tool-packs=$tool_packs" >> "$GITHUB_OUTPUT"
+          echo "test-data.lock changed against the base: $(jq -r 'if length == 0 then "none" else map("\(.pack)/\(.tool)") | join(", ") end' <<< "$tool_packs")"
+
+  # Each tool-pack whose test-data.lock the pull request changes, derived again from its pins (npm run fixtures:derive,
+  # without --update) and compared byte for byte with the data the lock's archive holds, so an archive is what its
+  # pins make and not whatever the run that packed it (a maintainer's, or a bump's) put in. The derivation runs
+  # upstream's code, so the job holds no token: the archives come from the test-data job's cache entry (`fetch:
+  # "false"`), and the runtimes are the ones port-readiness-bump.yml's bump job installs. Without --update the tracked
+  # files (the UPSTREAM.md tables) must come out unchanged too. No leg when no lock changed.
+  test-data-reproduces:
+    name: Test data reproduces from the pins (${{ matrix.pack }} · ${{ matrix.tool }})
+    needs: [test-data-locks, test-data]
+    if: needs.test-data-locks.outputs.tool-packs != '' && needs.test-data-locks.outputs.tool-packs != '[]'
+    runs-on: ubuntu-24.04
+    # The derivation clones, installs and runs the pinned upstream, as the bump job does within the same limit.
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.test-data-locks.outputs.tool-packs) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Every tool-pack's data: a generator may read another tool-pack's, and this is the entry the test-data job warms.
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+
+      - name: Set up the pinned PHP and Composer
+        if: matrix.pack == 'php' || matrix.pack == 'blade'
+        uses: ./.github/actions/php
+
+      - id: clippy-toolchain
+        name: Read the Rust toolchain Clippy's runtime pins
+        if: matrix.tool == 'clippy'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
+          [ -n "$runtime" ] || { echo "::error::packs/$PACK/upstream/$TOOL/gates.yaml has no upstream.runtime line this step reads"; exit 1; }
+          toolchain="conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml"
+          channel="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$toolchain")"
+          [ -n "$channel" ] || { echo "::error::$toolchain has no channel line this step reads"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain with clippy
+        if: matrix.tool == 'clippy'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
+          components: clippy
+
+      # The pulled data is the oracle: copied out under the same paths before the derivation removes the derived files.
+      - id: derive
+        name: Derive the tool-pack again and compare it with the pulled data
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          oracle="$RUNNER_TEMP/oracle"
+          mkdir -p "$oracle/packs/$PACK/upstream"
+          cp -a "packs/$PACK/upstream/$TOOL" "$oracle/packs/$PACK/upstream/"
+          npm run fixtures:derive -- --pack "$PACK" --tool "$TOOL" --compare "$oracle"
+
+      # When it differs, what Linux derived from the pins, for a maintainer to review and archive (CONTRIBUTING.md,
+      # "Pack test data": the derived data of a failed reproduction). It is pack test data only, made in this job without
+      # credentials; archiving it is the maintainer's decision, never this job's.
+      - name: Keep the derived data
+        if: failure() && steps.derive.outcome == 'failure'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          # The script is JavaScript: its ${…} are template literals, not shell expansions.
+          # shellcheck disable=SC2016
+          node --input-type=module -e '
+            import { toolPackFiles } from "./scripts/s3/pack-fixtures.mjs";
+            const directory = `packs/${process.env.PACK}/upstream/${process.env.TOOL}`;
+            for (const path of toolPackFiles(".", directory)) process.stdout.write(`${directory}/${path}\0`);
+          ' | tar --null -T - -cf "$RUNNER_TEMP/derived.tar"
+
+      - name: Upload the derived data
+        if: failure() && steps.derive.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: derived-${{ matrix.pack }}--${{ matrix.tool }}
+          path: ${{ runner.temp }}/derived.tar
+          retention-days: 7
+          if-no-files-found: error
+
+  # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
+  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
+  # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
+  # saved, so the job runs where that job does (the note at the top).
+  rust:
+    name: Rust engine (${{ matrix.name }})
+    needs: [changes, test-data]
+    if: >-
+      ${{
+        needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -176,11 +519,28 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      - name: Set up canonical Python
-        if: matrix.task == 'test'
-        uses: actions/setup-python@v6
+      # The clippy leg only compiles the tests; the tests leg runs them, and three read pack test data: Ruff's fixtures,
+      # SQLFluff's recordings and fixtures, and eslint-plugin-vue's fixtures.
+      - if: matrix.task == 'test'
+        uses: ./.github/actions/pack-test-data
         with:
-          python-version: "3.13.12"
+          pack: python
+          tool: ruff
+          fetch: "false"
+
+      - if: matrix.task == 'test'
+        uses: ./.github/actions/pack-test-data
+        with:
+          pack: sql
+          tool: sqlfluff
+          fetch: "false"
+
+      - if: matrix.task == 'test'
+        uses: ./.github/actions/pack-test-data
+        with:
+          pack: vue
+          tool: eslint-plugin-vue
+          fetch: "false"
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -189,7 +549,7 @@ jobs:
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
@@ -245,13 +605,13 @@ jobs:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:producer-shape
 
-      - name: Validate complete SQL accounting and parity; report submission counts
+      - name: Enforce 100 engine SQL submissions for the complete cold job
         if: matrix.task == 'test'
         env:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:sql-execution-budget -- "$RUNNER_TEMP/rerail-sql-budget"
 
-      - name: Preserve SQL execution accounting evidence
+      - name: Preserve SQL execution budget evidence
         if: always() && matrix.task == 'test'
         uses: actions/upload-artifact@v7
         with:
@@ -317,7 +677,7 @@ jobs:
 
       - name: Install pinned Rust toolchain
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
@@ -354,11 +714,47 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Every rule a pack ships must pass the port readiness gates; candidates are only reported (docs/port-readiness.md).
+  # They run when a pull request or a push to main touches a gate input (the changes job's port-readiness filter, and
+  # its accepted gaps); the nightly judges every rule regardless.
+  port-readiness:
+    name: Port readiness
+    needs: [changes, build]
+    if: >-
+      ${{
+        needs.changes.outputs.port-readiness != 'false' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    # The report job posts the results as a pull request comment; the test-data job pulls each planned tool-pack's test
+    # data, from S3 on a cache miss (the gates legs, which can run upstream's code, get no OIDC token).
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/port-readiness.yml
+    with:
+      base: ${{ github.event.pull_request.base.sha || github.event.before }}
+      # A pull request judges only the tool-packs of the packs it touches; a push to main judges every one.
+      select: ${{ github.event_name == 'pull_request' }}
+
+  # Both shards read every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
+  # restored from what the test-data job saved.
   unit:
     name: Unit tests (${{ matrix.shard }}/2)
-    needs: build
+    needs: [build, test-data]
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -372,358 +768,50 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
+
       - uses: ./.github/actions/node-deps
         with:
           built: "true"
-
-      - name: Set up canonical Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13.12"
 
       - name: Unit tests
         run: npm test -- --shard=${{ matrix.shard }}/2
 
-  data-layer-parity:
-    name: Data-layer upstream assertions (${{ matrix.mode }})
+  # The dashboard in Chromium over seeded scenario databases (e2e/README.md). Each worker runs the daemon from source
+  # (`--dev` serves ui/ as committed), which needs the build's native engine.
+  ui-e2e:
+    name: Dashboard browser tests
     needs: build
-    if: >-
-      ${{ github.head_ref != 'changeset-release/main' &&
-          (github.event_name != 'pull_request' ||
-           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [snapshot, workspace]
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout repository
+        uses: actions/checkout@v7
         with:
+          fetch-depth: 1
           persist-credentials: false
+
       - uses: ./.github/actions/lfs
+
       - uses: ./.github/actions/node-deps
         with:
           built: "true"
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.13.12"
-      - uses: astral-sh/setup-uv@v7
-      - name: Get read-only upstream access
-        id: upstream-token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: neralabs
-          repositories: nera-data-layer
-          permission-contents: read
-      - name: Checkout unchanged upstream tests
-        uses: actions/checkout@v7
-        with:
-          repository: neralabs/nera-data-layer
-          ref: 2b1504adc4291daaf080b2e932962b134da1a69a
-          path: .rerail/data-layer-upstream
-          token: ${{ steps.upstream-token.outputs.token }}
-          persist-credentials: false
-      - name: Install upstream assertion dependencies
-        env:
-          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/batch-eight-venv
-        run: >-
-          uv sync --directory .rerail/data-layer-upstream --python 3.13.12 --frozen
-          --no-default-groups --no-install-workspace --no-install-package nera-usearch-native
-          --extra sqlite --group ci-conformance
-      - name: Compare all original assertions and complete results
-        env:
-          PYTHONHASHSEED: "0"
-          RERAIL_NATIVE_CONTRACTS: ${{ github.workspace }}/.rerail/batch-eight-contracts.json
-          MODE: ${{ matrix.mode }}
-        run: |
-          set -euo pipefail
-          unset RERAIL_ENGINE_PATH GIT_PAGER
-          python scripts/dsl/data_layer_audit/native_contracts.py --source .rerail/data-layer-upstream --output "$RERAIL_NATIVE_CONTRACTS"
-          reports="$RUNNER_TEMP/batch-eight-reports"
-          mkdir -p "$reports"
-          py="$RUNNER_TEMP/batch-eight-venv/bin/python"
-          for part in 0 1 2 3; do
-            timeout 115s "$py" scripts/dsl/data_layer_audit/api_parity.py compare               --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream               --oracle fixtures/host/data-layer-port/batch-08-complete-api.json               --part "$part" --parts 4 --mode "$MODE" --output "$reports/api-$MODE-$part.json"
-          done
-          python scripts/dsl/data_layer_audit/collect.py --reports "$reports" --mode "$MODE"
-          timeout 115s "$py" scripts/dsl/data_layer_audit/facts_parity.py compare             --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream             --input fixtures/host/data-layer-port/batch-08-complete-facts.json             --mode "$MODE" --output "$reports/complete-facts-final-$MODE.json"
-          timeout 115s "$py" scripts/dsl/data_layer_audit/graph_api.py compare             --source .rerail/data-layer-upstream --input fixtures/host/data-layer-port/batch-08-graph-api.json             --mode "$MODE" --output "$reports/graph-$MODE.json"
-      - name: Require original positives to reject disabled detectors
-        if: matrix.mode == 'snapshot'
-        env:
-          PYTHONHASHSEED: "0"
-          RERAIL_NATIVE_CONTRACTS: ${{ github.workspace }}/.rerail/batch-eight-contracts.json
-        run: |
-          set -euo pipefail
-          unset RERAIL_ENGINE_PATH GIT_PAGER
-          reports="$RUNNER_TEMP/batch-eight-reports"
-          python scripts/dsl/data_layer_audit/native_mutation.py --output "$RUNNER_TEMP/batch-eight-mutants"
-          for part in 0 1 2 3; do
-            status=0
-            timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_audit/native_suite.py               --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream --mode snapshot               --policies "$RUNNER_TEMP/batch-eight-mutants/rules" --part "$part" --parts 4               --output "$reports/controls-$part.json" || status=$?
-            if [ "$status" -ne 1 ]; then echo "Expected assertion failures, got $status"; exit 1; fi
-          done
-          python scripts/dsl/data_layer_audit/collect.py --reports "$reports" --mode snapshot --controls
-      - name: Reproduce configured batch-nine plugin contracts
-        if: matrix.mode == 'snapshot'
-        run: |
-          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_nine/source_contracts.py \
-            --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
-            --output "$RUNNER_TEMP/batch-nine-public-contracts"
-          diff fixtures/host/data-layer-port/batch-09-public-scope-oracle.json "$RUNNER_TEMP/batch-nine-public-contracts/batch-09-public-scope-oracle.json"
-          diff fixtures/host/data-layer-port/batch-09-configured-defaults.json "$RUNNER_TEMP/batch-nine-public-contracts/batch-09-configured-defaults.json"
-          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_nine/audit/record.py \
-            --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
-            --output "$RUNNER_TEMP/batch-nine-public-contracts/batch-09-shape-audit.json"
-          diff fixtures/host/data-layer-port/batch-09-shape-audit.json "$RUNNER_TEMP/batch-nine-public-contracts/batch-09-shape-audit.json"
-      - name: Verify shipped data-layer defaults and the live production boundary
-        if: matrix.mode == 'snapshot'
-        run: >-
-          timeout 115s npx vitest run
-          test/conformance/data-layer/batch-nine-production-regressions.test.ts
-          test/conformance/data-layer/batch-nine-public-contract.test.ts
-          test/conformance/data-layer/batch-nine-shape-audit.test.ts
-          test/conformance/data-layer/production-runtime.test.ts
-          test/engine/native/data-layer-nine/parser-source.test.ts
-      - name: Compare all batch-nine assertions and complete results
-        env:
-          PYTHONHASHSEED: "0"
-          MODE: ${{ matrix.mode }}
-        run: |
-          set -euo pipefail
-          unset RERAIL_ENGINE_PATH GIT_PAGER RERAIL_NATIVE_CONTRACTS
-          reports="$RUNNER_TEMP/batch-nine-reports"
-          mkdir -p "$reports"
-          for part in 0 1 2 3; do
-            timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_nine/suite.py \
-              --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
-              --baseline fixtures/host/data-layer-port/batch-09-complete-api.json \
-              --part "$part" --parts 4 --mode "$MODE" --output "$reports/api-$MODE-$part.json"
-          done
-          python scripts/dsl/data_layer_nine/evidence.py \
-            --oracle fixtures/host/data-layer-port/batch-09-complete-api.json \
-            --reports "$reports/api-$MODE-0.json" "$reports/api-$MODE-1.json" "$reports/api-$MODE-2.json" "$reports/api-$MODE-3.json" \
-            --output "$reports/summary-$MODE.json"
-      - name: Require batch-nine positives to reject disabled detectors
-        if: matrix.mode == 'snapshot'
-        env:
-          PYTHONHASHSEED: "0"
-        run: |
-          set -euo pipefail
-          unset RERAIL_ENGINE_PATH GIT_PAGER RERAIL_NATIVE_CONTRACTS
-          reports="$RUNNER_TEMP/batch-nine-reports"
-          python scripts/dsl/data_layer_nine/evidence.py --mutants packs/data-layer/rules --output "$RUNNER_TEMP/batch-nine-mutants/rules"
-          for part in 0 1 2 3; do
-            status=0
-            timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_nine/suite.py \
-              --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
-              --baseline fixtures/host/data-layer-port/batch-09-complete-api.json --mutant \
-              --policies "$RUNNER_TEMP/batch-nine-mutants/rules" --mode snapshot \
-              --part "$part" --parts 4 --output "$reports/controls-$part.json" || status=$?
-            if [ "$status" -ne 1 ]; then echo "Expected assertion failures, got $status"; exit 1; fi
-          done
-          python scripts/dsl/data_layer_nine/evidence.py \
-            --oracle fixtures/host/data-layer-port/batch-09-complete-api.json --controls \
-            --reports "$reports/controls-0.json" "$reports/controls-1.json" "$reports/controls-2.json" "$reports/controls-3.json" --output "$reports/controls-summary.json"
-      - name: Compare batch-ten positives, negatives and complete results
-        env:
-          PYTHONHASHSEED: "0"
-          MODE: ${{ matrix.mode }}
-        run: |
-          set -euo pipefail
-          unset RERAIL_ENGINE_PATH GIT_PAGER RERAIL_NATIVE_CONTRACTS
-          reports="$RUNNER_TEMP/batch-ten-reports"
-          mkdir -p "$reports"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.contracts.suite_inventory \
-            --source .rerail/data-layer-upstream --output "$reports/original-test-inventory.json"
-          cmp fixtures/host/data-layer-port/batch-10-original-test-inventory.json "$reports/original-test-inventory.json"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null \
-            scripts/dsl/data_layer_ten/contracts/inventory_cases.py
-          if [ "$MODE" = snapshot ]; then
-            timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/contracts/inventory_execute.py \
-              .rerail/data-layer-upstream "$reports/original-integration.json" scripts/tests/test_lint_all.py \
-              scripts/tests/test_matching_phase1_gate.py scripts/tests/test_matching_phase5_gate.py
-          fi
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.assertions.programs \
-            --source .rerail/data-layer-upstream --output "$reports/helper-contracts.json"
-          cmp fixtures/host/data-layer-port/batch-10-helper-contracts.json "$reports/helper-contracts.json"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.assertions.transfer \
-            --source .rerail/data-layer-upstream --output "$reports/transferred-original.json"
-          cmp fixtures/host/data-layer-port/batch-10-transferable-assertions.json "$reports/transferred-original.json"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.contracts.reaudit \
-            --source .rerail/data-layer-upstream --output "$reports/reaudit-original.json"
-          cmp fixtures/host/data-layer-port/batch-10-reaudit.json "$reports/reaudit-original.json"
-          for part in 0 1 2 3 4 5 6 7; do
-            PYTEST_ADDOPTS="-k 'not test_current_matching_architecture_is_clean_tdd_red'" \
-            timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/suite.py \
-              --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
-              --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
-              --part "$part" --parts 8 --policies packs/data-layer/rules --mode "$MODE" \
-              --output "$reports/api-$MODE-$part.json"
-          done
-          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/suite.py \
-            --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
-            --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
-            --checks matching_architecture --policies packs/data-layer/rules --mode "$MODE" \
-            --output "$reports/repository-$MODE.json" \
-            "$GITHUB_WORKSPACE/.rerail/data-layer-upstream/scripts/tests/test_lint_matching_architecture.py::test_current_matching_architecture_is_clean_tdd_red"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
-          import hashlib,json,os
-          from pathlib import Path
-          from data_layer_ten.common import CHECKS
-          from data_layer_ten.evidence import read_report,verify
-          from data_layer_ten.assertions.evidence import verify_helpers
-          from data_layer_ten.contracts.suite_inventory import verify_execution
-          reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports';mode=os.environ['MODE']
-          paths=[reports/f'api-{mode}-{part}.json' for part in range(8)]+[reports/f'repository-{mode}.json']
-          policies={c:hashlib.sha256(Path('packs/data-layer/rules', 'data-layer-'+c.replace('_','-')+'.json').read_bytes()).hexdigest() for c in CHECKS}
-          summary=verify(read_report(Path('fixtures/host/data-layer-port/batch-10-complete-api.json.gz')),[read_report(p) for p in paths],mode=mode,policies=policies)
-          (reports/f'api-summary-{mode}.json').write_text(json.dumps(summary,indent=2)+'\n')
-          helper=verify_helpers(read_report(Path('fixtures/host/data-layer-port/batch-10-assertion-ledger.json'))['cases'],read_report(Path('fixtures/host/data-layer-port/batch-10-helper-assertions.json')),[read_report(p) for p in paths],mode,hashlib.sha256(Path('fixtures/host/data-layer-port/batch-10-helper-contracts.json').read_bytes()).hexdigest())
-          (reports/f'helper-summary-{mode}.json').write_text(json.dumps(helper,indent=2)+'\n')
-          original=verify_execution(read_report(Path('fixtures/host/data-layer-port/batch-10-original-test-inventory.json')),[read_report(p) for p in paths],mode,read_report(Path('fixtures/host/data-layer-port/batch-10-assertion-ledger.json'))['cases'])
-          (reports/f'original-suite-summary-{mode}.json').write_text(json.dumps(original,indent=2)+'\n')
-          PY
-      - name: Verify batch-ten production configuration and persistent revisions
-        if: matrix.mode == 'snapshot'
-        run: |
-          set -euo pipefail
-          reports="$RUNNER_TEMP/batch-ten-reports"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.assertions.dod_contracts \
-            --source .rerail/data-layer-upstream --output "$reports/dod-contracts-original.json"
-          cmp fixtures/host/data-layer-port/batch-10-dod-contracts.json "$reports/dod-contracts-original.json"
-          python3 -c 'import gzip,sys; assert gzip.decompress(open(sys.argv[1],"rb").read()) == gzip.decompress(open(sys.argv[2],"rb").read()), "Changed original fixture payload"' \
-            fixtures/host/data-layer-port/batch-10-base64-decoding.json.gz "$reports/batch-10-base64-decoding.json.gz"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.lifecycle \
-            --source .rerail/data-layer-upstream --output "$reports/lifecycle-original.json"
-          cmp fixtures/host/data-layer-port/batch-10-lifecycle.json "$reports/lifecycle-original.json"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.contracts.recovery \
-            --source .rerail/data-layer-upstream --output "$reports/identity-inventory-original.json"
-          cmp fixtures/host/data-layer-port/batch-10-identity-inventory.json "$reports/identity-inventory-original.json"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.contracts.global_queries \
-            --source .rerail/data-layer-upstream --output "$reports/global-queries-original.json"
-          cmp fixtures/host/data-layer-port/batch-10-global-queries.json "$reports/global-queries-original.json"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_nine.audit.inventory \
-            --source .rerail/data-layer-upstream --output "$reports/bootstrap-inventory-original.json.gz"
-          python3 -c 'import gzip,sys; assert gzip.decompress(open(sys.argv[1],"rb").read()) == gzip.decompress(open(sys.argv[2],"rb").read()), "Changed original fixture payload"' \
-            fixtures/host/data-layer-port/batch-09-bootstrap-inventory.json.gz "$reports/bootstrap-inventory-original.json.gz"
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/bootstrap-inventory.test.ts \
-            --reporter=json --outputFile="$reports/bootstrap-inventory.json"
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/dod/ \
-            --reporter=json --outputFile="$reports/dod.json"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
-          import json,os
-          from pathlib import Path
-          from data_layer_ten.completion import verify_contracts
-          reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports'
-          (reports/'dod-summary.json').write_text(json.dumps(verify_contracts([json.loads((reports/'dod.json').read_text())]),indent=2)+'\n')
-          PY
-      - name: Verify batch-ten replay, defaults and disabled detectors
-        if: matrix.mode == 'snapshot'
-        run: |
-          set -euo pipefail
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/batch-ten-registry.test.ts \
-            --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/registry-counterparts.json"
-          for check in graph_lazy_sql_plan bounded_composed_graph_paths graphql_plan_ownership plan_optimizer_v2 conditional_architecture schema_introspection_data_paths matching_architecture hnsw_architecture embedding_vector_orchestration generated_index_sources; do
-            timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/batch-ten-reaudit.test.ts -t "$check" \
-              --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/reaudit-$check.json"
-          done
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/batch-ten-reaudit.test.ts -t 'retains original|persistent workspace' \
-            --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/reaudit-inventory.json"
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/contracts/reaudit_cases.py
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
-          import json,os
-          from pathlib import Path
-          from data_layer_ten.common import CHECKS
-          from data_layer_ten.contracts.reaudit_evidence import verify
-          reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports'
-          paths=[reports/f'reaudit-{check}.json' for check in CHECKS]+[reports/'reaudit-inventory.json']
-          summary=verify(json.loads(Path('fixtures/host/data-layer-port/batch-10-reaudit.json').read_text()),[json.loads(path.read_text()) for path in paths])
-          (reports/'reaudit-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
-          PY
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts -t '^(?!matches complete )'
-          for check in graph_lazy_sql_plan bounded_composed_graph_paths graphql_plan_ownership plan_optimizer_v2 conditional_architecture schema_introspection_data_paths matching_architecture hnsw_architecture embedding_vector_orchestration generated_index_sources; do
-            for mode in snapshot workspace; do
-              for part in 0 1; do
-                timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts -t "^matches complete $check .* $mode API part $part$"
-              done
-            done
-          done
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-families.test.ts
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-helpers.test.ts \
-            --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/helpers-replay.json"
-          transfer_index=0
-          for pattern in '^transfers upstream assertions' '^executes transferred vocabulary .*positive ' '^executes transferred vocabulary .*lookalike ' '^executes transferred vocabulary .*other-family ' '^rejects removal of transferred symbol ' '^(preserves native command paths|rejects disabled native transport|transfers command help)'; do
-            timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-transfer.test.ts -t "$pattern" \
-              --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/transferred-$transfer_index.json"
-            transfer_index=$((transfer_index + 1))
-          done
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-transfer.test.ts -t '^requires native evidence'
-          contract_index=0
-          for pattern in '^(?!.*(?:collector|structural)).*' 'structural' 'collector'; do
-            timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-file-contracts.test.ts -t "$pattern" \
-              --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/contracts-$contract_index.json"
-            contract_index=$((contract_index + 1))
-          done
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
-          report_index=0
-          for pattern in 'configured (graph_lazy_sql_plan|bounded_composed_graph_paths|graphql_plan_ownership) ' 'configured (plan_optimizer_v2|conditional_architecture) ' 'matching_architecture' 'configured (schema_introspection_data_paths|hnsw_architecture|embedding_vector_orchestration|generated_index_sources) '; do
-            timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-defaults.test.ts -t "$pattern" \
-              --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/configured-$report_index.json"
-            report_index=$((report_index + 1))
-          done
-          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/evidence_cases.py
-          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/assertions/evidence_cases.py
-          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/contracts/completion_cases.py
-          python3 test/scripts/data_layer/test_complete_measurement.py
-          for mode in snapshot workspace; do
-            timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-configured-repository.test.ts \
-              -t "configured repository $mode" --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/configured-repository-$mode.json"
-          done
-          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
-          import json,os
-          from pathlib import Path
-          from data_layer_ten.evidence import read_report,verify_configured,verify_contracts
-          from data_layer_ten.assertions.evidence import verify_replay
-          from data_layer_ten.assertions.transferred import verify_transfer
-          from data_layer_ten.contracts.suite_inventory import verify_integration
-          reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports'
-          paths=[reports/f'configured-{i}.json' for i in range(4)]+[reports/f'configured-repository-{mode}.json' for mode in ['snapshot','workspace']]
-          summary=verify_configured(read_report(Path('fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz')),[read_report(p) for p in paths])
-          (reports/'configured-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
-          focused=verify_contracts(read_report(Path('fixtures/host/data-layer-port/batch-10-file-contract-regressions.json')),[read_report(reports/f'contracts-{i}.json') for i in range(3)])
-          (reports/'contracts-summary.json').write_text(json.dumps(focused,indent=2)+'\n')
-          helpers=verify_replay(read_report(Path('fixtures/host/data-layer-port/batch-10-helper-assertions.json')),[read_report(reports/'helpers-replay.json')])
-          (reports/'helpers-replay-summary.json').write_text(json.dumps(helpers,indent=2)+'\n')
-          transferred=verify_transfer(read_report(Path('fixtures/host/data-layer-port/batch-10-assertion-ledger.json'))['cases'],read_report(Path('fixtures/host/data-layer-port/batch-10-transferable-assertions.json')),[read_report(reports/f'transferred-{i}.json') for i in range(6)])
-          (reports/'transferred-summary.json').write_text(json.dumps(transferred,indent=2)+'\n')
-          registry=verify_integration(read_report(Path('fixtures/host/data-layer-port/batch-10-original-test-inventory.json')),read_report(reports/'original-integration.json'),read_report(reports/'registry-counterparts.json'))
-          (reports/'registry-summary.json').write_text(json.dumps(registry,indent=2)+'\n')
-          PY
-      - name: Upload batch-ten assertion receipts
-        if: always()
+
+      - name: Install Chromium and its system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Dashboard browser tests
+        run: npm run test:ui:e2e
+
+      - name: Upload the Playwright report and traces
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: batch-ten-${{ matrix.mode }}
-          path: ${{ runner.temp }}/batch-ten-reports/
-          if-no-files-found: error
-      - name: Upload batch-nine assertion receipts
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: batch-nine-${{ matrix.mode }}
-          path: ${{ runner.temp }}/batch-nine-reports/
-          if-no-files-found: error
-      - name: Upload assertion receipts
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: batch-eight-${{ matrix.mode }}
-          path: ${{ runner.temp }}/batch-eight-reports/
-          if-no-files-found: error
+          name: ui-e2e-report
+          path: .rerail/e2e/
+          retention-days: 7
 
   integration:
     name: Integration tests
@@ -751,11 +839,72 @@ jobs:
       - name: Integration tests
         run: npm run test:integration:built
 
-  tools:
-    name: Scripts, reference examples, conformance, and rule playground
+  # Rule packs installed from npm, against the registry: set-up on a project outside this repository, and
+  # `rerail packs` upgrading, downgrading and removing a published pack (integration/installed-packs.test.ts).
+  # NPM_PACKS_READ_TOKEN is a read-only granular token for the restricted @neralabs packs. Only the steps that check it
+  # and read the packs get it; `npm ci` and the build run without it.
+  installed-packs:
+    name: Rule packs installed from npm
     needs: build
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]' &&
+          github.head_ref != 'changeset-release/main'
+        )
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    steps:
+      - name: Require the npm read token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Reading the restricted rule packs needs the repository secret NPM_PACKS_READ_TOKEN"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
+      - name: Authenticate npm to read the packs
+        run: |
+          # shellcheck disable=SC2016 # npm expands ${NODE_AUTH_TOKEN} itself; the file must not hold the token.
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+
+      - name: Rule packs from npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+          RERAIL_INSTALLED_PACKS_NPM: "1"
+        run: npx vitest run integration/installed-packs.test.ts
+
+  # The conformance harnesses score every pack's ported rules on its test data, restored from what the test-data job
+  # saved.
+  tools:
+    name: Scripts, reference examples, conformance, and rule playground
+    needs: [build, test-data]
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -764,6 +913,10 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
 
       - uses: ./.github/actions/node-deps
         with:
@@ -933,7 +1086,7 @@ jobs:
 
       - name: Install pinned Rust toolchain
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
@@ -996,3 +1149,47 @@ jobs:
           cat "$results/codex.log"
           cat "$results/cursor.log"
           exit "$status"
+
+  # The one required check (the note at the top). It needs every other job, runs whatever happened to them, and fails
+  # when any of them failed or was cancelled. A job skipped by its own condition passes: forks and Dependabot get no
+  # secrets or OIDC token, the Release pull request runs only the licence and lint jobs, the path filters skip what a
+  # change cannot affect, and test-data-locks and test-data-reproduces run only on pull requests that change a lock.
+  ci-result:
+    name: CI result
+    needs:
+      - licenses
+      - lint
+      - changes
+      - test-data
+      - test-data-in-s3
+      - test-data-locks
+      - test-data-reproduces
+      - rust
+      - build
+      - port-readiness
+      - unit
+      - integration
+      - installed-packs
+      - tools
+      - real-sessions
+      - provider-smoke
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Fail when a job failed or was cancelled
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          {
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            jq -r 'to_entries | sort_by(.key) | .[] | "| \(.key) | \(.value.result) |"' <<< "$NEEDS"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          failed="$(jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | sort | join(", ")' <<< "$NEEDS")"
+          if [ -n "$failed" ]; then
+            echo "::error::failed or cancelled: $failed"
+            exit 1
+          fi

@@ -264,6 +264,10 @@ function walkBindsAndParse(walk, rule, pointer, grammar) {
     walk.add("rule.host", pointer, rule);
     walkRule(walk, rule.host, at(pointer, "host"));
   }
+  if (isObject(rule.embedded)) {
+    walk.add("rule.embedded", pointer, rule);
+    walkRule(walk, rule.embedded, at(pointer, "embedded"));
+  }
 }
 
 function walkFormatArguments(walk, rule, pointer, grammar) {
@@ -393,6 +397,7 @@ function walkAstTransforms(walk, ast, pointer) {
 
 function walkAst(walk, ast, pointer) {
   walk.add(`language.${ast.language}`, pointer, ast);
+  if (typeof ast.embedded === "string") walk.add("ast.embedded", pointer, ast);
   walkRule(walk, ast.rule, at(pointer, "rule"));
   walkAstRules(walk, ast, pointer);
   walkAstProperties(walk, ast, pointer);
@@ -575,6 +580,8 @@ export const CONSTRUCTS = [
     ["parse", "parse: eslintDirective", any("parse.eslintDirective")],
     ["capture", "capture", any("rule.capture")],
     ["host", "host", any("rule.host")],
+    ["embedded", "ast.embedded", any("ast.embedded")],
+    ["embedded", "embedded", any("rule.embedded")],
     ["formatArgs", "formatArgs", any("rule.formatArgs")],
   ]],
   ["transform", [

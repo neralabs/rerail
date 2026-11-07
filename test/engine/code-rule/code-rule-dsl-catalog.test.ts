@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadBundledCatalog } from "../../../src/engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
@@ -129,7 +129,7 @@ describe("checkout code-rule catalog", () => {
     const database = openRerailDatabase(databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
     try {
-      upsertLibraryRule(database, loadBundledCatalog(), rule("test:api-only"), "code");
+      upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code");
       addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" });
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null });
       setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" });
@@ -278,14 +278,14 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["an nthChild that is no An+B", ast({ kind: "identifier", nthChild: "n+" }), /nthChild: invalid syntax/],
     ["a negative nthChild", ast({ kind: "identifier", nthChild: -1 }), /Too small/],
     ["an nthChild without a position", ast({ kind: "identifier", nthChild: { ofRule: { kind: "identifier" } } }), /Invalid input/],
-    ["an nthChild with an unknown key", ast({ kind: "identifier", nthChild: { position: 1, of: {} } }), /Invalid input/],
-    ["an nthChild with a malformed ofRule", ast({ kind: "identifier", nthChild: { position: 1, ofRule: { kinds: "identifier" } } }), /Invalid input/],
+    ["an nthChild with an unknown key", ast({ kind: "identifier", nthChild: { position: 1, of: {} } }), /Unrecognized key: \\"of\\"/],
+    ["an nthChild with a malformed ofRule", ast({ kind: "identifier", nthChild: { position: 1, ofRule: { kinds: "identifier" } } }), /Unrecognized key: \\"kinds\\"/],
     ["an nthChild ofRule with an undefined utility", ast({ kind: "identifier", nthChild: { position: 1, ofRule: { matches: "missing" } } }), /Utility rule missing is not defined/],
     ["an empty layout", ast({ kind: "identifier", layout: {} }), /layout must hold span, start, before or after/],
     ["a line of a transform variable", ast({ pattern: "f($A)" }, { transform: { T: { substring: { source: "$A" } }, L: { line: { source: "$T" } } } }), /\$T is a transform variable, text; line, lines and count read a capture/],
     ["a line edge other than start or end", ast({ pattern: "f($A)" }, { transform: { L: { line: { source: "$A", edge: "middle" } } } }), /Invalid input/],
-    ["a count with settings", ast({ pattern: "f($$$A)" }, { transform: { N: { count: { source: "$$$A", nodes: true } } } }), /Invalid input/],
-    ["the value of a line", ast({ pattern: "f($A)" }, { transform: { L: { line: { source: "$A", value: true } } } }), /Invalid input/],
+    ["a count with settings", ast({ pattern: "f($$$A)" }, { transform: { N: { count: { source: "$$$A", nodes: true } } } }), /Unrecognized key: \\"nodes\\"/],
+    ["the value of a line", ast({ pattern: "f($A)" }, { transform: { L: { line: { source: "$A", value: true } } } }), /Unrecognized key: \\"value\\"/],
     ["an unknown layout key", ast({ kind: "identifier", layout: { lines: { eq: 0 } } }), /Unrecognized key: \\"lines\\"/],
     ["an empty line count", ast({ kind: "identifier", layout: { span: {} } }), /Set eq, min or max/],
     ["a negative line count", ast({ kind: "identifier", layout: { span: { eq: -1 } } }), /Too small/],
@@ -639,7 +639,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["empty parameters", ast({ kind: "number" }, { utils: { u: { params: [], rule: { kind: "number" } } } }), /Too small/],
     ["a parameter listed twice", ast({ kind: "number" }, { utils: { u: { params: ["A", "A"], rule: { kind: "number" } } } }), /A parameter is listed twice/],
     ["a lower-case parameter", ast({ kind: "number" }, { utils: { u: { params: ["a"], rule: { kind: "number" } } } }), /Must be a metavariable name/],
-    ["parameters without a rule", ast({ kind: "number" }, { utils: { u: { params: ["A"] } } }), /Invalid input/],
+    ["parameters without a rule", ast({ kind: "number" }, { utils: { u: { params: ["A"] } } }), /Unrecognized key: \\"params\\"/],
     ["a shared call that leaves a parameter out", clauses(shared({ callee }), tsQuery("q", { matches: { callee: {} } })), /Parameter F of callee is not passed/],
   ])("both reject %s", (_name, input, schemaError) => {
     const parsed = codeRuleSchema.safeParse(input);

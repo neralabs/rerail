@@ -1,1 +1,0 @@
-<template><input v-on:keyup.native='fore'></template>

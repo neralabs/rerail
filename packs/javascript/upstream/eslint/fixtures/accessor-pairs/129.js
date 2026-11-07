@@ -1,1 +1,0 @@
-var o = { set 1e2(foo) {} };

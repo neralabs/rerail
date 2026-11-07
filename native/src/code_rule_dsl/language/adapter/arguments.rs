@@ -1,6 +1,6 @@
 //! A call's arguments (`arguments`): `Semantic::Arguments`.
 
-use super::{Blade, Ecma, Php, Python, Refusal, Refused};
+use super::{Ecma, Php, Python, Refusal, Refused};
 use crate::code_rule_dsl::matcher::{Arguments, Passed};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
@@ -116,28 +116,6 @@ impl ArgumentRules for Php {
         } else {
             arguments.php(call)
         }
-    }
-}
-
-/// Blade's calls are those of the PHP its template embeds (`blade::view`); only its refusal of
-/// `estree` names the template.
-impl ArgumentRules for Blade {
-    const SUPPORTED: bool = <Php as ArgumentRules>::SUPPORTED;
-    const CALL_KINDS: &'static [&'static str] = <Php as ArgumentRules>::CALL_KINDS;
-
-    fn feature(feature: ArgumentFeature) -> Result<(), Refusal> {
-        match feature {
-            ArgumentFeature::SignatureMarkers | ArgumentFeature::Syntactic => {
-                <Php as ArgumentRules>::feature(feature)
-            }
-            ArgumentFeature::Estree => refused(
-                "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; blade has none (use language or syntactic)",
-            ),
-        }
-    }
-
-    fn passed<'r, D: Doc>(arguments: &Arguments, call: &Node<'r, D>) -> Option<Vec<Passed<'r, D>>> {
-        <Php as ArgumentRules>::passed(arguments, call)
     }
 }
 

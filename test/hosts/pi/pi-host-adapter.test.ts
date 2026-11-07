@@ -34,11 +34,13 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
     shutdown: async () => undefined,
     sessionFor: async () => session,
     ingest: async (_event: AdapterEvent) => { ingested += 1; },
+    yieldDeliveries: async () => undefined,
     conversationRulesTool: {},
     conversationRulesCommand: {},
     packageRoot: "/package-root",
     started: () => true,
     sessionNoteRules: async () => ({ setUp: false }),
+    openToolResult: () => () => [],
   });
   return { context, handlers, ingested: () => ingested };
 }

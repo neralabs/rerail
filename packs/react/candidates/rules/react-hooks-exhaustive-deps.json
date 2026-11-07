@@ -3,7 +3,7 @@
   "id": "react-hooks-exhaustive-deps",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react-hooks 7.1.1 react-hooks/exhaustive-deps, the missing-dependency report only: the dependency array literal of useEffect / useLayoutEffect / useInsertionEffect / useCallback / useMemo (and React.*), when the inline callback reads a name bound in the function that calls the hook (outside the callback) that no dependency's root names; useState/useReducer setters and dispatchers, useRef, useEffectEvent and useTransition results count as stable.",
+  "description": "List every component value that an effect, useCallback or useMemo callback reads in its dependency array; a missing one leaves the callback reading stale values.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -1411,7 +1411,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react-hooks/exhaustive-deps",
-        "message": "React Hook has a missing dependency. Either include it or remove the dependency array.",
+        "message": "Add `$R` to this dependency array; the callback reads it, so without it the callback keeps a stale value.",
         "suppress": {
           "eslint": {
             "rules": [

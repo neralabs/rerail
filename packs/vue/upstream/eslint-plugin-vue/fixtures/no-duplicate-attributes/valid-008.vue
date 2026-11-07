@@ -1,1 +1,0 @@
-<template><my-component :foo :[foo]></my-component></template>

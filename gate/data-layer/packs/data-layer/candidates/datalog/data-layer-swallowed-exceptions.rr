@@ -1,0 +1,38 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.input doc, node, child, field, text, name
+.decl k0(kind: symbol)
+k0("module").
+.decl k1(kind: symbol)
+k1("import_from_statement").
+.decl in_scope(d: number)
+.decl m19(n: node)
+.decl m27(n: node)
+.decl m52(n: node)
+.decl out_scope(d: number)
+.decl u10(n: node)
+.decl u2(n: node)
+.decl u30(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("services/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer_testing/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+m19(n) :- name(n, v18), (glob("async", v18) ; glob("async.*", v18)).
+m27(n) :- node(_, n, "identifier", _, _), text(n, v24), v24 = "suppress".
+m27(n) :- node(_, n, "attribute", _, _), child(n, v25, 0), node(_, v25, "identifier", _, _), text(v25, "contextlib"), child(n, v26, 1), node(_, v26, "identifier", _, _), text(v26, "suppress"), !child(n, _, 2).
+m52(n) :- node(_, n, "dotted_name", _, _), text(n, v49), v49 = "suppress".
+m52(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v50), node(_, v50, "dotted_name", _, _), text(v50, v51), v51 = "suppress".
+.output violation

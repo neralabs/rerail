@@ -1,0 +1,49 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-st01-structure-else-null",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove ELSE NULL from SQL CASE expressions; CASE already returns NULL when no branch matches.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "redundant-else-null",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "case",
+            "has": {
+              "kind": "keyword_else",
+              "precedes": {
+                "kind": "literal",
+                "regex": "^(?i:null)$"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ST01",
+        "message": "Do not specify ELSE NULL in a CASE WHEN statement.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST01",
+              "L035",
+              "all",
+              "structure",
+              "structure.else_null"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

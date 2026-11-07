@@ -1,5 +1,6 @@
 import type { SetupOption, SetupOptionInput, SetupQuestion, SetupQuestionId } from "./setup-step.js";
 import { RERAIL_BRAND_FOREGROUND } from "../presentation/terminal-brand.generated.js";
+import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
 
 /**
  * The text of every install and set-up screen (T2–T6, C3–C6b, WR,
@@ -22,11 +23,25 @@ export interface CodingAgent {
 }
 
 export interface RecommendedPack {
+  /** The pack's id, which `--packs` names it by. */
+  readonly id: string;
   readonly name: string;
   readonly ruleCount: number;
   readonly reason: string;
-  /** How many of its rules start in Log rather than Steer; none when absent. */
-  readonly logRuleCount?: number;
+  /** The npm package and exact version set-up installs once the person says yes. */
+  readonly packageName: string;
+  readonly version: string;
+  /** The version installed now, if any. Every repository on this computer runs it, so installing another replaces it there too. */
+  readonly installed: string | null;
+}
+
+/** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not. */
+export interface AvailablePack {
+  readonly id: string;
+  readonly version: string;
+  readonly name: string;
+  /** Why it fits the repository; undefined for a pack that does not. */
+  readonly reason?: string;
 }
 
 export interface DashboardLink {
@@ -45,15 +60,21 @@ export const SETUP_COMMAND = "rerail setup";
  * The flags the agent lane's answer commands use; set-up's argument parser reads the same ones. `relay` picks the
  * agent lane even when a coding agent runs commands in a terminal: `/rerail-start` and every answer pass it.
  */
-export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agents", relay: "--relay" } as const;
+export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agents", packs: "--packs", relay: "--relay" } as const;
 
 /** Answer keys in the order each question numbers its answers (answer 1 is index 0). */
 export const READ_REPO_ANSWERS = ["yes", "other-folder", "pick-myself"] as const;
-export const CONFIRM_PACKS_ANSWERS = ["start", "review", "other", "pick-myself"] as const;
-export const NO_REPO_ANSWERS = ["folder", "pick-myself", "skip"] as const;
+export const CONFIRM_PACKS_ANSWERS = ["start", "choose", "not-now"] as const;
+export const NO_REPO_ANSWERS = ["folder", "skip"] as const;
+/** "Skip, I’ll pick packs": pick some of every pack set-up fetched, or start with none. */
+export const PICK_PACKS_ANSWERS = ["choose", "none"] as const;
+/** `--packs none`: the answer that starts Rerail with no rule pack. */
+export const NO_PACKS = "none";
+export const SESSIONS_ANSWERS = ["allow", "decline"] as const;
 export type ReadRepoAnswer = (typeof READ_REPO_ANSWERS)[number];
 export type ConfirmPacksAnswer = (typeof CONFIRM_PACKS_ANSWERS)[number];
 export type NoRepoAnswer = (typeof NO_REPO_ANSWERS)[number];
+export type SessionsAnswer = (typeof SESSIONS_ANSWERS)[number];
 
 // ── Styling ─────────────────────────────────────────────────────────────────
 
@@ -79,20 +100,20 @@ const PLAIN_STYLE: Style = { brand: plain, dim: plain, bold: plain, red: plain, 
 const styleFor = (lane: SetupLane): Style => (lane === "terminal" ? TERMINAL_STYLE : PLAIN_STYLE);
 
 /** Repo names, reasons and paths come from disk; never let them carry escape sequences. */
-const clean = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
+export const clean = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 
 const MASCOT_HAPPY = ">^ᴥ^<";
-const LABEL_WIDTH = 15;
-const COMMAND_WIDTH = 19;
+const COMMAND_WIDTH = 17;
+const MODE_WIDTH = 8;
+const MODE_TEXT_WIDTH = 37;
 const TABLE_RULES_WIDTH = 7;
 const TABLE_MIN_PACK_WIDTH = 16;
-const TIPS_DIVIDER = "── Good to know · optional ──────────────────────────────────";
+const SUMMARY_LABEL_WIDTH = 10;
+const TIPS_DIVIDER = "── Good to know ─────────────────────────────────────────────";
 
 const lines = (rows: readonly string[]): string => `${rows.join("\n")}\n`;
 const withHint = (text: string, hint: string | undefined, style: Style): string =>
   hint === undefined ? text : `${text}  ${style.dim(hint)}`;
-const labelled = (label: string, value: string, style: Style, hint?: string): string =>
-  `  ${label.padEnd(LABEL_WIDTH)}${withHint(value, hint, style)}`;
 const bullet = (text: string, style: Style): string => `${style.brand("●")} ${text}`;
 
 function plural(count: number, noun: string): string {
@@ -107,10 +128,6 @@ function andList(names: readonly string[]): string {
 
 function agentNames(agents: readonly CodingAgent[]): string[] {
   return agents.map(agent => clean(agent.name));
-}
-
-function connectedText(agents: readonly CodingAgent[]): string {
-  return agents.length === 0 ? "no coding agents found" : andList(agentNames(agents));
 }
 
 const SHELL_SAFE = /^[\w@%+=:,./~-]+$/;
@@ -165,28 +182,66 @@ function agentCommand(form: QuestionForm, choice: Choice): string {
   return choice.agentText === undefined ? command : choice.agentText(command);
 }
 
+/** Where a question sits in the set-up's main flow, shown before it in the terminal: "Step 2 of 3". */
+export interface QuestionStep {
+  readonly index: number;
+  readonly total: number;
+}
+
 /**
- * Terminal: the body, then the answers with a cursor on the first.
+ * Terminal: the step, the body, then the answers with a cursor on the first.
  * Agent: the body and answers as text to relay, then one command per answer.
  * Json: the body without the question line, which `setupQuestion` carries with the answers.
  */
-export function renderQuestion(form: QuestionForm, lane: SetupLane): string {
+export function renderQuestion(form: QuestionForm, lane: SetupLane, step?: QuestionStep): string {
+  // The blank line the other lanes put between the lead and the question stays between the lead and the trail.
+  if (lane === "json") return lines([...form.lead, ...(form.lead.length === 0 || form.trail.length === 0 ? [] : [""]), ...form.trail]);
+  if (lane === "terminal") return `${renderQuestionHead(form, step)}${lines(choiceRows(form, TERMINAL_STYLE, 0))}`;
   const style = styleFor(lane);
-  if (lane === "json") return lines([...form.lead, ...form.trail]);
-  const body = [...form.lead, style.bold(form.prompt), ...form.trail];
-  const answer = (choice: Choice, index: number): string => withHint(`${index + 1}. ${choice.label}`, choice.hint, style);
-  if (lane === "terminal") {
-    return lines([...body, ...form.choices.map((choice, index) => `${index === 0 ? style.brand("❯") : " "} ${answer(choice, index)}`)]);
-  }
   return lines([
     AGENT_QUESTION_INTRO,
     "",
-    ...body,
-    ...form.choices.map(answer),
+    ...questionBody(form, style, form.prompt),
+    "",
+    ...form.choices.map((choice, index) => answerText(form, choice, index, style)),
     "",
     AGENT_QUESTION_OUTRO,
     ...form.choices.map((choice, index) => `${index + 1}. ${agentCommand(form, choice)}`),
   ]);
+}
+
+/** The lines above a question's answers: what leads up to it, the question, and what follows it. */
+function questionBody(form: QuestionForm, style: Style, prompt: string): string[] {
+  return [...form.lead, ...(form.lead.length === 0 ? [] : [""]), style.bold(prompt), ...form.trail];
+}
+
+/** One answer, numbered; its hint lines up in one column, past the longest answer. */
+function answerText(form: QuestionForm, choice: Choice, index: number, style: Style): string {
+  const width = Math.max(...form.choices.map((other, otherIndex) => `${otherIndex + 1}. ${other.label}`.length)) + 4;
+  const text = `${index + 1}. ${choice.label}`;
+  return choice.hint === undefined ? text : `${text.padEnd(width)}${style.dim(choice.hint)}`;
+}
+
+/** Terminal: the answers, with the cursor on `highlight`. */
+function choiceRows(form: QuestionForm, style: Style, highlight: number): string[] {
+  return form.choices.map((choice, index) => `${index === highlight ? style.brand("❯") : " "} ${answerText(form, choice, index, style)}`);
+}
+
+/**
+ * Terminal: the step and the body, ending on the blank line the answers follow. A blank line first, so each question
+ * stands apart from what the answer before it printed.
+ */
+export function renderQuestionHead(form: QuestionForm, step?: QuestionStep): string {
+  const prompt = step === undefined ? form.prompt : `Step ${step.index} of ${step.total} · ${form.prompt}`;
+  return lines(["", ...questionBody(form, TERMINAL_STYLE, prompt), ""]);
+}
+
+/**
+ * Terminal, where the arrow keys move the cursor: the answers with the cursor on `highlight`, a blank line, and the
+ * line to answer on, without a line break after it. The menu draws it again in place each time the cursor moves.
+ */
+export function renderMenu(form: QuestionForm, highlight: number): string {
+  return [...choiceRows(form, TERMINAL_STYLE, highlight), "", `${TERMINAL_STYLE.dim("↑↓ to move, Enter to choose, or type a number:")} `].join("\n");
 }
 
 /** The question as `--json` reports it. `baseArgs` start every answer's arguments: `setup`, `--port`, `--json`. */
@@ -207,17 +262,111 @@ export function setupQuestion(form: QuestionForm, baseArgs: readonly string[]): 
 const FOLDER_PLACEHOLDER = "<the folder they name>";
 const folderInput = (example: string): ChoiceInput => ({ flag: SETUP_FLAGS.repo, prompt: "Which folder?", hint: `for example ${example}`, placeholder: FOLDER_PLACEHOLDER });
 
-// ── T2 · Installed ─────────────────────────────────────────────────────────
+// ── T1 · Banner ────────────────────────────────────────────────────────────
 
-export interface InstalledInput {
+export interface BannerInput {
   readonly version: string;
+  /** What the terminal can draw (`colourDepth`); `none` keeps the letters plain. */
+  readonly depth: ColourDepth;
 }
 
-/** T2's finished line (terminal); the line C3 opens with (agent, json). */
-export function renderInstalled(input: InstalledInput, lane: SetupLane): string {
-  if (lane !== "terminal") return lines(["Rerail is installed. Nothing is on yet."]);
+/** T1: the footer's `R E R A I L` mark, in its colours, heading a set-up run in a terminal. Other lanes have none. */
+export function renderBanner(input: BannerInput, lane: SetupLane): string {
+  if (lane !== "terminal") return "";
+  const style = input.depth === "none" ? PLAIN_STYLE : TERMINAL_STYLE;
+  return lines(["", `  ${rerailMark(input.depth)}   ${style.dim(`set-up · ${clean(input.version)}`)}`, ""]);
+}
+
+// ── T2 · Installed ─────────────────────────────────────────────────────────
+
+/** T2's finished line (terminal), under the banner that names the version; the line C3 opens with (agent, json). */
+export function renderInstalled(lane: SetupLane): string {
+  if (lane !== "terminal") return lines(["Rerail is installed. Nothing is on yet, and your code is untouched."]);
   const style = styleFor(lane);
-  return lines([`${style.brand(MASCOT_HAPPY)}   rerail ${clean(input.version)} installed  ${style.dim("nothing is on yet")}`]);
+  return lines([`${style.brand(MASCOT_HAPPY)}  Rerail installed ${style.dim("· nothing is on yet, your code is untouched")}`]);
+}
+
+// ── T2 · On PATH ───────────────────────────────────────────────────────────
+
+export interface OnPathInput {
+  /** The launcher's directory, `~/.rerail/bin`. */
+  readonly binDir: string;
+  /** The startup files (or the Windows user Path) set-up added it to; empty when it could not. */
+  readonly locations: readonly string[];
+  /** Why set-up could not add it, when it could not. */
+  readonly failure?: string;
+  /** The person's home, shown as `~`. */
+  readonly home: string;
+}
+
+/** The line after T2 when set-up put the launcher on PATH, or could not. */
+export function renderOnPath(input: OnPathInput, lane: SetupLane): string {
+  const style = styleFor(lane);
+  const home = input.home.replace(/[\\/]+$/u, "");
+  const tilde = (path: string): string =>
+    clean(home !== "" && path.startsWith(home) && /^[\\/]/u.test(path.slice(home.length)) ? `~${path.slice(home.length)}` : path);
+  const binDir = tilde(input.binDir);
+  if (input.failure !== undefined) {
+    return lines([`${style.yellow("△")} Couldn’t add ${binDir} to PATH (${clean(input.failure)}). Add it yourself to run rerail from a terminal.`]);
+  }
+  const where = input.locations.map(tilde).join(" and ");
+  if (lane !== "terminal") return lines([`Added ${binDir} to PATH in ${where}. Open a new terminal to run rerail.`]);
+  return lines([bullet("You can run `rerail` from any new terminal", style)]);
+}
+
+// ── T2b · May Rerail read sessions ─────────────────────────────────────────
+
+export interface SessionsInput {
+  /** What every answer carries on, so the run picks up where it was: `--repo <folder>` when one was named. */
+  readonly carriedArgs: readonly string[];
+  readonly setupCommand?: string;
+  /**
+   * Internal testing: the hosts of the remotes this computer sends Rerail's data to (`rerail remote`), so the screen
+   * never says nothing is sent when something is; null when the remote configuration could not be read.
+   */
+  readonly remoteHosts?: readonly string[] | null;
+}
+
+/** What the sessions question says about where sessions go: nowhere, or each remote by its host, and how to stop. */
+function sessionsDestination(remoteHosts: readonly string[] | null | undefined): string[] {
+  if (remoteHosts === null) return ["  ! Rerail could not read its remote settings; run rerail remote list to see what it sends where."];
+  if (remoteHosts === undefined || remoteHosts.length === 0) return ["  ✓ Stays on this computer. Nothing is sent anywhere."];
+  const where = remoteHosts.join(", ");
+  return [
+    `  ! Sent to ${remoteHosts.length === 1 ? "the remote" : "the remotes"} set up on this computer: ${where}.`,
+    "    Stop it with rerail remote remove <name> (rerail remote list names them).",
+  ];
+}
+
+/** T2b: asked once on this computer, before set-up connects anything, so the person agrees to what Rerail reads. */
+export function sessionsQuestion(input: SessionsInput): QuestionForm {
+  return {
+    id: "sessions",
+    lead: [],
+    prompt: "Can Rerail see your coding agent sessions?",
+    trail: [
+      "Rerail sees what you ask your agent, what it does, and the files it edits,",
+      "so it can check the work against your rules.",
+      "",
+      ...sessionsDestination(input.remoteHosts),
+      "  ✓ You’re asked once, for every repo you start Rerail in.",
+    ],
+    choices: [
+      { answer: "allow", label: "Yes, allow", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
+      { answer: "decline", label: "No, cancel set-up", hint: "nothing changes", args: [SETUP_FLAGS.answer, "decline"] },
+    ],
+    ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
+  };
+}
+
+/** After "No": nothing new is connected or started. Coding agents connected before stay connected until removed. */
+export function renderSessionsDeclined(lane: SetupLane): string {
+  const style = styleFor(lane);
+  return lines([
+    ...(lane === "terminal" ? [""] : []),
+    bullet("Set-up stopped. Nothing new was connected or started.", style),
+    `  ${style.dim("Rerail needs your sessions to check rules. Run set-up again whenever you want to allow it.")}`,
+  ]);
 }
 
 // ── T3 / C3 · Ask before reading ───────────────────────────────────────────
@@ -229,22 +378,25 @@ export interface ReadRepoInput {
   readonly setupCommand?: string;
 }
 
-/** T3 / C3: Rerail names the repo, says what it will do, and asks before reading it. */
+/** T3 / C3: Rerail names the repo, says what scanning it does, and asks before reading it. */
 export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
   const repo = clean(input.repoName);
   const repoFlag = [SETUP_FLAGS.repo, clean(input.repoPath)];
   return {
     id: "read-repo",
     lead: [],
-    prompt: `You’re working in ${repo}. Can Rerail read it to pick the rule packs that look right?`,
+    prompt: `Find rule packs for ${repo}?`,
     trail: [
-      "It matches the files in this repo against the rule packs that come with Rerail.",
-      "It reads on this computer only. Nothing leaves it. Nothing is turned on yet.",
+      "Rule packs are ready-made sets of rules your coding agent must follow.",
+      "Rerail can scan this repo’s files and suggest packs that fit.",
+      "",
+      "  ✓ Scanning only reads files. Your code stays on this computer.",
+      "  ✓ Nothing is installed or turned on until you say yes.",
     ],
     choices: [
-      { answer: "yes", label: `Yes, read ${repo}`, args: [SETUP_FLAGS.answer, "yes", ...repoFlag] },
-      { answer: "other-folder", label: "Use a different folder…", hint: "for example “~/code/landing-page”", args: [], input: folderInput("~/code/landing-page") },
-      { answer: "pick-myself", label: "I’ll pick rule packs myself", hint: "Rerail won’t read the repo", args: [SETUP_FLAGS.answer, "pick-myself", ...repoFlag] },
+      { answer: "yes", label: `Yes, scan ${repo}`, args: [SETUP_FLAGS.answer, "yes", ...repoFlag] },
+      { answer: "other-folder", label: "Scan a different repo…", hint: "e.g. ~/code/landing-page", args: [], input: folderInput("~/code/landing-page") },
+      { answer: "pick-myself", label: "Skip, I’ll pick packs", hint: "Rerail won’t scan", args: [SETUP_FLAGS.answer, "pick-myself", ...repoFlag] },
     ],
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
   };
@@ -274,12 +426,19 @@ export interface RecommendedPacksInput {
   readonly repoName: string;
   readonly repoPath: string;
   readonly packs: readonly RecommendedPack[];
+  /** Every rule pack "Choose rule packs…" offers, the recommended ones first. */
+  readonly available: readonly AvailablePack[];
+  /** Rule packs set-up could not fetch or check, and why. */
+  readonly unavailable?: readonly string[];
+  /** The coding agents "Yes" connects. */
   readonly agentsFound: readonly CodingAgent[];
-  readonly agentsNotFound: readonly CodingAgent[];
   readonly setupCommand?: string;
   /** The rule settings starting Rerail takes from the repository's lint config; nothing shown when empty. */
   readonly lintConfig?: LintConfigInput;
 }
+
+/** At most this many lines say which rule packs set-up could not fetch; the rest are counted. */
+const MAX_UNAVAILABLE_LINES = 4;
 
 /** At most this many lint config lines; the rest are counted. */
 const MAX_LINT_CONFIG_LINES = 8;
@@ -311,66 +470,65 @@ function lintConfigLines(input: RecommendedPacksInput, style: Style): string[] {
 function packTable(packs: readonly RecommendedPack[], style: Style): string[] {
   const names = packs.map(pack => clean(pack.name));
   const nameWidth = Math.max(TABLE_MIN_PACK_WIDTH, ...names.map(name => name.length + 2));
-  const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why`);
+  const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why it fits`);
   const rows = packs.map(
     (pack, index) => `  ${(names[index] ?? "").padEnd(nameWidth)}${String(pack.ruleCount).padEnd(TABLE_RULES_WIDTH)}${clean(pack.reason)}`,
   );
   return [header, ...rows];
 }
 
-function recommendationLines(input: RecommendedPacksInput, style: Style): string[] {
-  const repo = clean(input.repoName);
-  const count = input.packs.length;
-  const found = input.agentsFound.length === 0 ? "no coding agents found" : agentNames(input.agentsFound).join(", ");
-  const notFound = input.agentsNotFound.length === 0 ? undefined : `not found: ${agentNames(input.agentsNotFound).join(", ")}`;
-  const intro =
-    count === 0
-      ? `  None of the rule packs that come with Rerail look right for ${repo}.`
-      : `  Of the rule packs that come with Rerail, ${count} ${count === 1 ? "looks" : "look"} right for ${repo}.`;
+/**
+ * The packs "Yes" would install over another version: every repository on this computer runs the installed one, so
+ * the person sees that before saying yes.
+ */
+function replaceLines(packs: readonly RecommendedPack[], style: Style): string[] {
+  return packs.flatMap(pack => pack.installed === null || pack.installed === pack.version
+    ? []
+    : [`  ${style.yellow("△")} ${clean(pack.packageName)}@${clean(pack.version)} replaces ${clean(pack.installed)}, which every repo on this computer uses.`]);
+}
+
+function unavailableLines(unavailable: readonly string[] | undefined, style: Style): string[] {
+  if (unavailable === undefined || unavailable.length === 0) return [];
+  const shown = unavailable.length > MAX_UNAVAILABLE_LINES ? unavailable.slice(0, MAX_UNAVAILABLE_LINES - 1) : unavailable;
+  const more = unavailable.length - shown.length;
   return [
-    intro,
-    ...(count === 0 ? [] : packTable(input.packs, style)),
-    ...lintConfigLines(input, style),
-    labelled("Connected to", found, style, notFound),
-    ...(count === 0 ? [] : [startModeLine(input.packs)]),
-    "  More rule packs are in the dashboard, off until you turn them on.",
+    "  Rule packs set-up could not use:",
+    ...shown.map(problem => `    ${style.dim(clean(problem))}`),
+    ...(more === 0 ? [] : [`    …and ${more} more.`]),
   ];
 }
 
-/** How the recommended rules start, from what each rule pack says: Steer, unless some start in Log. */
-function startModeLine(packs: readonly RecommendedPack[]): string {
-  const logged = packs.reduce((total, pack) => total + (pack.logRuleCount ?? 0), 0);
-  const steer = "your coding agent is told as it works, and fixes it.";
-  if (logged === 0) return `  Every rule starts in Steer: ${steer}`;
-  return `  Rules start in Steer: ${steer} ${logged === 1 ? "1 starts" : `${logged} start`} in Log, recorded only.`;
+function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): string[] {
+  const style = styleFor(lane);
+  const repo = clean(input.repoName);
+  const count = input.packs.length;
+  const scanned = count === 0
+    ? `Scanned ${repo}. None of Rerail’s rule packs fit it.`
+    : `Scanned ${repo}. ${count === 1 ? "1 rule pack fits" : `${count} rule packs fit`}:`;
+  const connecting = input.agentsFound.length === 0
+    ? ["  Will connect to: no coding agents found"]
+    : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, "  Adds /rerail commands and a status line to each. Connecting is free."];
+  return [
+    lane === "terminal" ? bullet(scanned, style) : scanned,
+    ...(count === 0 ? [] : ["", ...packTable(input.packs, style)]),
+    ...replaceLines(input.packs, style),
+    ...lintConfigLines(input, style),
+    ...unavailableLines(input.unavailable, style),
+    "",
+    ...connecting,
+  ];
 }
 
-function confirmQuestion(input: RecommendedPacksInput, prompt: string, lead: readonly string[]): QuestionForm {
-  const repoFlag = [SETUP_FLAGS.repo, clean(input.repoPath)];
-  const ids = input.agentsFound.map(agent => `${clean(agent.id)} (${clean(agent.name)})`).join(", ");
-  const idList = ids === "" ? "none found" : ids;
-  return {
-    id: "confirm-packs",
-    lead,
-    prompt,
-    trail: ["Nothing is on until you say yes."],
-    choices: [
-      { answer: "start", label: "Yes, start Rerail", args: [SETUP_FLAGS.answer, "start", ...repoFlag] },
-      { answer: "review", label: "Review them first", hint: "opens the dashboard", args: [SETUP_FLAGS.answer, "review", ...repoFlag] },
-      {
-        answer: "other",
-        label: "Type something else…",
-        hint: "only some coding agents, by id",
-        // Only some coding agents is what set-up can do with an answer of their own.
-        args: [SETUP_FLAGS.answer, "start", ...repoFlag],
-        input: { flag: SETUP_FLAGS.agents, prompt: "Which coding agents should Rerail connect to?", hint: `comma-separated ids from: ${idList}`, placeholder: "<ids>" },
-        agentText: command =>
-          `To start with only some coding agents: ${command}, with comma-separated ids from: ${idList}. For anything else, say what set-up can do and ask again.`,
-      },
-      { answer: "pick-myself", label: "I’ll pick rule packs myself", args: [SETUP_FLAGS.answer, "pick-myself", ...repoFlag] },
-    ],
-    ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
-  };
+/** `typescript@0.1.1,complexity@0.1.1`: what an answer installs, carried as `--packs`. */
+const packList = (packs: readonly { readonly id: string; readonly version: string }[]): string =>
+  packs.map(pack => `${clean(pack.id)}@${clean(pack.version)}`).join(",");
+
+/**
+ * The confirm question's answers, in its order: no "Choose rule packs…" when set-up has no pack to choose from, since
+ * nothing could be typed there and the person could not get back.
+ */
+export function confirmPacksAnswers(available: readonly unknown[]): readonly ConfirmPacksAnswer[] {
+  return available.length === 0 ? CONFIRM_PACKS_ANSWERS.filter(answer => answer !== "choose") : CONFIRM_PACKS_ANSWERS;
 }
 
 function startQuestion(input: RecommendedPacksInput): string {
@@ -380,111 +538,98 @@ function startQuestion(input: RecommendedPacksInput): string {
   return `Start Rerail in ${repo} with ${count === 1 ? "this rule pack" : `these ${count} rule packs`}?`;
 }
 
-/** T4 / C4: the rule packs that look right, each with its rule count and reason, then the confirm question. */
+/** T4 / C4: the rule packs that fit, each with its rule count and reason, then the confirm question. */
 export function recommendedPacksQuestion(input: RecommendedPacksInput, lane: SetupLane): QuestionForm {
-  const style = styleFor(lane);
-  const echo = lane === "terminal" ? [bullet(`You said yes. Rerail read ${clean(input.repoName)}.`, style)] : [];
-  return confirmQuestion(input, startQuestion(input), [...echo, ...recommendationLines(input, style)]);
+  const repoFlag = [SETUP_FLAGS.repo, clean(input.repoPath)];
+  // "Yes" carries the exact versions shown, so a later run installs what the person saw.
+  const packsFlag = input.packs.length === 0 ? [] : [SETUP_FLAGS.packs, packList(input.packs)];
+  const available = packList(input.available);
+  return {
+    id: "confirm-packs",
+    lead: recommendationLines(input, lane),
+    prompt: startQuestion(input),
+    trail: [
+      "When your coding agent breaks a rule, Rerail tells it, and the agent fixes",
+      "its own work. Rerail never edits your code itself.",
+    ],
+    choices: ([
+      { answer: "start", label: "Yes, start Rerail", args: [SETUP_FLAGS.answer, "start", ...repoFlag, ...packsFlag] },
+      {
+        answer: "choose",
+        label: "Change rule packs…",
+        hint: "here or in the dashboard",
+        args: [SETUP_FLAGS.answer, "choose", ...repoFlag],
+        input: { flag: SETUP_FLAGS.packs, prompt: "Which rule packs should Rerail install?", hint: `comma-separated, from: ${available}`, placeholder: "<packs>" },
+        agentText: command => `To choose the rule packs: ${command}, with comma-separated packs from: ${available}.`,
+      },
+      { answer: "not-now", label: "Not now", hint: "nothing is turned on", args: [SETUP_FLAGS.answer, "not-now"] },
+    ] satisfies Choice[]).filter(choice => confirmPacksAnswers(input.available).includes(choice.answer as ConfirmPacksAnswer)),
+    ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
+  };
 }
 
 export function renderRecommendedPacks(input: RecommendedPacksInput, lane: SetupLane): string {
   return renderQuestion(recommendedPacksQuestion(input, lane), lane);
 }
 
-// ── WR · Review in the dashboard, then confirm back here ───────────────────
+// ── T5 · Not now ───────────────────────────────────────────────────────────
 
-export interface PackReviewInput extends RecommendedPacksInput {
-  /** The dashboard's review page, e.g. `http://127.0.0.1:7777/#review`. */
-  readonly review: DashboardLink;
-}
-
-/**
- * After "Review them first": the review link, then the confirm question again.
- * Set-up does not wait on the browser; the person confirms back here.
- */
-export function packReviewQuestion(input: PackReviewInput, lane: SetupLane): QuestionForm {
+/** After "Not now": no rule pack installed, nothing connected or turned on. Set-up may have installed Rerail itself. */
+export function renderNotNow(lane: SetupLane): string {
   const style = styleFor(lane);
-  const lead = [
-    bullet("Review the rule packs in the dashboard. Switch off any you don’t want, then come back here to start Rerail.", style),
-    ...linkLines("Review", input.review, style),
-    ...lintConfigLines(input, style),
-  ];
-  return confirmQuestion(input, `Start Rerail in ${clean(input.repoName)} with the rule packs you kept on?`, lead);
-}
-
-export function renderPackReview(input: PackReviewInput, lane: SetupLane): string {
-  return renderQuestion(packReviewQuestion(input, lane), lane);
-}
-
-// ── T5 / C5 · Started ──────────────────────────────────────────────────────
-
-export interface StartedInput {
-  readonly repoName: string;
-  readonly packCount: number;
-  readonly connected: readonly CodingAgent[];
-}
-
-/** T5 / C5: Rerail is on in this repo, and which coding agents it is connected to. */
-export function renderStarted(input: StartedInput, lane: SetupLane): string {
-  const style = styleFor(lane);
-  const repo = clean(input.repoName);
-  const connected = connectedText(input.connected);
-  if (lane !== "terminal") return lines([`Rerail is on in ${repo}. Connected to ${connected}.`]);
+  const start = lane === "terminal" ? "rerail start" : "/rerail-start";
   return lines([
-    bullet(`Confirmed: ${plural(input.packCount, "rule pack")} · ${connected}`, style),
-    `${style.brand(MASCOT_HAPPY)}   Rerail is on in ${repo}.  ${style.dim(`connected to ${connected}`)}`,
-    style.dim("Enter to see the summary."),
+    ...(lane === "terminal" ? [""] : []),
+    bullet("Set-up stopped. No rule packs were installed and nothing was turned on.", style),
+    `  ${style.dim(`Start Rerail in this repo whenever you’re ready with ${start}.`)}`,
   ]);
 }
 
 // ── T6 / C6 / E6 · Summary ─────────────────────────────────────────────────
-
-/** "Manage rules" (or "Review") and its link. E6: the link is always shown, with one line when no browser opened. */
-function linkLines(label: string, link: DashboardLink, style: Style): string[] {
-  const url = clean(link.url);
-  if (link.browserOpened) return [labelled(label, url, style, "opening in your browser")];
-  if (link.linkOnly === true) return [labelled(label, url, style, "open this link")];
-  const reason = link.noBrowserReason === undefined ? "" : ` (${clean(link.noBrowserReason)})`;
-  return [labelled(label, url, style, "open this link"), `  ${style.yellow("△")} Couldn’t open a browser from here${reason}.`];
-}
-
-const YOUR_OWN_HINT = "create a rule in your own words, in a session";
-const SHOW_ME_HINT = "see Rerail catch and fix a broken rule";
 
 export interface SummaryInput {
   readonly repoName: string;
   /** The rule packs now on, by name. Never the rules themselves. */
   readonly packNames: readonly string[];
   readonly ruleCount: number;
-  readonly connected: readonly CodingAgent[];
   readonly dashboard: DashboardLink;
   /** Other repos where Rerail is already started; empty on a first set-up. */
   readonly otherStartedRepos?: readonly string[];
 }
 
-function otherReposLine(names: readonly string[], style: Style): string {
-  if (names.length === 0) {
-    return labelled("Other repos", "Rerail has not been started there", style, "type /rerail-start there to set one up");
-  }
-  return labelled("Other repos", `Rerail is also on in ${andList(names.map(clean))}`, style, "type /rerail-start in another repo to set it up");
+/** A summary row: its label, then its lines, each after the first under the one before. */
+function summaryRow(label: string, rows: readonly string[]): string[] {
+  return rows.map((row, index) => `  ${(index === 0 ? label : "").padEnd(SUMMARY_LABEL_WIDTH)}${row}`);
+}
+
+/** The dashboard link, and whether a browser opened it. E6: the link is always shown, with one line when none opened. */
+function manageRows(link: DashboardLink, style: Style): string[] {
+  const url = clean(link.url);
+  if (link.browserOpened) return [url, style.dim("Opening in your browser.")];
+  if (link.linkOnly === true) return [url];
+  // The reason (a remote session, BROWSER=none) means nothing to the person, so the line leaves it out.
+  return [url, `${style.yellow("△")} Couldn’t open your browser. Copy the link instead.`];
+}
+
+function otherReposLine(repo: string, others: readonly string[]): string {
+  const where = others.length === 0 ? `Rerail is only on in ${repo}.` : `Rerail is also on in ${andList(others.map(clean))}.`;
+  return `  ${where} To add another repo, type /rerail-start there.`;
 }
 
 function summaryLines(input: SummaryInput, style: Style): string[] {
+  const repo = clean(input.repoName);
   const packCount = input.packNames.length;
-  // No rule pack fit the repository: say so plainly, and where to add one.
-  const packsOn = packCount === 0
-    ? "No rule packs are on yet."
-    : `${plural(packCount, "rule pack")} ${packCount === 1 ? "is" : "are"} on, with ${plural(input.ruleCount, "rule")}.`;
+  // No rule pack fit the repository: say so plainly; the dashboard link is where to add one.
+  const packsOn = packCount === 0 ? "no rule packs on yet" : `${plural(packCount, "rule pack")}, ${plural(input.ruleCount, "rule")}`;
   return [
-    `  ${bullet(`Rerail is on in ${clean(input.repoName)}. ${packsOn}`, style)}`,
-    packCount === 0
-      ? labelled("Rule packs", "none yet", style, "add one in the dashboard if it suits this repo")
-      : labelled("Rule packs", input.packNames.map(clean).join(" · "), style),
-    labelled("Your own", "/rerail-create", style, YOUR_OWN_HINT),
-    otherReposLine(input.otherStartedRepos ?? [], style),
-    labelled("Connected", connectedText(input.connected), style),
-    labelled("Next", "Open a new session and type /rerail-show-me.", style, SHOW_ME_HINT),
-    ...linkLines("Manage rules", input.dashboard, style),
+    bullet(`Rerail is on in ${repo} · ${packsOn}`, style),
+    "",
+    ...summaryRow("Try it", ["Open a new agent session and type /rerail-show-me", "to watch Rerail catch and fix a broken rule."]),
+    ...summaryRow("Manage", manageRows(input.dashboard, style)),
+    "",
+    otherReposLine(repo, input.otherStartedRepos ?? []),
+    "  Type /rerail in any session for help and every command.",
+    "",
   ];
 }
 
@@ -500,23 +645,22 @@ const AGENT_TIPS_INTRO = "Only if they ask for tips, tell them this, as written:
 export function renderSummary(input: SummaryInput, lane: SetupLane): string {
   const style = styleFor(lane);
   const summary = summaryLines(input, style);
-  if (lane !== "agent") return lines(summary) + renderTips(lane);
+  // In the terminal a blank line first, so the summary stands apart from the answer before it.
+  if (lane === "terminal") return lines(["", ...summary]) + renderTips(lane);
+  if (lane === "json") return lines(summary) + renderTips(lane);
   return lines([AGENT_SUMMARY_INTRO, "", ...summary, "  Want a few tips for your first session? Just ask.", "", AGENT_TIPS_INTRO, ""]) + renderTips(lane);
 }
 
 // ── C6b · Tips ─────────────────────────────────────────────────────────────
 
 const TIP_LINES: readonly string[] = [
-  "  Three things can happen when a rule is broken.",
-  `  ${"Log".padEnd(LABEL_WIDTH)}Rerail records the violation for you. Your coding agent isn’t told.`,
-  `  ${"Steer".padEnd(LABEL_WIDTH)}Your coding agent is told as it works, and fixes it. It isn’t stopped.`,
-  `  ${"Block".padEnd(LABEL_WIDTH)}Your coding agent is stopped before it acts.  not in this version`,
-  "  Each rule starts in Steer or Log, as its rule pack says. See each rule in the dashboard.",
-  `  ${"/rerail".padEnd(COMMAND_WIDTH)}see what Rerail is doing, and every command`,
-  `  ${"/rerail-create".padEnd(COMMAND_WIDTH)}create a rule, in your own words`,
-  `  ${"/rerail-show-me".padEnd(COMMAND_WIDTH)}${SHOW_ME_HINT}, on this repo`,
-  `  ${"/rerail-stop".padEnd(COMMAND_WIDTH)}stop Rerail in this repo, straight away`,
-  "  Rerail never edits your instruction files.",
+  "  When a rule is broken, Rerail can:",
+  `    ${"Steer".padEnd(MODE_WIDTH)}${"tell your agent, so it fixes it".padEnd(MODE_TEXT_WIDTH)}most rules start here`,
+  `    ${"Log".padEnd(MODE_WIDTH)}only record it, for you to review`,
+  "  Change a rule’s mode in the dashboard.",
+  "",
+  `  ${"/rerail-create".padEnd(COMMAND_WIDTH)}write your own rule, in plain words`,
+  `  ${"/rerail-stop".padEnd(COMMAND_WIDTH)}stop Rerail in this repo`,
 ];
 
 /** C6b (agent, on request) and the tips below T6's divider (terminal dimmed, json plain). */
@@ -591,7 +735,6 @@ export function noRepoQuestion(input: NoRepoInput, lane: SetupLane): QuestionFor
     trail: ["Rerail reads it on this computer only, to recommend rule packs."],
     choices: [
       { answer: "folder", label: "Type the folder…", hint: "for example “~/code/acme-web”", args: [], input: folderInput("~/code/acme-web") },
-      { answer: "pick-myself", label: "I’ll pick rule packs myself", hint: "Rerail won’t read any code", args: [SETUP_FLAGS.answer, "pick-myself"] },
       { answer: "skip", label: "Skip for now", hint: "start Rerail later, in a session", args: [SETUP_FLAGS.answer, "skip"] },
     ],
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
@@ -602,46 +745,71 @@ export function renderNoRepoQuestion(input: NoRepoInput, lane: SetupLane): strin
   return renderQuestion(noRepoQuestion(input, lane), lane);
 }
 
-// ── E4 · "I'll pick rule packs myself" ─────────────────────────────────────
+// ── E4 · "Skip, I'll pick packs" ──────────────────────────────────────────
 
-export interface PickedMyselfInput {
+export interface PickPacksInput {
   readonly repoName: string;
-  readonly connected: readonly CodingAgent[];
-  readonly dashboard: DashboardLink;
+  readonly repoPath: string;
+  /** Every rule pack set-up fetched, those that fit first when it read the repository. */
+  readonly available: readonly AvailablePack[];
+  /** Packs set-up could not fetch or check, and why. */
+  readonly unavailable: readonly string[];
+  /** Overrides `rerail setup` in the agent lane's answer commands. */
+  readonly setupCommand?: string;
 }
 
-/** E4: Rerail is on without reading any code, and every rule pack is off. */
-export function renderPickedMyself(input: PickedMyselfInput, lane: SetupLane): string {
+/**
+ * E4, before it starts: every rule pack set-up fetched, to pick from. The repository is not read, so a pack picked
+ * here is added for the whole repository; "None for now" starts Rerail with none, as E4 did before packs were fetched.
+ * With nothing fetched, the question says why and offers only "None for now".
+ */
+export function pickPacksQuestion(input: PickPacksInput, lane: SetupLane): QuestionForm {
   const style = styleFor(lane);
-  const summary = [
-    `  ${bullet(`Rerail is on in ${clean(input.repoName)}. No rule packs are on yet.`, style)}`,
-    labelled("Connected", connectedText(input.connected), style),
-    labelled("Your own", "/rerail-create", style, YOUR_OWN_HINT),
-    labelled("Next", "Turn on the rule packs you want.", style, "then open a new session"),
-    labelled("Try it", "/rerail-show-me", style, `in a new session: ${SHOW_ME_HINT}`),
-    ...linkLines("Manage rules", input.dashboard, style),
-    "  Rerail did not read this repo. Changed your mind? Ask it to recommend rule packs, in the dashboard.",
-  ];
-  if (lane === "agent") return lines([AGENT_SUMMARY_INTRO, "", ...summary]);
-  if (lane === "json") return lines(summary);
-  return lines([bullet("You chose to pick rule packs yourself. Rerail did not read any code.", style), ...summary]);
+  const repoFlag = [SETUP_FLAGS.repo, clean(input.repoPath)];
+  const available = packList(input.available);
+  const none = { answer: "none", label: "None for now", hint: "add rule packs later", args: [SETUP_FLAGS.answer, "pick-myself", ...repoFlag, SETUP_FLAGS.packs, NO_PACKS] };
+  return {
+    id: "pick-packs",
+    lead: [
+      // The terminal lists the packs once, numbered, after "Choose rule packs…" (`renderPacksPrompt`).
+      ...(input.available.length === 0
+        ? ["  Set-up could not get any of Rerail’s rule packs."]
+        : lane === "terminal" ? [] : [
+          "  Rerail’s rule packs, from npm:",
+          ...input.available.map(pack => `    ${withHint(`${clean(pack.id)}@${clean(pack.version)}  ${clean(pack.name)}`, pack.reason === undefined ? undefined : clean(pack.reason), style)}`),
+        ]),
+      ...unavailableLines(input.unavailable, style),
+    ],
+    prompt: `Which rule packs should Rerail start with in ${clean(input.repoName)}?`,
+    trail: ["Each one you pick is installed from npm and added for the whole repo. Nothing is installed until you pick."],
+    choices: input.available.length === 0 ? [none] : [
+      {
+        answer: "choose",
+        label: "Choose rule packs…",
+        args: [SETUP_FLAGS.answer, "pick-myself", ...repoFlag],
+        input: { flag: SETUP_FLAGS.packs, prompt: "Which rule packs should Rerail install?", hint: `comma-separated, from: ${available}`, placeholder: "<packs>" },
+        agentText: command => `To choose the rule packs: ${command}, with comma-separated packs from: ${available}.`,
+      },
+      none,
+    ],
+    ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
+  };
 }
 
 // ── E5 · Skip for now ──────────────────────────────────────────────────────
 
-export interface SkippedInput {
-  readonly connected: readonly CodingAgent[];
-}
-
 /** E5: installed and connected, on in no repo; how to start it later. */
-export function renderSkipped(input: SkippedInput, lane: SetupLane): string {
+export function renderSkipped(lane: SetupLane): string {
   const style = styleFor(lane);
   const summary = [
-    `  ${bullet("Rerail is installed. It is not on in any repo yet.", style)}`,
-    labelled("Connected", connectedText(input.connected), style),
-    "  Next: open a session in one of your repos and type /rerail-start.",
-    "  Rerail then sets itself up for that repo: it asks, shows the rule packs that look right, and starts.",
+    bullet("Rerail is installed · not on in any repo yet", style),
+    "",
+    ...summaryRow("Start", ["Open a session in one of your repos and type /rerail-start.", "Rerail asks, suggests rule packs that fit, and starts there."]),
+    "",
+    "  Type /rerail in any session for help and every command.",
+    "",
   ];
+  if (lane === "terminal") return lines(["", ...summary]);
   return lines(lane === "agent" ? [AGENT_SUMMARY_INTRO, "", ...summary] : summary);
 }
 
@@ -662,10 +830,15 @@ export function renderStoppedRepo(input: StoppedRepoInput, lane: SetupLane): str
 
 /** Under a question in the terminal: Enter takes the answer the cursor is on. */
 export function renderAnswerPrompt(): string {
-  return `  ${TERMINAL_STYLE.dim("Type a number, or press Enter for 1:")} `;
+  return `\n${TERMINAL_STYLE.dim("Enter for 1, or type a number:")} `;
 }
 
-/** After "Use a different folder…" or "Type the folder…". */
+/** A typed answer that names none of the question's answers; the question is asked again. */
+export function renderAnswerHint(count: number): string {
+  return TERMINAL_STYLE.yellow(`Type a number from 1 to ${count}.`);
+}
+
+/** After "Scan a different repo…" or "Type the folder…". */
 export function renderFolderPrompt(): string {
   return `  ${TERMINAL_STYLE.bold("Which folder?")} `;
 }
@@ -680,12 +853,14 @@ export function renderFolderNotFound(input: FolderNotFoundInput, lane: SetupLane
   return lines([`${style.yellow("△")} There is no folder at ${clean(input.folder)}. Nothing was read.`]);
 }
 
-export interface AgentsPromptInput {
-  readonly found: readonly CodingAgent[];
+export interface PacksPromptInput {
+  readonly available: readonly AvailablePack[];
 }
 
-/** After "Type something else…": which coding agents to connect. */
-export function renderAgentsPrompt(input: AgentsPromptInput): string {
-  const example = input.found.length === 0 ? "claude-code, cursor" : input.found.map(agent => clean(agent.id)).join(", ");
-  return `  ${TERMINAL_STYLE.bold("Which coding agents should Rerail connect to?")} ${TERMINAL_STYLE.dim(`for example “${example}”:`)} `;
+/** After "Choose rule packs…": every rule pack set-up fetched, numbered, then which to install. */
+export function renderPacksPrompt(input: PacksPromptInput): string {
+  const style = TERMINAL_STYLE;
+  const rows = input.available.map((pack, index) =>
+    `  ${index + 1}. ${clean(pack.id)}@${clean(pack.version)}  ${withHint(clean(pack.name), pack.reason === undefined ? undefined : clean(pack.reason), style)}`);
+  return [...rows, `  ${style.bold("Which rule packs should Rerail install?")} ${style.dim("numbers or ids, comma-separated:")} `].join("\n");
 }

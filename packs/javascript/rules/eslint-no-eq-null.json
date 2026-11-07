@@ -3,7 +3,7 @@
   "id": "eslint-no-eq-null",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-eq-null` rule (https://eslint.org/docs/latest/rules/no-eq-null). Reports `==` and `!=` with a `null` operand (through parentheses).",
+  "description": "Use strict equality when comparing with null; loose equality also matches undefined.",
   "scope": {
     "include": [
       "**/*"

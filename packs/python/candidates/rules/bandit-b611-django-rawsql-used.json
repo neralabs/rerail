@@ -3,7 +3,7 @@
   "id": "bandit-b611-django-rawsql-used",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect nonconstant SQL passed to Django RawSQL",
+  "description": "Pass a constant SQL string to Django RawSQL and bind values as parameters; dynamic SQL opens the query to SQL injection.",
   "scope": {
     "include": [
       "**/*.py"

@@ -1,0 +1,996 @@
+// data-layer-serverplan-quality in Rerail logic: clause `quality-contracts-1` (part file; the rule's header, `.policy`
+// and its other clauses are in serverplan_quality.rdl). Options at their defaults: oracleAnalyzer false, entryPoint
+// "all" (every `diagnostics_N` stage takes its `all` case; the matchers keep their `$option` objects verbatim).
+// Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json.
+//
+// One relation per SQL stage, under the stage's name. The clause is per file (partitionBy file): a row keyed by
+// (__path, __start) is a node, and a join on __path is implied by the node. W's `syntax` declaration (`nodes`, `edges`,
+// `ownership`) maps to the tape: `nodes` = `snode` (gated by `syntax_gate`, excludeKinds dropped), `parent` /
+// `edge_parent` / `edges` = `child`, `X_id` / `X_start` / `X_kind` / `X_source` = `field` + `node` / `kind` / `text`,
+// `ordinal` = `ordinal` (rank among the visible children), `ownership.fn` / `.cls` = nearest function / class
+// ancestor-or-self (`own_fn`, `own_cls`; `top_fn` is not read). The `descendants` and `import_descendants` reachability
+// stages (ancestor-or-self over visible nodes, from their roots) are `@within`. A nullable column is a side relation
+// that holds where it is not NULL; a boolean column is a side relation that holds where it is true.
+//
+// Builtins: @rx_matches, @rx_extract, @rx_replace, @substr, @length, @add, @sub, @concat, @printf, @instr, @lower,
+// @trim, @within (tape); new: @id (a node's `nodes.id` as text, for identities and atom ids), @like (SQL LIKE: ASCII
+// case-insensitive, `%` any run), @cast_int (SQL CAST(x AS INTEGER)), @substr_bytes (SQL substr over CAST(x AS BLOB),
+// byte positions, read back as text). A builtin with no value (SQL NULL) binds nothing.
+//
+// OUTSIDE: call_paths (stage 30) — a path-text carrier: each node's dotted text is concatenated along attribute/call
+//   chains (`path || suffix` recursion over path_edges, E0 #20, no lattice and no non-recursive tape form); declared
+//   `.input call_paths` so execution_calls and its readers parse.
+// missing fact: `parse` captures (raw_fstring_parts PART, quoted_atoms ATOM) are nodes of a string's re-parse
+//   (grammars pythonFString, annotation), not tape nodes; they are read here through `node` / `text` as if the tape
+//   held them.
+// findings layer (§8): the final query's UNION ALL multiplicity (a set here) and its row key [detector, issue,
+//   identity]; `identity` and `detector` stay columns of diagnostics_N, `finding`'s key is `issue` (the clause's code).
+// findings layer (§8): file_starts rows anchor at `file.start`; here the module node they match.
+// LIMIT/choice: `LIMIT 1` over the file's module node (scopes, scope_owners): a file has one module node; no choice.
+// ties: none — every row_number() (class_levels, last_methods, last_module_functions, module_string_values) orders
+//   by a node's start within one partition, and distinct nodes there have distinct starts.
+// scoped_nodes (E0 #19), scope_chain (E0 #22): tree recursions, written without recursion — scoped_nodes as the
+//   nearest def/class/lambda strict ancestor (`nearest`), scope_chain's depth as a count of enclosing functions.
+
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl cdef(kind: symbol)
+cdef("class_definition").
+.decl walk_stop(kind: symbol)
+walk_stop("function_definition"). walk_stop("class_definition"). walk_stop("lambda").
+
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+
+// ---- inputs (evidence) ----
+// syntax_gate: the files whose syntax tables load (W's `gate`).
+.decl syntax_gate(d: number)
+syntax_gate(d) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"any": [{"filePath": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$"}}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)"}}]}]}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:l9750_graphql/|l2080_lazy_orm/|l2060_query_builder/|l9900_auto_api/)"}}]}]}}}}, "default": {"filePath": {"regex": "(?s).*"}}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "_check_batched_step_construction_sets_batching_hint": {"filePath": {"regex": "(?s).*"}}, "_check_branch_fetch_batchability_helper": {"filePath": {"regex": "(?s).*"}}, "_check_can_batch_lock_snapshot_policy": {"filePath": {"regex": "(?s).*"}}, "_check_compile_direct_io": {"filePath": {"regex": "(?s).*"}}, "_check_conditional_dialect_test_compiler_seam": {"filePath": {"regex": "(?s).*"}}, "_check_conditional_serverplan_fallback": {"filePath": {"regex": "(?s).*"}}, "_check_conditional_sql_compile_ownership": {"filePath": {"regex": "(?s).*"}}, "_check_contract_first_relationship_runtime": {"filePath": {"regex": "(?s).*"}}, "_check_control_flow_child_compile_calls": {"filePath": {"regex": "(?s).*"}}, "_check_duck_typed_context": {"filePath": {"regex": "(?s).*"}}, "_check_dynamic_child_steps": {"filePath": {"regex": "(?s).*"}}, "_check_executor_execute_runtime_bypass": {"filePath": {"regex": "(?s).*"}}, "_check_executor_python_execution": {"filePath": {"regex": "(?s).*"}}, "_check_forbidden_sqlcompoundwrite_usage": {"filePath": {"regex": "(?s).*"}}, "_check_graphql_serverplan_boundary": {"filePath": {"regex": "(?s).*"}}, "_check_imperative_lazy_resolution": {"filePath": {"regex": "(?s).*"}}, "_check_imperative_preop_execution": {"filePath": {"regex": "(?s).*"}}, "_check_include_through_shared_lowering": {"filePath": {"regex": "(?s).*"}}, "_check_intent_boilerplate": {"filePath": {"regex": "(?s).*"}}, "_check_lifecycle_entanglement": {"filePath": {"regex": "(?s).*"}}, "_check_materialized_row_semantics_fallback": {"filePath": {"regex": "(?s).*"}}, "_check_order_by_compile_helper_escape_hatches": {"filePath": {"regex": "(?s).*"}}, "_check_plan_analysis_field_reassignment": {"filePath": {"regex": "(?s).*"}}, "_check_plan_analysis_object_id_cache": {"filePath": {"regex": "(?s).*"}}, "_check_postop_hydration": {"filePath": {"regex": "(?s).*"}}, "_check_projection_helper_execution_fallback": {"filePath": {"regex": "(?s).*"}}, "_check_result_resolution_duplication": {"filePath": {"regex": "(?s).*"}}, "_check_runtime_replay_batching_uses_structured_analysis": {"filePath": {"regex": "(?s).*"}}, "_check_runtime_result_compiled_steps": {"filePath": {"regex": "(?s).*"}}, "_check_runtime_sequential_step_optins": {"filePath": {"regex": "(?s).*"}}, "_check_runtime_sequential_strategies": {"filePath": {"regex": "(?s).*"}}, "_check_serverplan_cleanup_ratchets": {"filePath": {"regex": "(?s).*"}}, "_check_serverplan_runtime_state_ingress": {"filePath": {"regex": "(?s).*"}}, "_check_sql_statement_batch_requires_category": {"filePath": {"regex": "(?s).*"}}, "_check_sync_async_duplication": {"filePath": {"regex": "(?s).*"}}, "_check_unused_raw_data": {"filePath": {"regex": "(?s).*"}}, "_check_vector_scope_filters_use_expressions": {"filePath": {"regex": "(?s).*"}}, "_check_versioned_forking": {"filePath": {"regex": "(?s).*"}}, "_check_serverplan_quality_source": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"kind": "module"}]}]}}).
+.decl file_starts(m: node)
+file_starts(m) :- ast(d, m, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"any": [{"filePath": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$"}}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)"}}]}]}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:l9750_graphql/|l2080_lazy_orm/|l2060_query_builder/|l9900_auto_api/)"}}]}]}}}}, "default": {"filePath": {"regex": "(?s).*"}}}, {"kind": "module"}]}}).
+// DECODED is a transform output: text.
+.decl raw_strings(x: node, value: symbol)
+raw_strings(x, v) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"any": [{"filePath": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$"}}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)"}}]}]}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:l9750_graphql/|l2080_lazy_orm/|l2060_query_builder/|l9900_auto_api/)"}}]}]}}}}, "default": {"filePath": {"regex": "(?s).*"}}}, {"all": [{"any": [{"all": [{"kind": "string"}, {"regex": "(?i)^[ru]*['\\\"]"}, {"not": {"inside": {"kind": "concatenated_string", "stopBy": "neighbor"}}}]}, {"all": [{"kind": "concatenated_string"}, {"not": {"has": {"kind": "interpolation", "stopBy": "end"}}}, {"not": {"has": {"all": [{"kind": "string"}, {"regex": "(?i)^(?:fr|rf|f)['\\\"]"}], "stopBy": "end"}}}]}]}, {"pattern": "$STRING"}]}]}, "transform": {"DECODED": {"replace": {"source": "$STRING", "value": true, "replace": "\\b\\B", "by": ""}}}}, DECODED: v).
+// each PART, anchored at PART (a node of the f-string's re-parse).
+.decl raw_fstring_parts(x: node, value: symbol)
+raw_fstring_parts(p, v) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"any": [{"filePath": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$"}}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)"}}]}]}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:l9750_graphql/|l2080_lazy_orm/|l2060_query_builder/|l9900_auto_api/)"}}]}]}}}}, "default": {"filePath": {"regex": "(?s).*"}}}, {"all": [{"any": [{"all": [{"kind": "string"}, {"regex": "(?i)^(?:fr|rf|f)[\"']"}, {"not": {"inside": {"kind": "concatenated_string", "stopBy": "neighbor"}}}]}, {"all": [{"kind": "concatenated_string"}, {"has": {"all": [{"kind": "string"}, {"regex": "(?i)^(?:fr|rf|f)[\"']"}], "stopBy": "end"}}]}]}, {"parse": {"grammar": "pythonFString", "has": {"kind": "literal", "capture": "PART"}}}]}]}}, PART: p), text(p, v).
+// each IMPORTED, anchored at the statement. ALIAS is bound by one `any` branch only: read by the tree relations of
+// that branch (IMPORTED is the `name` of an aliased_import whose `alias` is ALIAS).
+.decl from_imports(st: node, imported: node, module: symbol, name: symbol)
+from_imports(st, i, m, n) :- ast(d, st, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"any": [{"filePath": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$"}}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)"}}]}]}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:l9750_graphql/|l2080_lazy_orm/|l2060_query_builder/|l9900_auto_api/)"}}]}]}}}}, "default": {"filePath": {"regex": "(?s).*"}}}, {"all": [{"kind": "import_from_statement"}, {"has": {"pattern": "$MODULE", "stopBy": "neighbor", "field": "module_name"}}, {"has": {"any": [{"all": [{"kind": "dotted_name"}, {"pattern": "$IMPORTED"}]}, {"all": [{"kind": "aliased_import"}, {"has": {"pattern": "$IMPORTED", "stopBy": "neighbor", "field": "name"}}, {"has": {"pattern": "$ALIAS", "stopBy": "neighbor", "field": "alias"}}]}], "stopBy": "neighbor", "field": "name"}}]}]}}, MODULE: mn, IMPORTED: i), text(mn, m), text(i, n).
+.decl from_import_alias(imported: node, alias: symbol)
+from_import_alias(i, a) :- from_imports(_, i, _, _), field(ai, "name", i), kind(ai, "aliased_import"), field(ai, "alias", x), text(x, a).
+// COALESCE(alias, '')
+.decl from_import_alias_text(imported: node, alias: symbol)
+from_import_alias_text(i, a) :- from_import_alias(i, a).
+from_import_alias_text(i, "") :- from_imports(_, i, _, _), !from_import_alias(i, _).
+.decl direct_imports(st: node, imported: node, name: symbol)
+direct_imports(st, i, n) :- ast(d, st, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"any": [{"filePath": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$"}}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)"}}]}]}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:l9750_graphql/|l2080_lazy_orm/|l2060_query_builder/|l9900_auto_api/)"}}]}]}}}}, "default": {"filePath": {"regex": "(?s).*"}}}, {"all": [{"kind": "import_statement"}, {"has": {"any": [{"all": [{"kind": "dotted_name"}, {"pattern": "$IMPORTED"}]}, {"all": [{"kind": "aliased_import"}, {"has": {"pattern": "$IMPORTED", "stopBy": "neighbor", "field": "name"}}, {"has": {"pattern": "$ALIAS", "stopBy": "neighbor", "field": "alias"}}]}], "stopBy": "neighbor", "field": "name"}}]}]}}, IMPORTED: i), text(i, n).
+.decl direct_import_alias(imported: node, alias: symbol)
+direct_import_alias(i, a) :- direct_imports(_, i, _), field(ai, "name", i), kind(ai, "aliased_import"), field(ai, "alias", x), text(x, a).
+// each ATOM (a node of the annotation string's re-parse), anchored at the string; ANN is the assignment.
+.decl quoted_atoms(q: node, ann: node, atom: symbol)
+quoted_atoms(q, ann, atom) :- ast(d, q, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"any": [{"filePath": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$"}}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)"}}]}]}, {"all": [{"not": {"filePath": {"regex": "(?:^|/)__init__\\.py$"}}}, {"filePath": {"regex": "^(?:l9750_graphql/|l2080_lazy_orm/|l2060_query_builder/|l9900_auto_api/)"}}]}]}}}}, "default": {"filePath": {"regex": "(?s).*"}}}, {"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"inside": {"all": [{"kind": "assignment"}, {"pattern": "$ANN"}], "stopBy": "end", "field": "type"}}, {"parse": {"grammar": "annotation", "has": {"any": [{"all": [{"kind": "identifier"}, {"not": {"inside": {"kind": "attribute", "stopBy": "neighbor"}}}, {"capture": "ATOM"}]}, {"all": [{"kind": "attribute"}, {"not": {"inside": {"kind": "attribute", "stopBy": "neighbor"}}}, {"capture": "ATOM"}]}], "stopBy": "end"}}}]}]}}, ANN: ann, ATOM: at), text(at, atom).
+
+// ---- the SQL's IN-lists ----
+.decl in_list(list: symbol, v: symbol)
+in_list("excluded_kind", "comment"). in_list("excluded_kind", "string_start"). in_list("excluded_kind", "string_content").
+in_list("excluded_kind", "string_end"). in_list("excluded_kind", "escape_sequence"). in_list("excluded_kind", "line_continuation").
+in_list("desc_root_kind", "function_definition"). in_list("desc_root_kind", "class_definition"). in_list("desc_root_kind", "for_statement").
+in_list("desc_root_kind", "for_in_clause"). in_list("desc_root_kind", "assignment"). in_list("desc_root_kind", "delete_statement").
+in_list("desc_root_kind", "block"). in_list("desc_root_kind", "if_statement"). in_list("desc_root_kind", "elif_clause").
+in_list("desc_root_kind", "match_statement").
+in_list("desc_root_field", "name"). in_list("desc_root_field", "left"). in_list("desc_root_field", "right"). in_list("desc_root_field", "value").
+in_list("desc_root_field", "type"). in_list("desc_root_field", "function"). in_list("desc_root_field", "arguments"). in_list("desc_root_field", "object").
+in_list("desc_root_field", "body"). in_list("desc_root_field", "parameters"). in_list("desc_root_field", "condition"). in_list("desc_root_field", "consequence").
+in_list("non_argument", "comment"). in_list("non_argument", "keyword_argument"). in_list("non_argument", "list_splat"). in_list("non_argument", "dictionary_splat").
+in_list("param_kind", "identifier"). in_list("param_kind", "typed_parameter"). in_list("param_kind", "default_parameter"). in_list("param_kind", "typed_default_parameter").
+in_list("primary_path", "api/l2070_batching/executor.py"). in_list("primary_path", "impl/common/l2070_server_plan/base_server_plan.py").
+in_list("primary_path", "impl/common/l2070_server_plan/plan_helpers.py"). in_list("primary_path", "impl/common/l2070_server_plan/sql_backend_executor.py").
+in_list("primary_path", "l2070_batching/conditional_step.py"). in_list("primary_path", "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py").
+in_list("primary_path", "l2070_batching/compilation.py"). in_list("primary_path", "l2070_batching/optimizer.py"). in_list("primary_path", "l2070_batching/plan_prerequisites.py").
+in_list("name_owner", "function_definition"). in_list("name_owner", "class_definition"). in_list("name_owner", "keyword_argument").
+in_list("literal_kind", "string"). in_list("literal_kind", "concatenated_string"). in_list("literal_kind", "integer"). in_list("literal_kind", "float").
+in_list("literal_kind", "true"). in_list("literal_kind", "false"). in_list("literal_kind", "none").
+in_list("bool_kind", "true"). in_list("bool_kind", "false").
+in_list("ident_or_attr", "identifier"). in_list("ident_or_attr", "attribute").
+in_list("projection_callee", "dict"). in_list("projection_callee", "model_dump").
+in_list("build_callee", "_add_intent"). in_list("build_callee", "_add_intent_by_ref"). in_list("build_callee", "_get_lazy_plan").
+in_list("build_callee", "enqueue_lazy_plan_intent"). in_list("build_callee", "execute_later"). in_list("build_callee", "return_result").
+in_list("direct_callee", "execute"). in_list("direct_callee", "execute_async"). in_list("direct_callee", "graph"). in_list("direct_callee", "graph_async").
+in_list("direct_callee", "load_with_includes"). in_list("direct_callee", "load_with_includes_async"). in_list("direct_callee", "query"). in_list("direct_callee", "query_async").
+in_list("branch_kind", "if_statement"). in_list("branch_kind", "elif_clause").
+in_list("else_kind", "else_clause"). in_list("else_kind", "elif_clause").
+in_list("eq_op", "=="). in_list("eq_op", "!="). in_list("in_op", "in"). in_list("in_op", "not in").
+in_list("collection_kind", "set"). in_list("collection_kind", "list"). in_list("collection_kind", "tuple").
+in_list("scalar_kind", "integer"). in_list("scalar_kind", "float"). in_list("scalar_kind", "true"). in_list("scalar_kind", "false"). in_list("scalar_kind", "none").
+in_list("preop_runtime", "_execute_compound_async"). in_list("preop_runtime", "_execute_compound_sync"). in_list("preop_runtime", "_run_sync").
+in_list("preop_runtime", "async_pre_op"). in_list("preop_runtime", "build_sql_fts_components"). in_list("preop_runtime", "build_sql_fts_components_async").
+in_list("preop_runtime", "execute_async"). in_list("preop_runtime", "execute_ir"). in_list("preop_runtime", "execute_ir_async"). in_list("preop_runtime", "execute_sync").
+in_list("preop_runtime", "get_sql_fts_components"). in_list("preop_runtime", "get_sql_fts_components_async"). in_list("preop_runtime", "materialize_ir").
+in_list("preop_runtime", "pre_op"). in_list("preop_runtime", "search_unversioned_scores"). in_list("preop_runtime", "search_unversioned_scores_async").
+in_list("scope_kind", "module"). in_list("scope_kind", "class_definition"). in_list("scope_kind", "function_definition").
+in_list("left_binding", "assignment"). in_list("left_binding", "augmented_assignment"). in_list("left_binding", "for_statement"). in_list("left_binding", "for_in_clause").
+in_list("fdcd", "function_definition"). in_list("fdcd", "class_definition").
+in_list("metadata_origin", "typing.Literal"). in_list("metadata_origin", "typing_extensions.Literal").
+in_list("metadata_origin", "typing.Annotated"). in_list("metadata_origin", "typing_extensions.Annotated").
+in_list("literal_origin", "typing.Literal"). in_list("literal_origin", "typing_extensions.Literal").
+
+// ---- the syntax tables over the tape ----
+.decl snode(n: node)
+snode(n) :- node(d, n, k, _, _), syntax_gate(d), !in_list("excluded_kind", k).
+.decl module_root(d: number, m: node)
+module_root(d, m) :- node(d, m, "module", _, _), snode(m).
+.decl visible_child(p: node, c: node)
+visible_child(p, c) :- child(p, c, _), snode(c).
+.decl child_count(p: node, k: number)
+child_count(p, k) :- visible_child(p, _), k = count : { visible_child(p, _) }.
+// nodes.ordinal: the rank among the visible children of the parent.
+.decl sib_upto(n: node, m: node)
+sib_upto(n, m) :- child(p, n, i), snode(n), child(p, m, j), snode(m), j <= i.
+.decl ordinal(n: node, i: number)
+ordinal(n, i) :- sib_upto(n, _), k = count : { sib_upto(n, _) }, i = @sub(k, 1).
+// ownership.fn / ownership.cls: nearest function / class ancestor-or-self.
+.decl own_fn(n: node, f: node)
+own_fn(n, n) :- snode(n), kind(n, "function_definition").
+own_fn(n, f) :- snode(n), kind(n, k), k != "function_definition", nearest(n, f, fdef).
+.decl own_cls(n: node, c: node)
+own_cls(n, n) :- snode(n), kind(n, "class_definition").
+own_cls(n, c) :- snode(n), kind(n, k), k != "class_definition", nearest(n, c, cdef).
+.decl has_own_fn(n: node)
+has_own_fn(n) :- own_fn(n, _).
+.decl has_own_cls(n: node)
+has_own_cls(n) :- own_cls(n, _).
+
+// ---- functions, classes, methods, attributes, calls, arguments, keywords ----
+// name = name_source: a function_definition / class_definition always has its `name`.
+.decl functions(f: node, name: symbol)
+functions(f, name) :- snode(f), kind(f, "function_definition"), field(f, "name", x), text(x, name).
+.decl classes(c: node, name: symbol)
+classes(c, name) :- snode(c), kind(c, "class_definition"), field(c, "name", x), text(x, name).
+.decl methods(m: node, cls: node, name: symbol, class_name: symbol)
+methods(f, c, n, cn) :- functions(f, n), classes(c, cn), field(c, "body", b), child(b, f, _).
+methods(f, c, n, cn) :- functions(f, n), classes(c, cn), field(c, "body", b), child(w, f, _), snode(w), kind(w, "decorated_definition"), child(b, w, _).
+// attr = attribute_source, object = object_id, object_text = object_source: an attribute always has both fields.
+.decl attributes(a: node, attr: symbol, object: node, object_text: symbol)
+attributes(a, attr, o, ot) :- snode(a), kind(a, "attribute"), field(a, "attribute", x), text(x, attr), field(a, "object", o), text(o, ot).
+.decl is_attribute(a: node)
+is_attribute(a) :- attributes(a, _, _, _).
+// callee = COALESCE(a.attr, f.text); receiver = a.object (nullable).
+.decl calls(c: node, callee_id: node, callee_kind: symbol, full_callee: symbol, callee: symbol)
+calls(c, f, k, t, a) :- snode(c), kind(c, "call"), field(c, "function", f), snode(f), kind(f, k), text(f, t), attributes(f, a, _, _).
+calls(c, f, k, t, t) :- snode(c), kind(c, "call"), field(c, "function", f), snode(f), kind(f, k), text(f, t), !is_attribute(f).
+.decl calls_receiver(c: node, receiver: node)
+calls_receiver(c, o) :- calls(c, f, _, _, _), attributes(f, _, o, _).
+// position = row_number() OVER (PARTITION BY call ORDER BY __start) - 1: the count of arguments up to this one, less one.
+.decl argument_node(call: node, a: node)
+argument_node(c, n) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, n, _), snode(n), kind(n, k), !in_list("non_argument", k).
+.decl argument_upto(call: node, a: node, b: node)
+argument_upto(c, n, m) :- argument_node(c, n), argument_node(c, m), start(n, s), start(m, t), t <= s.
+.decl arguments(call: node, a: node, position: number)
+arguments(c, n, p) :- argument_node(c, n), k = count : { argument_upto(c, n, _) }, p = @sub(k, 1).
+.decl has_argument(call: node)
+has_argument(c) :- arguments(c, _, _).
+.decl keywords(call: node, keyword: node, name: symbol, value: node)
+keywords(c, k, name, v) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, k, _), snode(k), kind(k, "keyword_argument"),
+    field(k, "name", kn), snode(kn), text(kn, name), field(k, "value", v), snode(v).
+.decl keyword_named(call: node, name: symbol)
+keyword_named(c, name) :- keywords(c, _, name, _).
+
+// ---- descendants: ancestor-or-self pairs below the roots (a `reachability` syntax stage) ----
+.decl desc_root(r: node)
+desc_root(r) :- snode(r), kind(r, k), in_list("desc_root_kind", k).
+desc_root(p) :- snode(n), kind(n, "for_in_clause"), child(p, n, _).
+desc_root(c) :- snode(c), child(p, c, _), snode(p), kind(p, "comparison_operator").
+desc_root(c) :- snode(p), field(p, f, c), in_list("desc_root_field", f).
+desc_root(a) :- arguments(_, a, _).
+.decl descendants(root: node, n: node)
+descendants(r, r) :- desc_root(r), snode(r).
+descendants(r, n) :- desc_root(r), docof(r, d), node(d, n, _, _, _), snode(n), @within(n, r) = 1.
+
+// ---- returns, assignments, parameters ----
+.decl returns(r: node, value: node)
+returns(r, v) :- snode(r), kind(r, "return_statement"), visible_child(r, v).
+.decl returns_fn(r: node, fn: node)
+returns_fn(r, f) :- returns(r, _), own_fn(r, f).
+// target = left_id; value = right_id (nullable); typed = type_start IS NOT NULL.
+.decl assignments(a: node, target: node)
+assignments(a, l) :- snode(a), kind(a, "assignment"), field(a, "left", l), snode(l).
+.decl assignment_value(a: node, value: node)
+assignment_value(a, r) :- assignments(a, _), field(a, "right", r), snode(r).
+.decl assignment_typed(a: node)
+assignment_typed(a) :- assignments(a, _), field(a, "type", _).
+.decl assignment_fn(a: node, fn: node)
+assignment_fn(a, f) :- assignments(a, _), own_fn(a, f).
+.decl param_node(fn: node, p: node)
+param_node(f, p) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), snode(p), kind(p, k), in_list("param_kind", k).
+// The name: the parameter itself if an identifier, else its first visible child when that is an identifier. Only
+// (fn, name) is read later; `position` is projected away.
+.decl parameters(fn: node, name: symbol)
+parameters(f, n) :- param_node(f, p), kind(p, "identifier"), text(p, n).
+parameters(f, n) :- param_node(f, p), visible_child(p, x), ordinal(x, 0), kind(x, "identifier"), text(x, n).
+
+// ---- files: the module node's text and the path classes (callback_file is projected away) ----
+.decl files(d: number, source: symbol)
+files(d, src) :- module_root(d, m), text(m, src).
+.decl primary_file(d: number)
+primary_file(d) :- files(d, _), doc(d, p), in_list("primary_path", p).
+primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 36) = "impl/common/l2070_server_plan/steps/".
+primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 51) = "impl/common/l7300_sql_versioned_transactions/steps/".
+primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 40) = "impl/common/l9700_sql_graph_query/steps/".
+primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 41) = "impl/common/l2070_server_plan/strategies/".
+primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @rx_matches(p, "^impl/common/l2070_server_plan/[^/]+$") = 1.
+.decl fallback_file(d: number)
+fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 14) = "l9750_graphql/".
+fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 15) = "l2080_lazy_orm/".
+fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 20) = "l2060_query_builder/".
+fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 15) = "l9900_auto_api/".
+
+// ---- base_names, method_nodes ----
+// COALESCE(rx_extract(text, …, 1), text): the extract when the pattern matches (its group is mandatory), else the text.
+.decl base_names(cls: node, name: symbol)
+base_names(c, name) :- classes(c, _), visible_child(c, args), kind(args, "argument_list"), visible_child(args, b), kind(b, k), k != "keyword_argument",
+    text(b, t), name = @rx_extract(t, "(?:^|\\.)([A-Za-z_]\\w*)(?:\\[.*\\])?$", 1).
+base_names(c, t) :- classes(c, _), visible_child(c, args), kind(args, "argument_list"), visible_child(args, b), kind(b, k), k != "keyword_argument",
+    text(b, t), @rx_matches(t, "(?:^|\\.)([A-Za-z_]\\w*)(?:\\[.*\\])?$") = 0.
+.decl method_nodes(method: node, cls: node, method_name: symbol, class_name: symbol, node: node)
+method_nodes(m, c, mn, cn, x) :- methods(m, c, mn, cn), descendants(m, x).
+
+// ---- import_descendants, import_identifiers, py_names ----
+.decl import_descendants(root: node, n: node)
+import_descendants(r, r) :- snode(r), kind(r, "import_statement").
+import_descendants(r, r) :- snode(r), kind(r, "import_from_statement").
+import_descendants(r, n) :- snode(r), kind(r, "import_statement"), docof(r, d), node(d, n, _, _, _), snode(n), @within(n, r) = 1.
+import_descendants(r, n) :- snode(r), kind(r, "import_from_statement"), docof(r, d), node(d, n, _, _, _), snode(n), @within(n, r) = 1.
+.decl import_identifiers(n: node)
+import_identifiers(n) :- import_descendants(_, n), kind(n, "identifier").
+// Not a def/class/keyword name (`n.__start = p.name_start`), not an attribute's name, not inside an import.
+.decl py_name_excluded(n: node)
+py_name_excluded(n) :- snode(n), kind(n, "identifier"), child(p, n, _), kind(p, k), in_list("name_owner", k), field(p, "name", x), start(x, s), start(n, s).
+py_name_excluded(n) :- snode(n), kind(n, "identifier"), child(p, n, _), kind(p, "attribute"), field(p, "attribute", x), start(x, s), start(n, s).
+.decl py_names(n: node, text: symbol)
+py_names(n, t) :- snode(n), kind(n, "identifier"), child(p, n, _), snode(p), text(n, t), !py_name_excluded(n), !import_identifiers(n).
+
+// ---- class_levels: the first integer a `level` method returns (row_number() by __start = 1) ----
+.decl level_candidate(cls: node, i: node)
+level_candidate(c, i) :- method_nodes(_, c, "level", _, r), returns(r, i), kind(i, "integer").
+.decl level_start(cls: node, s: number)
+level_start(c, s) :- level_candidate(c, i), start(i, s).
+.decl level_first(cls: node, s: number)
+level_first(c, s) :- level_start(c, _), s = min t : { level_start(c, t) }.
+.decl class_levels(cls: node, level: number)
+class_levels(c, l) :- level_candidate(c, i), start(i, s), level_first(c, s), text(i, t), l = @cast_int(t).
+
+// ---- statements, literal_bools, strings ----
+.decl docstring_like(s: node)
+docstring_like(s) :- snode(s), kind(s, "expression_statement"), visible_child(s, v), kind(v, k), in_list("literal_kind", k).
+.decl statements(fn: node, s: node, kind: symbol)
+statements(f, s, k) :- functions(f, _), field(f, "body", b), visible_child(b, s), kind(s, k), k != "comment", !docstring_like(s).
+.decl statement_count(fn: node, k: number)
+statement_count(f, k) :- statements(f, _, _), k = count : { statements(f, _, _) }.
+.decl literal_bools(fn: node, value: symbol)
+literal_bools(f, k) :- statements(f, s, "return_statement"), visible_child(s, v), kind(v, k), in_list("bool_kind", k), statement_count(f, 1).
+.decl strings(x: node, value: symbol)
+strings(x, v) :- raw_strings(x, v).
+strings(x, v) :- raw_fstring_parts(x, v).
+
+// ---- module_functions, abstract_functions, last_methods, last_module_functions ----
+.decl module_functions(f: node, name: symbol)
+module_functions(f, n) :- functions(f, n), child(p, f, _), snode(p), kind(p, "module").
+module_functions(f, n) :- functions(f, n), child(p, f, _), snode(p), kind(p, "decorated_definition"), child(r, p, _), snode(r), kind(r, "module").
+.decl abstract_functions(f: node)
+abstract_functions(f) :- functions(f, _), child(w, f, _), snode(w), visible_child(w, dec), kind(dec, "decorator"), visible_child(dec, v), kind(v, k),
+    in_list("ident_or_attr", k), text(v, t), @rx_matches(t, "(?:^|\\.)abstractmethod$") = 1.
+abstract_functions(f) :- functions(f, _), statement_count(f, 1), statements(f, _, "pass_statement").
+// row_number() OVER (PARTITION BY cls, name ORDER BY __start DESC) = 1: the last definition.
+.decl method_start(cls: node, name: symbol, s: number)
+method_start(c, n, s) :- methods(m, c, n, _), start(m, s).
+.decl method_last(cls: node, name: symbol, s: number)
+method_last(c, n, s) :- method_start(c, n, _), s = max t : { method_start(c, n, t) }.
+.decl last_methods(m: node, cls: node, name: symbol)
+last_methods(m, c, n) :- methods(m, c, n, _), start(m, s), method_last(c, n, s).
+.decl mf_start(d: number, name: symbol, s: number)
+mf_start(d, n, s) :- module_functions(f, n), docof(f, d), start(f, s).
+.decl mf_last(d: number, name: symbol, s: number)
+mf_last(d, n, s) :- mf_start(d, n, _), s = max t : { mf_start(d, n, t) }.
+.decl last_module_functions(f: node, name: symbol)
+last_module_functions(f, n) :- module_functions(f, n), docof(f, d), start(f, s), mf_last(d, n, s).
+
+// ---- ir_names, scoped_nodes, loop_names, projection_repairs ----
+.decl ir_names(root: node, name: symbol)
+ir_names(r, t) :- descendants(r, x), py_names(x, t), @like(t, "%IR") = 1.
+ir_names(r, a) :- descendants(r, x), attributes(x, a, _, _), @like(a, "%IR") = 1.
+// The SQL walks `edges` down from each function, not entering a nested def/class/lambda (E0 #19, a bag over a forest):
+// the function itself, and every visible node of another kind whose nearest def/class/lambda strict ancestor is it.
+.decl scoped_nodes(fn: node, n: node)
+scoped_nodes(f, f) :- functions(f, _).
+scoped_nodes(f, n) :- snode(n), kind(n, k), k != "function_definition", k != "class_definition", k != "lambda", nearest(n, f, walk_stop), functions(f, _).
+.decl loop_names(fn: node, loop: node, name: symbol)
+loop_names(f, n, name) :- scoped_nodes(f, n), kind(n, "for_statement"), field(n, "left", l), descendants(l, x), py_names(x, name).
+loop_names(f, p, name) :- scoped_nodes(f, n), kind(n, "for_in_clause"), child(p, n, _), field(n, "left", l), descendants(l, x), py_names(x, name).
+.decl projection_repairs(fn: node)
+projection_repairs(f) :- loop_names(f, l, name), descendants(l, c), calls(c, _, _, "dict", _), arguments(c, a, _), descendants(a, r), py_names(r, name).
+projection_repairs(f) :- loop_names(f, l, name), descendants(l, c), calls(c, _, "attribute", _, ce), in_list("projection_callee", ce), calls_receiver(c, o),
+    descendants(o, r), py_names(r, name).
+
+// ---- path_edges, call_paths, execution_calls ----
+.decl path_edges(src: node, dst: node, suffix: symbol)
+path_edges(o, a, sfx) :- attributes(a, attr, o, _), sfx = @concat(".", attr).
+path_edges(f, c, "") :- calls(c, f, _, _, _).
+// OUTSIDE: call_paths — `names(id, path)`: py_names' text, extended by `path || suffix` along path_edges (E0 #20, a
+// path-text carrier; no non-recursive tape form).
+.decl call_paths(x: node, path: symbol)
+.input call_paths
+// build / direct: boolean columns; the row exists where either holds (and the callee has a call path).
+.decl exec_build(c: node)
+exec_build(c) :- calls(c, f, _, _, ce), call_paths(f, _), in_list("build_callee", ce).
+exec_build(c) :- calls(c, f, _, _, _), call_paths(f, p), @rx_matches(p, "(?:^|\\.)(?:ServerPlan|BaseServerPlan|[A-Za-z_]\\w*Intent)(?:\\.|$)") = 1.
+.decl exec_direct(c: node)
+exec_direct(c) :- calls(c, f, _, _, ce), call_paths(f, _), in_list("direct_callee", ce), @like(ce, "load_with_includes%") = 1.
+exec_direct(c) :- calls(c, f, _, _, ce), call_paths(f, p), in_list("direct_callee", ce), @rx_matches(p, "(?:^|\\.)(?:txn|tx|vrtxn|conn|query)\\.[^.]+$") = 1.
+.decl execution_calls(c: node)
+execution_calls(c) :- exec_build(c).
+execution_calls(c) :- exec_direct(c).
+
+// ---- branches, branch_flags ----
+.decl branches(b: node)
+branches(b) :- snode(b), kind(b, k), in_list("branch_kind", k).
+.decl branch_then(b: node, t: node)
+branch_then(b, t) :- branches(b), field(b, "consequence", t).
+// else_start / else_end: min start / max end of the else/elif siblings after the branch (under the if_statement).
+.decl branch_alt(b: node, alt: node)
+branch_alt(b, a) :- branches(b), kind(b, "if_statement"), visible_child(b, a), kind(a, k), in_list("else_kind", k), start(a, as), start(b, bs), as > bs.
+branch_alt(b, a) :- branches(b), kind(b, "elif_clause"), child(p, b, _), visible_child(p, a), kind(a, k), in_list("else_kind", k), start(a, as), start(b, bs), as > bs.
+.decl branch_alt_start(b: node, s: number)
+branch_alt_start(b, s) :- branch_alt(b, a), start(a, s).
+.decl branch_alt_end(b: node, e: number)
+branch_alt_end(b, e) :- branch_alt(b, a), node(_, a, _, _, e).
+.decl branch_else_start(b: node, s: number)
+branch_else_start(b, s) :- branch_alt_start(b, _), s = min x : { branch_alt_start(b, x) }.
+.decl branch_else_end(b: node, e: number)
+branch_else_end(b, e) :- branch_alt_end(b, _), e = max x : { branch_alt_end(b, x) }.
+.decl branch_else(b: node, s: number, e: number)
+branch_else(b, s, e) :- branch_else_start(b, s), branch_else_end(b, e).
+.decl branch_flags(b: node)
+branch_flags(b) :- branches(b).
+.decl branch_then_build(b: node)
+branch_then_build(b) :- branch_then(b, t), descendants(t, c), exec_build(c).
+.decl branch_then_direct(b: node)
+branch_then_direct(b) :- branch_then(b, t), descendants(t, c), exec_direct(c).
+.decl branch_else_build(b: node)
+branch_else_build(b) :- branch_else(b, s, e), docof(b, d), exec_build(c), node(d, c, _, cs, ce), cs >= s, ce <= e.
+.decl branch_else_direct(b: node)
+branch_else_direct(b) :- branch_else(b, s, e), docof(b, d), exec_direct(c), node(d, c, _, cs, ce), cs >= s, ce <= e.
+
+// ---- module_string_values: the last module-level `NAME = "…"` per name (row_number() by __start DESC = 1) ----
+.decl msv_candidate(d: number, name: symbol, value: symbol, s: number)
+msv_candidate(d, name, v, s) :- assignments(a, t), !assignment_typed(a), kind(t, "identifier"), text(t, name), child(expr, a, _), snode(expr),
+    child(root, expr, _), snode(root), kind(root, "module"), field(a, "right", r), docof(a, d), node(d, r, _, rs, re),
+    strings(x, v), node(d, x, _, rs, re), start(a, s).
+.decl msv_start(d: number, name: symbol, s: number)
+msv_start(d, name, s) :- msv_candidate(d, name, _, s).
+.decl msv_last(d: number, name: symbol, s: number)
+msv_last(d, name, s) :- msv_start(d, name, _), s = max t : { msv_start(d, name, t) }.
+.decl module_string_values(d: number, name: symbol, value: symbol)
+module_string_values(d, name, v) :- msv_candidate(d, name, v, s), msv_last(d, name, s).
+
+// ---- through_conditions: `x == "through"` / `x in {"through"}` comparisons ----
+.decl cmp_operand(c: node, o: node)
+cmp_operand(c, o) :- snode(c), kind(c, "comparison_operator"), visible_child(c, o), kind(o, k), k != "comment".
+.decl cmp_between(c: node, p: node, o: node)
+cmp_between(c, p, o) :- cmp_operand(c, o), cmp_operand(c, p), cmp_operand(c, x), start(p, ps), start(x, xs), start(o, os), ps < xs, xs < os.
+.decl cmp_adjacent(c: node, p: node, o: node)
+cmp_adjacent(c, p, o) :- cmp_operand(c, o), cmp_operand(c, p), start(p, ps), start(o, os), ps < os, !cmp_between(c, p, o).
+// The operator: TRIM of the comparison's bytes between the two operands.
+.decl cmp_op(c: node, p: node, o: node, op: symbol)
+cmp_op(c, p, o, op) :- cmp_adjacent(c, p, o), text(c, ct), node(_, c, _, cs, _), node(_, p, _, _, pe), start(o, os),
+    op = @trim(@substr_bytes(ct, @add(@sub(pe, cs), 1), @sub(os, pe))).
+.decl string_at(n: node, value: symbol)
+string_at(n, v) :- snode(n), node(d, n, _, s, e), strings(x, v), node(d, x, _, s, e).
+.decl through_el(o: node, el: node)
+through_el(o, el) :- visible_child(o, el), string_at(el, "through").
+.decl through_el_count(o: node, k: number)
+through_el_count(o, k) :- through_el(o, _), k = count : { through_el(o, _) }.
+.decl through_bad_scalar(o: node)
+through_bad_scalar(o) :- visible_child(o, el), kind(el, k), in_list("scalar_kind", k).
+.decl through_other(o: node)
+through_other(o) :- visible_child(o, el), string_at(el, v), v != "through".
+.decl through_conditions(c: node)
+through_conditions(c) :- cmp_op(c, _, o, op), in_list("eq_op", op), descendants(o, lit), string_at(lit, "through").
+through_conditions(c) :- cmp_op(c, _, o, op), in_list("in_op", op), kind(o, k), in_list("collection_kind", k), through_el_count(o, 1),
+    !through_bad_scalar(o), !through_other(o).
+
+// ---- preop_functions: a set recursion over the in-file call graph by name ----
+.decl preop_functions(d: number, name: symbol)
+preop_functions(d, n) :- functions(f, n), docof(f, d), descendants(f, c), calls(c, _, _, _, ce), in_list("preop_runtime", ce).
+preop_functions(d, n) :- functions(f, n), docof(f, d), descendants(f, c), calls(c, _, _, _, ce), preop_functions(d, ce).
+
+// ---- scopes, scope_owners, scope_chain ----
+.decl scopes(s: node, kind: symbol)
+scopes(s, k) :- snode(s), kind(s, k), in_list("scope_kind", k).
+// enclosing: NULL for the module; else the parent's ownership.fn, else the file's module.
+.decl scope_parent_fn(s: node)
+scope_parent_fn(s) :- scopes(s, k), k != "module", child(p, s, _), own_fn(p, _).
+.decl scope_enclosing(s: node, e: node)
+scope_enclosing(s, f) :- scopes(s, k), k != "module", child(p, s, _), own_fn(p, f).
+scope_enclosing(s, m) :- scopes(s, k), k != "module", !scope_parent_fn(s), docof(s, d), module_root(d, m).
+// scope: the class when it lies within the function (or there is no function), else the function, else the module.
+.decl scope_owners(n: node, scope: node)
+scope_owners(n, c) :- own_cls(n, c), own_fn(n, f), node(_, c, _, cs, ce), node(_, f, _, fs, fe), cs >= fs, ce <= fe.
+scope_owners(n, c) :- own_cls(n, c), !has_own_fn(n).
+scope_owners(n, f) :- own_fn(n, f), own_cls(n, c), node(_, c, _, cs, _), node(_, f, _, fs, _), cs < fs.
+scope_owners(n, f) :- own_fn(n, f), own_cls(n, c), node(_, c, _, _, ce), node(_, f, _, _, fe), ce > fe.
+scope_owners(n, f) :- own_fn(n, f), !has_own_cls(n).
+scope_owners(n, m) :- snode(n), !has_own_fn(n), !has_own_cls(n), docof(n, d), module_root(d, m).
+// The SQL climbs `enclosing` one scope per round, depth + 1 (E0 #22, a bag over a forest). Following `enclosing`
+// from a scope visits each function strictly above it, then the module: the ancestors are those, and the depth of
+// one is the number of chain members up to it (the functions strictly above the scope and within-or-equal to it,
+// plus it).
+.decl fn_ancestor(s: node, f: node)
+fn_ancestor(s, f) :- scopes(s, k), k != "module", docof(s, d), node(d, f, "function_definition", _, _), snode(f), @within(s, f) = 1.
+.decl chain_pair(s: node, a: node)
+chain_pair(s, a) :- fn_ancestor(s, a).
+chain_pair(s, m) :- scopes(s, k), k != "module", docof(s, d), module_root(d, m).
+.decl chain_hop(s: node, a: node, f: node)
+chain_hop(s, a, a) :- chain_pair(s, a).
+chain_hop(s, a, f) :- chain_pair(s, a), fn_ancestor(s, f), @within(f, a) = 1.
+.decl scope_chain(scope: node, ancestor: node, depth: number)
+scope_chain(s, s, 0) :- scopes(s, _).
+scope_chain(s, a, k) :- chain_pair(s, a), k = count : { chain_hop(s, a, _) }.
+
+// ---- scope_imports, scope_shadows ----
+.decl scope_imports(scope: node, name: symbol, origin: symbol)
+scope_imports(sc, a, o) :- from_imports(st, i, m, n), kind(st, "import_from_statement"), scope_owners(st, sc), from_import_alias(i, a), o = @concat(m, ".", n).
+scope_imports(sc, n, o) :- from_imports(st, i, m, n), kind(st, "import_from_statement"), scope_owners(st, sc), !from_import_alias(i, _), o = @concat(m, ".", n).
+scope_imports(sc, a, n) :- direct_imports(st, i, n), kind(st, "import_statement"), scope_owners(st, sc), direct_import_alias(i, a).
+scope_imports(sc, h, h) :- direct_imports(st, i, n), kind(st, "import_statement"), scope_owners(st, sc), !direct_import_alias(i, _), h = @rx_extract(n, "^[^.]+", 0).
+// target_root: the statement for `del`, `name` for a walrus, else `left`.
+.decl binding_target(n: node, t: node)
+binding_target(n, n) :- snode(n), kind(n, "delete_statement").
+binding_target(n, t) :- snode(n), kind(n, "named_expression"), field(n, "name", t).
+binding_target(n, t) :- snode(n), kind(n, k), in_list("left_binding", k), field(n, "left", t).
+.decl scope_shadows(scope: node, name: symbol)
+scope_shadows(sc, name) :- binding_target(n, t), scope_owners(n, sc), descendants(t, x), py_names(x, name).
+scope_shadows(f, name) :- parameters(f, name).
+scope_shadows(sc, name) :- snode(n), kind(n, k), in_list("fdcd", k), child(p, n, _), scope_owners(p, sc), field(n, "name", x), text(x, name).
+scope_shadows(s, name) :- snode(n), kind(n, "global_statement"), docof(n, d), node(d, n, _, ns, ne), scopes(s, "module"), node(d, s, _, ss, se),
+    ns >= ss, ne <= se, visible_child(n, x), kind(x, "identifier"), text(x, name).
+scope_shadows(s, name) :- snode(n), kind(n, "nonlocal_statement"), docof(n, d), node(d, n, _, ns, ne), scopes(s, "function_definition"), node(d, s, _, ss, se),
+    ns >= ss, ne <= se, visible_child(n, x), kind(x, "identifier"), text(x, name).
+
+// ---- annotations and their atoms ----
+.decl annotations(a: node, scope: node)
+annotations(a, sc) :- assignments(a, t), assignment_typed(a), kind(t, "identifier"), scope_owners(a, sc), scopes(sc, _).
+.decl annotation_function_local(a: node)
+annotation_function_local(a) :- annotations(a, sc), scopes(sc, "function_definition").
+// atom_id: the node's id, or 'quoted:' || string start || ':' || atom for an atom of a quoted annotation.
+.decl annotation_atoms(ann: node, scope: node, atom_id: symbol, s: number, e: number, atom: symbol)
+annotation_atoms(a, sc, id, s, e, t) :- annotations(a, sc), field(a, "type", ty), descendants(ty, n), kind(n, "identifier"), child(p, n, _), kind(p, pk),
+    pk != "attribute", node(_, n, _, s, e), text(n, t), id = @id(n).
+annotation_atoms(a, sc, id, s, e, atom) :- annotations(a, sc), field(a, "type", ty), descendants(ty, n), attributes(n, _, _, _), child(p, n, _), kind(p, pk),
+    pk != "attribute", text(n, t), @rx_matches(t, "^[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*$") = 1, atom = @rx_replace(t, "\\s+", ""), node(_, n, _, s, e), id = @id(n).
+annotation_atoms(a, sc, id, s, e, attr) :- annotations(a, sc), field(a, "type", ty), descendants(ty, n), attributes(n, attr, _, _), text(n, t),
+    @rx_matches(t, "^[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*$") = 0, node(_, n, _, s, e), id = @id(n).
+annotation_atoms(a, sc, id, s, e, atom) :- quoted_atoms(q, ann, atom), docof(q, d), node(d, ann, _, as, ae), annotations(a, sc), node(d, a, _, as, ae),
+    node(d, q, _, s, e), id = @printf("quoted:%d:%s", s, atom).
+// atom_imports: the imports of the atom's head name at the nearest scope of its chain that has one; unshadowed when
+// no scope up to that depth binds the name.
+.decl atom_import_cand(ann: node, atom_id: symbol, scope: node, ancestor: node, depth: number, name: symbol, origin: symbol)
+atom_import_cand(a, id, sc, anc, dep, h, o) :- annotation_atoms(a, sc, id, _, _, t), h = @rx_extract(t, "^[A-Za-z_]\\w*", 0), scope_chain(sc, anc, dep),
+    scope_imports(anc, h, o).
+.decl atom_import_nearer(ann: node, atom_id: symbol, depth: number)
+atom_import_nearer(a, id, dep) :- atom_import_cand(a, id, sc, _, dep, h, _), scope_chain(sc, near, nd), nd < dep, scope_imports(near, h, _).
+.decl atom_shadowed(ann: node, atom_id: symbol, depth: number)
+atom_shadowed(a, id, dep) :- atom_import_cand(a, id, sc, _, dep, h, _), scope_chain(sc, sa, sd), sd <= dep, scope_shadows(sa, h).
+.decl atom_imports(ann: node, atom_id: symbol, origin: symbol)
+atom_imports(a, id, o) :- atom_import_cand(a, id, _, _, dep, _, o), !atom_import_nearer(a, id, dep).
+.decl atom_unshadowed(ann: node, atom_id: symbol, origin: symbol)
+atom_unshadowed(a, id, o) :- atom_import_cand(a, id, _, _, dep, _, o), !atom_import_nearer(a, id, dep), !atom_shadowed(a, id, dep).
+.decl has_atom_import(ann: node, atom_id: symbol)
+has_atom_import(a, id) :- atom_imports(a, id, _).
+.decl atom_origin_count(ann: node, atom_id: symbol, k: number)
+atom_origin_count(a, id, k) :- atom_imports(a, id, _), k = count : { atom_imports(a, id, _) }.
+// origin: the import's origin || the atom past its head; trusted: unshadowed and one distinct origin.
+.decl resolved_atoms(ann: node, atom_id: symbol, s: number, e: number, origin: symbol)
+resolved_atoms(a, id, s, e, o) :- annotation_atoms(a, _, id, s, e, t), atom_imports(a, id, io), h = @rx_extract(t, "^[A-Za-z_]\\w*", 0),
+    o = @concat(io, @substr(t, @add(@length(h), 1))).
+resolved_atoms(a, id, s, e, t) :- annotation_atoms(a, _, id, s, e, t), !has_atom_import(a, id).
+.decl resolved_trusted(ann: node, atom_id: symbol, origin: symbol)
+resolved_trusted(a, id, o) :- annotation_atoms(a, _, id, _, _, t), atom_unshadowed(a, id, io), atom_origin_count(a, id, 1),
+    h = @rx_extract(t, "^[A-Za-z_]\\w*", 0), o = @concat(io, @substr(t, @add(@length(h), 1))).
+// Atoms inside a trusted Literal[…] (any argument) or Annotated[…] (past the first) of the annotation's type.
+.decl generic_arg(ann: node, origin: symbol, arg: node)
+generic_arg(a, io, arg) :- annotations(a, _), field(a, "type", ty), docof(a, d), node(d, ty, _, ts, te), node(d, g, "generic_type", gs, ge), snode(g),
+    gs >= ts, ge <= te, visible_child(g, base), ordinal(base, 0), bid = @id(base), resolved_trusted(a, bid, io), in_list("metadata_origin", io),
+    visible_child(g, params), kind(params, "type_parameter"), visible_child(params, arg).
+.decl ignored_annotation_metadata(ann: node, atom_id: symbol)
+ignored_annotation_metadata(a, id) :- resolved_atoms(a, id, as, ae, _), generic_arg(a, io, arg), in_list("literal_origin", io), node(_, arg, _, rs, re),
+    as >= rs, ae <= re.
+ignored_annotation_metadata(a, id) :- resolved_atoms(a, id, as, ae, _), generic_arg(a, _, arg), ordinal(arg, k), k > 0, node(_, arg, _, rs, re),
+    as >= rs, ae <= re.
+
+// ---- diagnostics_0 … diagnostics_6: one rule per UNION ALL arm (an OR inside an arm: one rule per branch) ----
+// Each row: the anchor node n, issue, identity (node ids through @id, as the SQL's `||`), detector. The arms' `(1)`
+// filler conditions are dropped. `JOIN files p` holds whenever primary_file / fallback_file does.
+in_list("duck", "getattr"). in_list("duck", "hasattr").
+in_list("exec5", "api/l2070_batching/executor.py"). in_list("exec5", "impl/common/l2070_server_plan/base_server_plan.py").
+in_list("exec5", "impl/common/l2070_server_plan/plan_helpers.py"). in_list("exec5", "impl/common/l2070_server_plan/sql_backend_executor.py").
+in_list("exec5", "l2070_batching/conditional_step.py").
+in_list("direct_io", "commit"). in_list("direct_io", "cursor"). in_list("direct_io", "execute"). in_list("direct_io", "executemany").
+in_list("direct_io", "fetchall"). in_list("direct_io", "fetchmany"). in_list("direct_io", "fetchone"). in_list("direct_io", "rollback").
+in_list("child_step_methods", "child_steps"). in_list("child_step_methods", "materialized_terminal_steps").
+in_list("runtime_result_kw", "runtime_result"). in_list("runtime_result_kw", "runtime_result_async").
+in_list("compiled_step", "CompiledStep"). in_list("compiled_step", "_CompiledStep").
+in_list("lazy_resolution", "resolve"). in_list("lazy_resolution", "resolve_async"). in_list("lazy_resolution", "result").
+in_list("control_flow_classes", "ConditionalStep"). in_list("control_flow_classes", "ReplayLoopStep").
+in_list("control_flow_classes", "_ConditionalStepLike"). in_list("control_flow_classes", "_ReplayStepLike").
+in_list("conditional_receivers", "cs"). in_list("conditional_receivers", "conditional"). in_list("conditional_receivers", "conditional_step").
+in_list("raise_errors", "TypeError"). in_list("raise_errors", "NotImplementedError").
+in_list("plan_attrs", "_active_plan"). in_list("plan_attrs", "_lazy_plan"). in_list("plan_attrs", "_plan").
+in_list("plan_state_paths", "impl/common/l2070_server_plan/base_server_plan.py"). in_list("plan_state_paths", "impl/common/l2070_server_plan/plan_helpers.py").
+in_list("unpack_targets", "pattern_list"). in_list("unpack_targets", "tuple_pattern").
+in_list("order_by_names", "JSON_EXISTS"). in_list("order_by_names", "JSON_GET"). in_list("order_by_names", "JSON_GET_BOOL").
+in_list("order_by_names", "JSON_GET_FLOAT"). in_list("order_by_names", "JSON_GET_INT"). in_list("order_by_names", "JSON_GET_TEXT").
+in_list("order_by_names", "JSON_KEYS"). in_list("order_by_names", "JSON_LENGTH"). in_list("order_by_names", "JSON_TYPE").
+in_list("order_by_names", "JsonAccessKind"). in_list("order_by_names", "SqlJsonAccess"). in_list("order_by_names", "SqlJsonPath").
+in_list("order_by_names", "SqlOrderByItem"). in_list("order_by_names", "SqlOrderByItems"). in_list("order_by_names", "build_query_spec_order_by").
+in_list("lock_stmt", "if_statement"). in_list("lock_stmt", "return_statement").
+in_list("lock_x_kinds", "attribute"). in_list("lock_x_kinds", "string"). in_list("lock_x_kinds", "concatenated_string").
+in_list("assignment_kinds", "assignment"). in_list("assignment_kinds", "augmented_assignment").
+in_list("analysis_fields", "ordered_steps"). in_list("analysis_fields", "step_facts"). in_list("analysis_fields", "steps").
+in_list("analysis_writers", "__init__"). in_list("analysis_writers", "build").
+in_list("exec_helpers", "_execute_nested_steps"). in_list("exec_helpers", "_execute_nested_steps_async").
+in_list("exec_helpers", "_execute_runtime_sequential_batch"). in_list("exec_helpers", "_execute_runtime_sequential_batch_async").
+in_list("exec_helpers", "_execute_runtime_sequential_batch_async_impl"). in_list("exec_helpers", "_execute_runtime_sequential_batch_sync").
+in_list("exec_helpers", "_execute_runtime_sequential_batch_sync_impl"). in_list("exec_helpers", "_finish_replay_like_step").
+in_list("exec_helpers", "_force_runtime_conditionals"). in_list("exec_helpers", "_prepare_runtime_sequential_child").
+in_list("exec_helpers", "_preprocess_replay_loop"). in_list("exec_helpers", "_resolve_conditional"). in_list("exec_helpers", "_resolve_conditional_step").
+in_list("exec_helpers", "_restore_runtime_conditionals"). in_list("exec_helpers", "_start_runtime_sequential_batch").
+in_list("exec_helpers", "_store_runtime_sequential_child_result").
+in_list("executor_classes", "PlanExecutor"). in_list("executor_classes", "SqlBackendExecutor").
+in_list("replay_protocols", "_ReplayStepLike"). in_list("replay_protocols", "_ConditionalStepLike").
+in_list("runtime_seq_attrs", "uses_runtime_sequential_execution"). in_list("runtime_seq_attrs", "materialized_terminal_steps").
+in_list("dispatch_helpers", "_dispatch_runtime_ir"). in_list("dispatch_helpers", "_dispatch_runtime_ir_async"). in_list("dispatch_helpers", "_dispatch_runtime_ir_impl").
+in_list("dispatch_helpers", "_execute_compound_write"). in_list("dispatch_helpers", "_execute_compound_write_async").
+in_list("dispatch_helpers", "_execute_sql_sequence"). in_list("dispatch_helpers", "_execute_sql_sequence_async").
+in_list("strategy_methods", "compile_batch"). in_list("strategy_methods", "split_results").
+in_list("graphql_private", "_ClosedProjectionStep"). in_list("graphql_private", "_flush_ctx"). in_list("graphql_private", "_lazy_branch").
+in_list("graphql_private", "_lazy_revision"). in_list("graphql_private", "_next_ref_id"). in_list("graphql_private", "_pending").
+in_list("graphql_private", "_plan"). in_list("graphql_private", "_step_ref_ids"). in_list("graphql_private", "_steps").
+in_list("relationship_specs", "DerivedRelationshipSpec"). in_list("relationship_specs", "ManyToManySpec"). in_list("relationship_specs", "ThroughSpec").
+in_list("relationship_builders", "build_json_array_derived_relationship_data"). in_list("relationship_builders", "build_two_hop_relationship_data").
+in_list("relationship_builders", "compile_json_array_derived_relationship_into_plan"). in_list("relationship_builders", "compile_two_hop_relationship_into_plan").
+in_list("relationship_nodes", "BelongsTo"). in_list("relationship_nodes", "HasMany"). in_list("relationship_nodes", "Include"). in_list("relationship_nodes", "IncludeMany").
+in_list("belongs_has", "BelongsTo"). in_list("belongs_has", "HasMany").
+in_list("relationship_info", "RelationshipInfo"). in_list("relationship_info", "relationship_type_from_contract").
+in_list("cleanup_kw", "steps"). in_list("cleanup_kw", "source_flush_context").
+in_list("graphql_compat_modules", "l9750_graphql.schema_builder"). in_list("graphql_compat_modules", "l9750_graphql.relationship_compat").
+in_list("list_tuple", "list"). in_list("list_tuple", "tuple").
+in_list("projection_execs", "execute"). in_list("projection_execs", "execute_async"). in_list("projection_execs", "resolve"). in_list("projection_execs", "resolve_async").
+in_list("row_names", "all_rows"). in_list("row_names", "candidates"). in_list("row_names", "group_rows"). in_list("row_names", "items").
+in_list("row_names", "ordered_rows"). in_list("row_names", "out"). in_list("row_names", "page"). in_list("row_names", "page_rows").
+in_list("row_names", "rows"). in_list("row_names", "source_rows").
+in_list("row_helpers", "_apply_orderby_to_dict_rows"). in_list("row_helpers", "_parse_orderby_clauses"). in_list("row_helpers", "_stable_sort_with_nulls_last").
+in_list("row_helpers", "parse_filter_for_fields"). in_list("row_helpers", "parse_odata_filter_expression").
+in_list("scope_columns", "branch_id"). in_list("scope_columns", "revision_id").
+in_list("preop_kw", "pre_op"). in_list("preop_kw", "async_pre_op").
+in_list("step_tag_values", "graph"). in_list("step_tag_values", "versioned").
+in_list("runtime_state", "_active_plan"). in_list("runtime_state", "_base_txn"). in_list("runtime_state", "_conn"). in_list("runtime_state", "_connection").
+in_list("runtime_state", "_cursor"). in_list("runtime_state", "_session"). in_list("runtime_state", "_txn"). in_list("runtime_state", "executor_transaction").
+in_list("runtime_state", "session_validation_cache_target"). in_list("runtime_state", "session_validation_txn_state_target"). in_list("runtime_state", "sql_connection").
+in_list("connection_ids", "data_layer.types.ConnectionId"). in_list("connection_ids", "l1350_foundational_types.ConnectionId"). in_list("connection_ids", "l1400_types.ConnectionId").
+in_list("unwrap_kinds", "tuple"). in_list("unwrap_kinds", "list"). in_list("unwrap_kinds", "set").
+in_list("runtime_builder_kw", "async_capability"). in_list("runtime_builder_kw", "bundle"). in_list("runtime_builder_kw", "callback").
+in_list("runtime_builder_kw", "capability"). in_list("runtime_builder_kw", "fn"). in_list("runtime_builder_kw", "handler").
+in_list("runtime_builder_kw", "parse_fn"). in_list("runtime_builder_kw", "service"). in_list("runtime_builder_kw", "store").
+
+// The arms' shared path and source conditions.
+.decl in_tests(d: number)
+in_tests(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)tests(?:/|$)") = 1.
+.decl steps_file(d: number)
+steps_file(d) :- files(d, _), doc(d, p), @substr(p, 1, 36) = "impl/common/l2070_server_plan/steps/".
+steps_file(d) :- files(d, _), doc(d, p), @substr(p, 1, 51) = "impl/common/l7300_sql_versioned_transactions/steps/".
+steps_file(d) :- files(d, _), doc(d, p), @substr(p, 1, 40) = "impl/common/l9700_sql_graph_query/steps/".
+// (p IN exec5 OR p IN ('…/sql_backend_executor.py')) AND NOT p = 'l2070_batching/executor.py'
+.decl executor_scope(d: number)
+executor_scope(d) :- files(d, _), doc(d, p), in_list("exec5", p), p != "l2070_batching/executor.py".
+executor_scope(d) :- files(d, _), doc(d, "impl/common/l2070_server_plan/sql_backend_executor.py").
+.decl exec_helper_source(d: number)
+exec_helper_source(d) :- files(d, src), @rx_matches(src, "_execute_nested_steps|_execute_nested_steps_async|_execute_runtime_sequential_batch|_execute_runtime_sequential_batch_async|_execute_runtime_sequential_batch_async_impl|_execute_runtime_sequential_batch_sync|_execute_runtime_sequential_batch_sync_impl|_finish_replay_like_step|_force_runtime_conditionals|_prepare_runtime_sequential_child|_preprocess_replay_loop|_resolve_conditional|_resolve_conditional_step|_restore_runtime_conditionals|_start_runtime_sequential_batch|_store_runtime_sequential_child_result") = 1.
+.decl prim_or_fallback(d: number)
+prim_or_fallback(d) :- primary_file(d).
+prim_or_fallback(d) :- fallback_file(d).
+.decl graphql_file(d: number)
+graphql_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)l9750_graphql/") = 1.
+.decl graphql_executor_file(d: number)
+graphql_executor_file(d) :- graphql_file(d), doc(d, p), @rx_matches(p, "(?:^|/)executor\\.py$") = 1.
+.decl contract_first_file(d: number)
+contract_first_file(d) :- files(d, _), !in_tests(d), doc(d, p), @rx_matches(p, "(?:^|/)(?:l9750_graphql|l9900_auto_api)/") = 1.
+.decl relationship_compat_exempt(d: number)
+relationship_compat_exempt(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)(?:schema_builder|__init__|graphql|relationship_compat)\\.py$") = 1.
+.decl fallback_source(d: number)
+fallback_source(d) :- files(d, src), @rx_matches(src, "_add_intent|_add_intent_by_ref|_get_lazy_plan|enqueue_lazy_plan_intent|execute_later|return_result") = 1,
+    @rx_matches(src, "execute|execute_async|query|query_async|load_with_includes") = 1.
+.decl executor_batch_file(d: number)
+executor_batch_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)l2070_batching/(?:.*/)?executor\\.py$") = 1.
+// Shared EXISTS subqueries.
+.decl descendant_callee(r: node, callee: symbol)
+descendant_callee(r, ce) :- descendants(r, c), calls(c, _, _, _, ce).
+.decl descendant_attr(r: node, attr: symbol)
+descendant_attr(r, a) :- descendants(r, x), attributes(x, a, _, _).
+.decl string_argument(call: node, position: number, value: symbol)
+string_argument(c, i, v) :- arguments(c, a, i), string_at(a, v).
+.decl contains_(outer: node, inner: node)
+contains_(o, n) :- functions(o, _), docof(o, d), node(d, o, _, os, oe), node(d, n, _, ns, ne), os <= ns, oe >= ne.
+.decl not_async_text(f: node)
+not_async_text(f) :- functions(f, _), text(f, t), @substr(t, 1, 5) != "async".
+
+// ---- diagnostics_0 ----
+.decl diagnostics_0(n: node, issue: symbol, identity: symbol, detector: symbol)
+diagnostics_0(n, "SPQ-003", id, "_check_postop_hydration") :- functions(n, "post_op"), docof(n, d), doc(d, p), @rx_matches(p, "(?:^|/)_compile_helpers\\.py$") = 0,
+    descendants(n, c), calls(c, _, _, "convert_row_db_to_python", _), steps_file(d), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-004", id, "_check_duck_typed_context") :- calls(n, _, _, fc, _), in_list("duck", fc), docof(n, d), doc(d, p), in_list("exec5", p),
+    p != "l2070_batching/conditional_step.py", primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-005", id, "_check_versioned_forking") :- methods(n, c, "lower", _), base_names(c, "ServerPlanStep"),
+    descendant_callee(n, "get_versioned_staging_ctx"), docof(n, d), steps_file(d), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-011", id, "_check_compile_direct_io") :- calls(n, _, "attribute", _, ce), in_list("direct_io", ce), method_nodes(_, c, "compile", _, n),
+    base_names(c, "ServerPlanStep"), docof(n, d), files(d, src), @instr(src, "compile") > 0, @rx_matches(src, "cursor|execute|fetch") = 1, primary_file(d),
+    id = @id(n).
+diagnostics_0(n, "SPQ-015", id, "_check_runtime_sequential_step_optins") :- methods(n, c, "requires_runtime_sequential_batch", _), base_names(c, "ServerPlanStep"),
+    literal_bools(n, "true"), docof(n, d), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-016", id, "_check_dynamic_child_steps") :- methods(n, c, name, _), in_list("child_step_methods", name), base_names(c, "ServerPlanStep"),
+    docof(n, d), files(d, src), @instr(src, "child_steps") > 0, primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-016", id, "_check_dynamic_child_steps") :- attributes(n, attr, _, _), @rx_matches(attr, "(?:child_steps|materialized_terminal_steps)$") = 1,
+    docof(n, d), node(d, n, _, s, e), node(d, l, _, s, e), field(as, "left", l), snode(as), kind(as, "assignment"),
+    method_nodes(_, c, _, _, n), base_names(c, "ServerPlanStep"), files(d, src), @instr(src, "child_steps") > 0, primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-017", id, "_check_runtime_result_compiled_steps") :- calls(n, _, _, _, ce), in_list("compiled_step", ce), keywords(n, k, kn, v),
+    in_list("runtime_result_kw", kn), kind(v, vk), vk != "none", docof(n, d), !in_tests(d), files(d, src), @instr(src, "runtime_result") > 0,
+    primary_file(d), id = @id(k).
+diagnostics_0(n, "SPQ-020", id, "_check_imperative_lazy_resolution") :- calls(n, _, "attribute", _, ce), in_list("lazy_resolution", ce), !has_argument(n),
+    !keyword_any(n), docof(n, d), primary_file(d), id = @id(n).
+.decl keyword_any(call: node)
+keyword_any(c) :- keywords(c, _, _, _).
+// callee = 'compile' OR callee LIKE 'Sql…' OR (callee = 'CompiledStep' AND a `grammar` keyword)
+.decl spq021_callee(c: node)
+spq021_callee(n) :- calls(n, _, _, _, "compile").
+spq021_callee(n) :- calls(n, _, _, _, ce), @substr(ce, 1, 3) = "Sql".
+spq021_callee(n) :- calls(n, _, _, _, "CompiledStep"), keyword_named(n, "grammar").
+diagnostics_0(n, "SPQ-021", id, "_check_conditional_sql_compile_ownership") :- spq021_callee(n), docof(n, d), doc(d, "l2070_batching/conditional_step.py"),
+    method_nodes(_, _, "compile", "ConditionalStep", n), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-022", id, "_check_control_flow_child_compile_calls") :- calls(n, _, _, _, "compile"), docof(n, d), doc(d, p),
+    p != "impl/common/l2070_server_plan/steps/_conditional_compile.py", method_nodes(_, c, "compile", cn, n), in_list("control_flow_classes", cn),
+    class_levels(c, 4), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-023", id, "_check_conditional_dialect_test_compiler_seam") :- calls(n, f, _, _, "compile"), docof(n, d),
+    doc(d, "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py"), attributes(f, _, _, ot), in_list("conditional_receivers", ot),
+    primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-026", id, "_check_branch_fetch_batchability_helper") :- functions(n, "_can_batch_fetch_branch_and_staged"), docof(n, d),
+    doc(d, "impl/common/l2070_server_plan/steps/commit_branch_steps.py"), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-027", id, "_check_plan_analysis_object_id_cache") :- calls(n, _, _, "id", _), docof(n, d), doc(d, "l2070_batching/optimizer.py"),
+    arguments(n, a, 0), kind(a, "identifier"), text(a, "step"), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-027", id, "_check_plan_analysis_object_id_cache") :- py_names(n, "step_fact_step_ids"), docof(n, d), doc(d, "l2070_batching/optimizer.py"),
+    primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-027", id, "_check_plan_analysis_object_id_cache") :- attributes(n, "step_fact_step_ids", _, _), docof(n, d), doc(d, "l2070_batching/optimizer.py"),
+    primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-045", id, "_check_forbidden_sqlcompoundwrite_usage") :- py_names(n, "SqlCompoundWrite"), docof(n, d), !in_tests(d), doc(d, p),
+    @rx_matches(p, "(?:^|/)stmt_compound_write\\.py$") = 0, primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-046", id, "_check_sql_statement_batch_requires_category") :- calls(n, _, _, _, "SqlStatementBatch"), !keyword_named(n, "category"),
+    docof(n, d), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-048", id, "_check_batched_step_construction_sets_batching_hint") :- functions(n, _), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)batch_fusion\\.py$") = 1, descendant_callee(n, "PhysicalStatementGroup"), !descendant_callee(n, "_set_batching_metrics_hint"),
+    primary_file(d), id = @id(n).
+// sync: the last method / module function named the `_async` name less its suffix.
+diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- methods(n, c, name, _), @substr(name, -6) = "_async",
+    base = @substr(name, 1, @sub(@length(name), 6)), last_methods(sync, c, base), !abstract_functions(n), !abstract_functions(sync),
+    statement_count(n, k), k > 3, docof(n, d), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- methods(n, c, name, _), @substr(name, -6) = "_async",
+    base = @substr(name, 1, @sub(@length(name), 6)), last_methods(sync, c, base), !abstract_functions(n), !abstract_functions(sync),
+    statement_count(sync, k), k > 3, docof(n, d), primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- module_functions(n, name), @substr(name, -6) = "_async",
+    base = @substr(name, 1, @sub(@length(name), 6)), docof(n, d), last_module_functions(sync, base), docof(sync, d),
+    statement_count(n, k), k > 3, primary_file(d), id = @id(n).
+diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- module_functions(n, name), @substr(name, -6) = "_async",
+    base = @substr(name, 1, @sub(@length(name), 6)), docof(n, d), last_module_functions(sync, base), docof(sync, d),
+    statement_count(sync, k), k > 3, primary_file(d), id = @id(n).
+
+// ---- diagnostics_1 ----
+.decl earlier_statement(fn: node, s: node)
+earlier_statement(f, s) :- statements(f, s, _), statements(f, o, _), start(o, os), start(s, ss), os < ss.
+.decl raise_error_child(s: node)
+raise_error_child(s) :- statements(_, s, "raise_statement"), visible_child(s, e), text(e, t), in_list("raise_errors", t).
+raise_error_child(s) :- statements(_, s, "raise_statement"), visible_child(s, e), calls(e, _, _, fc, _), in_list("raise_errors", fc).
+.decl inside_plan_analysis(n: node)
+inside_plan_analysis(n) :- classes(c, "PlanAnalysis"), docof(c, d), node(d, c, _, cs, ce), node(d, n, _, ns, ne), snode(n), cs <= ns, ce >= ne.
+.decl analysis_writer(n: node)
+analysis_writer(n) :- own_fn(n, f), functions(f, fname), in_list("analysis_writers", fname), inside_plan_analysis(n).
+// CASE stmt.kind WHEN if/elif THEN condition_id ELSE id
+.decl lock_root(st: node, r: node)
+lock_root(st, c) :- snode(st), kind(st, k), in_list("branch_kind", k), field(st, "condition", c).
+lock_root(st, st) :- snode(st), kind(st, k), !in_list("branch_kind", k).
+.decl lock_x(x: node)
+lock_x(x) :- py_names(x, _), kind(x, "identifier").
+lock_x(x) :- snode(x), kind(x, k), in_list("lock_x_kinds", k).
+.decl diagnostics_1(n: node, issue: symbol, identity: symbol, detector: symbol)
+diagnostics_1(n, "SPQ-002", id, "_check_intent_boilerplate") :- classes(n, _), base_names(n, "ServerPlanStep"), class_levels(n, 4),
+    methods(m, n, "compile", _), statements(m, s, "raise_statement"), !earlier_statement(m, s), raise_error_child(s),
+    docof(n, d), steps_file(d), primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-006", id, "_check_result_resolution_duplication") :- last_methods(n, c, "_execute_new_pipeline_async"),
+    last_methods(sync, c, "_execute_new_pipeline"), descendant_attr(sync, "_returns"), descendant_attr(n, "_returns"), docof(n, d), doc(d, p),
+    in_list("exec5", p), p != "l2070_batching/conditional_step.py", primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-007", id, "_check_lifecycle_entanglement") :- assignments(n, t), !assignment_typed(n), attributes(t, attr, _, _), in_list("plan_attrs", attr),
+    docof(n, d), node(d, n, _, ns, ne), methods(own, _, on, _), on != "__init__", node(d, own, _, os, oe), os < ns, oe >= ne,
+    doc(d, p), in_list("plan_state_paths", p), primary_file(d), id = @concat(@id(own), ":", @id(n)).
+diagnostics_1(n, "SPQ-007", id, "_check_lifecycle_entanglement") :- assignments(n, t), !assignment_typed(n), attributes(t, attr, _, _), in_list("plan_attrs", attr),
+    docof(n, d), node(d, n, _, ns, ne), module_functions(own, _), node(d, own, _, os, oe), os < ns, oe >= ne,
+    doc(d, p), in_list("plan_state_paths", p), primary_file(d), id = @concat(@id(own), ":", @id(n)).
+diagnostics_1(n, "SPQ-008", id, "_check_unused_raw_data") :- assignments(n, t), !assignment_typed(n), kind(t, tk), in_list("unpack_targets", tk),
+    assignment_value(n, v), calls(v, _, _, _, "_build_query_spec_and_raw"), visible_child(t, el), ordinal(el, 1), kind(el, "identifier"), text(el, "_"),
+    docof(n, d), steps_file(d), primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-024", id, "_check_order_by_compile_helper_escape_hatches") :- py_names(n, t), in_list("order_by_names", t), docof(n, d),
+    doc(d, "impl/common/l2070_server_plan/steps/_compile_helpers.py"), primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-024", id, "_check_order_by_compile_helper_escape_hatches") :- attributes(n, t, _, _), in_list("order_by_names", t), docof(n, d),
+    doc(d, "impl/common/l2070_server_plan/steps/_compile_helpers.py"), primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-024", id, "_check_order_by_compile_helper_escape_hatches") :- classes(n, t), in_list("order_by_names", t), docof(n, d),
+    doc(d, "impl/common/l2070_server_plan/steps/_compile_helpers.py"), primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-024", id, "_check_order_by_compile_helper_escape_hatches") :- functions(n, t), in_list("order_by_names", t), docof(n, d),
+    doc(d, "impl/common/l2070_server_plan/steps/_compile_helpers.py"), primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-024", id, "_check_order_by_compile_helper_escape_hatches") :- strings(n, v), @rx_matches(v, "(?:^|\\s)(?:JSON_EXISTS|JSON_GET|JSON_GET_BOOL|JSON_GET_FLOAT|JSON_GET_INT|JSON_GET_TEXT|JSON_KEYS|JSON_LENGTH|JSON_TYPE|JsonAccessKind|SqlJsonAccess|SqlJsonPath|SqlOrderByItem|SqlOrderByItems|build_query_spec_order_by)(?:\\s|$)") = 1,
+    node(d, n, _, s, e), doc(d, "impl/common/l2070_server_plan/steps/_compile_helpers.py"), primary_file(d), id = @printf("%d:%d", s, e).
+diagnostics_1(n, "SPQ-025", id, "_check_can_batch_lock_snapshot_policy") :- functions(n, "can_batch"), field(n, "body", b), visible_child(b, st), kind(st, sk),
+    in_list("lock_stmt", sk), lock_root(st, r), descendants(r, x), lock_x(x), text(x, t),
+    @rx_matches(@lower(t), "for_update|lock|locked|snapshot|use_for_update") = 1, docof(n, d), primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-028", id, "_check_plan_analysis_field_reassignment") :- snode(n), kind(n, k), in_list("assignment_kinds", k), field(n, "left", l),
+    descendants(l, x), attributes(x, attr, _, "analysis"), in_list("analysis_fields", attr), !analysis_writer(n), docof(n, d), files(d, src),
+    @instr(src, "PlanAnalysis") > 0, primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-028", id, "_check_plan_analysis_field_reassignment") :- snode(n), kind(n, k), in_list("assignment_kinds", k), field(n, "left", l),
+    descendants(l, x), attributes(x, attr, _, "self"), in_list("analysis_fields", attr), inside_plan_analysis(n), !analysis_writer(n), docof(n, d),
+    files(d, src), @instr(src, "PlanAnalysis") > 0, primary_file(d), id = @id(n).
+diagnostics_1(n, "SPQ-012", id, "_check_executor_python_execution") :- functions(n, name), in_list("exec_helpers", name), docof(n, d), executor_scope(d),
+    exec_helper_source(d), primary_file(d), id = @concat("function:", @id(n)).
+
+// ---- diagnostics_2 ----
+.decl diagnostics_2(n: node, issue: symbol, identity: symbol, detector: symbol)
+diagnostics_2(n, "SPQ-012", id, "_check_executor_python_execution") :- methods(n, _, name, cn), in_list("executor_classes", cn), in_list("exec_helpers", name),
+    docof(n, d), executor_scope(d), exec_helper_source(d), primary_file(d), id = @concat("method:", @id(n)).
+diagnostics_2(n, "SPQ-013", id, "_check_executor_python_execution") :- classes(n, name), in_list("replay_protocols", name), base_names(n, "Protocol"),
+    docof(n, d), executor_scope(d), exec_helper_source(d), primary_file(d), id = @id(n).
+diagnostics_2(n, "SPQ-013", id, "_check_executor_python_execution") :- calls(n, _, _, "isinstance", _), contains_(f, n), arguments(n, a, 1), ir_names(a, irn),
+    irn != "SqlStepIR", docof(n, d), doc(d, "impl/common/l2070_server_plan/sql_backend_executor.py"), exec_helper_source(d), primary_file(d),
+    id = @concat("helper:", @id(f), ":", @id(n), ":", irn).
+diagnostics_2(n, "SPQ-013", id, "_check_executor_python_execution") :- calls(n, _, _, "isinstance", _), method_nodes(m, _, _, cn, n), in_list("executor_classes", cn),
+    arguments(n, a, 1), ir_names(a, irn), irn != "SqlStepIR", docof(n, d), executor_scope(d), exec_helper_source(d), primary_file(d),
+    id = @concat("method:", @id(m), ":", @id(n), ":", irn).
+diagnostics_2(n, "SPQ-013", id, "_check_executor_python_execution") :- calls(n, _, _, "isinstance", _), method_nodes(m, _, _, cn, n), in_list("executor_classes", cn),
+    arguments(n, a, 1), ir_names(a, irn), in_list("control_flow_classes", irn), docof(n, d), executor_scope(d), exec_helper_source(d), primary_file(d),
+    id = @concat("method:", @id(m), ":", @id(n), ":", irn).
+diagnostics_2(n, "SPQ-013", id, "_check_executor_python_execution") :- calls(n, _, "attribute", _, ce), in_list("runtime_seq_attrs", ce), method_nodes(_, _, _, cn, n),
+    in_list("executor_classes", cn), docof(n, d), executor_scope(d), exec_helper_source(d), primary_file(d), id = @id(n).
+diagnostics_2(n, "SPQ-012", id, "_check_executor_python_execution") :- calls(n, _, "attribute", _, ce), in_list("dispatch_helpers", ce), method_nodes(_, _, _, cn, n),
+    in_list("executor_classes", cn), docof(n, d), executor_scope(d), exec_helper_source(d), primary_file(d), id = @id(n).
+// p = 'l2070_batching/executor.py' OR executor_scope
+diagnostics_2(n, "SPQ-013", id, "_check_executor_execute_runtime_bypass") :- calls(n, _, _, "object.__getattribute__", _), string_argument(n, 1, "execute_runtime"),
+    method_nodes(_, _, _, "PlanExecutor", n), docof(n, d), doc(d, "l2070_batching/executor.py"), primary_file(d), id = @id(n).
+diagnostics_2(n, "SPQ-013", id, "_check_executor_execute_runtime_bypass") :- calls(n, _, _, "object.__getattribute__", _), string_argument(n, 1, "execute_runtime"),
+    method_nodes(_, _, _, "PlanExecutor", n), docof(n, d), executor_scope(d), primary_file(d), id = @id(n).
+diagnostics_2(n, "SPQ-013", id, "_check_executor_python_execution") :- attributes(n, "child_steps", _, _), method_nodes(_, _, _, cn, n), in_list("executor_classes", cn),
+    docof(n, d), executor_scope(d), exec_helper_source(d), primary_file(d), id = @id(n).
+
+// ---- diagnostics_3 ----
+.decl strategies_file(d: number)
+strategies_file(d) :- files(d, _), doc(d, p), @substr(p, 1, 41) = "impl/common/l2070_server_plan/strategies/".
+.decl diagnostics_3(n: node, issue: symbol, identity: symbol, detector: symbol)
+diagnostics_3(n, "SPQ-018", id, "_check_executor_python_execution") :- attributes(n, attr, _, _), in_list("runtime_result_kw", attr), method_nodes(_, _, _, cn, n),
+    in_list("executor_classes", cn), docof(n, d), executor_scope(d), exec_helper_source(d), primary_file(d), id = @id(n).
+diagnostics_3(n, "SPQ-014", id, "_check_runtime_sequential_strategies") :- methods(n, c, "uses_runtime_sequential_execution", _), base_names(c, "PhysicalRegionCodegen"),
+    literal_bools(n, "true"), docof(n, d), strategies_file(d), primary_file(d), id = @id(n).
+diagnostics_3(n, "SPQ-014", id, "_check_runtime_sequential_strategies") :- methods(n, c, name, _), in_list("strategy_methods", name), base_names(c, "PhysicalRegionCodegen"),
+    descendant_callee(n, "NotImplementedError"), docof(n, d), strategies_file(d), primary_file(d), id = @id(n).
+diagnostics_3(n, "SPQ-014", id, "_check_runtime_sequential_strategies") :- calls(n, _, _, "getattr", _), string_argument(n, 1, "requires_runtime_sequential_batch"),
+    method_nodes(_, c, _, _, n), base_names(c, "PhysicalRegionCodegen"), docof(n, d), strategies_file(d), primary_file(d), id = @id(n).
+diagnostics_3(n, "SPQ-014", id, "_check_runtime_sequential_strategies") :- calls(n, _, _, _, ce), @like(ce, "%IR") = 1, ce != "SqlStepIR",
+    method_nodes(_, c, _, _, n), base_names(c, "PhysicalRegionCodegen"), docof(n, d), strategies_file(d), primary_file(d), id = @id(n).
+diagnostics_3(n, "SPQ-032", id, "_check_graphql_serverplan_boundary") :- py_names(n, t), in_list("graphql_private", t), docof(n, d), graphql_file(d),
+    prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-032", id, "_check_graphql_serverplan_boundary") :- attributes(n, t, _, _), in_list("graphql_private", t), docof(n, d), graphql_file(d),
+    prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-032", id, "_check_graphql_serverplan_boundary") :- calls(n, _, _, fc, _), in_list("duck", fc), string_argument(n, 1, v),
+    in_list("graphql_private", v), docof(n, d), graphql_file(d), prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-034", id, "_check_graphql_serverplan_boundary") :- py_names(n, "RelationshipType"), !in_list("graphql_private", "RelationshipType"),
+    docof(n, d), graphql_executor_file(d), prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-033", id, "_check_graphql_serverplan_boundary") :- classes(n, name), in_list("relationship_specs", name), docof(n, d), graphql_file(d),
+    prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-033", id, "_check_graphql_serverplan_boundary") :- classes(n, name), @like(name, "%RelationshipSpec") = 1, docof(n, d), graphql_file(d),
+    prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-033", id, "_check_graphql_serverplan_boundary") :- calls(n, _, _, _, ce), in_list("relationship_builders", ce), docof(n, d), graphql_file(d),
+    prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-036", id, "_check_contract_first_relationship_runtime") :- attributes(n, "relationships", _, ot), @rx_matches(ot, "(?:^|\\.)registry(?:\\.|$)") = 1,
+    docof(n, d), contract_first_file(d), prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-036", id, "_check_contract_first_relationship_runtime") :- calls(n, _, _, _, "get_relationship"), docof(n, d), contract_first_file(d),
+    prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-036", id, "_check_contract_first_relationship_runtime") :- calls(n, _, _, _, "_relationship_descriptor"), docof(n, d), contract_first_file(d),
+    doc(d, p), @rx_matches(p, "(?:^|/)l9900_auto_api/rest_router\\.py$") = 1, prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-036", id, "_check_contract_first_relationship_runtime") :- functions(n, "_relationship_descriptor"), not_async_text(n), docof(n, d),
+    contract_first_file(d), doc(d, p), @rx_matches(p, "(?:^|/)l9900_auto_api/rest_router\\.py$") = 1, prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-037", id, "_check_contract_first_relationship_runtime") :- calls(n, _, _, _, ce), in_list("relationship_nodes", ce), docof(n, d),
+    contract_first_file(d), graphql_executor_file(d), prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-037", id, "_check_contract_first_relationship_runtime") :- calls(n, _, _, _, "isinstance"), arguments(n, a, 1), kind(a, "identifier"), text(a, t),
+    in_list("belongs_has", t), docof(n, d), contract_first_file(d), graphql_executor_file(d), prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-038", id, "_check_serverplan_cleanup_ratchets") :- py_names(n, t), in_list("relationship_info", t), docof(n, d), !in_tests(d),
+    !relationship_compat_exempt(d), prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-039", id, "_check_serverplan_cleanup_ratchets") :- attributes(n, "source_flush_context", _, _), docof(n, d), !in_tests(d), prim_or_fallback(d),
+    id = @id(n).
+diagnostics_3(n, "SPQ-039", id, "_check_serverplan_cleanup_ratchets") :- attributes(n, "steps", _, "bundle"), docof(n, d), !in_tests(d), prim_or_fallback(d),
+    id = @id(n).
+diagnostics_3(n, "SPQ-039", id, "_check_serverplan_cleanup_ratchets") :- calls(n, _, _, _, "PlanPrerequisiteBundle"), keywords(n, k, kn, _), in_list("cleanup_kw", kn),
+    docof(n, d), !in_tests(d), prim_or_fallback(d), id = @id(k).
+diagnostics_3(n, "SPQ-040", id, "_check_serverplan_cleanup_ratchets") :- calls(n, _, _, _, "_build_include_query_step"), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)l2070_server_plan/.*intent_include\\.py$") = 1, functions(f, "_lower_include_load_intent"), not_async_text(f), contains_(f, n),
+    prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-041", id, "_check_serverplan_cleanup_ratchets") :- functions(n, "_format_embedded_object"), not_async_text(n), docof(n, d),
+    graphql_executor_file(d), prim_or_fallback(d), id = @id(n).
+diagnostics_3(n, "SPQ-041", id, "_check_serverplan_cleanup_ratchets") :- calls(n, _, _, _, "_format_embedded_object"), docof(n, d), graphql_executor_file(d),
+    prim_or_fallback(d), id = @id(n).
+
+// ---- diagnostics_4 ----
+.decl projection_prefix(d: number)
+projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 1, 20) = "l2060_query_builder/".
+projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 1, 30) = "impl/common/l2070_server_plan/".
+projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 1, 15) = "l2080_lazy_orm/".
+projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 1, 15) = "l9900_auto_api/".
+.decl non_false_child(v: node)
+non_false_child(v) :- visible_child(v, x), kind(x, k), k != "false", k != "comment".
+.decl row_semantics_node(y: node)
+row_semantics_node(y) :- calls(y, _, _, _, ce), in_list("row_helpers", ce).
+row_semantics_node(y) :- calls(y, _, "attribute", _, "evaluate").
+row_semantics_node(y) :- snode(y), kind(y, "subscript"), field(y, "value", v), kind(v, "identifier"), text(v, vt), in_list("row_names", vt),
+    visible_child(y, sl), kind(sl, "slice").
+.decl fn_has_build(f: node)
+fn_has_build(f) :- functions(f, _), descendants(f, c), exec_build(c).
+.decl fn_has_direct(f: node)
+fn_has_direct(f) :- functions(f, _), descendants(f, c), exec_direct(c).
+// (then_build AND else_direct) OR (else_build AND then_direct)
+.decl branch_mixed(b: node)
+branch_mixed(b) :- branch_then_build(b), branch_else_direct(b).
+branch_mixed(b) :- branch_else_build(b), branch_then_direct(b).
+.decl branch_any_direct(b: node)
+branch_any_direct(b) :- branch_then_direct(b).
+branch_any_direct(b) :- branch_else_direct(b).
+// A `x is (not) None` comparison in the condition: two visible children, a `none` and an identifier.
+.decl none_check_condition(b: node)
+none_check_condition(b) :- branch_flags(b), field(b, "condition", c), descendants(c, cmp), kind(cmp, "comparison_operator"), text(cmp, t),
+    @rx_matches(t, "\\bis(?: not)?\\b") = 1, child_count(cmp, 2), visible_child(cmp, e1), kind(e1, "none"), visible_child(cmp, e2), kind(e2, "identifier").
+.decl branch_in_fn(b: node, fn: node)
+branch_in_fn(b, f) :- branch_flags(b), contains_(f, b), fn_has_build(f), fn_has_direct(f).
+// A direct / build execution call after the branch and inside the function.
+.decl later_direct(b: node, fn: node)
+later_direct(b, f) :- branch_in_fn(b, f), docof(b, d), node(d, b, _, _, be), node(d, f, _, _, fe), exec_direct(x), node(d, x, _, xs, xe), xs > be, xe <= fe.
+.decl later_build(b: node, fn: node)
+later_build(b, f) :- branch_in_fn(b, f), docof(b, d), node(d, b, _, _, be), node(d, f, _, _, fe), exec_build(x), node(d, x, _, xs, xe), xs > be, xe <= fe.
+.decl scope_value(n: node)
+scope_value(n) :- string_at(n, v), in_list("scope_columns", v).
+scope_value(n) :- snode(n), kind(n, "identifier"), text(n, t), docof(n, d), module_string_values(d, t, v), in_list("scope_columns", v).
+.decl diagnostics_4(n: node, issue: symbol, identity: symbol, detector: symbol)
+diagnostics_4(n, "SPQ-045", id, "_check_forbidden_sqlcompoundwrite_usage") :- from_imports(n, i, "impl.common.l2100_sql_grammar.domain.infra.stmt_compound_write", "SqlCompoundWrite"),
+    docof(n, d), !in_tests(d), doc(d, p), @rx_matches(p, "(?:^|/)stmt_compound_write\\.py$") = 0, primary_file(d), start(n, s),
+    from_import_alias_text(i, al), id = @printf("%d:%s:%s", s, "SqlCompoundWrite", al).
+diagnostics_4(n, "SPQ-038", id, "_check_serverplan_cleanup_ratchets") :- from_imports(n, i, m, name), in_list("graphql_compat_modules", m), in_list("relationship_info", name),
+    docof(n, d), !in_tests(d), !relationship_compat_exempt(d), prim_or_fallback(d), start(n, s), from_import_alias_text(i, al),
+    id = @printf("%d:%s:%s", s, name, al).
+diagnostics_4(n, "SPQ-046", id, "_check_sql_statement_batch_requires_category") :- calls(n, _, _, _, "SqlStatementBatch"), !keyword_named(n, "statement_kinds_per_stmt"),
+    keywords(n, _, "collect_results_per_stmt", cv), kind(cv, ck), in_list("list_tuple", ck), visible_child(cv, tv), kind(tv, "true"),
+    keywords(n, _, "needs_returning_per_stmt", nv), kind(nv, nk), in_list("list_tuple", nk), !non_false_child(nv),
+    docof(n, d), primary_file(d), id = @concat("rowcounts:", @id(n)).
+diagnostics_4(n, "SPQ-043", id, "_check_projection_helper_execution_fallback") :- functions(n, _), docof(n, d), !in_tests(d), projection_prefix(d),
+    scoped_nodes(n, c), calls(c, _, "attribute", _, ce), in_list("projection_execs", ce), projection_repairs(n), files(d, src),
+    @rx_matches(src, "extract|project|projected|projection|tuple") = 1, @rx_matches(src, "execute|execute_async|resolve|resolve_async") = 1,
+    prim_or_fallback(d), id = @id(n).
+diagnostics_4(n, "SPQ-044", id, "_check_materialized_row_semantics_fallback") :- functions(n, _), docof(n, d), !in_tests(d), doc(d, p),
+    @substr(p, 1, 15) = "l9900_auto_api/", scoped_nodes(n, x), py_names(x, t), in_list("row_names", t), scoped_nodes(n, y), row_semantics_node(y),
+    files(d, src), @rx_matches(src, "_apply_orderby_to_dict_rows|_parse_orderby_clauses|_stable_sort_with_nulls_last|all_rows|candidates|group_rows|items|ordered_rows|out|page|page_rows|parse_filter_for_fields|parse_odata_filter_expression|rows|source_rows") = 1,
+    prim_or_fallback(d), id = @id(n).
+diagnostics_4(n, "SPQ-030", id, "_check_conditional_serverplan_fallback") :- branch_in_fn(n, f), branch_mixed(n), docof(n, d), fallback_source(d),
+    prim_or_fallback(d), id = @concat("branch:", @id(f), ":", @id(n)).
+diagnostics_4(n, "SPQ-031", id, "_check_conditional_serverplan_fallback") :- branch_in_fn(n, f), !branch_mixed(n), branch_any_direct(n), none_check_condition(n),
+    docof(n, d), fallback_source(d), prim_or_fallback(d), id = @concat(@id(f), ":", @id(n)).
+diagnostics_4(n, "SPQ-030", id, "_check_conditional_serverplan_fallback") :- branch_in_fn(n, f), kind(n, "if_statement"), field(f, "body", b), child(b, n, _),
+    branch_then_build(n), later_direct(n, f), docof(n, d), fallback_source(d), prim_or_fallback(d), id = @concat("later:", @id(f), ":", @id(n)).
+diagnostics_4(n, "SPQ-030", id, "_check_conditional_serverplan_fallback") :- branch_in_fn(n, f), kind(n, "if_statement"), field(f, "body", b), child(b, n, _),
+    branch_then_direct(n), later_build(n, f), docof(n, d), fallback_source(d), prim_or_fallback(d), id = @concat("later:", @id(f), ":", @id(n)).
+diagnostics_4(n, "SPQ-042", id, "_check_vector_scope_filters_use_expressions") :- calls(c, _, _, _, "QueryFilter"), arguments(c, n, 0), snode(n), scope_value(n),
+    docof(n, d), doc(d, "impl/common/l2070_server_plan/steps/intent_vector_query.py"), primary_file(d), id = @id(n).
+diagnostics_4(n, "SPQ-042", id, "_check_vector_scope_filters_use_expressions") :- calls(c, _, _, _, "QueryFilter"), keywords(c, _, "column", n), snode(n), scope_value(n),
+    docof(n, d), doc(d, "impl/common/l2070_server_plan/steps/intent_vector_query.py"), primary_file(d), id = @id(n).
+diagnostics_4(n, "SPQ-035", id, "_check_include_through_shared_lowering") :- branches(n), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)l2070_server_plan/.*intent_include\\.py$") = 1, branch_then(n, t), descendants(t, x), kind(x, "continue_statement"),
+    field(n, "condition", cd), through_conditions(cd), prim_or_fallback(d), id = @id(n).
+
+// ---- diagnostics_5 ----
+.decl doc_py_name(d: number, text: symbol)
+doc_py_name(d, t) :- py_names(x, t), docof(x, d).
+.decl doc_callee(d: number, callee: symbol)
+doc_callee(d, ce) :- calls(x, _, _, _, ce), docof(x, d).
+// An assignment `x[…] = None` directly in the branch's then-block.
+.decl then_none_reset(b: node)
+then_none_reset(b) :- branch_then(b, t), visible_child(t, stmt), visible_child(stmt, a), assignments(a, tg), !assignment_typed(a), assignment_value(a, v),
+    kind(v, "none"), kind(tg, "subscript").
+.decl condition_py_name(b: node, text: symbol)
+condition_py_name(b, t) :- branches(b), field(b, "condition", c), descendants(c, x), py_names(x, t).
+.decl condition_attr(b: node, attr: symbol)
+condition_attr(b, a) :- branches(b), field(b, "condition", c), descendants(c, x), attributes(x, a, _, _).
+.decl in_finish_batched_step(b: node)
+in_finish_batched_step(b) :- branches(b), functions(f, "_finish_batched_step"), contains_(f, b).
+.decl binop_operand(n: node, o: node)
+binop_operand(n, o) :- snode(n), kind(n, "binary_operator"), field(n, "left", o).
+binop_operand(n, o) :- snode(n), kind(n, "binary_operator"), field(n, "right", o).
+.decl getattr_string(f: node, value: symbol)
+getattr_string(f, v) :- descendants(f, c), calls(c, _, _, _, "getattr"), string_argument(c, _, v).
+.decl diagnostics_5(n: node, issue: symbol, identity: symbol, detector: symbol)
+diagnostics_5(n, "SPQ-020", id, "_check_imperative_preop_execution") :- calls(n, _, _, _, ce), in_list("compiled_step", ce), keywords(n, k, kn, v),
+    in_list("preop_kw", kn), kind(v, "identifier"), text(v, t), docof(n, d), preop_functions(d, t), !in_tests(d), primary_file(d), id = @id(k).
+diagnostics_5(n, "SPQ-020", id, "_check_imperative_preop_execution") :- calls(n, _, _, _, ce), in_list("compiled_step", ce), keywords(n, k, kn, v),
+    in_list("preop_kw", kn), kind(v, vk), vk != "none", vk != "identifier", descendant_callee(v, rc), in_list("preop_runtime", rc), docof(n, d), !in_tests(d),
+    primary_file(d), id = @id(k).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- functions(n, "_can_fuse_replay_terminal_steps"), not_async_text(n),
+    docof(n, d), doc(d, p), @rx_matches(p, "(?:^|/)sql_backend_executor\\.py$") = 1, primary_file(d), id = @id(n).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- functions(n, "supports_sql_batch_transport"),
+    descendant_callee(n, "sql_visible_dependencies"), docof(n, d), primary_file(d), id = @id(n).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- strings(n, v), @rx_matches(v, "^[\\p{L}\\p{N}_]+\\(.*\\)$") = 1,
+    functions(f, "split_for_outer_cte"), contains_(f, n), node(d, n, _, s, e), primary_file(d), id = @printf("%d:%d", s, e).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- functions(n, "_relation_output_columns"), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)dependent_read_cte\\.py$") = 1, descendant_attr(n, "relation_output_columns"), primary_file(d), id = @id(n).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- functions(n, "_relation_output_columns"), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)dependent_read_cte\\.py$") = 1, getattr_string(n, "relation_output_columns"), primary_file(d), id = @id(n).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- functions(n, "requires_prior_step_boundary"), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)versioned_query_steps\\.py$") = 1, descendant_callee(n, "_query_spec_has_json_function_filter"), primary_file(d), id = @id(n).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- functions(n, "requires_prior_step_boundary"), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)versioned_query_steps\\.py$") = 1, descendant_attr(n, "_after_refs"), primary_file(d), id = @id(n).
+diagnostics_5(n, "SPQ-047", "dependent-order", "_check_runtime_replay_batching_uses_structured_analysis") :- file_starts(n), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)dependent_read_cte\\.py$") = 1, !doc_py_name(d, "_BATCH_ROW_ORDINAL"), primary_file(d).
+diagnostics_5(n, "SPQ-047", "dependent-order", "_check_runtime_replay_batching_uses_structured_analysis") :- file_starts(n), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)dependent_read_cte\\.py$") = 1, !doc_callee(d, "with_order_by"), primary_file(d).
+diagnostics_5(n, "SPQ-047", "child-exports", "_check_runtime_replay_batching_uses_structured_analysis") :- file_starts(n), docof(n, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)compound_sequence\\.py$") = 1, !doc_callee(d, "exports_child_bindings"), primary_file(d).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- branches(n), docof(n, d), executor_batch_file(d),
+    in_finish_batched_step(n), then_none_reset(n), condition_py_name(n, "empty_result_allowed"), primary_file(d), id = @concat("empty:", @id(n)).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- branches(n), docof(n, d), executor_batch_file(d),
+    in_finish_batched_step(n), then_none_reset(n), condition_py_name(n, "omitted_projection_indices"), !condition_attr(n, "closed_post_op"), primary_file(d),
+    id = @concat("omitted:", @id(n)).
+diagnostics_5(n, "SPQ-047", id, "_check_runtime_replay_batching_uses_structured_analysis") :- snode(n), kind(n, "binary_operator"), text(n, t), @rx_matches(t, "&") = 1,
+    binop_operand(n, c), calls(c, _, "attribute", _, "step_tags"), binop_operand(n, sv), kind(sv, "set"), visible_child(sv, el), string_at(el, v),
+    in_list("step_tag_values", v), docof(n, d), executor_batch_file(d), primary_file(d), id = @id(n).
+diagnostics_5(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- annotations(n, _), assignments(n, tg), text(tg, tt), in_list("runtime_state", tt),
+    docof(n, d), !in_tests(d), primary_file(d), id = @concat("owner:", @id(n)).
+diagnostics_5(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- annotations(n, _), !annotation_function_local(n), assignments(n, tg), text(tg, tt),
+    @rx_matches(tt, "AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction|bundle|runtime") = 1,
+    docof(n, d), !in_tests(d), primary_file(d), id = @concat("field:", @id(n)).
+diagnostics_5(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- annotations(n, _), resolved_atoms(n, aid, _, _, o),
+    @rx_matches(o, "(?:^|\\.)Callable(?:\\.|$)") = 1, !ignored_annotation_metadata(n, aid), docof(n, d), !in_tests(d), primary_file(d),
+    id = @concat("callable:", @id(n)).
+// NOT (trusted AND origin IN connection_ids): one rule per disjunct.
+diagnostics_5(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- annotations(n, _), resolved_atoms(n, aid, _, _, o), !resolved_trusted(n, aid, o),
+    @rx_matches(o, "AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction") = 1,
+    !ignored_annotation_metadata(n, aid), docof(n, d), !in_tests(d), primary_file(d), id = @concat("service:", @id(n)).
+diagnostics_5(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- annotations(n, _), resolved_atoms(n, aid, _, _, o), !in_list("connection_ids", o),
+    @rx_matches(o, "AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction") = 1,
+    !ignored_annotation_metadata(n, aid), docof(n, d), !in_tests(d), primary_file(d), id = @concat("service:", @id(n)).
+
+// ---- diagnostics_6 ----
+.decl diagnostics_6(n: node, issue: symbol, identity: symbol, detector: symbol)
+diagnostics_6(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- assignments(n, tg), !assignment_typed(n), kind(tg, "identifier"), text(tg, tt),
+    @instr(tt, "UNWRAP") > 0, assignment_value(n, v), kind(v, vk), in_list("unwrap_kinds", vk), visible_child(v, item), string_at(item, s),
+    in_list("runtime_state", s), docof(n, d), !in_tests(d), primary_file(d), id = @concat("unwrap:", @id(n)).
+diagnostics_6(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- assignments(n, tg), !assignment_typed(n), kind(tg, "identifier"), text(tg, tt),
+    @instr(tt, "OWNER") > 0, assignment_value(n, v), kind(v, vk), in_list("unwrap_kinds", vk), visible_child(v, item), string_at(item, s),
+    in_list("runtime_state", s), docof(n, d), !in_tests(d), primary_file(d), id = @concat("unwrap:", @id(n)).
+diagnostics_6(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- attributes(n, "renewable_capability_bundle", _, _), docof(n, d), !in_tests(d),
+    primary_file(d), id = @id(n).
+diagnostics_6(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- calls(n, _, _, _, "runtime_builder_post_op"), keywords(n, k, kn, _),
+    in_list("runtime_builder_kw", kn), docof(n, d), !in_tests(d), primary_file(d), id = @id(k).
+
+// ---- the clause's query: SELECT * FROM diagnostics_0 UNION ALL … diagnostics_6 ----
+finding("quality-contracts-1", issue, n) :- diagnostics_0(n, issue, _, _).
+finding("quality-contracts-1", issue, n) :- diagnostics_1(n, issue, _, _).
+finding("quality-contracts-1", issue, n) :- diagnostics_2(n, issue, _, _).
+finding("quality-contracts-1", issue, n) :- diagnostics_3(n, issue, _, _).
+finding("quality-contracts-1", issue, n) :- diagnostics_4(n, issue, _, _).
+finding("quality-contracts-1", issue, n) :- diagnostics_5(n, issue, _, _).
+finding("quality-contracts-1", issue, n) :- diagnostics_6(n, issue, _, _).

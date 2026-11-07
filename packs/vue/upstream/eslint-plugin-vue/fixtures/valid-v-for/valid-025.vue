@@ -1,1 +1,0 @@
-<template><div><template v-for="(x, i) in list" :key="i"><MyComp /></template></div></template>

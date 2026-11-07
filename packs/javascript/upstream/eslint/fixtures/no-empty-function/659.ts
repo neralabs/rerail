@@ -1,1 +1,0 @@
-class A { private foo() { bar(); } }

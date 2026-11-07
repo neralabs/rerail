@@ -39,7 +39,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "COMMENT-PATTERN",
-        "message": "This comment matches the pattern"
+        "message": "Remove this comment; it matches the pattern."
       }
     }
   ]

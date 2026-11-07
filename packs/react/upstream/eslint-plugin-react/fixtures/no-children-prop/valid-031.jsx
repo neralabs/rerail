@@ -1,1 +1,0 @@
-<MyComponent className="class-name"></MyComponent>;

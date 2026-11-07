@@ -7,16 +7,16 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
-const version = "18.0.4";
+const version = "18.12.2";
 // Published release digests, pinned with the SDK rather than trusted at download time.
 const digests = {
-  "omp-darwin-arm64": "d493163887bcf8f77b9991ab7219f77712b5b27de6564f7af7283064aca84824",
-  "omp-darwin-x64": "f217752f5f579d2b220818462fc515ad333e8a410f1bbfcd6307825b705260f5",
-  "omp-linux-arm64": "f2b7c8a019681ede314ac165100c1c5b5cd4900139075948da809c004bec5ce7",
-  "omp-linux-x64": "94ec42d17d71975a381e20335bb3c005a7fd7eec19b319358df6d22f28e16b37",
-  "omp-linux-musl-arm64": "438a8541d87796711af24fdc7dc5e00e88eefc8a5ae75e92039e874cca1aa217",
-  "omp-linux-musl-x64": "f5bdec984733a4441ed9e58262d024dda1c4c4a046e31ef0ad82ba2954cd933b",
-  "omp-windows-x64.exe": "8e04c83fb03a7068c3c5f08b509e9d0ed51f6a01ef0e2118de369c32daad1f47",
+  "omp-darwin-arm64": "abd9a5b0fef77f4204078e348e233faa0dd3d5d81719cf2b6a9b9478c10eee48",
+  "omp-darwin-x64": "dcd3fa827ae73bdb471bb838171ef1c9c5be665a68eaec45ffc6d6e5cf128b92",
+  "omp-linux-arm64": "967d64fce514586e94c9ac5f978743b4fce29b999c8763747ce4754811407d1a",
+  "omp-linux-x64": "9513ef9f19d7991aac6ae0cb6077bcf16662092ddde861c002a91cedc6f47f9a",
+  "omp-linux-musl-arm64": "43c125d06d26440347392da3686c11581f5af31d3d12ecceb7d583e618dca8b7",
+  "omp-linux-musl-x64": "009fbd6819cadf70f13e7d36dfe7ab670b710b6c817b60e042223d0c1e755ecd",
+  "omp-windows-x64.exe": "5f2aad1aaec9bd4af3556c6fdaa1a2eae2873cd09e5804b593f4b516945a89ae",
 };
 
 function confinedPath(directory, name) {
@@ -78,7 +78,7 @@ async function ensureCacheDirectory(root, parent, name) {
 const root = await realpath(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."));
 const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 if (manifest.devDependencies["@oh-my-pi/pi-coding-agent"] !== version) {
-  throw new Error("Update the pinned OMP host version and release digests with the SDK dependency.");
+  throw new Error("The pinned OMP host is out of step with the SDK dependency: run npm run deps:sync.");
 }
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/host/install-omp-host.mjs");
 const platform = process.platform === "win32" ? "windows" : process.platform;

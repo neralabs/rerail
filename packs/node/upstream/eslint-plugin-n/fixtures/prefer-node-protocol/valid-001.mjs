@@ -1,1 +1,0 @@
-import nodePlugin from "eslint-plugin-n";

@@ -14,6 +14,7 @@ import {
   assistantDeltaEvent,
   assistantMessageEvent,
   sendNativeDeliveries,
+  resultWithSteers,
   callEvent,
   resultEvent,
   turnEndEvent,
@@ -29,6 +30,7 @@ import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "../../
 import { countDroppedEvent, createNativeSession, NativeSessionClient, type NativeSessionHost } from "../../harness/native-session-client.js";
 import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
 import { contained } from "../../harness/contained-hook.js";
+import { guardCompaction } from "../../harness/compaction-guard.js";
 import { registerHostCommands } from "../../harness/host-commands.js";
 import { createOmpPresentation } from "../../presentation/omp-presentation.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules, readRepositoryState } from "../../presentation/session-presentation.js";
@@ -125,6 +127,15 @@ interface InitializeOptions {
   onlyIfCurrent?: boolean;
 }
 
+/** A repository indexed within this never shows `indexing` in the footer, so a quick open does not flicker it. */
+const INDEXING_SHOWN_AFTER_MS = 500;
+
+/** The live runtime's repository indexing, which the footer shows while it lasts. */
+interface Indexing {
+  client: NativeSessionClient;
+  done: boolean;
+}
+
 /** The OMP adapter's delivery boundary, shared by live detection and local previews. */
 export function deliverOmpGuidance(pi: Pick<ExtensionAPI, "sendMessage">, delivery: AdapterDelivery): Promise<void> {
   // A preview bypasses detection; it records no steer receipt because no runtime session owns it.
@@ -147,6 +158,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
     const codeRuleTools = new Map<string, string>();
     let semantic: NativeSemanticToolRuntime | undefined;
     let remote: NativeSessionClient | undefined;
+    let indexing: Indexing | undefined;
     /** The session OMP is in: set when a session event delivers it, so a runtime of a session OMP left cannot write into this one. */
     let liveSessionId: string | undefined;
 
@@ -161,6 +173,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       remote = undefined;
       activeSession = undefined;
       semantic = undefined;
+      indexing = undefined;
+      presentation.indexing(false);
       // The runtime that replaces this one saw none of the deltas of the messages streaming now, so each is marked dropped
       // for its end to send the whole text again; the deltas still in flight settle against a runtime that is no longer live.
       for (const messageId of streamedMessages) droppedDeltaMessages.add(messageId);
@@ -177,7 +191,9 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       return pending;
     };
 
-    // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+    /** The tool results being ingested, each with the steers placed in it so far. */
+    const openResults = new Map<string, AdapterDelivery[]>();
+    // The runtime records no links; the rules point at this checkout's dashboard only here.
     const sendDeliveries = async (current: NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
       sendNativeDeliveries(await linkDeliveries(deliveries, currentContext?.cwd), async (message, options_) => {
         const context = currentContext;
@@ -191,7 +207,12 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         // string-only normalization path; the hook prevents queue consumption.
         await new Promise<void>(resolve_ => queueMicrotask(resolve_));
         if (!context.hasPendingMessages()) throw new Error("OMP did not accept Rerail policy guidance");
-      }, (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds));
+      }, (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds), (toolCallId, delivery) => {
+        // A steer placed into its call's result skips OMP's steer queue.
+        const placed = openResults.get(toolCallId);
+        placed?.push(delivery);
+        return placed !== undefined;
+      });
 
     /**
      * Hands the event to the live runtime. `outcome` learns whether the event reached the daemon through the runtime that is
@@ -417,7 +438,29 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         storageRoot: resolve(ctx.cwd, process.env.RERAIL_STORAGE_ROOT ?? ".rerail/sessions"),
       });
       if (activation !== "attached") throw new Error("OMP Rerail routing did not attach a runtime");
+      guardCompactions();
       presentation.start(ctx);
+      // A rebuilt session indexes again behind its new evaluator.
+      if (remote !== undefined && (options_.rebuild === true || indexing?.client !== remote)) watchIndexing(remote);
+    };
+
+    /**
+     * Shows `indexing` in the footer while the daemon indexes the repository the attached runtime checks. Nothing waits
+     * for it: until it ends, the session's tool calls, results and turn ends go on without code rules.
+     */
+    const watchIndexing = (client: NativeSessionClient): void => {
+      const watched: Indexing = { client, done: false };
+      const shown = setTimeout(() => {
+        if (indexing === watched && !watched.done) presentation.indexing(true);
+      }, INDEXING_SHOWN_AFTER_MS);
+      shown.unref();
+      // A daemon that cannot say clears the footer: its runtime reports its own faults.
+      void client.awaitCodeRules().catch(() => undefined).finally(() => {
+        watched.done = true;
+        clearTimeout(shown);
+        if (indexing === watched) presentation.indexing(false);
+      });
+      indexing = watched;
     };
 
     if (options.registerTool !== false) {
@@ -475,6 +518,17 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
     pi.on("session_switch", (_event, ctx) => attach(ctx));
     pi.on("session_branch", (_event, ctx) => attach(ctx));
     pi.on("session_tree", (_event, ctx) => attach(ctx));
+    /**
+     * Registers the compaction guard the first time Rerail attaches in a started repository. OMP compacts the
+     * preparation its handlers received, but skips speculative compaction while any `session_before_compact` handler is
+     * registered, and offers no way to remove one: sessions where Rerail never runs keep it.
+     */
+    let compactionsGuarded = false;
+    function guardCompactions(): void {
+      if (compactionsGuarded) return;
+      compactionsGuarded = true;
+      pi.on("session_before_compact", (event) => { guardCompaction(event.preparation); });
+    }
 
     // The first prompt of each session also carries the session-start note, hidden from the person (design A1).
     const notedSessions = new Set<string>();
@@ -568,9 +622,11 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         ), undefined, { quietAttachFailure: true });
       }));
     });
-    pi.on("tool_result", (event) => {
+    pi.on("tool_result", async (event) => {
       codeRuleTools.delete(event.toolCallId);
-      return contained("tool_result", sequenceCodeRuleEvent(async () => {
+      const placed: AdapterDelivery[] = [];
+      openResults.set(event.toolCallId, placed);
+      await contained("tool_result", sequenceCodeRuleEvent(async () => {
         await ingestEvent(sessionId => resultEvent(
           sessionId,
           `tool-result:${event.toolCallId}`,
@@ -580,9 +636,13 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           event.isError,
         ), undefined, { quietAttachFailure: true });
       }));
+      if (openResults.get(event.toolCallId) === placed) openResults.delete(event.toolCallId);
+      // The call's steers ride its result: after what it says, or in its place when its edit was rolled back; a later
+      // one goes out as a message.
+      return resultWithSteers(event.content, placed);
     });
 
-    /** The latest turn's end, still being checked: the daemon settles the turn's code rules before it answers. */
+    /** The latest turn's end, still being checked: the daemon waits up to 10 s for the turn's code rules before it answers. */
     let turnEnding: Promise<void> = Promise.resolve();
     pi.on("turn_end", (event) => {
       const ending = (async () => {
@@ -605,8 +665,13 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
     // (`#endInFlight` → `#drainStrandedQueuedMessages`). This is Codex's Stop hold, with the steer kept as a
     // `rerail.rule` message rather than a hidden continuation.
     // A failed turn-end check has already reported itself through its own `turn_end` handler. Escape ends the hold.
+    // Then the end of the run, which OMP's turn end is not (it ends one at every model call): the steers the daemon
+    // still holds and the digest of the findings whose checks outlasted the step that made them, sent the same way.
     pi.on("session_stop", event => contained("session_stop", Promise.race([
-      turnEnding.catch(() => undefined),
+      (async () => {
+        await turnEnding.catch(() => undefined);
+        await remote?.yieldDeliveries();
+      })(),
       new Promise<void>(resolve_ => {
         if (event.signal.aborted) resolve_();
         else event.signal.addEventListener("abort", () => resolve_(), { once: true });

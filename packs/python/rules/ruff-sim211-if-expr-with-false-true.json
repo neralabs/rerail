@@ -3,7 +3,7 @@
   "id": "ruff-sim211-if-expr-with-false-true",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM211 (if-expr-with-false-true): a conditional expression whose body is the literal `False` and whose `else` arm is `True` (through any parentheses), reported on the whole expression.",
+  "description": "Use not on the condition instead of a conditional expression that yields False when it holds and True otherwise.",
   "scope": {
     "include": [
       "**/*"

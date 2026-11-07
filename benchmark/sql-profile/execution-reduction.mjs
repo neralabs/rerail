@@ -1,4 +1,4 @@
-// Historical delivery deltas remain diagnostic; they do not establish performance acceptance.
+// Delivery targets do not replace the fixed final job limit.
 import { executionBudget } from './execution-budget.mjs';
 
 export function executionReduction(report, { baseline, removal }) {
@@ -8,6 +8,5 @@ export function executionReduction(report, { baseline, removal }) {
   const removed = baseline - budget.observed;
   return { baseline, requiredRemoval: removal, removed, observed: budget.observed,
     ceiling: baseline - removal, accepted: budget.problems.length === 0 && removed >= removal,
-    problems: budget.problems, finalLimit: budget.limit, withinReference: budget.observed <= budget.limit,
-    diagnosticOnly: true, performanceAccepted: null };
+    problems: budget.problems, finalLimit: budget.limit, finalLimitAccepted: budget.accepted };
 }

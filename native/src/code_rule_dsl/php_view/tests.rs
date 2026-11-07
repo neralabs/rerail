@@ -369,7 +369,7 @@ fn the_data_after_halt_compiler_is_no_php() {
     }
 }
 
-/// The minimal templates of NER-1808 and of its review, which the grammar read with errors.
+/// Minimal templates the grammar once read with errors, from a review of the PHP view.
 const TEMPLATES: &[&str] = &[
     INLINE,
     INLINE_REAL_EVAL,
@@ -414,7 +414,7 @@ fn templates_parse_clean_and_read_the_source() {
 /// The shipped `phpcs-squiz-php-eval`: every `eval` construct.
 fn squiz_php_eval() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     crate::code_rule_dsl::CodeRuleDslRuntime::compile(
-        include_str!("../../../../packs/php/candidates/rules/phpcs-squiz-php-eval.json").to_owned(),
+        include_str!("../../../../packs/php/rules/phpcs-squiz-php-eval.json").to_owned(),
         "json".to_owned(),
         CAPABILITIES.to_owned(),
     )

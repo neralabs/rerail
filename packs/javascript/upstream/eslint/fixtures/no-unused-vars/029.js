@@ -1,1 +1,0 @@
-var g = function(bar, baz) { return 2; }; g();

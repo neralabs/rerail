@@ -1,7 +1,0 @@
-
-class A {
-  dummyMethod() {
-    doSomething();
-  }
-}
-    

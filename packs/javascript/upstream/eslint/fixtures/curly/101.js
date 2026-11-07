@@ -1,2 +1,0 @@
-do 
- bar(); while (foo)

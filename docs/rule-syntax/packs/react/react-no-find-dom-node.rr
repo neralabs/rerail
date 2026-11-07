@@ -1,0 +1,19 @@
+.policy "react-no-find-dom-node" revision 2
+.description "Use refs instead of findDOMNode(); it is deprecated, fails in StrictMode and doesn't work with function components."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-find-dom-node: every call of a function named findDOMNode, bare or as a member, whatever it is bound to.
+//   ReactDOM.findDOMNode(this)   findDOMNode(this)   this.findDOMNode()      reported, at the callee
+//   findDOMNode                                                             not: only calls
+#include "tsx/react.rr"
+
+.violation no_find_dom_node(at: node)
+    code "react/no-find-dom-node"
+    "Replace findDOMNode() with a ref on the element you need; findDOMNode is deprecated and fails in StrictMode."
+    suppress eslint "react/no-find-dom-node"
+    suppress oxlint "no-find-dom-node"
+no_find_dom_node(f) :- kind(c, "call_expression"), field(c, "function", f), docof(c, d), react_doc(d),
+    (kind(f, "identifier"), text(f, "findDOMNode") ;
+     kind(f, "member_expression"), field(f, "property", p), text(p, "findDOMNode")).

@@ -1,1 +1,0 @@
-void obj?.foo;

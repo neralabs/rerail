@@ -1,1 +1,0 @@
-let x; for (x of array) { x; }

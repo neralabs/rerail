@@ -3,7 +3,7 @@
   "id": "ruff-f405-undefined-local-with-import-star-usage",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F405 (undefined-local-with-import-star-usage) on the engine's name resolution (M10a `resolves.unresolved: \"star\"`): a reference, or a string entry of a module `__all__`, that no binding in scope and no builtin resolves and that a visible star import may bind, reported on the name or the string; and such a name inside a string Ruff parses as a type definition (M11a `parse` with `annotation`, nested strings included), reported on each such name inside the string.",
+  "description": "Import names explicitly instead of relying on a star import to define them; names that may only come from a star import can't be checked.",
   "scope": {
     "include": [
       "**/*"
@@ -72,7 +72,7 @@
       "violation": {
         "anchor": "capture.NAME",
         "code": "F405",
-        "message": "`$NAME` may be undefined, or defined from star imports",
+        "message": "Import `$NAME` explicitly from its module; it may only be defined by a star import.",
         "each": "NAME",
         "suppress": {
           "noqa": {

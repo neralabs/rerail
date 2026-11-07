@@ -1,1 +1,0 @@
-var foo = array?.[0];

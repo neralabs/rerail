@@ -1,7 +1,5 @@
 # Candidate SQL replay host
 
-The [cold CPU experiments](cold-cpu.md) cover demand, fusion, native batches, publication, and plan reuse.
-
 This host compares physical SQL layouts over captured candidate inputs.
 It imports the production SQLite adapters, span codec, CPU clock, storage settings, and replay implementation directly.
 It does not parse ASTs or implement rule semantics.
@@ -194,30 +192,5 @@ Current captures include the logical graph in their `graph` field. Keep its arra
 The recompiler rejects an existing result, an existing copied database, or an already shared program.
 It adds no runtime engine option. Compare complete-process CPU separately with tracing and allocation accounting disabled.
 The fixed guard also records `chunk-a-budget.json`. This progress check requires all 3,474 expected removals.
-Since 2026-10-25, the fixed 100-submission reference is diagnostic. Complete accounting and parity remain mandatory.
-Performance acceptance uses full-repository cold CPU, wall time and peak RSS, with compilation reported separately.
+The final 100-submission gate remains independent and mandatory.
 SQL batch duration belongs to the batch. Use its captured logical membership when analyzing producer costs.
-
-## Failed relational queries
-
-Build the `failure_replay` binary with this package.
-It restores both SQL owners from a failure-only snapshot, then evaluates the saved SELECT query.
-It uses the same bundled SQLite version and backup boundary as the engine.
-It also installs the production regex functions, including their NULL and invalid-group behavior.
-Native virtual-table frames and external callbacks remain unavailable; queries that require them fail explicitly.
-
-```sh
-python3 scripts/profiling/run.py --trace off --deadline 115 \
-  --output .rerail/profiles/failure-replay/control -- \
-  scripts/profiling/preparation/target/release/failure_replay \
-  path/to/failure-manifest.json
-```
-
-Supply a SQL file as the second argument to evaluate a revised read-only query against the same captured data.
-The report separates restore wall time from query CPU, wall time, VM steps, scans, sorts, and automatic-index rows.
-Query time includes result hashing. Row count and a commutative typed-row digest help compare alternatives with the same replay binary.
-A digest match is diagnostic evidence, not a replacement for full rule parity.
-The host has no original rule allowance. The external controller enforces the command deadline.
-The report counts regex work units separately from SQLite VM steps.
-New failure manifests preserve both remaining SQL allowance and the outer clause's work limit and consumed polls.
-These diagnostics identify the exhausted boundary without changing either allowance.

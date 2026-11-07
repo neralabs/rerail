@@ -1,5 +1,25 @@
 # @neralabs/rerail-pack-javascript
 
+## 0.1.4
+
+### Patch Changes
+
+- e06db22: JavaScript pack: `eslint-accessor-pairs` drops a clause that could never match and only carried the message "Rule disabled by its options."
+- e06db22: JavaScript pack: messages whose rewrite only changed the voice are back to their original wording; in an eval with a coding agent, the original and rewritten messages steered it equally well. Messages where the original steered the agent better in that eval are back to their original wording too.
+- e06db22: JavaScript pack: `eslint-no-unused-vars` replaces the placeholder text "unused" in its option-chosen messages with the sentence each one means.
+- e06db22: JavaScript pack: every rule description now says in one plain sentence what the rule wants; the exact matching detail moved to the pack README.
+- e06db22: JavaScript pack: every violation message now says in one sentence what to change in the flagged code, without tool names or rule codes.
+
+## 0.1.3
+
+### Patch Changes
+
+- ac01449: JavaScript pack: the 21 ESLint core rules that typescript-eslint replaces or turns off for TypeScript (`no-redeclare`, `no-undef`, `no-unused-vars`, `no-dupe-keys` and others) run on JavaScript files only, so TypeScript overloads, declaration merges and type names are no longer reported, and they are scored on ESLint's JavaScript test cases only.
+  
+  The `default-param-last` and `max-params` candidates read JavaScript's own parameter syntax, so on JavaScript files they report what ESLint does (they were written against TypeScript's parameter nodes and reported nothing there).
+- 3049ced: JavaScript pack: named "JavaScript and TypeScript (ESLint core)", since its ESLint core rules apply to TypeScript source too and set-up recommends it for TypeScript repositories.
+- d1e67d7: JavaScript pack: six ESLint core rules that pass every rule gate and the pack's conformance check ship: `curly`, `no-labels`, `no-object-constructor` and `no-sequences` off, `no-unused-labels` and `no-unused-private-class-members` on; 71 rules ship, 24 on.
+
 ## 0.1.2
 
 ### Patch Changes

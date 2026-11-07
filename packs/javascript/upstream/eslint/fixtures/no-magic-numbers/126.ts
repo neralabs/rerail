@@ -1,1 +1,0 @@
-type Foo = -4n;

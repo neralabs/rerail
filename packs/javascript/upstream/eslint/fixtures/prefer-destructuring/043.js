@@ -1,1 +1,0 @@
-var foo = (f()).foo;

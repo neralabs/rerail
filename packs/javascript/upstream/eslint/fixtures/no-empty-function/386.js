@@ -1,1 +1,0 @@
-var obj = {get foo() {}}; // allow: generatorMethods

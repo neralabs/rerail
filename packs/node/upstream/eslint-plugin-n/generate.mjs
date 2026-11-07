@@ -4,7 +4,8 @@
 // upstream eslint-plugin-n v18.4.1 = f1d47aff402b9e009578f4b3155b84f7d8beef9b; corpora fastify @
 // 0d945819bebc08f4ca666d8283c03a26ed9706a0, prettier @ 5927216227411bc2cdaf30d50559e0a475ab4832. Refuses any other.
 //
-// Usage (offline, never in CI): node packs/node/upstream/eslint-plugin-n/generate.mjs
+// Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request
+// CI). Usage: node packs/node/upstream/eslint-plugin-n/generate.mjs
 //   [--tools <dir>] (default: the nearest .rerail/tools/node) [--corpora <dir>] (default: the nearest .rerail/corpora/node)
 //   [--fixtures-only] [--summary <file>] (writes the run summary, incl. per-case count mismatches, as JSON)
 //

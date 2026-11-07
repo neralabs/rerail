@@ -1,0 +1,184 @@
+// data-layer-serverplan-steps in Rerail logic: clause `step-contracts-3` (18 stages, partitionBy file), a part file
+// of serverplan_steps.rdl. Options at their defaults: entryPoint "all" (the matchers' `$option` file filter passes
+// every file; the query is the `all` case, every check's branch), strictModulesOnly true (`relaxed` matches no file).
+// Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
+//
+// One relation per SQL stage, under the stage's name; a nullable or boolean column is a side relation
+// `<stage>_<column>` that holds where the column is not NULL (true). A SQL row's id (kind:start:end) is a node; the
+// clause is per file, so a join on a name keeps the document (`docof`). Inputs are matcher atoms with the rule's
+// matchers verbatim (their `$option` cases included).
+//
+// Builtins: @depth (tape: the node's depth), @instr, @within (tape: strict descendant). A builtin with no value (SQL
+// NULL) binds nothing.
+// recursion: raw_shapers (E0 #55, call graph by name) and payload_values (#56, a guarded walk down the tree) are
+// set recursions; descendants (#54) is `@within`.
+// findings layer (§8): the rows' `entry` column (the Python check a row reproduces) and the identity text; the
+// finding is (issue, node).
+// OUTSIDE: none. missing fact: none. LIMIT/choice: none.
+// ties: none. The ordinal and position columns are exact.
+
+
+// ---- inputs (evidence) ----
+// raw_nodes: the selected nodes. Its captures are read by tree relations: PARENT is the tree parent (`child`), a field
+// capture (NAME, BODY, VALUE, …) the node's `field` child, ANCESTOR the nearest selected strict ancestor (below).
+.decl raw_nodes(n: node)
+raw_nodes(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "check_literal_payload_materializer_dispatch_guardrail": {"filePath": {"regex": "(?s).*"}}, "check_row_materializer_raw_row_shaping_guardrail": {"filePath": {"regex": "(?s).*"}}, "_scan_source": {"filePath": {"regex": "(?s).*"}}, "_scan_file": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"any": [{"has": {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:raw|raw_rows|rows)$"}]}, {"all": [{"any": [{"kind": "typed_parameter"}, {"kind": "typed_default_parameter"}]}, {"regex": "RawResult"}]}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "parameters"}}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:materialize)$"}], "stopBy": "neighbor", "field": "name"}}]}], "stopBy": "end"}}, {"all": [{"kind": "call"}, {"has": {"has": {"all": [{"kind": "keyword_argument"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:literal_payload|row_materializer|terminal_literal)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "arguments"}}]}, {"inside": {"all": [{"kind": "call"}, {"has": {"has": {"all": [{"kind": "keyword_argument"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:literal_payload|row_materializer|terminal_literal)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "arguments"}}], "stopBy": "end"}}]}, {"any": [{"inside": {"all": [{"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"any": [{"has": {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:raw|raw_rows|rows)$"}]}, {"all": [{"any": [{"kind": "typed_parameter"}, {"kind": "typed_default_parameter"}]}, {"regex": "RawResult"}]}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "parameters"}}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:materialize)$"}], "stopBy": "neighbor", "field": "name"}}]}], "stopBy": "end"}}, {"all": [{"kind": "call"}, {"has": {"has": {"all": [{"kind": "keyword_argument"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:literal_payload|row_materializer|terminal_literal)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "arguments"}}]}, {"inside": {"all": [{"kind": "call"}, {"has": {"has": {"all": [{"kind": "keyword_argument"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:literal_payload|row_materializer|terminal_literal)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "arguments"}}], "stopBy": "end"}}]}, {"pattern": "$ANCESTOR"}], "stopBy": {"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"any": [{"has": {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:raw|raw_rows|rows)$"}]}, {"all": [{"any": [{"kind": "typed_parameter"}, {"kind": "typed_default_parameter"}]}, {"regex": "RawResult"}]}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "parameters"}}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:materialize)$"}], "stopBy": "neighbor", "field": "name"}}]}], "stopBy": "end"}}, {"all": [{"kind": "call"}, {"has": {"has": {"all": [{"kind": "keyword_argument"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:literal_payload|row_materializer|terminal_literal)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "arguments"}}]}, {"inside": {"all": [{"kind": "call"}, {"has": {"has": {"all": [{"kind": "keyword_argument"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:literal_payload|row_materializer|terminal_literal)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "arguments"}}], "stopBy": "end"}}]}}}, {"pattern": "$_"}]}, {"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$RIGHT", "stopBy": "neighbor", "field": "right"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$VALUE", "stopBy": "neighbor", "field": "value"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$TYPE", "stopBy": "neighbor", "field": "type"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$BODY", "stopBy": "neighbor", "field": "body"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$PARAMETERS", "stopBy": "neighbor", "field": "parameters"}}, {"pattern": "$_"}]}]}}).
+// relaxed: at strictModulesOnly true its matcher matches no file; no stage of this clause reads it.
+.decl relaxed(d: number)
+relaxed(d) :- ast(d, m, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "module"}, {"$option": "strictModulesOnly", "cases": {"true": {"filePath": {"regex": "\\b\\B"}}, "false": {"filePath": {"regex": "(?s).*"}}}}]}}).
+
+// ---- nodes, edges ----
+// A row's id (kind:start:end) is the node.
+.decl nodes(n: node)
+nodes(n) :- raw_nodes(n).
+.decl nodes_parent(n: node, p: node)
+nodes_parent(n, p) :- nodes(n), child(p, n, _).
+// edge_parent: ANCESTOR, the deepest node of `nodes` strictly above (the matcher's `inside` stops at the selection rule).
+.decl nodes_above(n: node, a: node, depth: number)
+nodes_above(n, a, k) :- nodes(n), nodes(a), @within(n, a) = 1, k = @depth(a).
+.decl nodes_above_deepest(n: node, depth: number)
+nodes_above_deepest(n, k) :- nodes_above(n, _, _), k = max j : { nodes_above(n, _, j) }.
+.decl nodes_edge_parent(n: node, a: node)
+nodes_edge_parent(n, a) :- nodes_above(n, a, k), nodes_above_deepest(n, k).
+// ordinal: row_number() OVER (PARTITION BY parent ORDER BY __start, __end, kind) - 1, among `nodes`.
+.decl nodes_before(n: node, m: node)
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), start(n, sn), start(m, sm), sm < sn.
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), node(_, n, _, s, en), node(_, m, _, s, em), em < en.
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), node(_, n, kn, s, e), node(_, m, km, s, e), km < kn.
+.decl nodes_has_before(n: node)
+nodes_has_before(n) :- nodes_before(n, _).
+.decl nodes_ordinal(n: node, ordinal: number)
+nodes_ordinal(n, 0) :- nodes(n), !nodes_has_before(n).
+nodes_ordinal(n, k) :- nodes_has_before(n), k = count : { nodes_before(n, _) }.
+// NOT EXISTS (a selected node whose parent is p).
+.decl nodes_has_child(p: node)
+nodes_has_child(p) :- nodes_parent(_, p).
+.decl edges(src: node, dst: node, ordinal: number)
+edges(s, n, o) :- nodes_edge_parent(n, s), nodes_ordinal(n, o).
+
+.decl fields(owner: node, role: symbol, child: node)
+fields(o, "value", c) :- nodes(o), field(o, "value", c).
+
+// ---- functions, classes, methods ----
+.decl functions(f: node, name: symbol)
+functions(f, name) :- nodes(f), kind(f, "function_definition"), field(f, "name", x), text(x, name).
+
+.decl classes(c: node, name: symbol)
+classes(c, name) :- nodes(c), kind(c, "class_definition"), field(c, "name", x), text(x, name).
+// f's parent is the class's BODY, or a selected decorated_definition whose parent is the BODY.
+.decl methods(f: node, cls: node, name: symbol)
+methods(f, c, n) :- functions(f, n), child(b, f, _), classes(c, _), field(c, "body", b).
+methods(f, c, n) :- functions(f, n), child(d, f, _), nodes(d), kind(d, "decorated_definition"), child(b, d, _), classes(c, _),
+    field(c, "body", b).
+
+// ---- attributes, calls, arguments, keywords ----
+.decl attributes(a: node, attr: symbol, object: node, object_text: symbol)
+attributes(a, attr, o, ot) :- nodes(a), kind(a, "attribute"), field(a, "attribute", x), text(x, attr), field(a, "object", o), text(o, ot).
+.decl is_attribute(a: node)
+is_attribute(a) :- attributes(a, _, _, _).
+// The FUNCTION node must be selected; callee = coalesce(its attribute name, its text).
+.decl calls(c: node, callee_id: node, callee_kind: symbol, full_callee: symbol, callee: symbol)
+calls(c, f, k, t, a) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), kind(f, k), text(f, t), attributes(f, a, _, _).
+calls(c, f, k, t, t) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), kind(f, k), text(f, t), !is_attribute(f).
+.decl non_argument_kind(k: symbol)
+non_argument_kind("comment"). non_argument_kind("keyword_argument"). non_argument_kind("list_splat"). non_argument_kind("dictionary_splat").
+.decl argument_of(a: node, call: node)
+argument_of(a, c) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, a, _), nodes(a), kind(a, k), !non_argument_kind(k).
+// position = row_number() OVER (PARTITION BY call ORDER BY __start) - 1: the number of earlier arguments.
+.decl argument_before(a: node, b: node)
+argument_before(a, b) :- argument_of(a, c), argument_of(b, c), start(a, sa), start(b, sb), sb < sa.
+.decl argument_not_first(a: node)
+argument_not_first(a) :- argument_before(a, _).
+.decl arguments(a: node, call: node, position: number)
+arguments(a, c, 0) :- argument_of(a, c), !argument_not_first(a).
+arguments(a, c, k) :- argument_of(a, c), argument_not_first(a), k = count : { argument_before(a, _) }.
+// The keyword_argument, its NAME and its VALUE are selected.
+.decl keywords(call: node, keyword: node, name: symbol, value: node)
+keywords(c, k, name, v) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, k, _), nodes(k), kind(k, "keyword_argument"),
+    field(k, "name", kn), nodes(kn), text(kn, name), field(k, "value", v), nodes(v).
+
+// ---- descendants (E0 #54): the reflexive closure of `edges` from every selected node. A selected node's
+// chain of edge parents passes through every selected ancestor, so the closure is the selected nodes within the root.
+.decl descendants(root: node, n: node)
+descendants(r, r) :- nodes(r).
+descendants(r, n) :- nodes(r), nodes(n), @within(n, r) = 1.
+
+// ---- parameters ----
+// p: a selected child of the function's PARAMETERS; its name node is p (an identifier) or p's first selected child,
+// an identifier. annotation (TYPE) is nullable. position counts the function's earlier rows.
+.decl parameter_kind(k: symbol)
+parameter_kind("identifier"). parameter_kind("typed_parameter"). parameter_kind("default_parameter"). parameter_kind("typed_default_parameter").
+.decl parameter_row(fn: node, p: node, name: symbol)
+parameter_row(f, p, name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), nodes(p), kind(p, "identifier"), text(p, name).
+parameter_row(f, p, name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), nodes(p), kind(p, k), parameter_kind(k),
+    child(p, n, _), nodes_ordinal(n, 0), kind(n, "identifier"), text(n, name).
+.decl parameter_before(p: node, q: node)
+parameter_before(p, q) :- parameter_row(f, p, _), parameter_row(f, q, _), start(p, sp), start(q, sq), sq < sp.
+.decl parameter_not_first(p: node)
+parameter_not_first(p) :- parameter_before(p, _).
+.decl parameters(fn: node, p: node, name: symbol, position: number)
+parameters(f, p, n, 0) :- parameter_row(f, p, n), !parameter_not_first(p).
+parameters(f, p, n, k) :- parameter_row(f, p, n), parameter_not_first(p), k = count : { parameter_before(p, _) }.
+.decl parameters_annotation(p: node, annotation: node)
+parameters_annotation(p, t) :- parameters(_, p, _, _), field(p, "type", t).
+
+.decl string_kind(k: symbol)
+string_kind("string"). string_kind("concatenated_string").
+
+// ---- raw_parameters, raw_shapers, shaping_methods ----
+.decl raw_parameter_name(name: symbol)
+raw_parameter_name("raw"). raw_parameter_name("raw_rows"). raw_parameter_name("rows").
+.decl raw_parameters(fn: node, name: symbol)
+raw_parameters(f, n) :- parameters(f, _, n, _), raw_parameter_name(n).
+raw_parameters(f, n) :- parameters(f, p, n, _), parameters_annotation(p, t), descendants(t, x), kind(x, "identifier"), text(x, "RawResult").
+raw_parameters(f, n) :- parameters(f, p, n, _), parameters_annotation(p, t), descendants(t, x), kind(x, k), string_kind(k), text(x, s),
+    @instr(s, "RawResult") > 0.
+.decl has_raw_parameter(fn: node)
+has_raw_parameter(f) :- raw_parameters(f, _).
+.decl loop_kind(k: symbol)
+loop_kind("for_statement"). loop_kind("for_in_clause").
+.decl copy_callee(name: symbol)
+copy_callee("list"). copy_callee("tuple"). copy_callee("dict"). copy_callee("set"). copy_callee("sorted").
+// raw_shapers (E0 #55): a set recursion over the in-file call graph by name, keyed by (__path, name): a function with
+// a raw parameter that iterates it (its RIGHT) or copies it (first argument of list/tuple/dict/set/sorted), or calls
+// a shaper.
+.decl raw_shapers(d: number, name: symbol)
+raw_shapers(d, fn) :- functions(f, fn), docof(f, d), raw_parameters(f, p), descendants(f, n), kind(n, k), loop_kind(k), field(n, "right", rt),
+    descendants(rt, r), kind(r, "identifier"), text(r, p).
+raw_shapers(d, fn) :- functions(f, fn), docof(f, d), raw_parameters(f, p), descendants(f, n), calls(n, _, _, t, _), copy_callee(t),
+    arguments(a, n, 0), descendants(a, r), kind(r, "identifier"), text(r, p).
+raw_shapers(d, fn) :- functions(f, fn), docof(f, d), has_raw_parameter(f), descendants(f, c), calls(c, _, _, t, _), raw_shapers(d, t).
+.decl shaping_methods(cls: node, method: node)
+shaping_methods(c, m) :- methods(m, c, "materialize"), docof(m, d), raw_shapers(d, "materialize").
+shaping_methods(c, m) :- methods(m, c, "materialize"), descendants(m, x), calls(x, _, _, t, _), docof(x, d), raw_shapers(d, t).
+
+// ---- materializer_values, payload_roots, payload_values ----
+// An identifier naming a class of the file, or a call whose callee names one.
+.decl materializer_values(n: node, cls: node)
+materializer_values(n, c) :- nodes(n), kind(n, "identifier"), text(n, t), docof(n, d), classes(c, t), docof(c, d).
+materializer_values(n, c) :- calls(n, _, _, _, t), docof(n, d), classes(c, t), docof(c, d).
+.decl has_literal_payload(call: node)
+has_literal_payload(c) :- keywords(c, _, "literal_payload", _).
+.decl payload_roots(call: node, keyword: node, name: symbol, value: node)
+payload_roots(c, k, "literal_payload", v) :- keywords(c, k, "literal_payload", v), calls(c, _, _, _, "ResultMaterializationSpec").
+payload_roots(c, k, "terminal_literal", v) :- keywords(c, k, "terminal_literal", v), calls(c, _, _, _, "ResultMaterializationSpec"),
+    !has_literal_payload(c).
+.decl payload_container(k: symbol)
+payload_container("tuple"). payload_container("list"). payload_container("set"). payload_container("dictionary"). payload_container("argument_list").
+payload_container("keyword_argument").
+// payload_values (E0 #56): a set recursion down from each root through containers' `edges`, calls' keyword values
+// and arguments, and pairs' VALUE. Its hops skip nodes and a node can be reached by two of them (a keyword value is a
+// call's keyword value and, when the keyword_argument is selected, its edge child): a guarded walk, not `@within`.
+.decl payload_values(root: node, n: node)
+payload_values(v, v) :- payload_roots(_, _, _, v).
+payload_values(r, x) :- payload_values(r, n), nodes(n), kind(n, k), payload_container(k), edges(n, x, _).
+payload_values(r, x) :- payload_values(r, n), calls(n, _, _, _, _), keywords(n, _, _, x).
+payload_values(r, x) :- payload_values(r, n), calls(n, _, _, _, _), arguments(x, n, _).
+payload_values(r, x) :- payload_values(r, n), nodes(n), kind(n, "pair"), fields(n, "value", x).
+
+// ---- the clause's query: one finding per (issue, node) ----
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+// STEP-039: a row_materializer, or a value in a literal payload, naming a class whose materialize shapes raw rows.
+finding("step-contracts-3", "STEP-039", n) :- nodes(n), keywords(_, _, "row_materializer", n), materializer_values(n, c), shaping_methods(c, _).
+finding("step-contracts-3", "STEP-039", n) :- nodes(n), payload_values(_, n), materializer_values(n, c), shaping_methods(c, _).

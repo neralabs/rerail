@@ -3,7 +3,7 @@
   "id": "ruff-b004-unreliable-callable-check",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B004 (unreliable-callable-check): `hasattr(x, \"__call__\")` with exactly two positional arguments, or `getattr(x, \"__call__\")` / `getattr(x, \"__call__\", default)` with two or three, no keyword arguments, the second argument a str literal (not bytes, an f- or t-string; parentheses transparent) whose value is `__call__` (escapes decoded, implicit concatenations joined). The callee (parentheses transparent) resolves to the builtin `hasattr`/`getattr` (Ruff's `resolve_builtin_symbol`, via `resolves`): the unshadowed name, or that attribute of the `builtins` module through the file's imports. Reported on the call.",
+  "description": "Use callable() instead of checking hasattr() or getattr() for __call__; the attribute check gives wrong answers for some objects.",
   "scope": {
     "include": [
       "**/*"

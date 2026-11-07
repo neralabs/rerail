@@ -1,1 +1,0 @@
-const {access} = require('fs'); access()

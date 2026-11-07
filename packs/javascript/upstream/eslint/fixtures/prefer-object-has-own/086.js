@@ -1,1 +1,0 @@
-for (const x in{}.hasOwnProperty.call(object, property).toString());

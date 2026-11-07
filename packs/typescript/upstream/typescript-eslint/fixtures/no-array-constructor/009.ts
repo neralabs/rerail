@@ -1,1 +1,0 @@
-new Array<Foo>(1, 2, 3);

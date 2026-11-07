@@ -1,0 +1,76 @@
+.policy "n-no-mixed-requires" revision 3
+.description "Keep require() declarations separate from other variable declarations instead of mixing them in one statement."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-mixed-requires: a variable declaration whose declarators are require() calls must not
+// also declare anything else. Each declarator's initialiser is "require" (a call of the identifier require, or a
+// member of one), "uninitialized" or "other":
+//   const fs = require("fs"), x = 1;        reported (require and other)
+//   let a = require("a").b, c;              reported (require and uninitialized)
+//   const a = require("a"), b = require("b");  not
+// Options: `true` or { grouping: true } also reports a declaration of only requires whose modules are of
+// different types: core (the plugin's own list of built-ins), file ("./x", "../x", "/x"), module, or computed
+// (no string literal argument). { allowCall: true } reads `require("a")(b)` as a require too.
+// The identifier is read by name: a local `require` counts.
+
+#include "tsx/node.rr"   // called, node_chain, deparen
+
+.decl grouping()
+grouping() :- (option("option", "true") ; option("grouping", "true")).
+
+// decl(d, v, e): v is a declarator of variable declaration d, with initialiser e, parentheses skipped.
+.decl decl(d: node, v: node)
+decl(d, v) :- (kind(d, "variable_declaration") ; kind(d, "lexical_declaration")), child(d, v, _),
+    kind(v, "variable_declarator").
+// walk(e): an initialiser (parentheses skipped), and where getDeclarationType goes on from it (step).
+.decl walk(e: node)
+walk(e) :- decl(_, v), field(v, "value", w), deparen(w, e).
+walk(o) :- step(_, o).
+// step(e, o): getDeclarationType of e is o's: a member's object, or with allowCall a call's callee that is a call.
+// An optional chain is a ChainExpression, which is "other" at once.
+.decl step(e: node, o: node)
+step(e, o) :- walk(e), !node_chain(e), (kind(e, "member_expression") ; kind(e, "subscript_expression")),
+    field(e, "object", w), deparen(w, o).
+step(e, o) :- walk(e), !node_chain(e), option("allowCall", "true"), called(e, o), kind(o, "call_expression").
+.decl req(e: node)  // a call of the identifier require
+req(e) :- walk(e), !node_chain(e), called(e, f), kind(f, "identifier"), text(f, "require").
+.decl last(e: node, t: symbol)  // getDeclarationType(e): "require" or "other"
+last(e, "require") :- req(e).
+last(e, "other") :- walk(e), !req(e), !step(e, _).
+last(e, t) :- step(e, o), last(o, t).
+.decl kinds(d: node, t: symbol)  // the types of d's declarators
+kinds(d, "uninitialized") :- decl(d, v), !field(v, "value", _).
+kinds(d, t) :- decl(d, v), field(v, "value", w), deparen(w, e), last(e, t).
+// module_of(v, m): inferModuleType of declarator v's require: through members to a call, then its first argument.
+.decl module_of(v: node, m: symbol)
+module_of(v, m) :- decl(_, v), field(v, "value", w), deparen(w, e), last(e, "require"), mod(e, m).
+.decl mod(e: node, m: symbol)
+mod(e, m) :- walk(e), (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", w),
+    deparen(w, o), mod(o, m).
+mod(e, "module") :- walk(e), !kind(e, "member_expression"), !kind(e, "subscript_expression"),
+    !kind(e, "call_expression").
+mod(e, "computed") :- walk(e), kind(e, "call_expression"), !call_arg(e, _, 0).
+mod(e, "computed") :- walk(e), call_arg(e, a, 0), !kind(a, "string").
+mod(e, m) :- walk(e), call_arg(e, a, 0), kind(a, "string"), value(a, x),
+    (core(x), m = "core" ; !core(x), match("\\.{0,2}/.*", x), m = "file" ; !core(x), !match("\\.{0,2}/.*", x), m = "module").
+
+.violation mixed(at: node, msg: symbol) code "n/no-mixed-requires" "{msg}"
+    suppress eslint "n/no-mixed-requires"
+mixed(d, "Do not mix 'require' and other declarations.") :- kinds(d, "require"), (kinds(d, "other") ;
+    kinds(d, "uninitialized")).
+mixed(d, "Do not mix core, module, file and computed requires.") :- grouping(), kinds(d, "require"),
+    !kinds(d, "other"), !kinds(d, "uninitialized"), decl(d, v), decl(d, u),
+    module_of(v, a), module_of(u, b), a != b.
+
+// core(m): the plugin's own BUILTIN_MODULES list for this rule (older than Node's; no "node:" forms).
+.decl core(m: symbol)
+core("_http_agent"). core("_http_client"). core("_http_common"). core("_http_incoming"). core("_http_outgoing").
+core("_http_server"). core("_stream_duplex"). core("_stream_passthrough"). core("_stream_readable").
+core("_stream_transform"). core("_stream_wrap"). core("_stream_writable"). core("_tls_common"). core("_tls_wrap").
+core("assert"). core("async_hooks"). core("buffer"). core("child_process"). core("cluster"). core("console").
+core("constants"). core("crypto"). core("dgram"). core("dns"). core("domain"). core("events"). core("fs").
+core("http"). core("http2"). core("https"). core("inspector"). core("module"). core("net"). core("os"). core("path").
+core("perf_hooks"). core("process"). core("punycode"). core("querystring"). core("readline"). core("repl").
+core("stream"). core("string_decoder"). core("sys"). core("timers"). core("tls"). core("trace_events"). core("tty").
+core("url"). core("util"). core("v8"). core("vm"). core("worker_threads"). core("zlib").

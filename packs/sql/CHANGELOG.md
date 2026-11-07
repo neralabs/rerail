@@ -1,5 +1,13 @@
 # @neralabs/rerail-pack-sql
 
+## 0.1.3
+
+### Patch Changes
+
+- e06db22: SQL pack: messages whose rewrite only changed the voice are back to their original wording; in an eval with a coding agent, the original and rewritten messages steered it equally well.
+- e06db22: SQL pack: every rule description now says in one plain sentence what the rule wants; the exact matching detail moved to the pack README.
+- e06db22: SQL pack: every violation message now says in one sentence what to change in the flagged code, without tool names or rule codes.
+
 ## 0.1.2
 
 ### Patch Changes

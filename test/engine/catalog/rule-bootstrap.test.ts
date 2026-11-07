@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { codeRuleSchema, type CodeRule } from "../../../src/engine/code-rule/code-rule-schema.js";
-import { loadBundledRules } from "../../../src/engine/catalog/bundled-rule-documents.js";
+import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
 import { RERAIL_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 import { exportRulesDump, importRulesDump, type RulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
 import { testBundle } from "../../support/rule-configuration-builders.js";
@@ -40,19 +40,9 @@ function codeRule(id: string, revision = 1, message = "No print"): CodeRule {
   });
 }
 
-describe("bundled rules", () => {
-  it("ships only the complexity pack core carries: every document is a code rule, read by file name", () => {
-    const documents = loadBundledRules();
-    expect(documents.map(document => document.rule.id)).toEqual([
-      "complexity-cyclomatic-javascript",
-      "complexity-cyclomatic-python",
-      "complexity-cyclomatic-typescript",
-    ]);
-    expect(documents.every(document => document.kind === "code")).toBe(true);
-  });
-
+describe("pack rule documents", () => {
   it("reads each pack's rules/ in pack order and by file name, ignoring non-JSON files and a pack without rules/, and rejects a duplicate id", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-bundled-"));
+    const root = await mkdtemp(join(tmpdir(), "rerail-pack-documents-"));
     temporaryDirectories.push(root);
     const write = async (path: string, id: string): Promise<void> => {
       await mkdir(dirname(join(root, path)), { recursive: true });
@@ -64,14 +54,14 @@ describe("bundled rules", () => {
     await writeFile(join(root, "packs", "alpha", "rules", "README.md"), "# alpha pack\n");
     await writeFile(join(root, "packs", "alpha", "rules", ".DS_Store"), "\u0000\u0001binary");
     const packs = [join(root, "packs", "alpha"), join(root, "packs", "absent"), join(root, "packs", "zeta")];
-    expect(loadBundledRules(packs).map(document => document.rule.id)).toEqual([
+    expect(loadPackRuleDocuments(packs).map(document => document.rule.id)).toEqual([
       "alpha:a",
       "alpha:b",
       "zeta:a",
     ]);
 
     await write("packs/zeta/rules/b.json", "alpha:a");
-    expect(() => loadBundledRules(packs)).toThrow(/Duplicate bundled rule id: alpha:a/u);
+    expect(() => loadPackRuleDocuments(packs)).toThrow(/Duplicate rule id: alpha:a/u);
   });
 });
 

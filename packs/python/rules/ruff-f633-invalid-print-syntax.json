@@ -3,7 +3,7 @@
   "id": "ruff-f633-invalid-print-syntax",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F633 (invalid-print-syntax) with default settings: the left operand of `>>` when it resolves to the builtin `print` (or `builtins.print`), reported on `print`. tree-sitter-python parses a statement `print >> f, x` as a Python 2 print statement whose `print` is a keyword token, not a name reference, so name resolution cannot be asked there; that form falls back to a file-wide test: no binding of `print` anywhere in the file (assignment, loop, with/except and walrus targets, def/class names, parameters, imports, global/nonlocal).",
+  "description": "Use print()'s file argument instead of Python 2's >> redirection, which raises TypeError with the print function.",
   "scope": {
     "include": [
       "**/*"
@@ -285,7 +285,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F633",
-        "message": "Use of `>>` is invalid with `print` function",
+        "message": "Replace `>>` with print()'s `file=` argument, as in `print(msg, file=sys.stderr)`.",
         "suppress": {
           "noqa": {
             "codes": [

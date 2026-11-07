@@ -3,7 +3,7 @@
   "id": "ruff-sim118-in-dict-keys",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM118 (in-dict-keys): `key in X.keys()` / `key not in X.keys()` (a single comparison), a non-async `for key in X.keys()` and a comprehension `for key in X.keys()`, where `.keys()` has no arguments and `X` is not the name `self`. Reported from the key (with its parentheses).",
+  "description": "Test membership in or iterate over a dict directly instead of calling .keys() on it; the keys view adds nothing.",
   "scope": {
     "include": [
       "**/*"

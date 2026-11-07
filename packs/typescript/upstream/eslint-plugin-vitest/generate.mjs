@@ -1,7 +1,8 @@
 // Records @vitest/eslint-plugin for the TypeScript pack's vitest ports (packs/typescript/conformance.json), in the
 // format rerail/conformance/languages/pack.ts reads: eslint-plugin-vitest/fixtures.expected.json (the rules' own
 // RuleTester cases). No vitest port ships, so it records no corpus: a corpus recording covers shipped ports only.
-// Run offline by a maintainer, never in CI:
+// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
+// test-data.lock reproduces):
 //   node generate.mjs --tools <dir> --vitest <checkout>
 // <dir> holds node_modules with the runtime nera-rule-validation pins for @vitest/eslint-plugin 1.6.27
 // (validation/upstream/vitest-eslint-plugin-1.6.27): eslint 10.0.0, @vitest/eslint-plugin 1.6.27,
@@ -33,7 +34,7 @@ const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", "
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
 
 /**
- * Cases Rerail wrote for the plugin to score: inputs the ports once misread (NER-1779, NER-1780, NER-1781: a call was
+ * Cases Rerail wrote for the plugin to score: inputs the ports once misread (a call was
  * Vitest's by its name alone). Each is linted with every pack rule, like the plugin's own cases. Upstream classifies a
  * call by its head's binding (`resolveVitestFn` in src/utils/parse-vitest-fn-call.ts): a global; a named import, or a
  * key destructured from `require`/`await import`, of `vitest`; a `.extend` of a test function so bound; or a test
@@ -269,7 +270,7 @@ it.only('focused', () => {});
 `,
     reports: { "expect-expect": 2, "no-focused-tests": 1 },
   },
-  // Syntax upstream's ESTree resolver reads through (review of NER-1869): comments, trailing commas, template literals
+  // Syntax upstream's ESTree resolver reads through: comments, trailing commas, template literals
   // and escapes in the module name; parentheses around an initializer; a test context named by an explicit property.
   {
     rule: "no-focused-tests",
@@ -381,7 +382,7 @@ test('focused', { only: true }, t => {
 describe('skipped', { skip: true }, () => {});
 `,
   },
-  // Self-review of NER-1869: key and module-name literals as upstream reads them, valid chains only, the last mode
+  // Key and module-name literals as upstream reads them, valid chains only, the last mode
   // option property, and a test callback's own name.
   {
     rule: "no-disabled-tests",

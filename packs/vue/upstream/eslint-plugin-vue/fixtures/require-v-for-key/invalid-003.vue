@@ -1,1 +1,0 @@
-<template><div><slot v-for="x in list" :name="x"><div></div></slot></div></template>

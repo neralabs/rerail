@@ -1,6 +1,6 @@
 // `just rerail-dashboard-history`: seed a throwaway database with a long audit history, serve the daemon's API over
 // it, and time what the dashboard asks for: each history read alone, one full poll, and how long a cheap request
-// (`/healthz`) waits while dashboard tabs poll (NER-1746, NER-1750). Nothing is written outside a temporary folder.
+// (`/healthz`) waits while dashboard tabs poll. Nothing is written outside a temporary folder.
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { mkdtempSync, rmSync, statSync } from "node:fs";

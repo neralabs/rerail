@@ -1,1 +1,0 @@
-switch (a) { case 1: { class C {} break; } default: { class C {} break; } }

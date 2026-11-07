@@ -145,6 +145,7 @@ struct Profile {
     store_write_ns: u128,
     manifest_ns: u128,
     index_ns: u128,
+    /// D's: anchor plan-input statistics (D's `Phase::Planning`).
     planning_ns: u128,
     selection_ns: u128,
     dispatch_ns: u128,
@@ -172,6 +173,12 @@ struct Profile {
     active_line_bytes: usize,
     active_navigation_line_bytes: usize,
     peak_transient_bytes: Option<usize>,
+    // W's retained-bytes report (`record_retained`), which P's profile dropped.
+    retained_source_bytes: Option<usize>,
+    retained_tape_bytes: Option<usize>,
+    retained_grammar_bytes: Option<usize>,
+    retained_dispatch_bytes: Option<usize>,
+    retained_result_bytes: Option<usize>,
     native_acquisitions: usize,
     native_active: usize,
     native_peak: usize,
@@ -419,6 +426,17 @@ pub(super) fn record_transient(navigation_bytes: usize) {
     });
 }
 
+/// W's retained-bytes report (`workspace/memory.rs`), which P's profile dropped.
+pub(super) fn record_retained(source: usize, tape: usize, grammar: usize, dispatch: usize, results: usize) {
+    with_profile(|profile| {
+        profile.retained_source_bytes = Some(source);
+        profile.retained_tape_bytes = Some(tape);
+        profile.retained_grammar_bytes = Some(grammar);
+        profile.retained_dispatch_bytes = Some(dispatch);
+        profile.retained_result_bytes = Some(results);
+    });
+}
+
 pub(super) struct NativeOwner(Instant);
 impl NativeOwner {
     pub(super) fn start() -> Self {
@@ -548,6 +566,11 @@ impl Drop for ApplyProfile {
                 "astMatchNs": profile.dispatch_ns,
                 "serializationNs": profile.serialization_ns,
                 "otherNs": profile.other_ns,
+                "retainedSourceBytesEstimate": profile.retained_source_bytes,
+                "retainedTapeBytesEstimate": profile.retained_tape_bytes,
+                "retainedGrammarBytesEstimate": profile.retained_grammar_bytes,
+                "retainedDispatchBytesEstimate": profile.retained_dispatch_bytes,
+                "retainedResultBytesEstimate": profile.retained_result_bytes,
                 "peakTransientNavigationLineIndexBytesEstimate": profile.peak_transient_bytes,
                 "visitedNodes": profile.visited_nodes,
                 "indexedFiles": profile.indexed_files,

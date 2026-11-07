@@ -1,1 +1,0 @@
-import { Card, Button } from './components.jsx'; export const Component = () => <Card><Button /></Card>;

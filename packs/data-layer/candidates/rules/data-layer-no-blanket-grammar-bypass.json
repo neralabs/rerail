@@ -115,25 +115,24 @@
     {
       "id": "constant",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "_ALLOW_DIRECT_EXECUTION",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "scripts/lint_impl_direct_execution.py",
-              "scripts/lint_no_blanket_grammar_bypass.py",
-              "scripts/tests/test_lint_no_blanket_grammar_bypass.py"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "regex": "_ALLOW_DIRECT_EXECUTION"
+              }
             ]
-          }
+          },
+          "file": {
+            "path": {
+              "notRegex": "^(?:scripts/lint_impl_direct_execution\\.py|scripts/lint_no_blanket_grammar_bypass\\.py|scripts/tests/test_lint_no_blanket_grammar_bypass\\.py)$"
+            }
+          },
+          "syntax": "valid"
         }
       },
       "violation": {
@@ -145,25 +144,24 @@
     {
       "id": "keyword",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^[^#]*?(?<LOWER>allow_direct_execution)",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "scripts/lint_impl_direct_execution.py",
-              "scripts/lint_no_blanket_grammar_bypass.py",
-              "scripts/tests/test_lint_no_blanket_grammar_bypass.py"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "regex": "(?P<LOWER>allow_direct_execution)"
+              }
             ]
-          }
+          },
+          "file": {
+            "path": {
+              "notRegex": "^(?:scripts/lint_impl_direct_execution\\.py|scripts/lint_no_blanket_grammar_bypass\\.py|scripts/tests/test_lint_no_blanket_grammar_bypass\\.py)$"
+            }
+          },
+          "syntax": "valid"
         }
       },
       "violation": {

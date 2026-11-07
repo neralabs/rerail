@@ -3,7 +3,7 @@
   "id": "ruff-sim108-if-else-block-instead-of-if-exp",
   "revision": 1,
   "mode": "steer",
-  "description": "Partial port of Ruff's SIM108 (if-else-block-instead-of-if-exp): an `if`/`else` whose two bodies are each one plain assignment `N = value` to the same name (no yield/await value), unless it is a `sys.version_info`/`sys.platform` or `TYPE_CHECKING` block. Missing: Ruff reports only when the generated ternary fits the line length.",
+  "description": "Use a conditional expression instead of an if/else whose two branches only assign to the same variable.",
   "scope": {
     "include": [
       "**/*.py",

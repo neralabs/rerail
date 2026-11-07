@@ -3,7 +3,7 @@
   "id": "eslint-vars-on-top",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of ESLint's `vars-on-top` rule (https://eslint.org/docs/latest/rules/vars-on-top). A `var` declaration must sit directly in a program, function body or static block, preceded only by declarations (after a leading run of directives and imports, except in static blocks).",
+  "description": "Declare var variables at the top of their function, script or static block; it matches how var is hoisted.",
   "scope": {
     "include": [
       "**/*"
@@ -362,7 +362,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vars-on-top",
-        "message": "All 'var' declarations must be at the top of the function scope.",
+        "message": "Move this var declaration to the top of its static block.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -571,7 +571,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vars-on-top",
-        "message": "All 'var' declarations must be at the top of the function scope.",
+        "message": "Declare this loop variable with var at the top of the function and reuse it in the for-in head.",
         "suppress": {
           "eslint": {
             "rules": [

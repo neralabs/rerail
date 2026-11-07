@@ -3,7 +3,7 @@
   "id": "eslint-no-ternary",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-ternary` rule (https://eslint.org/docs/latest/rules/no-ternary). Reports every conditional expression.",
+  "description": "Avoid the ternary conditional operator entirely; write an if statement instead.",
   "scope": {
     "include": [
       "**/*"

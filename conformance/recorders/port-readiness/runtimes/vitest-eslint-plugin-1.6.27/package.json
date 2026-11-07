@@ -1,0 +1,46 @@
+{
+  "name": "validation-upstream-vitest-eslint-plugin",
+  "private": true,
+  "description": "@vitest/eslint-plugin 1.6.27 as published, with the eslint, @typescript-eslint, typescript and tsx versions its v1.6.27 pnpm-lock.yaml resolves; the overrides keep every transitive package at the version that lockfile resolves for its dependent.",
+  "dependencies": {
+    "@typescript-eslint/parser": "8.58.0",
+    "@typescript-eslint/rule-tester": "8.58.0",
+    "@typescript-eslint/scope-manager": "8.58.0",
+    "@typescript-eslint/utils": "8.58.0",
+    "@vitest/eslint-plugin": "1.6.27",
+    "eslint": "10.0.0",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "@eslint-community/eslint-utils": "4.9.1",
+    "@eslint/config-array": "0.23.1",
+    "@eslint/config-helpers": "0.5.2",
+    "@eslint/core@1": "1.1.0",
+    "@eslint/object-schema": "3.0.1",
+    "@eslint/plugin-kit": "0.6.0",
+    "@humanfs/core": "0.19.1",
+    "@humanfs/node": "0.16.7",
+    "@types/estree": "1.0.8",
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": {
+        ".": "10.2.5",
+        "brace-expansion": "5.0.5"
+      }
+    },
+    "acorn": "8.15.0",
+    "ajv@6": "6.12.6",
+    "balanced-match@4": "4.0.2",
+    "brace-expansion@5": "5.0.2",
+    "esbuild": "0.27.3",
+    "eslint-scope": "9.1.0",
+    "eslint-visitor-keys@5": "5.0.0",
+    "espree": "11.1.0",
+    "flatted": "3.3.3",
+    "get-tsconfig": "4.13.6",
+    "minimatch@10": "10.2.0",
+    "picomatch": "4.0.3",
+    "semver": "7.7.4",
+    "tinyglobby": "0.2.15"
+  }
+}

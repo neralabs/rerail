@@ -465,7 +465,13 @@ mod tests {
                     .children()
                     .filter(|child| child.kind() == "ERROR")
                     .map(|child| {
-                        let range = tree.host_range(child.node_id()).expect("range");
+                        let range = crate::code_rule_dsl::origin::Origin::of_node(
+                            &*tree,
+                            child.node_id(),
+                            child.range(),
+                        )
+                        .expect("range")
+                        .primary();
                         let message = match tree.value(child.node_id()) {
                             Some(Value::Str(message)) => message.clone(),
                             other => format!("{other:?}"),

@@ -78,13 +78,12 @@ impl SqlfluffIndex {
     }
 
     /// Reads every `comment` node of the file `root` belongs to (tree-sitter-sql names `--` and
-    /// `/* */` comments `comment`), except those inside a routine's `AS $$ ... $$` body: the
-    /// grammar parses that body as SQL, but SQLFluff's PostgreSQL dialect lexes it as one
-    /// dollar-quoted string, so a comment there is no directive. A `BEGIN ATOMIC` body is SQL to
-    /// both, and its comments count.
+    /// `/* */` comments `comment`). A routine's `AS $$ ... $$` body is one string literal to the
+    /// grammar, as to SQLFluff's PostgreSQL dialect, so a comment-like text there is no comment
+    /// node; a `BEGIN ATOMIC` body is SQL to both, and its comments count.
     pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
         Self::from_comments(root.dfs().filter_map(|node| {
-            (node.kind() == "comment" && !in_dollar_quoted_body(&node)).then(|| {
+            (node.kind() == "comment").then(|| {
                 let range = node.range();
                 (lines.line(range.start) + 1, &source[range])
             })
@@ -115,27 +114,6 @@ impl SqlfluffIndex {
         }
         ignored
     }
-}
-
-/// Whether `comment` lies between the opening and closing `dollar_quote` of an enclosing
-/// `function_body` (`AS $tag$ ... $tag$`). A comment between `AS` and the opening tag is outside
-/// the string, as SQLFluff lexes it.
-fn in_dollar_quoted_body<D: Doc>(comment: &Node<'_, D>) -> bool {
-    let range = comment.range();
-    comment
-        .ancestors()
-        .filter(|node| node.kind() == "function_body")
-        .any(|body| {
-            let mut quotes = body
-                .children()
-                .filter(|child| child.kind() == "dollar_quote");
-            match (quotes.next(), quotes.last()) {
-                (Some(open), Some(close)) => {
-                    open.range().end <= range.start && range.end <= close.range().start
-                }
-                _ => false,
-            }
-        })
 }
 
 fn parse(comment: &str) -> Option<(Option<Action>, Patterns)> {

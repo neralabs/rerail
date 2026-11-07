@@ -1,1 +1,0 @@
-array.findLast(function (x) { return this.eval.includes(x); }, { eval: ['foo', 'bar'] });

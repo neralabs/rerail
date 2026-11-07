@@ -191,11 +191,12 @@ pub(super) fn make_file(
                     ast: ast.clone(),
                     ..Candidates::default()
                 };
-                // The dialect's whole catalog: a Blade rule's PHP root kinds follow Blade's own.
                 let kind_count = language.map_or(0, GrammarDialect::kind_count);
                 for (slot, id) in candidates.ast.iter().enumerate() {
-                    let anchors = &candidate_grammar(&code_rules[id.0], id.1, &input).anchors;
-                    if let Some(kinds) = anchors.root_kinds() {
+                    // A clause over an embedded program dispatches on no kind of the file's own
+                    // tree.
+                    let grammar = candidate_grammar(&code_rules[id.0], id.1, &input);
+                    if let Some(kinds) = grammar.host_root_kinds() {
                         for &kind in kinds {
                             let kind = usize::from(kind);
                             // An ERROR root always overlaps a syntax-error region, so its
@@ -257,8 +258,8 @@ pub(super) fn candidate_dispatch(
     }
     let kind_count = language.map_or(0, GrammarDialect::kind_count);
     for (slot, id) in candidates.ast.iter().enumerate() {
-        let anchors = &candidate_grammar(&code_rules[id.0], id.1, input).anchors;
-        if let Some(kinds) = anchors.root_kinds() {
+        let grammar = candidate_grammar(&code_rules[id.0], id.1, input);
+        if let Some(kinds) = grammar.host_root_kinds() {
             for &kind in kinds {
                 let kind = usize::from(kind);
                 if kind >= kind_count {
@@ -927,34 +928,38 @@ pub(super) fn apply_request(
             }
         }
     }
-    // Remove stale postings before publishing the new logical file versions. A failed
-    // preparation leaves a missing index, which authoritative matching can still answer.
-    for path in &request.removed {
-        state
-            .anchor_corpus
-            .remove(path)
-            .map_err(|e| invalid(e.to_string()))?;
-    }
-    for input in inputs
-        .iter()
-        .filter(|input| file_needs_update(state, input))
+    // P's anchor corpus (test-only, open items O18 and O20).
+    #[cfg(test)]
     {
-        let lang = crate::code_rule_dsl::eval::file_language(input)
-            .and_then(crate::code_rule_dsl::language::tape_tag)
-            .map(u32::from);
-        let digest: [u8; 32] = Sha256::digest(input.source.as_bytes()).into();
-        let same = match lang {
-            Some(lang) => state
-                .anchor_corpus
-                .contains(&input.path, lang, &digest)
-                .map_err(|e| invalid(e.to_string()))?,
-            None => false,
-        };
-        if !same {
+        // Remove stale postings before publishing the new logical file versions. A failed
+        // preparation leaves a missing index, which authoritative matching can still answer.
+        for path in &request.removed {
             state
                 .anchor_corpus
-                .remove(&input.path)
+                .remove(path)
                 .map_err(|e| invalid(e.to_string()))?;
+        }
+        for input in inputs
+            .iter()
+            .filter(|input| file_needs_update(state, input))
+        {
+            let lang = crate::code_rule_dsl::eval::file_language(input)
+                .and_then(crate::code_rule_dsl::language::tape_tag)
+                .map(u32::from);
+            let digest: [u8; 32] = Sha256::digest(input.source.as_bytes()).into();
+            let same = match lang {
+                Some(lang) => state
+                    .anchor_corpus
+                    .contains(&input.path, lang, &digest)
+                    .map_err(|e| invalid(e.to_string()))?,
+                None => false,
+            };
+            if !same {
+                state
+                    .anchor_corpus
+                    .remove(&input.path)
+                    .map_err(|e| invalid(e.to_string()))?;
+            }
         }
     }
     // Nothing below fails: the request's context changes are the workspace's now.

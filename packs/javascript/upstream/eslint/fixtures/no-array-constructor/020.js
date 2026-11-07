@@ -1,1 +1,0 @@
-const array = new Array(...args);

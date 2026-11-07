@@ -1,1 +1,0 @@
-callback(a ? b : 1, data)

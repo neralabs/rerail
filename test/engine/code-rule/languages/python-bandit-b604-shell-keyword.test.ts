@@ -1,6 +1,6 @@
 /**
  * bandit-b604-any-other-function-with-shell-equals-true (packs/python/candidates/) must read only a `shell=` keyword,
- * as Bandit 1.9.4's has_shell does (NER-1815). The port bound a call's second positional argument to `shell`, so
+ * as Bandit 1.9.4's has_shell does. The port bound a call's second positional argument to `shell`, so
  * pytest.mark.parametrize, getattr, re.sub and any helper with a truthy second argument were flagged; and it needed a
  * known value, so `shell=<expression>` was missed. has_shell treats a `shell=` keyword as truthy unless it is a falsy
  * constant (False, None, a zero number, an empty string or bytes), an empty list or an empty dict.

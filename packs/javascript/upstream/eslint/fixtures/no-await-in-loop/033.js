@@ -1,1 +1,0 @@
-async function foo() { while (xyz || 5 > await x) {  } }

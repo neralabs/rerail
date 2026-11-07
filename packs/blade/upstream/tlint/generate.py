@@ -1,5 +1,6 @@
-"""Records tlint 9.7.0 for the Blade pack's ported lints (rerail/packs/blade/conformance.json). Run offline,
-never in CI, with PHP 8.5.11:
+"""Records tlint 9.7.0 for the Blade pack's ported lints (rerail/packs/blade/conformance.json). Run by
+`npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request CI), with
+PHP 8.5.11:
 
     python3 generate.py fixtures <tighten/tlint checkout at tag v9.7.0> <composer project with tightenco/tlint 9.7.0>
     python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]
@@ -100,7 +101,7 @@ def write_licenses(checkout: pathlib.Path, cases: list[tuple]) -> None:
 
 Upstream: [tighten/tlint](https://github.com/tighten/tlint/tree/{COMMIT}) at tag `v{VERSION}` (commit `{COMMIT}`). License: MIT (Copyright (c) Tighten Co.); [`LICENSE.md`](LICENSE.md) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the templates the tests of the lints the Blade pack ports (the pack's `conformance.json`) hand those lints, and remain under tlint's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `candidates/rules/`, the recorders `upstream/common.py`, `upstream/capture.php` and `upstream/tlint/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running tlint {VERSION}.
+The files listed below are the templates the tests of the lints the Blade pack ports (the pack's `conformance.json`) hand those lints, and remain under tlint's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py` and `upstream/tlint/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running tlint {VERSION}.
 
 Paths are relative to the pack directory, `packs/blade/`. Each fixture is written by `upstream/tlint/generate.py fixtures`, which runs the test with the template captured as the linter receives it.
 

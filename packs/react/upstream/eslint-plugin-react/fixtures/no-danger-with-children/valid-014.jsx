@@ -1,1 +1,0 @@
-<Hello {...undefined}>Children</Hello>

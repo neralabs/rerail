@@ -1,3 +1,0 @@
-const obj = {get foo(): string {
-    // empty
-}};

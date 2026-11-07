@@ -1,1 +1,0 @@
-<MyComponent>{async function() {}}</MyComponent>;

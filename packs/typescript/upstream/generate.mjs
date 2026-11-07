@@ -2,7 +2,8 @@
 // (rerail/packs/typescript/conformance.json), in the format rerail/conformance/languages/pack.ts reads:
 //   typescript-eslint/fixtures.expected.json    (the rules' own RuleTester cases)
 //   <tool>/corpus-<name>.expected.json          (the pack's pinned corpora)
-// Run offline by a maintainer, never in CI:
+// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
+// test-data.lock reproduces):
 //   node generate.mjs --tools <dir> --typescript-eslint <checkout> [--fixtures] [--corpus <name>=<checkout>]...
 // <dir> holds node_modules with exactly eslint@10.11.0, @typescript-eslint/parser and
 // @typescript-eslint/eslint-plugin @8.70.1, typescript@5.9.3 and tsx (to load typescript-eslint's .ts tests).
@@ -29,6 +30,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, matchesGlob, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { recordingWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "conformance.json"), "utf8"));
@@ -165,6 +167,7 @@ async function lint(cwd, files, rules) {
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  console.log(recordingWritten(path, value.source.kind));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

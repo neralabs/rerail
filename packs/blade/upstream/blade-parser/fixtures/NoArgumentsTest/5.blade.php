@@ -1,1 +1,0 @@
-@endComponent($some, $args)

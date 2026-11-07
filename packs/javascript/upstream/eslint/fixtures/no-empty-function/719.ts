@@ -1,1 +1,0 @@
-const obj = {*foo(param: string) {}}; // allow: generatorMethods

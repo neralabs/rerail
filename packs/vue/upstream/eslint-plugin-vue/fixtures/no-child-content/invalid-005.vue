@@ -1,1 +1,0 @@
-<template><div v-text="foo">bar</div></template>

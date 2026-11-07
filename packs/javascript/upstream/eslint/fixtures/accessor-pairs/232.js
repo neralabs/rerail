@@ -1,1 +1,0 @@
-A = class { get a() {} get [b]() {} }

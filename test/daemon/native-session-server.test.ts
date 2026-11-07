@@ -2,8 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
-import { SqliteSessionReader } from "../../src/runtime/index.js";
+import { RerailRuntime, SqliteSessionReader } from "../../src/runtime/index.js";
 import { CodeRuleBridge, SqliteAuditStore } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
@@ -323,5 +324,88 @@ describe("NativeSessionServer request boundary", () => {
       endedAt: null,
     }));
     reader.close();
+  });
+
+  it("answers an operation that outlasts the reply bound with a ticket, and collects it, and the one queued behind it, in order", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    const databasePath = join(root, "rerail.sqlite");
+    startTestRepository(root, databasePath);
+    server = new NativeSessionServer({ workspaceRoot: root, modelPath: resolve("model"), databasePath, replyWithinMs: 20 });
+    const session = { workspaceRoot: root, sessionId: "s", host: "omp" as const };
+    const busy = Promise.withResolvers<void>();
+    const ingest = RerailRuntime.prototype.ingest;
+    const spy = vi.spyOn(RerailRuntime.prototype, "ingest").mockImplementation(async function (this: RerailRuntime, event) {
+      if (event.eventId === "slow" || event.eventId === "broken") await busy.promise;
+      if (event.eventId === "broken") throw new Error("content store busy");
+      return ingest.call(this, event);
+    });
+    const prompt = (eventId: string) => ({
+      ...session, operation: "ingest" as const, deferReply: true,
+      event: { kind: "user-prompt", sessionId: "s", eventId, text: eventId },
+    });
+    const ticketOf = (reply: unknown) => z.object({ pendingReply: z.string(), deliveries: z.tuple([]), entries: z.tuple([]) }).parse(reply).pendingReply;
+    const awaitReply = (ticket: string) => server!.handle({ ...session, operation: "await-reply", input: { ticket } });
+    /** As the client does: asks again while the daemon is still working on it. */
+    const collect = async (ticket: string): Promise<unknown> => {
+      for (;;) {
+        const reply = await awaitReply(ticket);
+        if (z.object({ pendingReply: z.string() }).safeParse(reply).success) continue;
+        return reply;
+      }
+    };
+    const reader = new SqliteSessionReader(databasePath);
+    try {
+      await server.handle({ ...session, operation: "initialize", entries: [] });
+      const slow = ticketOf(await server.handle(prompt("slow")));
+      // Queued behind the slow one in the session's lane, it is still waiting when its bound runs out too.
+      const next = ticketOf(await server.handle(prompt("next")));
+      const broken = ticketOf(await server.handle(prompt("broken")));
+      expect(ticketOf(await awaitReply(slow))).toBe(slow);
+      busy.resolve();
+      await expect(collect(slow)).resolves.toEqual({ deliveries: [], entries: [] });
+      await expect(collect(next)).resolves.toEqual({ deliveries: [], entries: [] });
+      await expect(collect(broken)).rejects.toThrow("content store busy");
+      expect(reader.events("s").filter(event => event.kind === "user-prompt").map(event => event.eventId)).toEqual(["slow", "next"]);
+      // A collected reply is forgotten.
+      await expect(awaitReply(slow)).rejects.toThrow("native deferred reply is unknown");
+    } finally {
+      busy.resolve();
+      spy.mockRestore();
+      reader.close();
+    }
+  });
+
+  it("answers await-code-rules once the session's evaluator has opened, while the session's events go on", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    const databasePath = join(root, "rerail.sqlite");
+    startTestRepository(root, databasePath);
+    const opening = Promise.withResolvers<void>();
+    const open = CodeRuleBridge.prototype.openWorkspace;
+    const spy = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace").mockImplementationOnce(async function (this: CodeRuleBridge, sessionId: string) {
+      await opening.promise;
+      await open.call(this, sessionId);
+    });
+    server = new NativeSessionServer({ workspaceRoot: root, modelPath: resolve("model"), databasePath, replyWithinMs: 20 });
+    const session = { workspaceRoot: root, sessionId: "s", host: "omp" as const };
+    const pending = z.object({ pendingReply: z.string() });
+    try {
+      await server.handle({ ...session, operation: "initialize", entries: [] });
+      const ticket = pending.parse(await server.handle({ ...session, operation: "await-code-rules", deferReply: true })).pendingReply;
+      // Not in the session's lane: a prompt goes through while the evaluator is still opening.
+      await server.handle({ ...session, operation: "ingest", event: { kind: "user-prompt", sessionId: "s", eventId: "p", text: "hi" } });
+      expect(pending.safeParse(await server.handle({ ...session, operation: "await-reply", input: { ticket } })).success).toBe(true);
+      opening.resolve();
+      for (;;) {
+        const reply = await server.handle({ ...session, operation: "await-reply", input: { ticket } });
+        if (pending.safeParse(reply).success) continue;
+        expect(reply).toEqual({ deliveries: [], entries: [] });
+        break;
+      }
+    } finally {
+      opening.resolve();
+      spy.mockRestore();
+    }
   });
 });

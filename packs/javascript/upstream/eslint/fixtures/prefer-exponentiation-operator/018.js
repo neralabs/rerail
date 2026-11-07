@@ -1,1 +1,0 @@
-var x = function Math() { Math.pow(a, b); }

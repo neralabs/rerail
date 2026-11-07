@@ -1,1 +1,0 @@
-function foo(NaN) { return arr.indexOf(NaN); }

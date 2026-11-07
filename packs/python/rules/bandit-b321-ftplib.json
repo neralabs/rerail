@@ -3,7 +3,7 @@
   "id": "bandit-b321-ftplib",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect insecure ftplib.FTP construction",
+  "description": "Avoid opening ftplib.FTP connections; FTP sends credentials and data unencrypted, so use SFTP, SCP, or another encrypted protocol.",
   "scope": {
     "include": [
       "**/*.py"
@@ -33,7 +33,7 @@
       "violation": {
         "code": "B321",
         "anchor": "witness.span",
-        "message": "FTP is unencrypted and insecure; use SSH, SFTP, SCP, or another encrypted protocol.",
+        "message": "Replace this FTP connection with SFTP, SCP, or another encrypted protocol; FTP sends credentials in clear text.",
         "suppress": {
           "nosec": {
             "codes": [

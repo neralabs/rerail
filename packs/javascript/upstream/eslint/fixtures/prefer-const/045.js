@@ -1,1 +1,0 @@
-(function() { let x; for (const a of [1,2,3]) { x = foo(); bar(x); } })();

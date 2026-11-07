@@ -1,7 +1,8 @@
 // Records where ESLint 10.11.0 reports the JavaScript pack's ported rules (rerail/packs/javascript/conformance.json),
 // in the format rerail/conformance/languages/pack.ts reads: eslint/fixtures.expected.json (the rules' own RuleTester
 // cases).
-// Run offline by a maintainer, never in CI:
+// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
+// test-data.lock reproduces):
 //   node generate.mjs --tools <dir> --eslint <checkout>
 // <dir> holds node_modules with exactly eslint@10.11.0, @typescript-eslint/parser@8.70.1 and typescript@6.0.3 (the
 // runtime nera-rule-validation pins for ESLint 10.11.0, validation/upstream/eslint-10.11.0). The checkout is
@@ -23,6 +24,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { recordingWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "conformance.json"), "utf8"));
@@ -137,6 +139,7 @@ async function lint(cwd, files, rules, languages) {
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  console.log(recordingWritten(path, value.source.kind));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

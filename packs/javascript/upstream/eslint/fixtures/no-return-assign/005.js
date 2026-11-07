@@ -1,1 +1,0 @@
-function x() { return function y() { result = a * b }; }

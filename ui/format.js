@@ -43,13 +43,9 @@ export const ago = t => {
   return `${Math.round(m / 1440)}d ago`;
 };
 
-/** Seconds since a timestamp, as the freshness pill reads it. */
-export const secondsSince = t => Math.max(0, Math.round((Date.now() - t) / 1000));
-
 export const clock = t => new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 export const clockSeconds = t => new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 export const stamp = t => new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-export const shortDate = t => new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
 /** "45m", "2h 10m", "3d 4h". */
 export function duration(ms) {

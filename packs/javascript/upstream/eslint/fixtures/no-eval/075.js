@@ -1,1 +1,0 @@
-'use strict'; class C { [this.eval('foo')] }

@@ -1,1 +1,0 @@
-Object.prototype.p = 0

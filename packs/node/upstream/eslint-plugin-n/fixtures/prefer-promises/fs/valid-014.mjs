@@ -1,1 +1,0 @@
-const fs = process.getBuiltinModule('node:fs'); fs.promises.access()

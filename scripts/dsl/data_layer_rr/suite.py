@@ -65,7 +65,7 @@ class Suite:
     def __init__(self, source, engine, checks, part, parts, baseline, rule_root=None):
         self.source, self.engine, self.checks = source, engine, checks
         self.part, self.parts = part, parts
-        self.rule_root = rule_root or ROOT / 'packs/data-layer/candidates/rr'
+        self.rule_root = rule_root or ROOT / 'gate/data-layer/packs/data-layer/candidates/rr'
         self.originals, self.calls, self.cases, self.translations = [], [], {}, []
         self.collected = []
         self.semantic_fallbacks = []
@@ -701,7 +701,7 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--checks', required=True)
-    parser.add_argument('--rule-root', type=Path, default=ROOT / 'packs/data-layer/candidates/rr',
+    parser.add_argument('--rule-root', type=Path, default=ROOT / 'gate/data-layer/packs/data-layer/candidates/rr',
                         help='Rule directory to execute; mutation tests supply a directory of disabled policies')
     parser.add_argument('--part', type=int, default=0)
     parser.add_argument('--parts', type=int, default=1)

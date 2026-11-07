@@ -1,1 +1,0 @@
-const A = class {set foo(value: string) {}}; // allow: overrideMethods

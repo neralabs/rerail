@@ -14,12 +14,12 @@ use super::package_manifest::{Manifest, manifest_directory, manifest_in};
 use napi::Result;
 pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
-    violation_ids,
+    violation_id, violation_ids,
 };
 pub(super) use query::Output;
 pub(super) use query::{
-    TapeCacheSlot, WitnessError, evaluate_query, file_language, file_tape, grammar_matcher,
-    witness_from_match, witnesses_from_match,
+    TapeCacheSlot, WitnessError, document_matcher, evaluate_query, file_language, file_tape,
+    grammar_matcher, witness_from_match, witnesses_from_match,
 };
 #[cfg(test)]
 pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
@@ -261,8 +261,12 @@ pub(super) fn evaluate_clauses(
     mode: &str,
     clauses: &[CompiledClause],
 ) -> Result<Evaluation> {
+    // P's anchor corpus for every rule (the `p-anchor-corpus` path, open item O20).
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
     let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
     let _tapes = TapeCacheSlot::install();
+    // P's syntax facts, shared by P's relational inputs (test-only, open item O18).
+    #[cfg(test)]
     let _syntax = super::relational::syntax::Pool::install();
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
@@ -273,8 +277,8 @@ pub(super) fn evaluate_clauses(
         .files
         .iter()
         .filter(|file| code_rule.scope.matches(&file.path))
-        .fold((0usize, 0usize), |(files, bytes): (usize, usize), file| {
-            (files + 1, bytes.max(file.source.len()))
+        .fold((0usize, 0usize), |(files, bytes), file| {
+            (files + 1, bytes + file.source.len())
         });
     // Each reported clause has a coverage entry; a synthetic leaf is part of the clause it serves.
     let covered: Vec<(Option<String>, String)> = clauses
@@ -297,10 +301,11 @@ pub(super) fn evaluate_clauses(
         },
         clauses: covered,
     };
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
     prepare_candidates(code_rule, snapshot);
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
+    #[cfg(test)]
     let mut relational_jobs = Vec::new();
-    let relational_versions = std::cell::OnceCell::new();
     for clause in clauses {
         match &clause.kind {
             ClauseKind::Forbid(query) => {
@@ -407,9 +412,9 @@ pub(super) fn evaluate_clauses(
                     evidence::budget(code_rule, clause, query, rows),
                 );
             }
+            // P's relational clauses (test-only, open item O18): one job per file where per-file.
+            #[cfg(test)]
             ClauseKind::Relational(plan) => {
-                let versions = relational_versions
-                    .get_or_init(|| super::relational::Versions::snapshot(snapshot));
                 let partitions = if plan.per_file {
                     snapshot
                         .files
@@ -424,19 +429,13 @@ pub(super) fn evaluate_clauses(
                     vec![snapshot.clone()]
                 };
                 for partition in partitions {
-                    #[cfg(feature = "code-rule-profile")]
-                    let _context = super::profile::trace::Context::enter(
-                        &code_rule.id,
-                        &clause.id,
-                        (partition.files.len() == 1).then(|| partition.files[0].path.as_str()),
-                    );
-                    relational_jobs.push(super::relational::Job {
+                    relational_jobs.push(crate::code_rule_dsl::residency::admission::relational::Job {
                         code_rule,
                         clause,
-                        inputs: super::relational::Inputs {
-                            versions: Some(versions.clone()),
+                        inputs: crate::code_rule_dsl::residency::admission::relational::Inputs {
                             gate: None,
                             file_local: false,
+                            read_bytes: 0,
                             rows: None,
                             facts: Vec::new(),
                             snapshot: partition,
@@ -453,7 +452,8 @@ pub(super) fn evaluate_clauses(
             )),
         }
     }
-    for result in super::relational::evaluate_batch(relational_jobs) {
+    #[cfg(test)]
+    for result in crate::code_rule_dsl::residency::admission::relational::evaluate_batch(relational_jobs) {
         merge(&mut evaluation, result);
     }
     if evaluation.metrics.witnesses > limits.max_witnesses
@@ -473,12 +473,14 @@ pub(super) fn evaluate_clauses(
 }
 
 fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
-    evaluation.metrics.observe_native_work(&other.metrics);
     evaluation.violations.append(&mut other.violations);
     evaluation.failures.append(&mut other.failures);
     evaluation.metrics.witnesses += other.metrics.witnesses;
 }
 
+/// P's corpus publication and candidate preparation for one rule's stateless evaluation (the
+/// `p-anchor-corpus` path, open item O20).
+#[cfg(all(test, feature = "p-anchor-corpus"))]
 fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
     use crate::code_rule_dsl::matcher::{CorpusSlot, anchor_plans};
     let plans = anchor_plans(std::iter::once(code_rule));
@@ -501,13 +503,12 @@ fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
             continue;
         }
         match file_tape(lang, file) {
-            Ok((doc, _)) => {
-                let plans =
-                    crate::code_rule_dsl::matcher::anchor_plans_for_file(code_rule, file, &doc);
-                if plans.is_empty() {
-                    continue;
-                }
-                demands.insert(file.path.clone(), plans);
+            Ok(None) => {}
+            Ok(Some((doc, _))) => {
+                demands.insert(
+                    file.path.clone(),
+                    crate::code_rule_dsl::matcher::anchor_plans_for_file(code_rule, file, &doc),
+                );
                 if let Err(error) = corpus.put(
                     &file.path,
                     &doc,
@@ -526,19 +527,40 @@ fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
     }
 }
 
-/// Full file-local projections preserve the original local semantic side tables.
+/// Each input relation's rows of a relational clause (P's, test-only, open item O18).
 #[cfg(test)]
 pub(super) fn relational_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
-    plan: &super::relational::Plan,
+    plan: &crate::code_rule_dsl::residency::admission::relational::Plan,
     snapshot: &Snapshot,
     metrics: &mut Metrics,
 ) -> Result<Vec<evidence::Rows>> {
-    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
-    let _tapes = TapeCacheSlot::install();
     let _calls = stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
+    plan.inputs
+        .iter()
+        .map(|(_, input)| {
+            stateless_rows(
+                code_rule,
+                clause,
+                (input, evidence::Side::Counted),
+                snapshot,
+                metrics,
+            )
+        })
+        .collect()
+}
 
+/// Each input relation's rows of D's relational plan (test-only, open item O19).
+#[cfg(test)]
+pub(super) fn data_layer_rows(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    plan: &crate::code_rule_dsl::waves::relational::Plan,
+    snapshot: &Snapshot,
+    metrics: &mut Metrics,
+) -> Result<Vec<evidence::Rows>> {
+    let _calls = stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
     plan.inputs
         .iter()
         .map(|(_, input)| {
@@ -564,7 +586,7 @@ pub(super) fn stateless_rows(
 ) -> Result<evidence::Rows> {
     stateless_rows_to(code_rule, clause, (relation, side), snapshot, metrics, None)
 }
-pub(super) fn stateless_rows_to(
+pub(in crate::code_rule_dsl) fn stateless_rows_to(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),
@@ -634,7 +656,7 @@ pub(super) fn stateless_rows_to(
 /// spends the evaluation's work budget (`metrics.visited_nodes`); seed witnesses are no violation,
 /// so each seed evaluation has its own witness budget, as a workspace's seed producer has per
 /// file, and spends none of the clauses'.
-pub(super) fn stateless_calls(
+pub(in crate::code_rule_dsl) fn stateless_calls(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     clauses: &[CompiledClause],
@@ -664,21 +686,35 @@ pub(super) fn stateless_calls(
         }
         let path: Arc<str> = Arc::from(file.path.as_str());
         let module = file.module.as_deref();
-        // A Blade file's calls are its tape's embedded program's (`calls::taped`).
-        let (summary, _) = if calls::taped(language) {
-            let (doc, _) = query::file_tape(language, file)?;
-            let has_errors = !doc.syntax_error_ranges().is_empty();
-            let root = ast_grep_core::AstGrep::doc(doc);
+        // A file that embeds code reads its calls from its tape's embedded program
+        // (`calls::calls_document`).
+        let (summary, _) = if !language.embeds().is_empty() {
             let bytes = file.source.len();
-            calls::summarize(
-                root.root(),
-                language,
-                &file.path,
-                module,
-                has_errors,
-                bytes,
-                None,
-            )
+            // A file the parser stopped on (`file_tape`) has no program to read calls from.
+            let doc = query::file_tape(language, file)?.map(|(doc, _)| doc);
+            match doc.and_then(|doc| calls::calls_document(doc, language)) {
+                Some((doc, dialect)) => {
+                    let has_errors =
+                        !crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&doc).is_empty();
+                    let root = ast_grep_core::AstGrep::doc(doc);
+                    calls::summarize(
+                        root.root(),
+                        dialect,
+                        &file.path,
+                        module,
+                        has_errors,
+                        bytes,
+                        None,
+                    )
+                }
+                None => (
+                    calls::summary::Summary {
+                        bytes: u32::try_from(bytes).unwrap_or(u32::MAX),
+                        ..Default::default()
+                    },
+                    None,
+                ),
+            }
         } else {
             let root = crate::code_rule_dsl::language::adapter::ast_grep(language, &file.source);
             let has_errors = root.root().get_doc().tree.root_node().has_error();

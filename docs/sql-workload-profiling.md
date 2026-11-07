@@ -12,10 +12,9 @@ The statement tracer, report renderer, cost summaries, and report tests come fro
 The integration uses this branch's relational executor and bounded profiling controller.
 The SQL matcher compiler and its optimization experiments remain on the source branch.
 
-## Complete-job execution accounting
+## Complete-job execution limit
 
-The fixed diagnostic reference is **100 engine-submitted SQL statements for one complete cold job**.
-Full-repository acceptance uses cold CPU, wall time, RSS, and complete findings with no engine failures.
+The fixed acceptance limit is **100 engine-submitted SQL statements for one complete cold job**.
 Commit `c109a915` on the source branch defines this limit. The earlier profiler import omitted its enforcement.
 Every worker and connection shares the allowance. File batches, rules, and output packets do not reset it.
 Setup, publication, DDL, transactions, matching, and cleanup count. Each statement inside `execute_batch` counts separately.
@@ -47,37 +46,11 @@ Production builds exclude this instrumentation.
 
 The [SQL shape experiments](sql-shape-spikes.md) record isolated changes, CPU results, parity checks, and reproduction commands.
 
-## SQL page census
-
-Ordinary CPU tracing does not scan SQL pages.
-Use `--sql-working-set` with `scripts/profiling/run.py` to request per-stage object sizes and reserved-page counts.
-This option requires `--trace on` and can be expensive over a growing corpus.
-For a direct harness invocation, set `RERAIL_PROFILE_SQL_WORKING_SET=1` and `RERAIL_PROFILE=1`.
-Keep the census out of CPU and wall-time controls.
-The separate `--memory-census` option records workspace ownership at driver boundaries.
-
-## Focus on one component
-
-Set `RERAIL_SQL_PROFILE_SCOPE=relational` to capture relational statements while excluding candidate-index publication.
-Use `ast-index` to select candidate preparation instead.
-The filter matches the connection context, including the scope of each native operation.
-A relational-only capture does not copy candidate databases or export candidate producer plans.
-Normal execution still runs every required operator.
-
-Filtered reports set `executionCoverage.fromSessionStart` to `false` and retain the selected context in `contextFilter`.
-They cannot pass the complete-job accounting check, even when their statement count is below 100.
-`filteredStatementNotifications` counts excluded trace notifications. It does not claim an execution-origin count.
-Unset this variable for complete captures and for performance measurements.
-
 ## Candidate preparation captures
 
 The candidate index also supports input-complete SQL captures.
 The [preparation design](sql-preparation-architecture.md) and [spikes](sql-preparation-spikes.md) describe their purpose.
-By default, SQL-profile capture writes `candidate-*.json` and matching SQLite snapshots beneath `sql/raw/`.
-For large workload diagnosis, add `--sql-trace-only` to capture statements without these replay copies.
-This mode retains SQL plans, counters, and statement coverage. It cannot supply standalone candidate replay databases.
-The equivalent direct-run environment setting is `RERAIL_SQL_PROFILE_REPLAY=0`.
-Use separate bounded replay captures when database contents are required.
+Each SQL-profile capture writes `candidate-*.json` and matching SQLite snapshots beneath `sql/raw/`.
 Snapshots contain the selected source, packed facts, indexes, and retained property state before candidate execution.
 The JSON files contain generated SQL, typed parameters, logical relation identities, and file identities.
 They do not contain JSON AST rows.
@@ -310,14 +283,3 @@ Allocator totals cover macOS system-malloc zones. They do not measure exclusive 
 These totals do not cover allocations owned by a separate allocator, such as production jemalloc.
 The suite driver also records the RSS high-water mark after each apply operation.
 Use these boundaries to distinguish retained storage, temporary allocation, and allocator residency.
-
-## Failure-only relation snapshots
-
-Set `RERAIL_SQL_FAILURE_DIR` to a diagnostic directory before an engine run.
-A failed relational stage or result query copies its main and temporary SQLite databases before owner cleanup.
-Successful queries do no snapshot work and install no statement-tracing callback through this setting.
-The JSON manifest records the rule, clause, failed query, database filenames, and capture limits.
-Its budget record separates remaining SQL allowance from the outer clause's work limit, consumed polls, and observed exhaustion.
-Failed-run CPU includes snapshot work. Such a run fails acceptance regardless of its timing.
-SQLite backups do not serialize native virtual-table frames or external source callbacks.
-A query that requires those producers also requires their original inputs for replay.

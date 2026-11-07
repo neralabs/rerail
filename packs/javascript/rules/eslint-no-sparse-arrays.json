@@ -3,7 +3,7 @@
   "id": "eslint-no-sparse-arrays",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-sparse-arrays` rule (https://eslint.org/docs/latest/rules/no-sparse-arrays). Reports, at the comma, every hole in an array literal: a comma whose previous non-comment sibling is `[` or another comma.",
+  "description": "Avoid holes in array literals from consecutive commas; they create sparse arrays and usually come from a typo.",
   "scope": {
     "include": [
       "**/*"

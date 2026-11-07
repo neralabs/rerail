@@ -1,1 +1,0 @@
-(Object?.defineProperties)(foo, { bar: { value: function baz() {} } })

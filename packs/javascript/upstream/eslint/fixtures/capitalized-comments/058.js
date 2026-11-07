@@ -1,2 +1,0 @@
-/* lowercase
-Second line need not be lowercase */

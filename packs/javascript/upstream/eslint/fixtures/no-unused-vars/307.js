@@ -1,1 +1,0 @@
-try {} catch ({ stack: $ }) { $ = 'Something broke: ' + $; }

@@ -1,30 +1,30 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Core ships no pack with a match definition; set-up's recommendation flow is exercised with the TypeScript pack added.
-vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOriginal) => {
-  const actual = await importOriginal<{ corePackDirectories(): string[] }>();
-  const typescriptPack = decodeURIComponent(new URL("../../packs/typescript", import.meta.url).pathname);
-  return { ...actual, corePackDirectories: () => [...actual.corePackDirectories(), typescriptPack] };
-});
-import { runSetup, runSetupStep, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
+// Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
+import { runSetup, runSetupStep, setupPacks, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
 import { workspaceStartState, type RepositorySetupIo } from "../../src/runtime/index.js";
 import { runSetupCommand, runSetupStepArgs, type SetupIo } from "../../src/cli/setup-cli.js";
 import { CONFIRM_PACKS_ANSWERS, NO_REPO_ANSWERS, READ_REPO_ANSWERS, shellQuote } from "../../src/harness/index.js";
 import type { SetupQuestion, SetupStep } from "../../src/harness/index.js";
-import { ManagedUpdater } from "../../src/setup/index.js";
+import { ManagedUpdater, type PackStore } from "../../src/setup/index.js";
+import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
+import { removeInstalledPacks } from "../support/installed-packs.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
+/** The pack set-up offers the TypeScript fixture, at the version its "Yes" answer carries (`--packs`). */
+const TYPESCRIPT = repositoryPackVersions("typescript");
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
+  removeInstalledPacks();
   vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
@@ -79,6 +79,7 @@ function requestFrom(args: readonly string[], setup: Fixture, environment: FakeS
     ...(answer === undefined ? {} : { answer }),
     ...(repo === undefined ? {} : { repo }),
     ...(value === undefined ? {} : { repo: value }),
+    ...setupPacks(flags.get("--packs"), answer),
   });
 }
 
@@ -86,7 +87,9 @@ function requestFrom(args: readonly string[], setup: Fixture, environment: FakeS
 function expectParity(question: SetupQuestion, agent: string, keys: readonly string[]): void {
   const { answers, commands } = agentQuestion(agent);
   expect(question.options.map(option => option.answer)).toEqual([...keys]);
-  expect(question.options.map((option, index) => `${index + 1}. ${option.label}${option.detail === null ? "" : `  ${option.detail}`}`)).toEqual(answers);
+  // The agent lane lines its hints up in one column; the words are the same.
+  expect(question.options.map((option, index) => `${index + 1}. ${option.label}${option.detail === null ? "" : `  ${option.detail}`}`))
+    .toEqual(answers.map(answer => answer.replace(/ {2,}/gu, "  ")));
   question.options.forEach((option, index) => {
     const command = ["rerail setup", ...option.next.args.slice(2).map(arg => shellQuote(arg))].join(" ");
     expect(commands[index]).toContain(command);
@@ -111,7 +114,6 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     const scenarios: Array<[Partial<SetupRequest>, SetupStep["step"], readonly string[]]> = [
       [{}, "read-repo", READ_REPO_ANSWERS],
       [{ answer: "yes", repo: setup.repo }, "confirm-packs", CONFIRM_PACKS_ANSWERS],
-      [{ answer: "review", repo: setup.repo }, "confirm-packs", CONFIRM_PACKS_ANSWERS],
       [{ cwd: plain }, "no-repo", NO_REPO_ANSWERS],
     ];
     for (const [extra, step, keys] of scenarios) {
@@ -122,9 +124,9 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
       expectParity(json.question!, agent, keys);
       expectPersonText(json);
     }
-    // The review recorded the checkout, so its dashboard can add packs; nothing is set up or started.
+    // Asking changes nothing: no database is written, so nothing is set up or started.
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
-    expect(attachedPacks(setup.repo, setup.databasePath)).toEqual([]);
+    expect(existsSync(setup.databasePath)).toBe(false);
   });
 
   it("follows its own next.args from the first question to Rerail on, with the agent lane's side effects", async () => {
@@ -132,26 +134,40 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     const environment = fakeSetupEnvironment();
 
     const asked = await runSetupStep(request(setup, environment));
-    expect(asked.screen).toContain("It reads on this computer only.");
+    expect(asked.screen).toContain("Your code stays on this computer.");
     const yes = asked.question!.options.find(option => option.answer === "yes")!;
     expect(yes.next.args).toEqual(["setup", "--json", "--answer", "yes", "--repo", setup.repo]);
 
     const packs = await runSetupStep(requestFrom(yes.next.args, setup, environment));
     expect(packs.step).toBe("confirm-packs");
-    expect(packs.screen).toContain("Of the rule packs that come with Rerail, 1 looks right for acme api.");
+    expect(packs.screen).toContain("Scanned acme api. 1 rule pack fits:");
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
-    const other = packs.question!.options.find(option => option.answer === "other")!;
-    expect(other.input).toEqual({ flag: "--agents", prompt: "Which coding agents should Rerail connect to?", hint: "comma-separated ids from: claude-code (Claude Code), cursor (Cursor)" });
 
     const start = packs.question!.options.find(option => option.answer === "start")!;
     const done = await runSetupStep(requestFrom(start.next.args, setup, environment));
     expect(done).toMatchObject({ step: "done", question: null });
-    expect(done.screen).toContain("● Rerail is on in acme api. 1 rule pack is on");
-    expect(done.screen).toContain("── Good to know · optional");
+    expect(done.screen).toContain("● Rerail is on in acme api · 1 rule pack,");
+    expect(done.screen).toContain("── Good to know ──");
     expectPersonText(done);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     expect(attachedPacks(setup.repo, setup.databasePath)).toEqual(["typescript"]);
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: setup.repo }]);
+  });
+
+  it("installs, connects and turns on nothing when the person answers not now", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    const packs = await runSetupStep(request(setup, environment, { answer: "yes", repo: setup.repo }));
+    const notNow = packs.question!.options.find(option => option.answer === "not-now")!;
+    expect(notNow).toMatchObject({ label: "Not now", detail: "nothing is turned on", next: { args: ["setup", "--json", "--answer", "not-now"] } });
+
+    const done = await runSetupStep(requestFrom(notNow.next.args, setup, environment));
+    expect(done).toMatchObject({ step: "done", question: null });
+    expect(done.screen).toContain("Set-up stopped. No rule packs were installed and nothing was turned on.");
+    expectPersonText(done);
+    expect(environment.connections).toEqual([]);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+    expect(existsSync(setup.databasePath)).toBe(false);
   });
 
   it("takes a folder for E3's first answer, and reports a bad answer as an error step", async () => {
@@ -188,7 +204,7 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(first.question!.options.map(option => option.next.args[0])).toEqual(["setup", "setup", "setup"]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
 
-    await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo }));
+    await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     const again = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
     expect(again).toMatchObject({ step: "done", question: null });
     expect(again.screen.split("\n")[0]).toMatch(/^● Rerail is already on in acme api\. \d+ rules are on\.$/u);
@@ -197,7 +213,7 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("ends on the rules dashboard's link, scoped to the repository, where it is set up already", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment();
-    await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo }));
+    await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     const { repositoryKey } = environment.pages.at(-1)!;
 
     const step = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
@@ -210,35 +226,88 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     const setup = await fixture();
     const home = join(setup.root, "home");
     const packageRoot = join(setup.root, "package");
-    const context = { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0" }) };
+    const context = { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "0.1.9" }) };
     const place = { cwd: setup.repo, databasePath: setup.databasePath, environment: () => fakeSetupEnvironment() };
     const step = await runSetupStepArgs(["start", "--relay", "--json"], context, place);
     expect(step.step).toBe("read-repo");
     expect(step.question!.options[0]!.next.args).toEqual(["setup", "--database", setup.databasePath, "--json", "--answer", "yes", "--repo", setup.repo]);
   });
+
+  it("asks first whether Rerail may read sessions, and its yes still asks before reading the folder start ran for", async () => {
+    const setup = await fixture();
+    const plain = join(setup.root, "notes");
+    mkdirSync(plain);
+    const environment = fakeSetupEnvironment({ sessionsApproved: false });
+    const first = await startRerailStep(plain, { databasePath: setup.databasePath, environment });
+    expect(first.step).toBe("sessions");
+    const allow = first.question!.options.find(option => option.answer === "allow")!;
+    expect(allow.next.args).toEqual(["setup", "--json", "--answer", "allow", "--repo", plain]);
+
+    // Outside Git the folder is still the one asked about, and naming it in the allow answer reads nothing yet.
+    const next = await runSetupStep(request(setup, environment, { cwd: setup.root, answer: "allow", repo: plain }));
+    expect(next.step).toBe("read-repo");
+    expect(next.question!.options[0]!.next.args).toEqual(["setup", "--json", "--answer", "yes", "--repo", plain]);
+    expect(environment.connections).toEqual([]);
+
+    // No takes the yes back, so the next set-up asks again.
+    expect((await runSetupStep(request(setup, environment, { answer: "decline" }))).step).toBe("done");
+    expect((await startRerailStep(plain, { databasePath: setup.databasePath, environment })).step).toBe("sessions");
+  });
 });
 
 describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
-  async function commandFixture(): Promise<{ setup: Fixture; context: { home: string; packageRoot: string; updater: ManagedUpdater }; said: string[]; io: SetupIo }> {
+  async function commandFixture(approved = true): Promise<{ setup: Fixture; context: { home: string; packageRoot: string; updater: ManagedUpdater; packs: PackStore }; said: string[]; io: SetupIo }> {
     const setup = await fixture();
     const home = join(setup.root, "home");
     const packageRoot = join(setup.root, "package");
     mkdirSync(join(packageRoot, "dist"), { recursive: true });
-    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.9" }));
+    // The one approval set-up asks for first; the tests of the later questions start past it.
+    if (approved) {
+      mkdirSync(home, { recursive: true });
+      writeFileSync(join(home, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-10-16T00:00:00.000Z" } }));
+    }
     vi.stubEnv("RERAIL_HOME", home);
     vi.stubEnv("HOME", join(setup.root, "user"));
     vi.spyOn(process, "cwd").mockReturnValue(setup.repo);
     const said: string[] = [];
     const io: SetupIo = { lane: "agent", say: text => { said.push(text); }, close: () => {} };
-    return { setup, context: { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0" }) }, said, io };
+    return { setup, context: { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "0.1.9" }), packs: directoryPackStore(undefined, ["typescript"]) }, said, io };
   }
+
+  it("asks once whether Rerail may read sessions, connects nothing on no, and remembers yes", async () => {
+    const { setup, context, said, io } = await commandFixture(false);
+    await context.updater.activateRoot(context.packageRoot);
+
+    expect(await runSetupCommand(["--json", "--repo", setup.repo], context, io)).toBe(0);
+    const asked = JSON.parse(said[0]!) as SetupStep;
+    expect(asked.step).toBe("sessions");
+    expect(asked.question!.options.map(option => option.next.args)).toEqual([
+      ["setup", "--json", "--answer", "allow", "--repo", setup.repo],
+      ["setup", "--json", "--answer", "decline"],
+    ]);
+
+    said.length = 0;
+    expect(await runSetupCommand(["--json", "--answer", "decline"], context, io)).toBe(0);
+    expect(JSON.parse(said[0]!)).toMatchObject({ step: "done", screen: expect.stringContaining("Set-up stopped."), question: null });
+    expect(existsSync(join(context.home, "consent.json"))).toBe(false);
+    expect(workspaceStartState(setup.repo, join(context.home, "rerail.sqlite"))).toBe("stopped");
+
+    // Yes carries on to the folder it was named, still asking before reading it, and set-up never asks again.
+    said.length = 0;
+    expect(await runSetupCommand(["--json", "--answer", "allow", "--repo", setup.repo], context, io)).toBe(0);
+    expect((JSON.parse(said[0]!) as SetupStep).step).toBe("read-repo");
+    said.length = 0;
+    expect(await runSetupCommand(["--json"], context, io)).toBe(0);
+    expect((JSON.parse(said[0]!) as SetupStep).step).toBe("read-repo");
+  });
 
   it("says Rerail is installed only on the run that installed it", async () => {
     const installing = await commandFixture();
     const install = vi.spyOn(installing.context.updater, "install").mockResolvedValue(undefined as never);
     expect(await runSetupCommand([], installing.context, installing.io)).toBe(0);
     expect(install).toHaveBeenCalledOnce();
-    expect(installing.said[0]).toBe("Rerail is installed. Nothing is on yet.");
+    expect(installing.said[0]).toBe("Rerail is installed. Nothing is on yet, and your code is untouched.");
 
     const installed = await commandFixture();
     await installed.context.updater.activateRoot(installed.context.packageRoot);
@@ -246,7 +315,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(await runSetupCommand([], installed.context, installed.io)).toBe(0);
     expect(reinstall).not.toHaveBeenCalled();
     expect(installed.said.join("\n")).not.toContain("Rerail is installed");
-    expect(installed.said.join("\n")).toContain("Can Rerail read it");
+    expect(installed.said.join("\n")).toContain("Find rule packs for acme api?");
   });
 
   it("prints exactly one JSON step and nothing else, the install line inside it", async () => {
@@ -256,7 +325,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(said).toHaveLength(1);
     const step = JSON.parse(said[0]!) as SetupStep;
     expect(step.step).toBe("read-repo");
-    expect(step.screen.split("\n")[0]).toBe("Rerail is installed. Nothing is on yet.");
+    expect(step.screen.split("\n")[0]).toBe("Rerail is installed. Nothing is on yet, and your code is untouched.");
     expect(step.question!.options[0]!.next.args).toEqual(["setup", "--port", "4999", "--json", "--answer", "yes", "--repo", setup.repo]);
 
     said.length = 0;
@@ -274,15 +343,14 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     await context.updater.activateRoot(context.packageRoot);
     expect(await runSetupCommand(["--agents", "Cursor", "--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
     const { commands } = agentQuestion(said.join("\n"));
-    expect(commands).toHaveLength(4);
+    expect(commands).toHaveLength(3);
     for (const command of commands) expect(command).toContain("setup --relay --agents cursor --answer ");
 
     said.length = 0;
     expect(await runSetupCommand(["--json", "--agents", "cursor", "--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
     const step = JSON.parse(said[0]!) as SetupStep;
-    expect(step.question!.options.map(option => option.next.args.slice(0, 4))).toEqual(Array(4).fill(["setup", "--agents", "cursor", "--json"]));
-    expect(step.question!.options.find(option => option.answer === "other")!.input!.hint).toBe("comma-separated ids from: cursor (Cursor)");
-    expect(step.screen).toMatch(/^ {2}Connected to +Cursor\b/mu);
+    expect(step.question!.options.map(option => option.next.args.slice(0, 4))).toEqual(Array(3).fill(["setup", "--agents", "cursor", "--json"]));
+    expect(step.screen).toMatch(/^ {2}Will connect to: Cursor$/mu);
   });
 
   it("asks the confirm question again for an answer's unknown coding agents, in both lanes", async () => {
@@ -306,7 +374,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
   /** A coding agent's pseudo-terminal, or a person's terminal: a TTY on stdout and (unless piped) stdin, which reaches its end at once. */
   function terminal(stdinIsTTY = true): { output: () => string; listenedToStdin: () => boolean } {
     const written: string[] = [];
-    const stdin = Object.assign(Readable.from([]), { isTTY: stdinIsTTY });
+    const stdin = Object.assign(Readable.from([]), { isTTY: stdinIsTTY, setRawMode: vi.fn() });
     const listen = vi.spyOn(stdin, "on");
     const stdout = Object.assign(new Writable({ write(chunk, _encoding, done) { written.push(String(chunk)); done(); } }), { isTTY: true });
     vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as typeof process.stdin);
@@ -328,7 +396,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     const next = terminal();
     expect(await runSetupCommand(["--relay", "--answer", "yes", "--repo", setup.repo], context)).toBe(0);
     const confirm = agentQuestion(next.output());
-    expect(confirm.commands).toHaveLength(4);
+    expect(confirm.commands).toHaveLength(3);
     for (const command of confirm.commands) expect(command).toContain("setup --relay --answer ");
     expect(tty.listenedToStdin() || next.listenedToStdin()).toBe(false);
   });
@@ -340,7 +408,9 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     // The terminal lane waits on stdin; this one ends at once, so set-up stops at its first question.
     expect(await runSetupCommand([], context)).toBe(1);
     expect(person.listenedToStdin()).toBe(true);
-    expect(person.output()).toContain("Can Rerail read it");
+    expect(person.output()).toContain("Find rule packs for acme api?");
+    // A question there is a menu the arrow keys move through.
+    expect(person.output()).toContain("↑↓ to move, Enter to choose, or type a number:");
     expect(person.output()).not.toContain("Ask them this");
 
     const piped = terminal(false);

@@ -1,1 +1,0 @@
-new Atomics.foo()

@@ -1,3 +1,0 @@
-class A {@decorator() set foo(value: string) {
-    // empty
-}}

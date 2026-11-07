@@ -3,7 +3,7 @@
   "id": "bandit-b504-ssl-with-no-version",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect ssl.wrap_socket calls without an ssl_version argument",
+  "description": "Pass an explicit ssl_version to ssl.wrap_socket; the default may negotiate an insecure protocol.",
   "scope": {
     "include": [
       "**/*.py"

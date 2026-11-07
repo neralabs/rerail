@@ -17,10 +17,6 @@ mod publication;
 #[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/relational/schema.rs"]
 mod schema;
-// The live scheduler also uses CLEAR; replay imports the production relation and schema.
-#[allow(dead_code)]
-#[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/functions/source_batch.rs"]
-mod source_batch;
 #[cfg(test)]
 #[path = "../../../../native/src/code_rule_dsl/profile/trace.rs"]
 #[allow(dead_code)]
@@ -73,7 +69,6 @@ mod graph;
 mod children;
 
 pub mod candidate_owner;
-pub mod cold_cpu;
 pub mod composition;
 pub mod fts;
 pub mod owner_projection;
@@ -91,9 +86,6 @@ mod code_rule_dsl {
     pub(crate) mod budget {
         // Captured SQL has no active rule context. The controller supplies the hard deadline.
         pub(crate) fn step_budget_exhausted() -> bool {
-            false
-        }
-        pub(crate) fn matcher_budget_exhausted() -> bool {
             false
         }
     }
@@ -129,8 +121,3 @@ mod tests;
 #[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/relational/storage.rs"]
 mod relational_storage;
-
-#[cfg(test)]
-#[allow(dead_code)]
-#[path="../../../../native/src/code_rule_dsl/relational/pipeline/readers.rs"]
-mod family_readers;

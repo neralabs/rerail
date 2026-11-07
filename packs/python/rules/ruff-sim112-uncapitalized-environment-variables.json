@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-sim112-uncapitalized-environment-variables",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's SIM112 (uncapitalized-environment-variables): a str literal (not bytes, an f- or t-string; escapes decoded, implicit concatenations joined) whose value has an ASCII lowercase letter, other than `https_proxy`/`http_proxy`/`no_proxy`, used as `os.environ[...]` or as the first argument of a call resolving to `os.environ.get`/`os.getenv`, after Ruff's traversal has visited an absolute import of `os` (M10a `resolves.seenBefore`). Reported on the string.",
+  "description": "Use uppercase names when reading environment variables through os.environ or os.getenv; the lowercase proxy variables are exempt.",
   "scope": {
     "include": [
       "**/*"
@@ -154,7 +154,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM112",
-        "message": "Use capitalized environment variable",
+        "message": "Uppercase only if the deployment uses that name; preserve intentional lowercase keys because lookups are case-sensitive on POSIX.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -3,7 +3,7 @@
   "id": "ruff-sim103-needless-bool",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM103 (needless-bool): an `if`/`else`, a trailing `elif`/`else`, or an `if` followed by a `return` statement, whose two branches are single `return True` / `return False` statements with opposite values, unless the `if` is a `sys.version_info`/`sys.platform` or `TYPE_CHECKING` block. Reported at the `if` (or the last `elif`).",
+  "description": "Return the condition directly instead of an if/else that returns True in one branch and False in the other.",
   "scope": {
     "include": [
       "**/*"
@@ -422,7 +422,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM103",
-        "message": "Return the condition directly",
+        "message": "Replace this `if`/`else` with one `return` of the condition, negated with `not` if the `if` branch returns `False`.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -1,1 +1,0 @@
-<template><div><div foo :bar baz></div></div></template>

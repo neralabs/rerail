@@ -1,0 +1,15 @@
+{
+  "name": "validation-upstream-eslint-plugin-vue",
+  "private": true,
+  "description": "eslint-plugin-vue 10.11.1 as published, with the parser stack the vue pack pins (eslint 10.11.0, vue-eslint-parser 10.4.1, @typescript-eslint/parser 8.70.1, typescript 6.0.3), the eslint-compat-utils and semver its tests import at the latest their v10.11.1 devDependency ranges admit, and tsx to load its TypeScript test files. Upstream commits no lockfile.",
+  "dependencies": {
+    "@typescript-eslint/parser": "8.70.1",
+    "eslint": "10.11.0",
+    "eslint-compat-utils": "0.6.5",
+    "eslint-plugin-vue": "10.11.1",
+    "semver": "7.8.5",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vue-eslint-parser": "10.4.1"
+  }
+}

@@ -1,1 +1,0 @@
-type Foo = 0x0a;

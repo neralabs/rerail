@@ -3,11 +3,11 @@
   "id": "clippy-needless-raw-strings",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's needless_raw_strings: reports raw literals whose contents do not require raw-string syntax or hashes; macro expansion and format-string preprocessing are not modelled.",
+  "description": "Use a plain Rust string literal instead of a raw one when the contents hold no backslash or quote.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [{
     "id": "needless-raw-string",
     "forbid": { "ast": { "language": "rust", "rule": { "kind": "raw_string_literal", "regex": "(?s)^(?:b|c)?r#*\\\"[^\\\"\\\\]*\\\"#*$" } } },
-    "violation": { "suppress": { "clippy": { "lints": ["clippy::needless_raw_strings", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "needless_raw_strings", "message": "Clippy needless_raw_strings: raw string literal can be shortened" }
+    "violation": { "suppress": { "clippy": { "lints": ["clippy::needless_raw_strings", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "needless_raw_strings", "message": "Write this as a plain string literal, e.g. \"text\" instead of r\"text\"; it holds no backslash or quote." }
   }]
 }

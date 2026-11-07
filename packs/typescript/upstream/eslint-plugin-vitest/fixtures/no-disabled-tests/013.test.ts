@@ -1,1 +1,0 @@
-var appliedSkip = describe.skip; appliedSkip.apply(describe)

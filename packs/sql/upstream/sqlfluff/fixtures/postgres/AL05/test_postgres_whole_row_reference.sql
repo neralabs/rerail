@@ -1,1 +1,0 @@
-SELECT t FROM foo AS t

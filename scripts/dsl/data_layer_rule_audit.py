@@ -33,7 +33,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def fixtures_path(*parts: str) -> Path:
     """The shared Python resolver for repository-owned fixture data."""
     override = os.environ.get("RERAIL_ORACLES_DIR")
-    root = Path(override) if override else ROOT / "fixtures"
+    gate = ROOT / "gate/data-layer/fixtures"
+    root = Path(override) if override else gate if parts[:2] == ("host", "data-layer-port") else ROOT / "fixtures"
     if not root.is_absolute():
         root = ROOT / root
     return root.joinpath(*parts)

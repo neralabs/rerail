@@ -301,7 +301,7 @@ export default async function generatePlaygroundScenarios(): Promise<void> {
         throw new Error("Generation never refreshes OAuth credentials");
       },
     });
-    await auth.set("openai-codex", { type: "oauth", ...snapshot, refresh: "" });
+    await auth.credentials.set("openai-codex", { type: "oauth", ...snapshot, refresh: "" });
     const discovery = await fetchCodexModels({
       accessToken: snapshot.access,
       accountId: snapshot.accountId,

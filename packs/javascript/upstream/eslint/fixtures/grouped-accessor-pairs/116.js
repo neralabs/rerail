@@ -1,1 +1,0 @@
-({ set [a](foo){}, set a(bar){}, get [a](){} })

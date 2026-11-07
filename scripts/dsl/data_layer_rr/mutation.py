@@ -50,7 +50,7 @@ def run(args):
         # Collection still imports every original module. Only the chosen positive case executes.
         for check in args.checks.split(','):
             filename = check.replace('_', '-') + '.rr'
-            source = (ROOT / 'packs/data-layer/candidates/rr' / filename).read_text()
+            source = (ROOT / 'gate/data-layer/packs/data-layer/candidates/rr' / filename).read_text()
             (root / filename).write_text(disable_policy(check, source))
         disabled = (root / (args.check.replace('_', '-') + '.rr')).read_text()
         report_path = root / 'report.json'

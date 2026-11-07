@@ -3,7 +3,7 @@
   "id": "eslint-no-var",
   "revision": 1,
   "mode": "steer",
-  "description": "A `var` declaration; `let` and `const` are block-scoped.",
+  "description": "Use let or const instead of var in JavaScript; they are block-scoped and avoid hoisting surprises.",
   "scope": {
     "include": [
       "**/*.js",

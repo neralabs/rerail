@@ -3,7 +3,7 @@
   "id": "ruff-b024-abstract-base-class-without-abstract-method",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B024 (abstract-base-class-without-abstract-method): a class with exactly one base or keyword, which is `abc.ABC` as a base or `abc.ABCMeta` as `metaclass=`, whose body has no method decorated with an `abc` abstract decorator and no annotated attribute without a value. Names resolve with `resolves` (imports and shadowing as Ruff's semantic model sees them). Not in stubs. Reported on the class name.",
+  "description": "Add at least one abstract method or property to abstract base classes, or drop the ABC base if the class isn't meant to be abstract.",
   "scope": {
     "include": [
       "**/*"
@@ -260,7 +260,7 @@
       "violation": {
         "anchor": "capture.CLS",
         "code": "B024",
-        "message": "`$CLS` is an abstract base class, but it has no abstract methods or properties",
+        "message": "Add an abstract method or property to `$CLS`, or drop its ABC base if it isn't meant to be abstract.",
         "suppress": {
           "noqa": {
             "codes": [

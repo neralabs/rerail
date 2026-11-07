@@ -1,1 +1,0 @@
-class C { #__proto__; foo() { this.#__proto__; } }

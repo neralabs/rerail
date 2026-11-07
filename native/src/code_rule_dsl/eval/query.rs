@@ -9,16 +9,18 @@ use crate::code_rule_dsl::matcher::{
 use crate::code_rule_dsl::model::{
     CodeRuleScope, FileInput, Limits, Metrics, Query, RegexSource, Snapshot, ViolationSpec,
 };
+use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::query::select_when::{self, LeafRow, Leaves, Plan};
 use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading};
-use crate::code_rule_dsl::violations::{self, Captures, Span, Witness};
-use ast_grep_core::Doc;
+use crate::code_rule_dsl::violations::{self, Captures, Witness};
 use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
+use ast_grep_core::{Doc, Node};
 use napi::Result;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
+use std::ops::Range;
 use std::sync::Arc;
 
 pub(crate) enum WitnessError {
@@ -53,16 +55,14 @@ pub(crate) fn witness_from_match<D: Doc>(
     matched: &NodeMatch<'_, D>,
     language: GrammarDialect,
     violation: Option<&ViolationSpec>,
-    span: impl Fn(usize, usize) -> Span,
 ) -> WitnessResult<Witness> {
-    witness_from_match_to(file, matched, language, violation, span, None)
+    witness_from_match_to(file, matched, language, violation, None)
 }
 fn witness_from_match_to<D: Doc>(
     file: &FileInput,
     matched: &NodeMatch<'_, D>,
     language: GrammarDialect,
     violation: Option<&ViolationSpec>,
-    span: impl Fn(usize, usize) -> Span,
     output: Option<&Output<'_>>,
 ) -> WitnessResult<Witness> {
     let groups = violation.map_or_else(Vec::new, |violation| {
@@ -72,12 +72,10 @@ fn witness_from_match_to<D: Doc>(
     let env = regrouped(matched, violation, sets, || false)?
         .pop()
         .flatten();
-    witness_with_groups(file, matched, language, violation, &groups, env, span).map(
-        |w| match output {
-            Some(out) => (out.borrow_mut())(w),
-            None => w,
-        },
-    )
+    witness_with_groups(file, matched, language, violation, &groups, env).map(|w| match output {
+        Some(out) => (out.borrow_mut())(w),
+        None => w,
+    })
 }
 
 /// The witnesses one match reports under `violation.each`: one, or one per match of a regex group
@@ -93,11 +91,10 @@ pub(crate) fn witnesses_from_match<D: Doc>(
     violation: &ViolationSpec,
     room: usize,
     cancelled: impl Fn() -> bool,
-    span: impl Fn(usize, usize) -> Span,
     keep: impl FnMut(&mut Witness) -> bool,
 ) -> WitnessResult<Vec<Witness>> {
     witnesses_from_match_to(
-        file, matched, language, violation, room, cancelled, span, keep, None,
+        file, matched, language, violation, room, cancelled, keep, None,
     )
 }
 #[allow(clippy::too_many_arguments)]
@@ -108,7 +105,6 @@ fn witnesses_from_match_to<D: Doc>(
     violation: &ViolationSpec,
     room: usize,
     cancelled: impl Fn() -> bool,
-    span: impl Fn(usize, usize) -> Span,
     mut keep: impl FnMut(&mut Witness) -> bool,
     output: Option<&Output<'_>>,
 ) -> WitnessResult<Vec<Witness>> {
@@ -119,7 +115,7 @@ fn witnesses_from_match_to<D: Doc>(
         let envs = regrouped(matched, Some(violation), batch, &cancelled)?;
         for (groups, env) in batch.iter().zip(envs) {
             let mut witness =
-                witness_with_groups(file, matched, language, Some(violation), groups, env, &span)?;
+                witness_with_groups(file, matched, language, Some(violation), groups, env)?;
             if keep(&mut witness) {
                 if let Some(output) = output {
                     witness = (output.borrow_mut())(witness);
@@ -263,8 +259,12 @@ fn witness_with_groups<'t, D: Doc>(
     violation: Option<&ViolationSpec>,
     groups: &[violations::NodeGroup],
     regrouped: Option<MetaVarEnv<'t, D>>,
-    span: impl Fn(usize, usize) -> Span,
 ) -> WitnessResult<Witness> {
+    // Every position reported is the file's (`origin`): an embedded program's nodes stand for
+    // the file bytes they were built from.
+    let place = InFile::of(matched.get_node()).expect("a witness's document is a file's");
+    let span = |range: Range<usize>| place.span(place.range(range));
+    let node_span = |node: &Node<'t, D>| place.span(place.node(node));
     let mut captures = BTreeMap::new();
     let input_only = violation.is_some_and(|v| v.input_only);
     let anchor = violation.and_then(|v| match &v.anchor {
@@ -289,11 +289,11 @@ fn witness_with_groups<'t, D: Doc>(
         match variable {
             MetaVariable::Capture(name, _) => {
                 if let Some(capture) = matched.get_env().get_match(&name) {
-                    captures.insert(name, vec![span(capture.range().start, capture.range().end)]);
+                    captures.insert(name, vec![node_span(capture)]);
                 } else if !is_span_variable(&name)
                     && let Some(range) = exported_span(matched.get_env(), &name)
                 {
-                    captures.insert(name, vec![span(range.start, range.end)]);
+                    captures.insert(name, vec![span(range)]);
                 }
             }
             MetaVariable::MultiCapture(name) => {
@@ -302,7 +302,7 @@ fn witness_with_groups<'t, D: Doc>(
                     .get_multiple_matches(&name)
                     .into_iter()
                     .filter(|capture| capture.is_named())
-                    .map(|capture| span(capture.range().start, capture.range().end))
+                    .map(|capture| node_span(&capture))
                     .collect::<Vec<_>>();
                 captures.insert(name, spans);
             }
@@ -313,14 +313,14 @@ fn witness_with_groups<'t, D: Doc>(
     for (name, _, range) in groups.iter().filter(|(name, _, _)| wanted(name)) {
         captures
             .entry(name.clone())
-            .or_insert_with(|| vec![span(range.start, range.end)]);
+            .or_insert_with(|| vec![span(range.clone())]);
     }
     let regrouped = regrouped.map(|env| NodeMatch::new(node.clone(), env));
     let matched = regrouped.as_ref().unwrap_or(matched);
     let (message, fix) = violation
         .filter(|v| !v.input_only)
         .map_or((None, None), |violation| {
-            violations::ast_output(violation, language, matched, groups, &span)
+            violations::ast_output(violation, language, matched, groups, &place)
         });
     let mut captures = Captures::from_spans(captures);
     if let Some(violation) = violation.filter(|violation| !violation.project.is_empty()) {
@@ -332,8 +332,9 @@ fn witness_with_groups<'t, D: Doc>(
         ));
     }
     Ok(Witness {
+        sql_violation: None,
         path: file.path.clone(),
-        span: span(node.range().start, node.range().end),
+        span: node_span(node),
         captures,
         message,
         fix,
@@ -383,19 +384,8 @@ pub(super) fn evaluate_query_to(
     util_limit: &mut Option<(String, UtilLimit)>,
     output: Option<&Output<'_>>,
 ) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
-    if output.is_some()
-        && !matches!(
-            query,
-            Query::Ast { .. }
-                | Query::Regex {
-                    source: RegexSource::Content,
-                    ..
-                }
-        )
-    {
-        return Err(invalid(
-            "streamed relational inputs require AST or file.content regex queries",
-        ));
+    if output.is_some() && !matches!(query, Query::Ast { .. }) {
+        return Err(invalid("streamed relational inputs require an AST query"));
     }
     let _projections = crate::code_rule_dsl::violations::projection::Scope::enter();
     let leaf = Leaf {
@@ -543,6 +533,7 @@ impl<'a> Leaf<'a> {
                         && violation.is_none_or(|violation| violation.fix.is_none())
                     {
                         witnesses.push(Witness {
+                            sql_violation: None,
                             path: file.path.clone(),
                             span: span(start, end),
                             captures: Captures::default(),
@@ -554,16 +545,6 @@ impl<'a> Leaf<'a> {
                         witnesses.push(violations::regex_witness(
                             &file.path, regex, &found, violation, span,
                         ));
-                    }
-                    if let Some(violation) = violation.filter(|v| !v.project.is_empty()) {
-                        let witness = witnesses.last_mut().expect("regex witness");
-                        let projection =
-                            super::evidence::project_text(&violation.project, file, witness);
-                        witness.captures.set_typed_projection(projection);
-                    }
-                    if let Some(output) = output {
-                        let witness = witnesses.pop().expect("regex witness");
-                        witnesses.push((output.borrow_mut())(witness));
                     }
                     if decision {
                         return Ok(FileStep::Read {
@@ -583,15 +564,39 @@ impl<'a> Leaf<'a> {
                 })
             }
             Query::Ast { matchers, .. } => {
-                let Some(grammar) = grammar_matcher(matchers, file) else {
+                if grammar_matcher(matchers, file).is_none() {
                     return Ok(FileStep::Skipped);
+                }
+                let language = file_language(file).expect("a matcher's file has a dialect");
+                let Some((host, lines)) = file_tape(language, file)? else {
+                    *util_limit = Some((file.path.clone(), UtilLimit::Parse));
+                    return Ok(FileStep::Failed(None));
                 };
-                let (doc, lines) = file_tape(grammar.language, file)?;
-                // From the tape: a Blade file's embedded PHP is part of it (`blade::view`); a
-                // program apart from its host reads only its own (`SyntaxErrors::of_doc`).
+                // The document the clause reads (`embed`): the file's own tree, or the program it
+                // embeds; a file without the program the clause reads holds no witness of it.
+                let guests = host.guests();
+                let Some((doc, grammar)) = std::iter::once(host.clone())
+                    .chain(
+                        guests
+                            .iter()
+                            .flat_map(|guests| guests.iter().map(|guest| guest.doc.clone())),
+                    )
+                    .find_map(|doc| {
+                        document_matcher(matchers, file, &doc).map(|grammar| (doc, grammar))
+                    })
+                else {
+                    return Ok(FileStep::Read {
+                        witnesses,
+                        partial: None,
+                        decided: false,
+                    });
+                };
+                // Each document has its own syntax errors, as ranges of the file
+                // (`SyntaxErrors::of_doc`): a Blade view reads the template's too.
                 let errors = SyntaxErrors::of_doc(&doc);
                 let target = ast_grep_core::AstGrep::doc(doc);
-                let mut partial = None;
+                // A whole-file syntax gate (`invalid_syntax`) reads only files with, or only
+                // files without, syntax errors, and reads those errors as content.
                 if grammar
                     .invalid_syntax
                     .is_some_and(|invalid| invalid == errors.is_empty())
@@ -602,33 +607,54 @@ impl<'a> Leaf<'a> {
                         decided: false,
                     });
                 }
-                if !errors.is_empty() && grammar.invalid_syntax.is_none() {
+                let gated = grammar.invalid_syntax.is_none();
+                if gated && !errors.is_empty() {
                     // A file the parser did not read is not read by any clause, sound or not.
-                    let message = match errors.reading(&lines, file.source.len()) {
-                        SyntaxReading::Partial(message) => message,
-                        SyntaxReading::Unread(detail) => return Ok(FileStep::Failed(Some(detail))),
-                    };
-                    // A file the query's file gates exclude matches nothing, errors or not, as
-                    // `run_clause` reads it without them.
-                    if !FileGates::new(file, target.root()).admit(grammar) {
-                        return Ok(FileStep::Read {
-                            witnesses,
-                            partial: None,
-                            decided: false,
-                        });
+                    if let SyntaxReading::Unread(detail) = errors.reading(&lines, file.source.len())
+                    {
+                        return Ok(FileStep::Failed(Some(detail)));
                     }
-                    if errors.incomplete(grammar) {
-                        return Ok(FileStep::Failed(None));
-                    }
-                    partial = Some(message);
                 }
+                // A clause reads around its document's errors, or, crossing to the file's other
+                // document, every document's.
+                let file_errors;
+                let read = if grammar.crosses {
+                    file_errors = SyntaxErrors::of_file(&host);
+                    &file_errors
+                } else {
+                    &errors
+                };
+                // A file the query's file gates exclude matches nothing, errors or not, as
+                // `run_clause` reads it without them.
+                if gated && !read.is_empty() && !FileGates::new(file, target.root()).admit(grammar)
+                {
+                    return Ok(FileStep::Read {
+                        witnesses,
+                        partial: None,
+                        decided: false,
+                    });
+                }
+                if gated && read.incomplete(grammar) {
+                    return Ok(FileStep::Failed(None));
+                }
+                // A file read around syntax errors in any of its documents reports the first
+                // document's on its clauses, as the workspace does (`FileState::syntax`).
+                let partial = std::iter::once(host.clone())
+                    .chain(
+                        guests
+                            .iter()
+                            .flat_map(|guests| guests.iter().map(|guest| guest.doc.clone())),
+                    )
+                    .filter(|_| gated)
+                    .map(|doc| SyntaxErrors::of_doc(&doc))
+                    .find(|errors| !errors.is_empty())
+                    .map(|errors| match errors.reading(&lines, file.source.len()) {
+                        SyntaxReading::Partial(message) | SyntaxReading::Unread(message) => message,
+                    });
                 // Admission must also bypass matching; an omitted SQL plan is not a request
                 // to fall back to a full root walk for a known-empty file.
-                if !grammar.admits_source(
-                    &file.source,
-                    &errors,
-                    &mut rustc_hash::FxHashMap::default(),
-                ) || !FileGates::new(file, target.root()).admit(grammar)
+                if !grammar.admits_source(&file.source, read, &mut rustc_hash::FxHashMap::default())
+                    || !FileGates::new(file, target.root()).admit(grammar)
                 {
                     return Ok(FileStep::Read {
                         witnesses,
@@ -645,8 +671,7 @@ impl<'a> Leaf<'a> {
                     grammar,
                     file,
                     target,
-                    Arc::clone(&lines),
-                    &errors,
+                    read,
                     metrics,
                     self.limits,
                     decision,
@@ -869,10 +894,12 @@ impl TapeCacheSlot {
         Self(outer)
     }
 
+    // Read by P's relational workspace path (test-only, open item O18).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn seed(
         language: GrammarDialect,
         file: &FileInput,
-        image: &crate::code_rule_dsl::tape::TapeImage,
+        image: &crate::code_rule_dsl::tape::FileImage,
     ) -> Result<()> {
         let (doc, lines) = restore_file_tape(language, file, image)?;
         cache_tape(language, file, &doc, &lines);
@@ -888,11 +915,13 @@ impl Drop for TapeCacheSlot {
     }
 }
 
-/// A file's tape and line table, reused only within the current evaluation.
+/// A file's tape, as the workspace stores it, and its line table, reused only within the current
+/// evaluation; `None` where the parser stopped at a limit before it read the file (Forte's
+/// nesting depth or step budget).
 pub(in crate::code_rule_dsl) fn file_tape(
     language: GrammarDialect,
     file: &FileInput,
-) -> Result<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)> {
+) -> Result<Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)>> {
     if let Some(cached) = EVALUATION_TAPE.with(|cache| {
         cache
             .borrow()
@@ -903,17 +932,22 @@ pub(in crate::code_rule_dsl) fn file_tape(
             })
             .cloned()
     }) {
-        return Ok((cached.doc, cached.lines));
+        return Ok(Some((cached.doc, cached.lines)));
     }
     use crate::code_rule_dsl::tape;
     let never = || false;
+    let grammar_span = crate::code_rule_dsl::logic::profile::span(|| "tape grammar".into());
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
-    let image = tape::TapeImage::parse(&tape_grammar, &file.source, &never)
-        .ok_or_else(|| invalid("file could not be parsed"))?
-        .map_err(invalid)?;
+    drop(grammar_span);
+    let Some(image) = tape::TapeImage::parse(&tape_grammar, &file.source, &never) else {
+        return Ok(None);
+    };
+    let image = image.map_err(invalid)?;
+    let restore = crate::code_rule_dsl::logic::profile::span(|| "tape restore".into());
     let (doc, lines) = restore_file_tape(language, file, &image)?;
+    drop(restore);
     cache_tape(language, file, &doc, &lines);
-    Ok((doc, lines))
+    Ok(Some((doc, lines)))
 }
 
 fn cache_tape(
@@ -938,7 +972,7 @@ fn cache_tape(
 fn restore_file_tape(
     language: GrammarDialect,
     file: &FileInput,
-    image: &crate::code_rule_dsl::tape::TapeImage,
+    image: &crate::code_rule_dsl::tape::FileImage,
 ) -> Result<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)> {
     use crate::code_rule_dsl::tape;
     let never = || false;
@@ -957,16 +991,30 @@ fn restore_file_tape(
     Ok((doc, lines))
 }
 
+/// W's stateless evaluation walks every root; P's selects them from its anchor corpus (the
+/// `p-anchor-corpus` path below, open item O20).
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+fn anchor_roots(
+    _target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+    _grammar: &GrammarMatcher,
+    _bound: usize,
+    _path: &str,
+) -> Option<Arc<[u32]>> {
+    None
+}
+
 /// Selects candidate ordinals through the same postings used by workspace ingestion. Incomplete
 /// indexes retain the existing bounded root walk. Kind-only queries also use SQL postings.
+#[cfg(all(test, feature = "p-anchor-corpus"))]
 fn anchor_roots(
     target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
     grammar: &GrammarMatcher,
     bound: usize,
     path: &str,
 ) -> Option<Arc<[u32]>> {
-    use crate::code_rule_dsl::matcher::FileAnchorIndex;
-    if !grammar.anchors.needs_index() {
+    use crate::code_rule_dsl::matcher::p_anchors::{plan_for, sql::FileAnchorIndex};
+    let anchors = plan_for(grammar);
+    if !anchors.needs_index() {
         return None;
     }
     #[cfg(feature = "code-rule-profile")]
@@ -975,7 +1023,7 @@ fn anchor_roots(
     );
     let index = FileAnchorIndex::build_at(
         target,
-        &[&grammar.anchors],
+        &[&anchors],
         bound,
         crate::code_rule_dsl::budget::matcher_budget_exhausted,
         path,
@@ -989,18 +1037,22 @@ fn anchor_roots(
             index.complete(),
         );
     }
-    selected_roots(&index, grammar)
+    selected_roots(&index, &anchors)
 }
 
+#[cfg(all(test, feature = "p-anchor-corpus"))]
 fn selected_roots(
-    index: &crate::code_rule_dsl::matcher::FileAnchorIndex<'_, crate::code_rule_dsl::tape::TapeDoc>,
-    grammar: &GrammarMatcher,
+    index: &crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex<
+        '_,
+        crate::code_rule_dsl::tape::TapeDoc,
+    >,
+    anchors: &Arc<crate::code_rule_dsl::matcher::p_anchors::AnchorPlan>,
 ) -> Option<Arc<[u32]>> {
     #[cfg(feature = "code-rule-profile")]
     let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
         crate::code_rule_dsl::profile::Phase::Selection,
     );
-    index.selected(&grammar.anchors)
+    index.selected(anchors)
 }
 
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
@@ -1012,7 +1064,6 @@ fn evaluate_file_clause(
     grammar: &GrammarMatcher,
     file: &FileInput,
     target: ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
-    lines: Arc<LineTable>,
     errors: &SyntaxErrors,
     metrics: &mut Metrics,
     limits: &Limits,
@@ -1026,6 +1077,7 @@ fn evaluate_file_clause(
     use crate::code_rule_dsl::json::invalid;
     use crate::code_rule_dsl::matcher::{Stopped, enumerate, node_at, run_clause, with_file_memo};
     let count = target.root().get_doc().transducer_len();
+    let place = InFile::tape(target.root().get_doc());
     let visited = metrics.visited_nodes;
     let selected = anchor_roots(
         &target,
@@ -1059,7 +1111,7 @@ fn evaluate_file_clause(
                         *work = crate::code_rule_dsl::matcher::end_clause().0;
                     }
                     if grammar.invalid_syntax != Some(true)
-                        && errors.overlaps(&matched.get_node().range())
+                        && errors.meets(&place.place(matched.get_node()))
                     {
                         return Ok(true);
                     }
@@ -1078,7 +1130,6 @@ fn evaluate_file_clause(
                         }
                         true
                     };
-                    let span = |start, end| lines.span(start, end);
                     let found = match violation.filter(|_| each.is_some()) {
                         Some(violation) => witnesses_from_match_to(
                             file,
@@ -1087,7 +1138,6 @@ fn evaluate_file_clause(
                             violation,
                             (limits.max_witnesses + 1).saturating_sub(metrics.witnesses),
                             || false,
-                            span,
                             keep,
                             output,
                         ),
@@ -1096,7 +1146,6 @@ fn evaluate_file_clause(
                             &matched,
                             grammar.language,
                             violation,
-                            span,
                             output,
                         )
                         .map(|mut witness| {
@@ -1163,12 +1212,39 @@ pub(crate) fn grammar_matcher<'a>(
     let language = file_language(file)?;
     let source_type = SourceType::of_file(&file.language, &file.path, file.package_type());
     matchers.iter().find(|grammar| {
-        grammar.language == language
-            && grammar.applies
-            && grammar.may_apply_to(source_type)
-            && grammar.file.as_ref().is_none_or(|condition| {
-                condition.holds(&file.path, file.module.as_deref(), file.package.as_deref())
-            })
+        let reads = match grammar.document {
+            None => grammar.language == language,
+            // A clause over an embedded program (`ast.embedded`) reads files whose dialect
+            // embeds one through its `via` in its dialect.
+            Some(via) => language.embeds().contains(&(via, grammar.language)),
+        };
+        reads && applies(grammar, file, source_type)
+    })
+}
+
+/// Whether a matcher's `when` and `file` gates hold for `file`, whose module system its path and
+/// manifest decide where they do (`source_type`).
+fn applies(grammar: &GrammarMatcher, file: &FileInput, source_type: Option<SourceType>) -> bool {
+    grammar.applies
+        && grammar.may_apply_to(source_type)
+        && grammar.file.as_ref().is_none_or(|condition| {
+            condition.holds(&file.path, file.module.as_deref(), file.package.as_deref())
+        })
+}
+
+/// The matcher of `matchers` that reads `doc`, a document of `file` (`embed`): the file's own tree,
+/// or the program it embeds through a `via`, in the program's dialect. `None` where none reads it.
+pub(crate) fn document_matcher<'a>(
+    matchers: &'a [GrammarMatcher],
+    file: &FileInput,
+    doc: &crate::code_rule_dsl::tape::TapeDoc,
+) -> Option<&'a GrammarMatcher> {
+    let language = *ast_grep_core::Doc::get_lang(doc);
+    let source_type = SourceType::of_file(&file.language, &file.path, file.package_type());
+    matchers.iter().find(|grammar| {
+        grammar.document == doc.via()
+            && grammar.language == language
+            && applies(grammar, file, source_type)
     })
 }
 
@@ -1189,11 +1265,11 @@ mod tape_cache_tests {
         )
         .unwrap();
         let _slot = TapeCacheSlot::install();
-        let (_, first) = file_tape(language, &file).unwrap();
-        let (_, same) = file_tape(language, &file).unwrap();
+        let (_, first) = file_tape(language, &file).unwrap().unwrap();
+        let (_, same) = file_tape(language, &file).unwrap().unwrap();
         assert!(Arc::ptr_eq(&first, &same));
         file.source = Arc::new("def second(): pass\n".into());
-        let (_, edited) = file_tape(language, &file).unwrap();
+        let (_, edited) = file_tape(language, &file).unwrap().unwrap();
         assert!(!Arc::ptr_eq(&first, &edited));
     }
 }

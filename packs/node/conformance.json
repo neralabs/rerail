@@ -49,7 +49,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-process-exit"
       },
-      "policy": "rules/n-no-process-exit.json",
+      "policy": "candidates/rules/n-no-process-exit.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -62,7 +62,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-new-require"
       },
-      "policy": "rules/n-no-new-require.json",
+      "policy": "candidates/rules/n-no-new-require.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -75,7 +75,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-process-env"
       },
-      "policy": "rules/n-no-process-env.json",
+      "policy": "candidates/rules/n-no-process-env.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -88,7 +88,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/global-require"
       },
-      "policy": "rules/n-global-require.json",
+      "policy": "candidates/rules/n-global-require.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -102,7 +102,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-exports-assign"
       },
-      "policy": "rules/n-no-exports-assign.json",
+      "policy": "candidates/rules/n-no-exports-assign.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -116,7 +116,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-sync"
       },
-      "policy": "rules/n-no-sync.json",
+      "policy": "candidates/rules/n-no-sync.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -129,7 +129,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-mixed-requires"
       },
-      "policy": "rules/n-no-mixed-requires.json",
+      "policy": "candidates/rules/n-no-mixed-requires.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -142,7 +142,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-global/buffer"
       },
-      "policy": "rules/n-prefer-global-buffer.json",
+      "policy": "candidates/rules/n-prefer-global-buffer.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -157,7 +157,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-global/console"
       },
-      "policy": "rules/n-prefer-global-console.json",
+      "policy": "candidates/rules/n-prefer-global-console.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -172,7 +172,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-global/process"
       },
-      "policy": "rules/n-prefer-global-process.json",
+      "policy": "candidates/rules/n-prefer-global-process.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -187,7 +187,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-global/url"
       },
-      "policy": "rules/n-prefer-global-url.json",
+      "policy": "candidates/rules/n-prefer-global-url.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -202,7 +202,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-global/url-search-params"
       },
-      "policy": "rules/n-prefer-global-url-search-params.json",
+      "policy": "candidates/rules/n-prefer-global-url-search-params.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -217,7 +217,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-global/text-decoder"
       },
-      "policy": "rules/n-prefer-global-text-decoder.json",
+      "policy": "candidates/rules/n-prefer-global-text-decoder.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -232,7 +232,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-global/text-encoder"
       },
-      "policy": "rules/n-prefer-global-text-encoder.json",
+      "policy": "candidates/rules/n-prefer-global-text-encoder.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -247,7 +247,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-promises/fs"
       },
-      "policy": "rules/n-prefer-promises-fs.json",
+      "policy": "candidates/rules/n-prefer-promises-fs.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -262,7 +262,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-promises/dns"
       },
-      "policy": "rules/n-prefer-promises-dns.json",
+      "policy": "candidates/rules/n-prefer-promises-dns.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -277,7 +277,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-node-protocol"
       },
-      "policy": "rules/n-prefer-node-protocol.json",
+      "policy": "candidates/rules/n-prefer-node-protocol.json",
       "capabilities": [
         "syntax",
         "value",
@@ -291,7 +291,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-path-concat"
       },
-      "policy": "rules/n-no-path-concat.json",
+      "policy": "candidates/rules/n-no-path-concat.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -306,7 +306,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/exports-style"
       },
-      "policy": "rules/n-exports-style.json",
+      "policy": "candidates/rules/n-exports-style.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -320,7 +320,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/handle-callback-err"
       },
-      "policy": "rules/n-handle-callback-err.json",
+      "policy": "candidates/rules/n-handle-callback-err.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -334,7 +334,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-callback-literal"
       },
-      "policy": "rules/n-no-callback-literal.json",
+      "policy": "candidates/rules/n-no-callback-literal.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -347,7 +347,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/callback-return"
       },
-      "policy": "rules/n-callback-return.json",
+      "policy": "candidates/rules/n-callback-return.json",
       "capabilities": [
         "syntax",
         "suppression"

@@ -1,1 +1,0 @@
-foo = Object.create(null)

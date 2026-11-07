@@ -118,6 +118,662 @@
       "define": {
         "language": "python",
         "utils": {
+          "connection-0": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-rec",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-rec",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "connection-1": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-0",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-0",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "connection-2": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-1",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-1",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "connection-3": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-2",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-2",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "connection-4": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-3",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-3",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "connection-5": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-4",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-4",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "connection-6": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-5",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-5",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "connection-7": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-6",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-6",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
           "connection": {
             "any": [
               {
@@ -146,19 +802,92 @@
               {
                 "all": [
                   {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
                     "any": [
                       {
-                        "kind": "string"
+                        "kind": "type"
                       },
                       {
-                        "kind": "concatenated_string"
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
                       }
                     ]
                   },
                   {
-                    "value": {
-                      "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                    "has": {
+                      "matches": "connection-7",
+                      "stopBy": "neighbor"
                     }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "connection-7",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "connection-rec": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"\"\"|'''(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)'''|\"(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)\"|'(?:Connection|DoltDbConnection|MariaDbConnection|MongoDbConnection|SyncDatabaseConnection|SyncNeo4jConnection|SyncPostgresConnection|SyncSqliteConnection)')$"
                   }
                 ]
               },
@@ -209,6 +938,662 @@
               }
             ]
           },
+          "transaction-0": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-rec",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-rec",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transaction-1": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-0",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-0",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transaction-2": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-1",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-1",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transaction-3": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-2",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-2",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transaction-4": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-3",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-3",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transaction-5": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-4",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-4",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transaction-6": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-5",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-5",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transaction-7": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-6",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-6",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
           "transaction": {
             "any": [
               {
@@ -237,19 +1622,92 @@
               {
                 "all": [
                   {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
                     "any": [
                       {
-                        "kind": "string"
+                        "kind": "type"
                       },
                       {
-                        "kind": "concatenated_string"
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
                       }
                     ]
                   },
                   {
-                    "value": {
-                      "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                    "has": {
+                      "matches": "transaction-7",
+                      "stopBy": "neighbor"
                     }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "transaction-7",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transaction-rec": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "regex": "^[rRuUfF]{0,2}(?:\"\"\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"\"\"|'''(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)'''|\"(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)\"|'(?:AsyncReadTransaction|AsyncWriteTransaction|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)')$"
                   }
                 ]
               },
@@ -311,345 +1769,27 @@
           "rule": {
             "all": [
               {
-                "all": [
-                  {
-                    "kind": "function_definition"
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "has": {
-                            "kind": "identifier",
-                            "regex": "^(?:_get_metadata_id_for_revision|_lookup_doltdb_metadata_by_revision_id|_revision_id_from_metadata_id|execute_vector_query|index_versioned_table_at_revision|process_trigger_ripple|search_versioned_table_with_replay)$",
-                            "stopBy": "neighbor",
-                            "field": "name"
-                          }
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:GenericSparseVersionedWriteTransaction)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:Neo4jCrossBranchQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:Neo4jQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:Neo4jRevisionHistoryQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlCrossBranchQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:from_spec)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlCrossBranchQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlQueryBase)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlRevisionHistoryQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:VersionedWriteSqlQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        }
-                      ]
+                "kind": "function_definition"
+              },
+              {
+                "regex": "Connection"
+              },
+              {
+                "regex": "Transaction"
+              },
+              {
+                "has": {
+                  "field": "parameters",
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "regex": "Connection"
+                    },
+                    {
+                      "regex": "Transaction"
                     }
-                  }
-                ]
+                  ]
+                }
               },
               {
                 "has": {
@@ -694,6 +1834,340 @@
                   "stopBy": "neighbor",
                   "field": "parameters"
                 }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "kind": "identifier",
+                        "regex": "^(?:_get_metadata_id_for_revision|_lookup_doltdb_metadata_by_revision_id|_revision_id_from_metadata_id|execute_vector_query|index_versioned_table_at_revision|process_trigger_ripple|search_versioned_table_with_replay)$",
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:GenericSparseVersionedWriteTransaction)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:Neo4jCrossBranchQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:Neo4jQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:Neo4jRevisionHistoryQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlCrossBranchQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:from_spec)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlCrossBranchQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlQueryBase)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlRevisionHistoryQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:VersionedWriteSqlQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
               }
             ]
           },
@@ -714,345 +2188,27 @@
           "rule": {
             "all": [
               {
-                "all": [
-                  {
-                    "kind": "function_definition"
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "has": {
-                            "kind": "identifier",
-                            "regex": "^(?:_get_metadata_id_for_revision|_lookup_doltdb_metadata_by_revision_id|_revision_id_from_metadata_id|execute_vector_query|index_versioned_table_at_revision|process_trigger_ripple|search_versioned_table_with_replay)$",
-                            "stopBy": "neighbor",
-                            "field": "name"
-                          }
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:GenericSparseVersionedWriteTransaction)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:Neo4jCrossBranchQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:Neo4jQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:Neo4jRevisionHistoryQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlCrossBranchQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:from_spec)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlCrossBranchQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlQueryBase)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:SqlRevisionHistoryQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^(?:__init__)$",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "has": {
-                                      "kind": "identifier",
-                                      "regex": "^(?:VersionedWriteSqlQuery)$",
-                                      "stopBy": "neighbor",
-                                      "field": "name"
-                                    }
-                                  }
-                                ],
-                                "stopBy": {
-                                  "kind": "class_definition"
-                                }
-                              }
-                            }
-                          ]
-                        }
-                      ]
+                "kind": "function_definition"
+              },
+              {
+                "regex": "Connection"
+              },
+              {
+                "regex": "Transaction"
+              },
+              {
+                "has": {
+                  "field": "parameters",
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "regex": "Connection"
+                    },
+                    {
+                      "regex": "Transaction"
                     }
-                  }
-                ]
+                  ]
+                }
               },
               {
                 "has": {
@@ -1168,6 +2324,340 @@
                   ],
                   "stopBy": "neighbor",
                   "field": "parameters"
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "kind": "identifier",
+                        "regex": "^(?:_get_metadata_id_for_revision|_lookup_doltdb_metadata_by_revision_id|_revision_id_from_metadata_id|execute_vector_query|index_versioned_table_at_revision|process_trigger_ripple|search_versioned_table_with_replay)$",
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:GenericSparseVersionedWriteTransaction)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:Neo4jCrossBranchQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:Neo4jQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:Neo4jRevisionHistoryQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlCrossBranchQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:from_spec)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlCrossBranchQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlQueryBase)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:SqlRevisionHistoryQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:__init__)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "class_definition"
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^(?:VersionedWriteSqlQuery)$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "class_definition"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 }
               }
             ]

@@ -1,29 +1,34 @@
 # Rerail rule pack: Blade
 
 17 ports of rules for Laravel Blade templates: Bladestan 0.11.7 (8 PHPStan 2.2.16 rules over the compiled template),
-tlint 9.7.0 (5 lints) and stillat/blade-parser 2.1.0 (4 validators). A port starts in `candidates/rules/` and moves to
-`rules/` and `pack.json` once it passes the V1 rule validation gates
-([nera-rule-validation](https://github.com/neralabs/nera-rule-validation)). Every port is a candidate today, so
-`pack.json` lists no rules: the pack ships none and is never recommended. Every port is scored against the tool's own
-findings on the tool's test fixtures and on three pinned corpora, through the engine's production workspace path, with
-every disagreement declared in `divergences.json`. The conformance check (`--check`, run in CI) scores the fixtures: it
-gates the ports in `rules/` and reports the candidates without gating them.
+tlint 9.7.0 (5 lints) and stillat/blade-parser 2.1.0 (4 validators). 10 ship: tlint's 5, blade-parser's
+`DebugDirectiveValidator`, `ForElseStructureValidator` and `ComponentShorthandVariableParameterValidator`, and
+Bladestan's `if.alwaysTrue` and `identical.alwaysTrue`. The two Bladestan rules start off (`"on": false`): PHPStan
+registers them at level 4 and Bladestan's recommended level is 0, so they are experimental. A port starts in
+`candidates/rules/` and moves to `rules/` and `pack.json` once it passes every blocking port readiness gate
+([docs/port-readiness.md](../../docs/port-readiness.md)); each of the pack's three tools is gated. Every port is scored
+against the tool's own findings on the tool's test fixtures and on three pinned corpora, through the engine's
+production workspace path, with every disagreement declared in `divergences.json`. The conformance check (`--check`,
+run in CI) scores the fixtures: it gates the ports in `rules/` and reports the candidates without gating them.
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack blade"` ([pack structure and validation
 contract](../../docs/pack-format.md)).
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, and no rules until a port passes |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, each rule's document, title, group and, for a rule that starts off, `on`; two rules carry examples |
+| `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `candidates/rules/` | The candidates' code-rule documents (`rerail.policy/v1`), scored but never shipped |
 | `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools, the pinned corpora (BookStack, Filament, Bagisto) and the `calls` exemption with its evidence |
 | `divergences.json` | Declared disagreements with the tools |
-| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py` with its PHP helpers, sharing `upstream/common.py` and `upstream/capture.php`) |
+| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`; both pack test data, derived from the pins and archived in S3: `npm run fixtures:pull`) and the recorder (`generate.py` with its PHP helpers, sharing `upstream/common.py`; the template capture tlint's and stillat/blade-parser's test readers run, and stillat/blade-parser's reader itself, are the port readiness recorder's, under `conformance/recorders/port-readiness/adapters/`) |
+| `upstream/<tool>/gates.yaml`, `recording.lock` | The port readiness gates' manifest for the tool and the lock naming its recordings (kept out of git, by sha256) ([docs/port-readiness.md](../../docs/port-readiness.md)) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Candidates
 
-The title is what `pack.json` lists for a candidate once it ships; its group is the tool the title names.
+Seven ports stay candidates: they fail `matches-upstream-tests`, a blocking port readiness gate. The title is what
+`pack.json` lists for a candidate once it ships; its group is the tool the title names.
 
 | Candidate | Title |
 |---|---|
@@ -31,26 +36,21 @@ The title is what `pack.json` lists for a candidate once it ships; its group is 
 | `bladestan-argument-sprintf` | Bladestan argument.sprintf: sprintf() arguments and format disagree |
 | `bladestan-array-duplicate-key` | Bladestan array.duplicateKey: Duplicate array key |
 | `bladestan-random-int-parameters` | Bladestan argument.type: random_int() minimum above maximum |
-| `bladestan-if-always-true` | Bladestan if.alwaysTrue: If condition always true |
 | `bladestan-if-always-false` | Bladestan if.alwaysFalse: If condition always false |
-| `bladestan-identical-always-true` | Bladestan identical.alwaysTrue: Strict comparison always true |
 | `bladestan-missing-function-return-type` | Bladestan missingType.return: Function without a return type |
-| `tlint-no-json-directive` | tlint NoJsonDirective: No @json directive |
-| `tlint-no-dump-directives` | tlint NoDumpDirectives: No @dd or @dump directive |
-| `tlint-no-ray-directive` | tlint NoRayDirective: No @ray directive |
-| `tlint-space-after-blade-directives` | tlint SpaceAfterBladeDirectives: Space after control structure directives |
-| `tlint-spaces-around-blade-render-content` | tlint SpacesAroundBladeRenderContent: One space inside echo delimiters |
-| `blade-parser-debug-directive` | blade-parser DebugDirectiveValidator: No debug directive |
 | `blade-parser-duplicate-condition-expressions` | blade-parser DuplicateConditionExpressionsValidator: Duplicate @elseif condition |
-| `blade-parser-for-else-structure` | blade-parser ForElseStructureValidator: @forelse with one @empty |
-| `blade-parser-component-shorthand-variable-parameter` | blade-parser ComponentShorthandVariableParameterValidator: Malformed component shorthand attribute |
 
-Eight candidates carried an example pair while they shipped. `test/engine/catalog/candidate-examples.test.ts` still
-checks each pair below through the engine, so they keep guarding Blade's embedded PHP. For six of them
-(`bladestan-variable-undefined`, `bladestan-argument-sprintf`, `bladestan-array-duplicate-key`,
-`bladestan-random-int-parameters`, `bladestan-if-always-false`, `bladestan-missing-function-return-type`) the tool's
-fixture findings are empty or all excused, so the pair is what proved them while they shipped; the pairs go back
-into `pack.json` with their rules:
+The six Bladestan candidates fail `matches-upstream-tests` with `fires`: Bladestan's own test templates hold none of
+their findings (`variable.undefined`'s appear only when a template is rendered with its caller's data), so nothing
+upstream wrote proves them, and they wait for goldens. `blade-parser-duplicate-condition-expressions` is
+`source-incomplete` on two of blade-parser's `DebugDirectiveTest` templates, a malformed `@forelse` and `@foreach` that
+blade-parser accepts and Laravel's `BladeCompiler` rejects: the parsers disagree on them and no known engine gap
+excuses the rule.
+
+Each of the six Bladestan candidates carried an example pair while it shipped. The tool's fixture findings are empty
+or all excused, so the pair is what proved it then; `test/engine/catalog/candidate-examples.test.ts` still checks each
+pair below through the engine, so they keep guarding Blade's embedded PHP, and the pairs go back into `pack.json` with
+their rules:
 
 ### `bladestan-variable-undefined`
 
@@ -171,51 +171,16 @@ Passes (`resources/views/users/card.blade.php`):
 <span>{{ initials($user->name) }}</span>
 ```
 
-### `tlint-no-json-directive`
-
-Caught (`resources/views/profile.blade.php`):
-
-```blade
-<script>
-    const user = @json($user);
-</script>
-```
-
-Passes (`resources/views/profile.blade.php`):
-
-```blade
-<script>
-    const user = {{ Js::from($user) }};
-</script>
-```
-
-### `tlint-space-after-blade-directives`
-
-Caught (`resources/views/profile.blade.php`):
-
-```blade
-@if($user)
-    <p>{{ $user->name }}</p>
-@endif
-```
-
-Passes (`resources/views/profile.blade.php`):
-
-```blade
-@if ($user)
-    <p>{{ $user->name }}</p>
-@endif
-```
-
-Re-recording runs offline against the pinned tool versions, with PHP 8.5.11 (each recorder's docstring has the setup):
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/blade.ts`) runs each tool's `generate.py`, in `fixtures` mode and then `corpus` mode over
+bookstack, filament and bagisto, against the pinned tool versions, with the pinned PHP 8.5.11 first on `PATH` (each
+recorder's docstring has the setup):
 
 ```sh
-python3 upstream/bladestan/generate.py fixtures <bladestan checkout at 0.11.7>
-python3 upstream/tlint/generate.py fixtures <tlint checkout at v9.7.0> <composer project with tightenco/tlint 9.7.0>
-python3 upstream/blade-parser/generate.py fixtures <blade-parser checkout at v2.1.0> <composer project with stillat/blade-parser 2.1.0>
-python3 upstream/bladestan/generate.py corpus <bladestan checkout> bookstack=<checkout> filament=<checkout> bagisto=<checkout>
-python3 upstream/tlint/generate.py corpus <tlint composer project> bookstack=<checkout> filament=<checkout> bagisto=<checkout>
-python3 upstream/blade-parser/generate.py corpus <blade-parser composer project> bookstack=<checkout> filament=<checkout> bagisto=<checkout>
+npm run fixtures:derive -- --pack blade                    # every tool
+npm run fixtures:derive -- --pack blade --tool bladestan   # one
+npm run fixtures:push -- --pack blade --tool bladestan     # on your own branch: archive it and rewrite its test-data.lock
 ```
 
 Scoring one rule with every false positive and false negative printed:
@@ -223,3 +188,55 @@ Scoring one rule with every false positive and false negative printed:
 ```sh
 node --import tsx conformance/languages/cli.ts --pack blade --rule tlint-space-after-blade-directives --fixtures
 ```
+
+## Rule details
+
+What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
+
+### `blade-parser-duplicate-condition-expressions`
+
+Port of stillat/blade-parser 2.1.0 DuplicateConditionExpressionsValidator. Reports only the first @elseif of an @if chain whose condition, as written (source text), equals an earlier branch's; read from the compiled view, where the chain is one if statement. A later duplicate in the same chain is not reported, because blade-parser stops at the first. The chain is the witness and the @elseif a capture of it, so the rule asks nothing negative and reads a view with syntax errors elsewhere, as blade-parser does.
+
+### `bladestan-array-duplicate-key`
+
+Port of Bladestan 0.11.7 array.duplicateKey (PHPStan 2.2.16 DuplicateKeysInLiteralArraysRule over the compiled template). Reports, as PHPStan does, at the first explicitly keyed element whose key PHP coerces to the same key as a later explicit key's. A key PHP cannot evaluate (e.g. a method call) equals none. Arrays spanning more than 256 lines are not checked: comparing every pair of keys of a larger literal (generated data tables) exceeds the per-file AST work budget, which would fail every policy on the file.
+
+### `bladestan-identical-always-true`
+
+Port of Bladestan 0.11.7 identical.alwaysTrue (PHPStan 2.2.16 StrictComparisonOfDifferentTypesRule over the compiled template). Constant evaluation follows variables through their one reaching binding. The condition of the last @elseif of a chain with no @else is not reported, matching PHPStan's reportAlwaysTrueInLastCondition: false.
+
+### `bladestan-if-always-false`
+
+Port of Bladestan 0.11.7 if.alwaysFalse (PHPStan 2.2.16 IfConstantConditionRule over the compiled template). Constant evaluation follows variables through their one reaching binding. Not reported: comparisons, negations, ternaries, isset and empty (PHPStan leaves those to other rules), a condition inside a trait, or an if preceded by an inline @var doc comment (PHPStan reads the variable as the PHPDoc type).
+
+### `bladestan-if-always-true`
+
+Port of Bladestan 0.11.7 if.alwaysTrue (PHPStan 2.2.16 IfConstantConditionRule over the compiled template). Same exclusions as `bladestan-if-always-false`: comparisons, negations, ternaries, isset and empty, conditions inside a trait, and an if preceded by an inline @var doc comment.
+
+### `bladestan-missing-function-return-type`
+
+Port of Bladestan 0.11.7 missingType.return as PHPStan 2.2.16's MissingFunctionReturnTypehintRule reports it. Only function declarations (not methods or closures). A @return, @phpstan-return or @psalm-return tag in the doc comment counts as a return type.
+
+### `bladestan-random-int-parameters`
+
+Port of Bladestan 0.11.7 argument.type as PHPStan 2.2.16's RandomIntParametersRule reports it over the compiled template. Arguments are bound as PHP binds them (named arguments included); only reported when both $min and $max are constants with $min > $max.
+
+### `bladestan-variable-undefined`
+
+Port of Bladestan 0.11.7 variable.undefined (PHPStan 2.2.16 DefinedVariableRule over the compiled template). A read at the template's top level that the template does not define is view data, which Bladestan reads as "might not be defined" when the render passes none; neither side claims it.
+
+### `tlint-no-json-directive`
+
+Port of tlint 9.7.0 NoJsonDirective. Read from the compiled view, where Blade compiles @json to a call, so it is caught in text, attribute values and script alike.
+
+### `tlint-no-ray-directive`
+
+Port of tlint 9.7.0 NoRayDirective. @ray is spatie/laravel-ray's directive, which core Blade does not compile, so it is read from the template's tree (where every @name is a directive) rather than the compiled view.
+
+### `tlint-space-after-blade-directives`
+
+Port of tlint 9.7.0 SpaceAfterBladeDirectives. Flags a control directive whose name is not followed by a space or tab, where Blade compiles it to control flow. Read from the compiled view's if/elseif/for/foreach/while statement whose host is the directive (not the if a @forelse's @empty compiles to). In an attribute value, where Forte does not pair directives into a block and the statement's host is the whole value, it is read from the directive itself where the view reads it as control flow.
+
+### `tlint-spaces-around-blade-render-content`
+
+Port of tlint 9.7.0 SpacesAroundBladeRenderContent. Only single-line echoes; covers {{ }} and {!! !!}, but not {{-- --}} comments or escaped @{{ }} echoes.

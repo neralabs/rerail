@@ -3,65 +3,135 @@
 use super::read_cache::CacheKey;
 use super::rows::{generation, hash_params, intern_hash};
 use super::{
-    CODEC_ZSTD, CachedBytes, ContentStore, HASH_SHA256, HashKey, SourceId, StoreError, StoreResult,
-    StoredPathObjects, StoredSourceObjects, TapeId, TapePayload, compress,
+    CODEC_ZSTD, CachedBytes, ContentStore, DocumentPayload, HASH_SHA256, HashKey, SourceId,
+    StoreError, StoreResult, StoredDocument, StoredPathObjects, StoredSourceObjects, TapeId,
+    TapePayload, compress,
 };
-#[cfg(test)]
 use rusqlite::Connection;
-use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeSet, HashMap};
 use std::io::Cursor;
 use std::sync::Arc;
 
+/// A stored tape's frames as residency admits them (PIAT §20.3): the tape's and its source's zstd
+/// frames with their raw lengths, the source's SHA-256 and the tape's grammar.
+pub(crate) struct ResidentFrames {
+    pub(crate) grammar_id: i64,
+    pub(crate) tape_length: usize,
+    pub(crate) tape_frame: Vec<u8>,
+    pub(crate) source_length: usize,
+    pub(crate) source_frame: Vec<u8>,
+    pub(crate) source_sha256: [u8; 32],
+}
+
 impl ContentStore {
+    /// The frames of the tapes whose SHA-256 is each of `tapes`, in one read: `None` where no tape
+    /// has that digest. Frames are returned compressed, for the caller to decompress in place.
+    pub(crate) fn resident_frames(&self, tapes: &[[u8; 32]]) -> StoreResult<Vec<Option<ResidentFrames>>> {
+        let encoded = serde_json::to_string(
+            &tapes
+                .iter()
+                .enumerate()
+                .map(|(at, digest)| {
+                    let key = HashKey::from_sha256_digest(*digest);
+                    serde_json::json!([at, key.algorithm, key.lanes[0], key.lanes[1], key.lanes[2], key.lanes[3]])
+                })
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) at, \
+             CAST(json_extract(value,'$[1]') AS INTEGER) algorithm, CAST(json_extract(value,'$[2]') AS INTEGER) lane0, \
+             CAST(json_extract(value,'$[3]') AS INTEGER) lane1, CAST(json_extract(value,'$[4]') AS INTEGER) lane2, \
+             CAST(json_extract(value,'$[5]') AS INTEGER) lane3 FROM json_each(?1)) \
+             SELECT i.at,t.grammar_id,t.codec_id,t.raw_length,t.frame,s.codec_id,s.raw_length,s.frame,\
+             sh.algorithm_id,sh.lane0,sh.lane1,sh.lane2,sh.lane3 \
+             FROM input i CROSS JOIN hashes th INDEXED BY hashes_by_prefix ON th.algorithm_id=i.algorithm AND th.lane0=i.lane0 \
+             AND th.lane1=i.lane1 AND th.lane2=i.lane2 AND th.lane3=i.lane3 \
+             JOIN tape_objects t ON t.canonical_hash_id=th.hash_id \
+             JOIN source_objects s ON s.source_id=t.source_id JOIN hashes sh ON sh.hash_id=s.canonical_hash_id",
+        )?;
+        let mut out = (0..tapes.len()).map(|_| None).collect::<Vec<_>>();
+        let rows = statement.query_map([encoded], |row| {
+            let length = |at: usize| row.get::<_, i64>(at).map(|length| usize::try_from(length).unwrap_or(usize::MAX));
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(5)?,
+                ResidentFrames {
+                    grammar_id: row.get(1)?,
+                    tape_length: length(3)?,
+                    tape_frame: row.get(4)?,
+                    source_length: length(6)?,
+                    source_frame: row.get(7)?,
+                    source_sha256: HashKey { algorithm: row.get(8)?, lanes: [row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?] }
+                        .sha256_bytes()
+                        .unwrap_or_default(),
+                },
+            ))
+        })?;
+        for row in rows {
+            let (at, tape_codec, source_codec, frames) = row?;
+            if tape_codec != CODEC_ZSTD || source_codec != CODEC_ZSTD {
+                return Err(StoreError::Invalid(format!("unsupported codecs {tape_codec}, {source_codec}")));
+            }
+            if let Some(slot) = usize::try_from(at).ok().and_then(|at| out.get_mut(at)) {
+                *slot = Some(frames);
+            }
+        }
+        Ok(out)
+    }
     pub fn put_source(&self, source: &[u8], aliases: &[HashKey]) -> StoreResult<SourceId> {
+        self.put_source_hashed(source, HashKey::sha256(source), aliases)
+    }
+
+    /// [`Self::put_source`] for a caller that already holds the source's SHA-256 (`canonical`): the bytes are not
+    /// hashed again.
+    pub fn put_source_hashed(&self, source: &[u8], canonical: HashKey, aliases: &[HashKey]) -> StoreResult<SourceId> {
         self.require_write_capacity()?;
-        let canonical = HashKey::sha256(source);
         let frame = compress(source, self.compression_level)?;
         let raw_length = i64::try_from(source.len())
             .map_err(|_| StoreError::Invalid("source length exceeds i64".to_owned()))?;
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let canonical_hash_id = intern_hash(&transaction, canonical)?;
-        let generation = generation(&transaction)?;
-        transaction.execute(
-            "INSERT INTO source_objects(canonical_hash_id, raw_length, codec_id, frame, created_generation)\
-             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(canonical_hash_id) DO NOTHING",
-            params![canonical_hash_id, raw_length, CODEC_ZSTD, frame, generation],
-        )?;
-        let source_id: i64 = transaction.query_row(
-            "SELECT source_id FROM source_objects WHERE canonical_hash_id = ?1",
-            [canonical_hash_id],
-            |row| row.get(0),
-        )?;
-        for alias in aliases {
-            let alias_hash_id = intern_hash(&transaction, *alias)?;
-            let existing = transaction
-                .query_row(
-                    "SELECT source_id FROM source_aliases WHERE alias_hash_id = ?1",
-                    [alias_hash_id],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional()?;
-            if existing.is_some_and(|existing| existing != source_id) {
-                return Err(StoreError::Corrupt(
-                    "Git object alias maps to different source bytes".to_owned(),
-                ));
-            }
+        // Retried under `retry_busy`: the push writes sources while the overlay's writer holds
+        // the store, and one busy timeout behind it must not fail the push.
+        self.immediate_transaction(|transaction| {
+            let canonical_hash_id = intern_hash(transaction, canonical)?;
+            let generation = generation(transaction)?;
             transaction.execute(
-                "INSERT INTO source_aliases(alias_hash_id, source_id) VALUES (?1, ?2)\
-                 ON CONFLICT(alias_hash_id) DO NOTHING",
-                params![alias_hash_id, source_id],
+                "INSERT INTO source_objects(canonical_hash_id, raw_length, codec_id, frame, created_generation)\
+                 VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(canonical_hash_id) DO NOTHING",
+                params![canonical_hash_id, raw_length, CODEC_ZSTD, frame, generation],
             )?;
-        }
-        transaction.commit()?;
-        Ok(SourceId(source_id))
+            let source_id: i64 = transaction.query_row(
+                "SELECT source_id FROM source_objects WHERE canonical_hash_id = ?1",
+                [canonical_hash_id],
+                |row| row.get(0),
+            )?;
+            for alias in aliases {
+                let alias_hash_id = intern_hash(transaction, *alias)?;
+                let existing = transaction
+                    .query_row(
+                        "SELECT source_id FROM source_aliases WHERE alias_hash_id = ?1",
+                        [alias_hash_id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                if existing.is_some_and(|existing| existing != source_id) {
+                    return Err(StoreError::Corrupt(
+                        "Git object alias maps to different source bytes".to_owned(),
+                    ));
+                }
+                transaction.execute(
+                    "INSERT INTO source_aliases(alias_hash_id, source_id) VALUES (?1, ?2)\
+                     ON CONFLICT(alias_hash_id) DO NOTHING",
+                    params![alias_hash_id, source_id],
+                )?;
+            }
+            Ok(SourceId(source_id))
+        })
     }
 
-    #[cfg(test)]
     pub fn source_by_hash(&self, hash: HashKey) -> StoreResult<Option<SourceId>> {
         let connection = self
             .connection
@@ -70,7 +140,6 @@ impl ContentStore {
         source_id_by_hash(&connection, hash)
     }
 
-    #[cfg(test)]
     pub fn tape_by_source(
         &self,
         source_id: SourceId,
@@ -321,7 +390,7 @@ impl ContentStore {
 
     /// Read immutable source IDs qualified by the canonical hashes from bulk metadata.
     /// Cache hits require no source query. Cold frames use bounded typed batches.
-    pub(crate) fn get_sources_bulk(
+    pub(crate) fn get_sources_by_hash_bulk(
         &self,
         requests: &[(SourceId, HashKey)],
         max_bytes: usize,
@@ -446,51 +515,148 @@ impl ContentStore {
             ));
         }
         let frame = compress(tape, self.compression_level)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let tape_id = put_tape_tx(
-            &transaction,
-            source_id,
-            TapePayload {
-                grammar_id,
-                grammar_version,
-                tape_format_version,
-                bytes: tape,
-            },
-            &frame,
-        )?;
-        transaction.commit()?;
-        Ok(tape_id)
+        // Retried under `retry_busy`, as `put_source` is.
+        self.immediate_transaction(|transaction| {
+            put_tape_tx(
+                transaction,
+                source_id,
+                TapePayload {
+                    grammar_id,
+                    grammar_version,
+                    tape_format_version,
+                    bytes: tape,
+                    documents: &[],
+                },
+                &frame,
+                &[],
+            )
+        })
     }
 
     pub fn get_tapes_bulk(
         &self,
         tape_ids: &[TapeId],
     ) -> StoreResult<HashMap<TapeId, (Arc<CachedBytes>, bool)>> {
-        if tape_ids.is_empty() {
-            return Ok(HashMap::new());
+        let ids = tape_ids.iter().map(|id| id.0).collect::<BTreeSet<_>>();
+        Ok(self
+            .objects_bulk(&ids, BulkObjects::Tapes)?
+            .into_iter()
+            .map(|(id, object)| (TapeId(id), object))
+            .collect())
+    }
+
+    /// The sources `source_ids` name, each with whether the read cache held it; a source that is
+    /// not stored is left out.
+    pub fn get_sources_bulk(
+        &self,
+        source_ids: &[SourceId],
+    ) -> StoreResult<HashMap<SourceId, (Arc<CachedBytes>, bool)>> {
+        let ids = source_ids.iter().map(|id| id.0).collect::<BTreeSet<_>>();
+        Ok(self
+            .objects_bulk(&ids, BulkObjects::Sources)?
+            .into_iter()
+            .map(|(id, object)| (SourceId(id), object))
+            .collect())
+    }
+
+    /// The documents derived from each of `tapes` (`file_documents`), in ordinal order, with
+    /// their sources and tapes. A tape that derives none is left out.
+    pub fn file_documents_bulk(
+        &self,
+        tapes: &[TapeId],
+    ) -> StoreResult<HashMap<TapeId, Vec<StoredDocument>>> {
+        let mut documents = HashMap::<TapeId, Vec<StoredDocument>>::new();
+        if tapes.is_empty() {
+            return Ok(documents);
         }
         let requested =
-            serde_json::to_string(&tape_ids.iter().map(|id| id.0).collect::<BTreeSet<_>>())
+            serde_json::to_string(&tapes.iter().map(|id| id.0).collect::<BTreeSet<_>>())
                 .map_err(|error| StoreError::Invalid(error.to_string()))?;
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        // A row whose tape is gone stays in the answer, so its file reads as not stored.
+        let mut statement = connection.prepare_cached(
+            "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
+             SELECT d.tape_id,d.ordinal,d.parent_ordinal,d.role_id,d.via_id,d.document_tape_id,\
+             t.source_id,t.grammar_id,d.source_map,d.host_errors FROM requested r \
+             JOIN file_documents d ON d.tape_id=r.id \
+             LEFT JOIN tape_objects t ON t.tape_id=d.document_tape_id \
+             ORDER BY d.tape_id,d.ordinal",
+        )?;
+        let rows = statement.query_map([&requested], |row| {
+            Ok((
+                TapeId(row.get(0)?),
+                StoredDocument {
+                    ordinal: row.get(1)?,
+                    parent_ordinal: row.get(2)?,
+                    role_id: row.get(3)?,
+                    via_id: row.get(4)?,
+                    tape: TapeId(row.get(5)?),
+                    source: row.get::<_, Option<i64>>(6)?.map(SourceId),
+                    grammar_id: row.get(7)?,
+                    source_map: row.get(8)?,
+                    host_errors: row.get(9)?,
+                },
+            ))
+        })?;
+        for row in rows {
+            let (tape, document) = row?;
+            documents.entry(tape).or_default().push(document);
+        }
+        Ok(documents)
+    }
+
+    /// The stored objects `ids` name, read from the read cache or decompressed and validated,
+    /// each with whether the cache held it. A missing row is a cache miss: callers parse again
+    /// rather than issuing a point lookup.
+    fn objects_bulk(
+        &self,
+        ids: &BTreeSet<i64>,
+        objects: BulkObjects,
+    ) -> StoreResult<HashMap<i64, (Arc<CachedBytes>, bool)>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let (identity_sql, frame_sql, what) = match objects {
+            BulkObjects::Tapes => (
+                "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
+                 SELECT t.tape_id,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
+                 FROM requested r JOIN tape_objects t ON t.tape_id=r.id \
+                 JOIN hashes h ON h.hash_id=t.canonical_hash_id",
+                "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
+                 SELECT t.tape_id,t.raw_length,t.codec_id,t.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
+                 FROM requested r JOIN tape_objects t ON t.tape_id=r.id JOIN hashes h ON h.hash_id=t.canonical_hash_id",
+                "tape",
+            ),
+            BulkObjects::Sources => (
+                "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
+                 SELECT s.source_id,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
+                 FROM requested r JOIN source_objects s ON s.source_id=r.id \
+                 JOIN hashes h ON h.hash_id=s.canonical_hash_id",
+                "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
+                 SELECT s.source_id,s.raw_length,s.codec_id,s.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
+                 FROM requested r JOIN source_objects s ON s.source_id=r.id JOIN hashes h ON h.hash_id=s.canonical_hash_id",
+                "source",
+            ),
+        };
+        let cache_key = |hash| match objects {
+            BulkObjects::Tapes => CacheKey::Tape(hash),
+            BulkObjects::Sources => CacheKey::Source(hash),
+        };
+        let requested =
+            serde_json::to_string(ids).map_err(|error| StoreError::Invalid(error.to_string()))?;
         let identities = {
             let connection = self
                 .connection
                 .lock()
                 .expect("content store mutex poisoned");
-            let mut statement = connection.prepare_cached(
-                "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
-                 SELECT t.tape_id,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
-                 FROM requested r JOIN tape_objects t ON t.tape_id=r.id \
-                 JOIN hashes h ON h.hash_id=t.canonical_hash_id",
-            )?;
+            let mut statement = connection.prepare_cached(identity_sql)?;
             statement
                 .query_map([&requested], |row| {
                     Ok((
-                        TapeId(row.get(0)?),
+                        row.get::<_, i64>(0)?,
                         HashKey {
                             algorithm: row.get(1)?,
                             lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?],
@@ -507,10 +673,10 @@ impl ContentStore {
                 .lock()
                 .expect("decompressed cache mutex poisoned");
             for (id, hash) in identities {
-                if let Some(bytes) = cache.get(CacheKey::Tape(hash)) {
+                if let Some(bytes) = cache.get(cache_key(hash)) {
                     result.insert(id, (bytes, true));
                 } else {
-                    missing.insert(id.0);
+                    missing.insert(id);
                 }
             }
         }
@@ -524,15 +690,11 @@ impl ContentStore {
                 .connection
                 .lock()
                 .expect("content store mutex poisoned");
-            let mut statement = connection.prepare_cached(
-                "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
-                 SELECT t.tape_id,t.raw_length,t.codec_id,t.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
-                 FROM requested r JOIN tape_objects t ON t.tape_id=r.id JOIN hashes h ON h.hash_id=t.canonical_hash_id",
-            )?;
+            let mut statement = connection.prepare_cached(frame_sql)?;
             statement
                 .query_map([encoded], |row| {
                     Ok((
-                        TapeId(row.get(0)?),
+                        row.get::<_, i64>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, i64>(2)?,
                         row.get::<_, Vec<u8>>(3)?,
@@ -545,23 +707,22 @@ impl ContentStore {
                 .collect::<Result<Vec<_>, _>>()?
         };
         // Decode and validate outside the database connection and transaction.
-        // A missing row is a cache miss: callers parse again rather than issuing a point lookup.
         for (id, length, codec, frame, hash) in rows {
             if codec != CODEC_ZSTD {
-                return Err(StoreError::Corrupt("unsupported tape codec".to_owned()));
+                return Err(StoreError::Corrupt(format!("unsupported {what} codec")));
             }
             let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
             if usize::try_from(length).ok() != Some(bytes.len()) || HashKey::sha256(&bytes) != hash
             {
-                return Err(StoreError::Corrupt(
-                    "tape length or hash does not match metadata".to_owned(),
-                ));
+                return Err(StoreError::Corrupt(format!(
+                    "{what} length or hash does not match metadata"
+                )));
             }
             let bytes = self
                 .decompressed_cache
                 .lock()
                 .expect("decompressed cache mutex poisoned")
-                .insert_bytes(CacheKey::Tape(hash), bytes)?;
+                .insert_bytes(cache_key(hash), bytes)?;
             result.insert(id, (bytes, false));
         }
         Ok(result)
@@ -713,15 +874,53 @@ impl ContentStore {
     }
 }
 
+/// Which objects `ContentStore::objects_bulk` reads.
+#[derive(Clone, Copy)]
+enum BulkObjects {
+    Sources,
+    Tapes,
+}
+
 pub(super) fn validate_tape_payload(tape: Option<TapePayload<'_>>) -> StoreResult<()> {
-    if tape.is_some_and(|tape| {
-        tape.grammar_id < 0 || tape.grammar_version < 0 || tape.tape_format_version < 0
-    }) {
+    let Some(tape) = tape else {
+        return Ok(());
+    };
+    if tape.grammar_id < 0 || tape.grammar_version < 0 || tape.tape_format_version < 0 {
         return Err(StoreError::Invalid(
             "tape identifiers must be nonnegative".to_owned(),
         ));
     }
+    for (index, document) in tape.documents.iter().enumerate() {
+        let ordinal = i64::try_from(index + 1)
+            .map_err(|_| StoreError::Invalid("too many derived documents".to_owned()))?;
+        if document.grammar_id < 0
+            || document.grammar_id == tape.grammar_id
+            || document.role_id <= 0
+            || !(0..ordinal).contains(&document.parent_ordinal)
+        {
+            return Err(StoreError::Invalid(
+                "a derived document needs a grammar of its own, a role and an earlier parent"
+                    .to_owned(),
+            ));
+        }
+    }
     Ok(())
+}
+
+/// Each of `documents`' source and tape frames, compressed before a transaction starts.
+pub(super) fn compress_documents(
+    documents: &[DocumentPayload<'_>],
+    level: i32,
+) -> StoreResult<Vec<(Vec<u8>, Vec<u8>)>> {
+    documents
+        .iter()
+        .map(|document| {
+            Ok((
+                compress(document.source, level)?,
+                compress(document.tape, level)?,
+            ))
+        })
+        .collect()
 }
 
 pub(super) fn put_source_tx(
@@ -798,21 +997,71 @@ fn put_source_aliases_tx(
     Ok(())
 }
 
+/// Stores `tape` over `source_id`, with the documents derived from it (`file_documents`), whose
+/// source and tape frames `document_frames` holds in order.
 pub(super) fn put_tape_tx(
     transaction: &Transaction<'_>,
     source_id: SourceId,
     tape: TapePayload<'_>,
     frame: &[u8],
+    document_frames: &[(Vec<u8>, Vec<u8>)],
 ) -> StoreResult<TapeId> {
     let created_generation = generation(transaction)?;
-    put_tape_prepared_tx(
+    let tape_id = put_tape_prepared_tx(
         transaction,
         source_id,
         tape,
         HashKey::sha256(tape.bytes),
         frame,
         created_generation,
-    )
+    )?;
+    if tape.documents.len() != document_frames.len() {
+        return Err(StoreError::Invalid(
+            "every derived document needs its frames".to_owned(),
+        ));
+    }
+    for (index, (document, (source_frame, tape_frame))) in
+        tape.documents.iter().zip(document_frames).enumerate()
+    {
+        let document_source = put_source_prepared_tx(
+            transaction,
+            HashKey::sha256(document.source),
+            document.source.len(),
+            source_frame,
+            &[],
+            created_generation,
+        )?;
+        let document_tape = put_tape_prepared_tx(
+            transaction,
+            document_source,
+            TapePayload {
+                grammar_id: document.grammar_id,
+                grammar_version: tape.grammar_version,
+                tape_format_version: tape.tape_format_version,
+                bytes: document.tape,
+                documents: &[],
+            },
+            HashKey::sha256(document.tape),
+            tape_frame,
+            created_generation,
+        )?;
+        transaction
+            .prepare_cached(
+                "INSERT INTO file_documents(tape_id,ordinal,parent_ordinal,role_id,via_id,document_tape_id,source_map,host_errors) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(tape_id,ordinal) DO NOTHING",
+            )?
+            .execute(params![
+                tape_id.0,
+                index as i64 + 1,
+                document.parent_ordinal,
+                document.role_id,
+                document.via_id,
+                document_tape.0,
+                document.source_map,
+                document.host_errors,
+            ])?;
+    }
+    Ok(tape_id)
 }
 
 fn put_tape_prepared_tx(
@@ -866,7 +1115,6 @@ fn put_tape_prepared_tx(
     Ok(TapeId(tape_id))
 }
 
-#[cfg(test)]
 fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreResult<Option<SourceId>> {
     connection
         .query_row(

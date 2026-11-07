@@ -1,0 +1,4 @@
+/* The page for a repository that is not set up (views/not-set-up.js): the note, then its empty rule packs. */
+
+.notsetup > .welcome{margin:24px 0 24px}
+.notsetup .empty p.acts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}

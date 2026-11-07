@@ -40,13 +40,13 @@ upstream sources), the unpatched grammar builds the trees ast-grep's bundled tre
 Upstream issues: tree-sitter/tree-sitter-typescript#279 (closed by tree-sitter/tree-sitter-javascript#305, which
 admits an `&` followed by neither `#` nor a letter, and so fixes `class="a & b"` only) and
 tree-sitter/tree-sitter-javascript#304 (closed with it). Present at tag `v0.25.0` and at HEAD `58404d8`. The same
-change as Patch 3 in `grammars/tree-sitter-typescript/PATCHES.md` (NER-1760).
+change as Patch 3 in `grammars/tree-sitter-typescript/PATCHES.md`.
 
 Why: a JSX attribute string may hold `&` as text; Babel and TypeScript decode a complete character reference
 (`&amp;`, `&#38;`, `&#x26;`) and read any other `&` literally. Upstream's string fragment stops at an `&` before `#`
 or a letter, and the only other token there, `html_character_reference`, needs the closing `;`. So
 `href="https://fonts.googleapis.com/css2?family=Krona+One&display=swap"` is a parse error, and the element around it
-is lost (NER-1764): all 13 of the Next.js plugin fixtures that failed to parse (`google-font-display`,
+is lost: all 13 of the Next.js plugin fixtures that failed to parse (`google-font-display`,
 `no-css-tags`, `no-page-custom-font`'s `pages/_document.js`) and 10 of next-examples' files. The fragment's escape for
 any other `&` also admitted the closing quote, so `title="Q&"` ran on past its end.
 
@@ -112,7 +112,7 @@ case; tree-sitter/tree-sitter-typescript#371 makes the same change there (Patch 
 
 Why: JSX text may hold `&` as text, as React renders it. Upstream's `jsx_text` is an external token that stops at
 every `&`, and the only other token there, `html_character_reference`, needs the closing `;`. So
-`<span>Help & Support</span>` and `<h2>{a} & {b}</h2>` are parse errors (NER-1764): 2 next-examples files and
+`<span>Help & Support</span>` and `<h2>{a} & {b}</h2>` are parse errors: 2 next-examples files and
 eslint-plugin-react's `no-unescaped-entities` fixtures, whose findings are exactly such `&`s.
 
 ```diff
@@ -203,7 +203,7 @@ HEAD.
 Why: ECMAScript 2025 allows import attributes on `export … from`, as on `import`:
 `export { default as x } from './x.json' with { type: 'json' }` and `export * from 'y' with { type: 'json' }`.
 Upstream takes them only on `import`, so a re-export with them is a parse error whose remainder reads as a label, and
-`no-labels` reports a false positive at the `with {` (NER-1777; 4 ESLint fixtures: `id-length/086`, `087`,
+`no-labels` reports a false positive at the `with {` (4 ESLint fixtures: `id-length/086`, `087`,
 `no-array-constructor/065`, `067`).
 
 ```diff

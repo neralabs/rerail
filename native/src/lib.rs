@@ -1,3 +1,6 @@
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
@@ -7,7 +10,10 @@ mod build_identity;
 #[cfg(test)]
 mod build_languages;
 mod code_rule_dsl;
+/// The engine's tools without Node (`rerail-engine dump` / `asm`).
+pub use code_rule_dsl::tools;
 pub mod content_store;
+pub mod git_ignore;
 pub mod git_workspace;
 mod main_instance;
 mod model;
@@ -22,11 +28,11 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 // jemalloc does not build for MSVC targets; Windows keeps the system allocator.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 union JemallocConf {
     byte: &'static u8,
     character: &'static std::ffi::c_char,
@@ -36,7 +42,7 @@ union JemallocConf {
 // decay cost a tenth of the data-layer benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
@@ -49,7 +55,7 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 /// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
 /// which the system allocator served at 10% of the parse. Installed when the addon loads, before
 /// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
     use std::ffi::c_void;
@@ -162,7 +168,7 @@ pub fn process_session_id(pid: i32) -> Result<Option<i32>> {
 /// neither does the Windows system allocator: its counters read zero.
 #[napi]
 pub fn native_memory_profile() -> String {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     let allocator = {
         let _ = tikv_jemalloc_ctl::epoch::advance();
         serde_json::json!({
@@ -173,7 +179,7 @@ pub fn native_memory_profile() -> String {
             "retainedBytes": tikv_jemalloc_ctl::stats::retained::read().unwrap_or(0),
         })
     };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_family = "wasm"))]
     let allocator = serde_json::json!({
         "allocatedBytes": 0,
         "activeBytes": 0,
@@ -190,10 +196,23 @@ pub fn native_memory_profile() -> String {
     .to_string()
 }
 
+/// SQLite's allocator set when the library loads, before anything can initialize SQLite
+/// (`content_store::sqlite_on_jemalloc`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[used]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+static SQLITE_ALLOCATOR: extern "C" fn() = {
+    extern "C" fn install() {
+        content_store::sqlite_on_jemalloc();
+    }
+    install
+};
+
 /// Return allocator pages after eviction closes idle SQLite connections.
 pub(crate) fn release_allocator_memory() {
     // Background threads, where available, decay pages between applies too.
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     let _ = tikv_jemalloc_ctl::background_thread::write(true);
     purge_allocator_pages();
 }
@@ -202,7 +221,7 @@ pub(crate) fn release_allocator_memory() {
 pub(crate) fn purge_allocator_pages() {
     // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
     // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     unsafe {
         tikv_jemalloc_sys::mallctl(
             c"arena.4096.purge".as_ptr(),

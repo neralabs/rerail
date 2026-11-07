@@ -1,1 +1,0 @@
-const foo = async function(param: string) {} // allow: overrideMethods

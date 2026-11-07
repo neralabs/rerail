@@ -1,0 +1,111 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tlint-space-after-blade-directives",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Put a space between Blade control directives (@if, @elseif, @unless, @for, @foreach, @forelse, @while) and their opening parenthesis.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "any": [
+              {
+                "kind": "if_statement",
+                "host": {
+                  "regex": "^@(if|unless)($|[^ \\t\\w])"
+                }
+              },
+              {
+                "kind": "else_if_clause",
+                "host": {
+                  "regex": "^@elseif($|[^ \\t\\w])"
+                }
+              },
+              {
+                "kind": "for_statement",
+                "host": {
+                  "regex": "^@for($|[^ \\t\\w])"
+                }
+              },
+              {
+                "kind": "foreach_statement",
+                "host": {
+                  "regex": "^@(foreach|forelse)($|[^ \\t\\w])"
+                }
+              },
+              {
+                "kind": "while_statement",
+                "host": {
+                  "regex": "^@while($|[^ \\t\\w])"
+                }
+              }
+            ],
+            "host": {
+              "not": {
+                "kind": "attribute_value"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "SpaceAfterBladeDirectives",
+        "message": "Put a space between blade control structure names and the opening paren: `@if(` -> `@if (`"
+      }
+    },
+    {
+      "id": "attribute-value",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "kind": "directive",
+            "regex": "^@(if|elseif|unless|for|foreach|forelse|while)($|[^ \\t\\w])",
+            "inside": {
+              "stopBy": "end",
+              "kind": "attribute_value"
+            },
+            "embedded": {
+              "inside": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "if_statement"
+                  },
+                  {
+                    "kind": "else_if_clause"
+                  },
+                  {
+                    "kind": "for_statement"
+                  },
+                  {
+                    "kind": "foreach_statement"
+                  },
+                  {
+                    "kind": "while_statement"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "SpaceAfterBladeDirectives",
+        "message": "Put a space between blade control structure names and the opening paren: `@if(` -> `@if (`"
+      }
+    }
+  ]
+}

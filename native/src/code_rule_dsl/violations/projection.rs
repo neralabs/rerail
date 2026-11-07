@@ -23,7 +23,7 @@ struct Data {
     names: Arc<[String]>,
     rows: usize,
     raw: Option<Value>,
-    columns: Vec<Box<[Cell]>>,
+    columns: Vec<Vec<Cell>>,
     sources: Vec<Arc<String>>,
     owned: Vec<bool>,
 }
@@ -150,15 +150,10 @@ impl Builder {
             raw: None,
             rows: std::mem::take(&mut self.rows),
             names: Arc::clone(&self.names),
-            // Published columns never grow. A partial processing batch must not
-            // retain storage for 256 rows in each column for the workspace lifetime.
             columns: std::mem::replace(
                 &mut self.columns,
                 self.names.iter().map(|_| Vec::new()).collect(),
-            )
-            .into_iter()
-            .map(Vec::into_boxed_slice)
-            .collect(),
+            ),
             sources: std::mem::take(&mut self.sources),
             owned: std::mem::take(&mut self.owned),
         };
@@ -211,6 +206,8 @@ pub(crate) fn append<'a>(
         }
     })
 }
+// Some of P's row accessors are read only by P's relational stage (test-only, open item O18).
+#[cfg_attr(not(test), allow(dead_code))]
 impl Row {
     fn data(&self) -> &Data {
         self.data
@@ -309,10 +306,10 @@ impl Row {
     }
     pub(crate) fn memory(&self) -> (usize, usize, usize, usize) {
         let d = self.data();
-        let bytes = d.columns.capacity() * std::mem::size_of::<Box<[Cell]>>()
+        let bytes = d.columns.capacity() * std::mem::size_of::<Vec<Cell>>()
             + d.columns
                 .iter()
-                .map(|c| c.len() * std::mem::size_of::<Cell>())
+                .map(|c| c.capacity() * std::mem::size_of::<Cell>())
                 .sum::<usize>()
             + d.names.iter().map(String::capacity).sum::<usize>()
             + d.sources

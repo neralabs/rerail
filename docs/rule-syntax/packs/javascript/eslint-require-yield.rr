@@ -1,0 +1,22 @@
+.policy "eslint-require-yield" revision 3
+.description "Add a yield to generator functions with a non-empty body, or make them plain functions."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   generator, fn_block, own_fn, fn_head
+
+// ESLint's require-yield: a generator whose body has statements but no `yield` of its own. A yield inside a
+// nested generator belongs to that one. The empty generator `function* f() {}` is allowed. No options.
+//   function* f() { return 1; }               → reported
+//   function* f() { yield 1; }                fine
+//   ({ *m() { function* g() { yield; } } })   m is reported, g is fine
+.violation require_yield(at: node) code "require-yield" "This generator function does not have 'yield'."
+    suppress eslint "require-yield"
+    suppress oxlint "require-yield"
+    suppress biome "lint/correctness/useYield"
+// Reported where the function's head starts (getFunctionHeadLoc): a method or `a: function* () {}` at its key,
+// with `static` if there is one. That is ESLint 10's place; ESLint 9.39 reports a method at its parameters.
+require_yield(at) :- generator(f), fn_block(f, b), count : { child(b, s, _), !not_stmt(s) } > 0,
+    count : { kind(y, "yield_expression"), own_fn(y, f) } = 0, fn_head(f, at).

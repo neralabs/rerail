@@ -1,1 +1,0 @@
-const Foo = class implements Bar { private method() {} };

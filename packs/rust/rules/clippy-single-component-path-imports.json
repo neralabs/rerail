@@ -1,0 +1,36 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-single-component-path-imports",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove private imports of a bare crate name in Rust 2018 and later; the crate is already in scope without them.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "single-component-import",
+      "forbid": { "ast": { "language": "rust",
+        "utils": {
+          "module-item": {"inside": {"any": [{"kind": "source_file"}, {"kind": "declaration_list", "inside": {"kind": "mod_item"}}]}},
+          "not-pub": {"not": {"has": {"kind": "visibility_modifier", "regex": "^pub$"}}},
+          "starts-with-n": {"any": [{"kind": "identifier", "pattern": "$N"}, {"has": {"field": "path", "matches": "starts-with-n"}}, {"kind": "use_wildcard", "has": {"matches": "starts-with-n"}}]},
+          "self-n": {"kind": "scoped_identifier", "has": {"field": "path", "kind": "self"}, "all": [{"has": {"field": "name", "pattern": "$N"}}]},
+          "reused-with-self": {"any": [{"follows": {"stopBy": "end", "kind": "use_declaration", "matches": "not-pub", "has": {"stopBy": "end", "any": [{"matches": "self-n"}, {"kind": "scoped_use_list", "has": {"field": "path", "kind": "self"}, "all": [{"has": {"field": "list", "has": {"matches": "starts-with-n"}}}]}]}}}, {"precedes": {"stopBy": "end", "kind": "use_declaration", "matches": "not-pub", "has": {"stopBy": "end", "any": [{"matches": "self-n"}, {"kind": "scoped_use_list", "has": {"field": "path", "kind": "self"}, "all": [{"has": {"field": "list", "has": {"matches": "starts-with-n"}}}]}]}}}, {"inside": {"any": [{"kind": "source_file"}, {"kind": "declaration_list"}], "has": {"stopBy": "end", "matches": "self-n", "not": {"inside": {"stopBy": "end", "kind": "use_declaration"}}}}}, {"follows": {"stopBy": "end", "kind": "macro_definition", "has": {"field": "name", "pattern": "$N"}}}]}
+        },
+        "rule": {"all": [{"kind": "use_declaration"}, {"has": {"field": "argument", "kind": "identifier", "pattern": "$N"}}, {"matches": "module-item"}, {"matches": "not-pub"}, {"not": {"matches": "reused-with-self"}}]} } },
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::single_component_path_imports", "clippy::all", "clippy::style", "warnings"]}}, "anchor": "witness.span", "code": "single_component_path_imports", "message": "Remove this use of a bare crate name; the crate is already in scope."}
+    },
+    {
+      "id": "nested-single-component-import",
+      "forbid": { "ast": { "language": "rust",
+        "utils": {
+          "module-item": {"inside": {"any": [{"kind": "source_file"}, {"kind": "declaration_list", "inside": {"kind": "mod_item"}}]}},
+          "not-pub": {"not": {"has": {"kind": "visibility_modifier", "regex": "^pub$"}}},
+          "starts-with-n": {"any": [{"kind": "identifier", "pattern": "$N"}, {"has": {"field": "path", "matches": "starts-with-n"}}, {"kind": "use_wildcard", "has": {"matches": "starts-with-n"}}]},
+          "self-n": {"kind": "scoped_identifier", "has": {"field": "path", "kind": "self"}, "all": [{"has": {"field": "name", "pattern": "$N"}}]},
+          "reused-with-self": {"any": [{"follows": {"stopBy": "end", "kind": "use_declaration", "matches": "not-pub", "has": {"stopBy": "end", "any": [{"matches": "self-n"}, {"kind": "scoped_use_list", "has": {"field": "path", "kind": "self"}, "all": [{"has": {"field": "list", "has": {"matches": "starts-with-n"}}}]}]}}}, {"precedes": {"stopBy": "end", "kind": "use_declaration", "matches": "not-pub", "has": {"stopBy": "end", "any": [{"matches": "self-n"}, {"kind": "scoped_use_list", "has": {"field": "path", "kind": "self"}, "all": [{"has": {"field": "list", "has": {"matches": "starts-with-n"}}}]}]}}}, {"inside": {"any": [{"kind": "source_file"}, {"kind": "declaration_list"}], "has": {"stopBy": "end", "matches": "self-n", "not": {"inside": {"stopBy": "end", "kind": "use_declaration"}}}}}, {"follows": {"stopBy": "end", "kind": "macro_definition", "has": {"field": "name", "pattern": "$N"}}}]}
+        },
+        "rule": {"all": [{"kind": "identifier", "pattern": "$N"}, {"inside": {"kind": "use_list", "inside": {"field": "argument", "kind": "use_declaration", "matches": "module-item", "all": [{"matches": "not-pub"}, {"not": {"matches": "reused-with-self"}}]}}}]} } },
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::single_component_path_imports", "clippy::all", "clippy::style", "warnings"]}}, "anchor": "witness.span", "code": "single_component_path_imports", "message": "Remove this bare crate name from the use list; the crate is already in scope."}
+    }
+  ]
+}

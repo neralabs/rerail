@@ -39,6 +39,7 @@ const NO_PRINT = codeRuleSchema.parse({
 
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const { root, runtime, daemon } of fixtures.splice(0)) {
     await runtime.dispose();
     await daemon.close();
@@ -100,8 +101,10 @@ describe("rerail scan and settings CLI", () => {
     expect(workspaceStartState(root)).toBe("stopped");
 
     // Where the repository is not set up, start runs the set-up, which asks before reading; closing the question changes nothing.
+    // Rerail may read sessions on this computer already (set-up's one approval; `setup-json.test.ts` asks it).
+    await writeFile(join(process.env.RERAIL_HOME!, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-10-16T00:00:00.000Z" } }));
     await commands.get("rerail-start")!.handler("", { ui });
-    expect(asked).toEqual([`You’re working in ${name}. Can Rerail read it to pick the rule packs that look right?`]);
+    expect(asked).toEqual([`Find rule packs for ${name}?`]);
     expect(notices.at(-1)).toBe(SETUP_CANCELLED);
     expect(workspaceStartState(root)).toBe("stopped");
     // The person's "start" answer, run as the coding agent relays it.
@@ -136,6 +139,7 @@ describe("rerail scan and settings CLI", () => {
   }, 60_000);
 
   it("runs one log-only repository audit for the workspace and exposes it to later sessions", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const automaticAuditRequests: Array<{ sessionId: string; scope: string; mode: string }> = [];
     const { root, runtime, daemon } = await fixture(options => ({
       openWorkspace: async () => undefined,
@@ -179,7 +183,7 @@ describe("rerail scan and settings CLI", () => {
     });
     expect(automaticAuditRequests).toEqual([{ sessionId: "s1", scope: "repository", mode: "log" }]);
     expect(await (await fetch(new URL("/api/sessions/s2/audit-settings", daemon.url))).json()).toMatchObject({
-      settings: { scope: "touched-files", mode: "steer" },
+      settings: { scope: "ai-output", mode: "steer" },
       repositoryAudit: { status: "completed" },
       repositoryAuditRecord: { sessionId: "s1", scope: "repository", mode: "log" },
     });
@@ -202,6 +206,20 @@ describe("rerail scan and settings CLI", () => {
     ]) });
     const settings = auditControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json());
     expect(settings.settings.mode).toBe("steer");
+  });
+
+  it("saves the steer strategy for the session's checkout and keeps the other settings", async () => {
+    const { home } = await fixture();
+    let output = "";
+    expect(await runAuditCommand("settings", ["--session", "s1", "--steer-strategy", "rewind"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(0);
+    expect(output).toMatch(/^Ongoing settings for .+: ai-output\/steer, steer strategy rewind \(/u);
+    output = "";
+    expect(await runAuditCommand("settings", ["--session", "s1", "--mode", "log", "--json"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(0);
+    expect(auditControlsResponseSchema.parse(JSON.parse(output)).settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "rewind" });
   });
 
   it("reports an empty Git diff without starting an audit", async () => {
@@ -277,7 +295,11 @@ describe("rerail scan and settings CLI", () => {
   }, 30_000);
 
   it("fails a repository scan where a rule finds more than it may report on a file, which is no coverage gap", async () => {
-    const { root, home, daemon } = await fixture();
+    const { root, home, daemon, runtime } = await fixture();
+    // The session's first walk is done before the writes, so it audits neither file on its own: the scan stays the
+    // session's latest audit.
+    await runtime.codeRulesOpened("s1");
+    await runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: "s1", text: "" });
     // More matches than the engine's 10,000-witness budget: an output cap, not running out of work.
     await writeFile(join(root, "api/generated.py"), "print(1)\n".repeat(10_001));
     await writeFile(join(root, "api/noisy.py"), "print('checked')\n");
@@ -303,8 +325,8 @@ describe("rerail scan and settings CLI", () => {
 
   it("keeps how many failures a scan had past the 20 it lists, and reports them with the session", async () => {
     // An AST rule on files with syntax errors fails on each (`source-partial`), while the regex rule reads them, so
-    // no file is blind: 25 files read in part, five past the list's 20. A touched-files audit fails on them; a
-    // repository scan lists them and completes.
+    // no file is blind: 25 files read in part, five past the list's 20. The session's own audit of them fails on them;
+    // a repository scan lists them and completes.
     const PRINT_CALL = codeRuleSchema.parse({
       format: "rerail.policy/v1", id: "test:print-call", revision: 1, mode: "log",
       scope: { include: ["api/**/*.py"], exclude: [] },
@@ -322,7 +344,7 @@ describe("rerail scan and settings CLI", () => {
     // The session audits the 25 edits on its own; the scan must come after them to be the session's latest audit.
     await vi.waitFor(async () => {
       const { audits } = await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json();
-      expect(audits[0]).toMatchObject({ scope: "touched-files", status: "failed", failureCount: 25 });
+      expect(audits[0]).toMatchObject({ scope: "ai-output", status: "failed", failureCount: 25 });
     }, { timeout: 20_000, interval: 50 });
     let output = "";
     expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
@@ -337,6 +359,7 @@ describe("rerail scan and settings CLI", () => {
   });
 
   it("applies saved log mode to new edits while an explicit audit is still running", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const gate = Promise.withResolvers<void>();
     const { root, database, runtime, daemon } = await fixture(options => {
       const auditor = new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT]), options);
@@ -374,7 +397,7 @@ describe("rerail scan and settings CLI", () => {
       expect(delivered).toEqual([]);
       expect(await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json()).toMatchObject({
         audits: expect.arrayContaining([expect.objectContaining({
-          scope: "touched-files", mode: "log", violations: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
+          scope: "ai-output", mode: "log", violations: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
         })]),
       });
     } finally {
@@ -386,6 +409,15 @@ describe("rerail scan and settings CLI", () => {
 
 
   it("requires a session instead of guessing the latest one", async () => {
-    await expect(runAuditCommand("scan", [], { home: "/unused" })).rejects.toThrow("--session is required");
+    // `rerail scan` without one is the headless scan of a checkout (headless-scan.test.ts), never the latest session's.
+    await expect(runAuditCommand("settings", [], { home: "/unused" })).rejects.toThrow("--session is required");
+    await expect(runAuditCommand("scan", ["--session", "s1", "--repo", "."], { home: "/unused" })).rejects.toThrow("Unknown option: --repo");
+  });
+
+  it("refuses a steer strategy it does not know before reaching Rerail", async () => {
+    await expect(runAuditCommand("settings", ["--session", "s1", "--steer-strategy", "undo"], { home: "/unused" }))
+      .rejects.toThrow("--steer-strategy must be message, rewind, or subagent");
+    await expect(runAuditCommand("settings", ["--session", "s1", "--steer-strategy"], { home: "/unused" }))
+      .rejects.toThrow("--steer-strategy requires a value");
   });
 });

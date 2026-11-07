@@ -1,1 +1,0 @@
-function bar() { module.exports = { foo: 1 }; }

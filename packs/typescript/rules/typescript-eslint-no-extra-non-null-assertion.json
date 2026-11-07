@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-extra-non-null-assertion",
   "revision": 4,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-extra-non-null-assertion` rule (https://typescript-eslint.io/rules/no-extra-non-null-assertion). Flags a non-null assertion that is itself asserted non-null again, or that is the object/callee of an optional chain (parentheses are transparent, as in ESTree).",
+  "description": "Remove repeated non-null assertions and ones placed before an optional chain; they add nothing.",
   "scope": {
     "include": [
       "**/*.ts",

@@ -1,13 +1,13 @@
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { UpdateResult } from "../setup/updater.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory, rollbackRestoring, rollbackRestoringPath } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistoryIn, rollbackRestoring, rollbackRestoringPath } from "../engine/storage/database.js";
 import { RERAIL_SCHEMA_VERSION } from "../engine/storage/migrations.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
-import { listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
+import { listRepositories, lookupCheckout, repositoryHistoryIds } from "../engine/catalog/repository-registry.js";
 import { defaultRulesDumpPath, exportRulesDump, importRulesDump } from "../engine/catalog/rule-bootstrap.js";
 
 /** Where `rerail update` leaves a consistent copy of the Rerail database before it switches versions. */
@@ -419,7 +419,7 @@ export function runRulesCommand(args: readonly string[], usage: () => string): n
     const value = parseJsonWithoutDuplicateKeys(readFileSync(source, "utf8"), source);
     const db = openRerailDatabase(database);
     try {
-      const report = importRulesDump(db, loadBundledCatalog(), value);
+      const report = importRulesDump(db, loadRuleCatalog(), value);
       process.stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
     } finally {
       db.$client.close();
@@ -446,8 +446,9 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     return 0;
   }
   const db = openRerailDatabase(database);
-  let ids: string[];
   let repositoryKey: string;
+  let sessions: number;
+  let openSessions: number;
   try {
     const checkout = lookupCheckout(db, process.cwd());
     if (checkout === undefined) {
@@ -456,16 +457,9 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     }
     repositoryKey = checkout.repositoryKey;
     const repository = listRepositories(db).find(candidate => candidate.repositoryKey === repositoryKey);
-    ids = [...new Set([repositoryKey, ...(repository?.aliases ?? []), ...(repository?.checkouts ?? []).map(row => row.cloneId)])];
+    ({ sessions, openSessions } = resetRepositoryHistoryIn(db, repository === undefined ? [repositoryKey] : repositoryHistoryIds(repository)));
   } finally {
     db.$client.close();
-  }
-  let sessions = 0;
-  let openSessions = 0;
-  for (const id of ids) {
-    const report = resetRepositoryHistory(database, id);
-    sessions += report.sessions;
-    openSessions += report.openSessions;
   }
   const kept = openSessions > 0 ? `, ${openSessions} running ${plural(openSessions, "session")} kept (history dropped)` : "";
   process.stdout.write(

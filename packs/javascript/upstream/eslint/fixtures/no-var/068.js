@@ -1,1 +1,0 @@
-function wrap() { bar(); var a = 1; function bar() { function inner() { console.log(a); } inner(); } }

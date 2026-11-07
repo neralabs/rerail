@@ -1,1 +1,0 @@
-x = function f(){}; class A { set a(val) { return 1; } };

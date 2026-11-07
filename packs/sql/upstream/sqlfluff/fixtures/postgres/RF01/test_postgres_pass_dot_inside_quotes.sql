@@ -1,2 +1,0 @@
-SELECT "a.b"
-FROM table

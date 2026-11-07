@@ -3,7 +3,7 @@
   "id": "ruff-f702-continue-outside-loop",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F702 (continue-outside-loop, a semantic syntax error) with default settings: `continue` with no enclosing `for`/`while` body between it and the nearest function or class definition. A loop's `else` block does not count as inside that loop.",
+  "description": "Keep continue inside a for or while loop body; outside one (including a loop's else block) it is a Python syntax error.",
   "scope": {
     "include": [
       "**/*"

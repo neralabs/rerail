@@ -1,6 +1,6 @@
 # Data-layer rules in `.rr`
 
-New data-layer rules use the `.rr` format from `More-ergonomic-rule-syntax`.
+New data-layer rules use the `.rr` format integrated into `Final rerail shape`.
 Use the engine-owned relations in `docs/rule-syntax/lib/core.rr` and shared Datalog libraries.
 Keep rule logic in Datalog. Do not add SQL stages or rule-specific native detectors.
 
@@ -8,38 +8,40 @@ The migration covers the **100 existing ports**, including their complete public
 The remaining 42 checks will use `.rr` when ported.
 The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
-## Engine survey
+## Active engine
 
-The sibling branches contain complementary work. Neither branch alone is the complete target.
+Build and develop the engine in this repository root. Its baseline is Final rerail shape
+`879486272cd1b44b3567320c85847ba0fd19a918`. That branch already merged the earlier migration fixes.
+Its engine, frontend, build files, and dependency locks replace the former root engine without local overrides.
+The sibling's uncommitted guest-language work is not part of this baseline.
 
-| Source | Commit inspected | Relevant work |
-| --- | --- | --- |
-| `final-rerail-shape` in `wolfeel` | `5332989f8` | `.rr` reader, core relations, includes, typed places, closed engine-owned names |
-| `final-shape-serverplan-quality` | `8f399baeae405bdad5fee4d65e123c25076f5ccf` | Batched corpus execution, containment views, local join pushdown, memoized file results, bounded history collection |
-| `More-ergonomic-rule-syntax` | See the migration manifest | Shared libraries and handwritten rule drafts, including uncommitted work |
-| `final-rerail-shape-rr-align` | `38d105533abf9be6482230ca36af63776943c2f9` | Reader and base-relation alignment, already in the final-shape branch |
-| `Typing-support-final-shape` | `667b48539` | Shared inference and typed program shapes |
-| `Parser-generators-final-shape` | `956269619` | Broad CPU and Metal parser kernels; a separate integration, not a format requirement |
+The nested `.rerail/rr-migration-20261106/engine` checkout is retired. Do not develop or build there.
+Existing receipts retain their historical engine hashes. They do not certify the current engine.
+The replay harness rejects libraries loaded from another checkout, even when their bytes match.
 
-The target runs rules as one combined program. It renames private relations and shares equivalent producers.
-It plans from stored statistics, pushes local joins into document batches, and reuses unchanged file results.
-Core facts come from typed tape views. The backend can execute broad batches on CPU or Metal.
-This migration must retain that shape. It must not restore per-node callbacks or per-rule fact reconstruction.
+Migration rules and fixtures live under `gate/data-layer/`, as Final shape defines them.
+The gate preserves all 100 historical policy contracts and the recorded-observation parity harness.
+The unfinished `error_handling` translation is preserved as a draft. It has no modern-engine acceptance claim.
 
-The integration checkout is `.rerail/rr-migration-20261106/engine`.
-It combines the final reader with the quality runtime. The merge required explicit repairs in five files.
-The first test build also found two mistakes in the merged containment tests. Those mistakes were corrected.
-The primary production addon remains the previous executable baseline until the new path passes the contracts below.
-The integration checkout is migration work, not a second production backend.
+Build the root CLI with the standard headless feature. On this machine, use:
+
+```sh
+PATH=/Users/jeremy/.cargo/bin:$PATH RUSTUP_TOOLCHAIN=1.97.1 cargo build -p rerail-engine --features headless --bin rerail-engine
+```
+
+The shared target directory may be supplied through `CARGO_TARGET_DIR`.
+Freeze the completed binary before acceptance and record its hash, root commit, command, and library hashes.
+Merge future Final shape updates into this branch. Resolve engine conflicts in favor of its current architecture;
+port any still-needed generic capability onto that architecture and test it there.
 
 ## Imported drafts and provenance
 
-[migration.json](../packs/data-layer/candidates/rr/migration.json) lists each of the 100 checks and its original policy hash.
+[migration.json](../gate/data-layer/packs/data-layer/candidates/rr/migration.json) lists each of the 100 checks and its original policy hash.
 It records the syntax branch commit and hashes the imported bytes, including uncommitted sibling work.
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **65 target drafts and 35 absent translations**. None has full acceptance yet.
+The current inventory contains **66 target drafts and 34 absent translations**. None has full acceptance yet.
 Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
 Reader success is a syntax milestone. It is not rule completion.
 

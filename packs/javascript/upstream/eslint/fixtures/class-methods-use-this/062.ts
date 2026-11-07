@@ -1,1 +1,0 @@
-class A { accessor foo = 1; }

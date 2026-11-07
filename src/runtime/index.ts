@@ -39,3 +39,23 @@ export {
   SqliteSessionStore,
 } from "./session-store.js";
 export { type RepositorySetupIo, onRuleCount } from "./repository-start.js";
+export { type NpmRunner } from "./npm.js";
+export {
+  addRemote,
+  machineId,
+  readRemoteConfig,
+  readRemoteToken,
+  removeRemote,
+  setRepositoryExcluded,
+  type RemoteConfig,
+  type RemoteEntry,
+} from "./remote-config.js";
+export {
+  backoffMs,
+  MAX_BACKOFF_MS,
+  MAX_BATCH_BYTES,
+  RemoteOutbox,
+  startRemoteSink,
+  type RemoteStatus,
+  type SyncResult,
+} from "./remote-outbox.js";

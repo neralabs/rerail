@@ -1,1 +1,0 @@
-<template><my-component #wrapper="{ items, Iteration }"><Iteration v-for="(key, index) in items" :key="key" :index="index" /></my-component></template>

@@ -1,1 +1,0 @@
-class C { #x; foo() { this.#x = function y() {}; } }

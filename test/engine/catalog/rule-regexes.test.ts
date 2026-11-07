@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadBundledCatalog } from "../../../src/engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { assertEngineRegexes, engineRegexIssues } from "../../../src/engine/catalog/rule-regexes.js";
 import {
@@ -75,7 +75,7 @@ describe("engine regex validation", () => {
 
     const library = openRerailDatabase(join(root, "rerail.sqlite"));
     try {
-      expect(() => upsertLibraryRule(library, loadBundledCatalog(), bad, "conversation")).toThrow(/^rule\.match\.regex is not a valid regex/u);
+      expect(() => upsertLibraryRule(library, loadRuleCatalog(), bad, "conversation")).toThrow(/^rule\.match\.regex is not a valid regex/u);
       expect(listLibraryRules(library)).toEqual([]);
     } finally {
       library.$client.close();

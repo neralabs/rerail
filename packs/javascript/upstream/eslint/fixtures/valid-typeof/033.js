@@ -1,1 +1,0 @@
-'strnig' === typeof foo

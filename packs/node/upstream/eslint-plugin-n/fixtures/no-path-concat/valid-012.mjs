@@ -1,1 +1,0 @@
-var fullPath = import.meta.filename + ".map";

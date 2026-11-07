@@ -3,7 +3,7 @@
   "id": "bandit-b412-import-httpoxy",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect imports of modules exposing insecure CGI handler classes.",
+  "description": "Avoid importing the CGI handlers from wsgiref and twisted.web; CGI handlers are exposed to the httpoxy proxy-header attack.",
   "scope": {
     "include": [
       "**/*.py"
@@ -94,7 +94,7 @@
       "violation": {
         "code": "B412",
         "anchor": "witness.span",
-        "message": "Consider possible security implications associated with this CGI handler import.",
+        "message": "Serve the app through a WSGI server instead of this CGI handler; CGI handlers are open to the httpoxy proxy-header attack.",
         "suppress": {
           "nosec": {
             "codes": [

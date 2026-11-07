@@ -3,7 +3,7 @@
  "id": "ruff-async221-run-process-in-async-function",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC221 (run-process-in-async-function): a call to `os.system`, `os.posix_spawn[p]`, `subprocess.run`/`call`/`check_call`/`check_output`/`getoutput`/`getstatusoutput`, or an `os.spawn*` function whose mode (Ruff's find_argument_value(\"mode\", 0): `arguments` in syntactic mode) is absent or `os.P_WAIT` (directly, or through a name whose value, read as find_assigned_value's lookup_symbol does (`resolves.binding` with `stopAtGlobal`), is `os.P_WAIT`) inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Don't run processes with subprocess.run, os.system or other blocking process calls inside async functions; they block the event loop until the process exits.",
  "scope": {
   "include": [
    "**/*"

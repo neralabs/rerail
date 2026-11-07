@@ -1,0 +1,43 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-v-html",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid the v-html directive; rendering raw HTML can expose users to XSS attacks.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "kind": "directive_attribute",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "directive_name",
+              "regex": "^v-html$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-v-html",
+        "message": "Render this content with text interpolation or components instead of v-html, or sanitize it first, to avoid XSS.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-v-html"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

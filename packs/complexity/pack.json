@@ -4,7 +4,82 @@
   "name": "Cyclomatic complexity (limit 6)",
   "category": "language",
   "covers": "Flags a Python, TypeScript or JavaScript function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6.",
-  "reason": "chosen by hand; a limit of 6 is strict for most existing code, so it is never recommended",
+  "reason": "matches Python, TypeScript or JavaScript source",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.py"
+        ],
+        "exclude": [
+          "**/node_modules/**",
+          "**/.venv/**",
+          "**/venv/**",
+          "**/site-packages/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/generated/**",
+          "**/__generated__/**",
+          "**/test_*.py",
+          "**/*_test.py",
+          "**/tests/**",
+          "**/conftest.py"
+        ],
+        "label": "*.py files"
+      },
+      {
+        "files": [
+          "**/*.ts",
+          "**/*.tsx",
+          "**/*.mts",
+          "**/*.cts"
+        ],
+        "exclude": [
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/out/**",
+          "**/.next/**",
+          "**/coverage/**",
+          "**/generated/**",
+          "**/__generated__/**",
+          "**/*.generated.ts",
+          "**/*.generated.tsx",
+          "**/*.gen.ts",
+          "**/*.test.*",
+          "**/*.spec.*",
+          "**/__tests__/**"
+        ],
+        "label": "*.ts files"
+      },
+      {
+        "files": [
+          "**/*.js",
+          "**/*.jsx",
+          "**/*.mjs",
+          "**/*.cjs"
+        ],
+        "exclude": [
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/out/**",
+          "**/.next/**",
+          "**/coverage/**",
+          "**/generated/**",
+          "**/__generated__/**",
+          "**/*.generated.js",
+          "**/*.generated.jsx",
+          "**/*.gen.js",
+          "**/*.min.js",
+          "**/*.test.*",
+          "**/*.spec.*",
+          "**/__tests__/**"
+        ],
+        "label": "*.js files"
+      }
+    ]
+  },
   "rules": [
     {
       "id": "complexity-cyclomatic-python",

@@ -1,1 +1,0 @@
-class C { foo = -2; }

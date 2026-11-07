@@ -1,1 +1,0 @@
-async function a(param: string){} // allow: setters

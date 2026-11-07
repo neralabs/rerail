@@ -1,7 +1,0 @@
-
-        class Hello extends React.Component {
-          componentWillUnmount() {
-            this.state.foo = "bar"
-          }
-        }
-      

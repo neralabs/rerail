@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadNativeBinding } from "../engine/native/native.js";
@@ -42,6 +42,8 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   native: NativeStatus;
   /** Absolute checkout path native sessions address. */
   workspaceRoot: string;
+  /** When Rerail was installed on this machine (epoch ms); null before the database exists. */
+  installedAt: number | null;
 }
 
 /**
@@ -242,9 +244,13 @@ export async function withStartLock<T>(
       await sleep(POLL_INTERVAL_MS);
     }
   }
+  // Written beside the lease and renamed over it: a rewrite in place truncates first, and a starter that read the
+  // empty file between would take the lease for stale and remove the lock this start still holds.
   const writeLease = async (): Promise<void> => {
     const lease: StartLockLease = { pid: process.pid, expiresAt: Date.now() + timing.leaseMs };
-    await writeFile(leasePath, JSON.stringify(lease), { mode: 0o600 });
+    const written = `${leasePath}.${process.pid}.tmp`;
+    await writeFile(written, JSON.stringify(lease), { mode: 0o600 });
+    await rename(written, leasePath);
   };
   const ownsLease = async (): Promise<boolean> => (await readStartLockLease(leasePath))?.pid === process.pid;
   await writeLease();

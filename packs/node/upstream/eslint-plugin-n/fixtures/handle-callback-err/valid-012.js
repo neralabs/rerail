@@ -1,1 +1,0 @@
-function handler(err, data) {if (data) {doSomethingWith(data);} else if (err) {console.log(err);}}

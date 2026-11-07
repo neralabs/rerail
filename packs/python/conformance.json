@@ -1126,7 +1126,7 @@
         "tool": "ruff",
         "rule": "F722"
       },
-      "policy": "rules/ruff-f722-forward-annotation-syntax-error.json",
+      "policy": "candidates/rules/ruff-f722-forward-annotation-syntax-error.json",
       "capabilities": [
         "annotation",
         "scope",
@@ -2010,7 +2010,7 @@
         "tool": "bandit",
         "rule": "B406"
       },
-      "policy": "rules/bandit-b406-import-xml-sax.json",
+      "policy": "candidates/rules/bandit-b406-import-xml-sax.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2156,7 +2156,7 @@
         "tool": "bandit",
         "rule": "B610"
       },
-      "policy": "rules/bandit-b610-django-extra-used.json",
+      "policy": "candidates/rules/bandit-b610-django-extra-used.json",
       "capabilities": [
         "arguments",
         "suppression"
@@ -2292,7 +2292,7 @@
         "tool": "ruff",
         "rule": "B030"
       },
-      "policy": "candidates/rules/ruff-b030-except-with-non-exception-classes.json",
+      "policy": "rules/ruff-b030-except-with-non-exception-classes.json",
       "capabilities": [
         "suppression",
         "syntax"

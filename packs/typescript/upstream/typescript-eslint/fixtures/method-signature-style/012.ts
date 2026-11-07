@@ -1,1 +1,0 @@
-type Test = { get f(): number };

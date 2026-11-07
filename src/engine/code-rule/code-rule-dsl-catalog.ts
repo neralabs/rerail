@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { and, eq, inArray, or } from "drizzle-orm";
-import { loadBundledCatalog } from "../catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../catalog/rule-catalog.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "../catalog/checkout-owner.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
@@ -18,7 +18,7 @@ import type { RepositoryAuditRuleProvenance, AuditRuleProvenance, RulePlacementD
 import { bundledCodeRuleDslDirectory } from "./code-rule-compile.js";
 import {
   folderContains,
-  type BundledCatalog,
+  type RuleCatalog,
   type CheckoutContext,
   type CheckoutRuleSet,
   type EffectiveRule,
@@ -31,7 +31,7 @@ import { checkoutStatus, parentCheckouts, recordedCheckoutsVersion } from "../ca
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
+import { checkouts, repositories, ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
 
 export { bundledCodeRuleDslDirectory };
@@ -320,15 +320,24 @@ interface CheckoutEntry {
 export class CheckoutCatalogs {
   readonly databasePath: string;
   readonly database: RerailDatabase;
-  readonly bundle: BundledCatalog;
+  readonly #ruleCatalog: RuleCatalog | undefined;
   readonly #capabilities: CodeRuleCapabilities;
   readonly #entries = new Map<string, CheckoutEntry>();
 
-  constructor(databasePath: string = defaultRerailDatabasePath(), options: { capabilities?: CodeRuleCapabilities; bundle?: BundledCatalog } = {}) {
+  /** `options.ruleCatalog` fixes the catalog; without it each read follows the installed packs (`loadRuleCatalog`). */
+  constructor(databasePath: string = defaultRerailDatabasePath(), options: { capabilities?: CodeRuleCapabilities; ruleCatalog?: RuleCatalog } = {}) {
     this.databasePath = resolve(databasePath);
     this.database = openRerailDatabase(this.databasePath);
-    this.bundle = options.bundle ?? loadBundledCatalog();
+    this.#ruleCatalog = options.ruleCatalog;
     this.#capabilities = options.capabilities ?? loadCodeRuleCapabilities();
+  }
+
+  /**
+   * The catalog the checkouts' rules come from. A pack installed or removed changes its digest, and with it every
+   * checkout's configuration signature, so the next refresh rebuilds their rules.
+   */
+  get ruleCatalog(): RuleCatalog {
+    return this.#ruleCatalog ?? loadRuleCatalog();
   }
 
   /** The checkout at `root` (a physical checkout top level) as last read; refreshed with `refresh`. */
@@ -338,6 +347,14 @@ export class CheckoutCatalogs {
 
   eligibility(root: string): CheckoutEligibility {
     return this.#entry(root).eligibility;
+  }
+
+  /** Whether audits in `root` leave out files Git ignores: its repository's setting, on for a checkout not recorded. */
+  followsGitignore(root: string): boolean {
+    const repositoryKey = this.#entry(root).checkout?.repositoryKey;
+    if (repositoryKey === undefined) return true;
+    return this.database.select({ followGitignore: repositories.followGitignore }).from(repositories)
+      .where(eq(repositories.repositoryKey, repositoryKey)).get()?.followGitignore ?? true;
   }
 
   /** The checkout and its recorded parent checkouts, whose settings apply in it. */
@@ -436,13 +453,13 @@ export class CheckoutCatalogs {
   #signature(entry: CheckoutEntry): string {
     this.#read(entry);
     if (entry.checkout === undefined) return entry.eligibility;
-    const signature = ruleConfigurationSignature(this.database, this.bundle, entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
+    const signature = ruleConfigurationSignature(this.database, this.ruleCatalog, entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
     return `${entry.eligibility}\0${signature}`;
   }
 
   #ruleSet(entry: CheckoutEntry): CheckoutRuleSet | undefined {
     if (entry.checkout === undefined || entry.status === undefined) return undefined;
-    return loadCheckoutRuleSet(this.database, this.bundle, entry.checkout, entry.status, entry.parents);
+    return loadCheckoutRuleSet(this.database, this.ruleCatalog, entry.checkout, entry.status, entry.parents);
   }
 
   #load(entry: CheckoutEntry): LoadedCheckoutRules {

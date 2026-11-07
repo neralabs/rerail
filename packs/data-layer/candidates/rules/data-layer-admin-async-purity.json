@@ -23,46 +23,17 @@
     {
       "id": "pattern-0",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\basyncio\\.to_thread\\b",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#"
-            ],
-            "state": {
-              "initial": "code",
-              "emit": [
-                "code"
-              ],
-              "transitions": [
-                {
-                  "from": "code",
-                  "to": "hidden",
-                  "pattern": "\"\"\"|\\x27\\x27\\x27",
-                  "count": {
-                    "parity": "odd"
-                  },
-                  "skip": true
-                },
-                {
-                  "from": "hidden",
-                  "to": "code",
-                  "pattern": "\"\"\"|\\x27\\x27\\x27",
-                  "count": {
-                    "parity": "odd"
-                  },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "\"\"\"|\\x27\\x27\\x27",
-                  "skip": true
-                }
-              ]
-            }
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "attribute"
+              },
+              {
+                "regex": "\\basyncio\\s*\\.\\s*to_thread$"
+              }
+            ]
           }
         }
       },
@@ -75,46 +46,17 @@
     {
       "id": "pattern-1",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\brun_in_executor\\b",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#"
-            ],
-            "state": {
-              "initial": "code",
-              "emit": [
-                "code"
-              ],
-              "transitions": [
-                {
-                  "from": "code",
-                  "to": "hidden",
-                  "pattern": "\"\"\"|\\x27\\x27\\x27",
-                  "count": {
-                    "parity": "odd"
-                  },
-                  "skip": true
-                },
-                {
-                  "from": "hidden",
-                  "to": "code",
-                  "pattern": "\"\"\"|\\x27\\x27\\x27",
-                  "count": {
-                    "parity": "odd"
-                  },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "\"\"\"|\\x27\\x27\\x27",
-                  "skip": true
-                }
-              ]
-            }
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "regex": "^run_in_executor$"
+              }
+            ]
           }
         }
       },
@@ -127,46 +69,17 @@
     {
       "id": "pattern-2",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bdisable_sync_in_async_check\\b",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#"
-            ],
-            "state": {
-              "initial": "code",
-              "emit": [
-                "code"
-              ],
-              "transitions": [
-                {
-                  "from": "code",
-                  "to": "hidden",
-                  "pattern": "\"\"\"|\\x27\\x27\\x27",
-                  "count": {
-                    "parity": "odd"
-                  },
-                  "skip": true
-                },
-                {
-                  "from": "hidden",
-                  "to": "code",
-                  "pattern": "\"\"\"|\\x27\\x27\\x27",
-                  "count": {
-                    "parity": "odd"
-                  },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "\"\"\"|\\x27\\x27\\x27",
-                  "skip": true
-                }
-              ]
-            }
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "regex": "^disable_sync_in_async_check$"
+              }
+            ]
           }
         }
       },

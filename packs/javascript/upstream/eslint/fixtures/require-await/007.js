@@ -1,1 +1,0 @@
-(class { async foo() { await doSomething() } })

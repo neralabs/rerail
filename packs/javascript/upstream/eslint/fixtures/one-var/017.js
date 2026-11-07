@@ -1,1 +1,0 @@
-function foo() { let a = 1; var c = true; if (a) {let c = true; } }

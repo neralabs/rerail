@@ -24,6 +24,8 @@ export interface RepositoryRecord {
   /** When set-up ran; `null` means Not set up, and nothing runs. */
   readonly configuredAt: number | null;
   readonly started: boolean;
+  /** Whether audits leave out files Git ignores; true until turned off. */
+  readonly followGitignore: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -170,8 +172,18 @@ export interface LibraryRule {
   readonly updatedAt: number;
 }
 
-/** The rules and packs that ship with Rerail, loaded once per process. */
-export interface BundledCatalog {
+/** An installed pack the catalog left out, and why. */
+export interface SkippedRulePack {
+  /** The pack's directory. */
+  readonly path: string;
+  /** The npm package and version its `package.json` names, where it can be read. */
+  readonly packageName: string | null;
+  readonly version: string | null;
+  readonly reason: string;
+}
+
+/** The rules and packs installed on this machine (`rule-catalog.ts`). */
+export interface RuleCatalog {
   readonly documents: ReadonlyMap<string, RuleDocument>;
   readonly packs: ReadonlyMap<string, RulePack>;
   /** Rule id → id of the pack that holds it (a rule is in at most one pack). */
@@ -181,8 +193,10 @@ export interface BundledCatalog {
    * resolved). A rule setting's `config` is applied to this one.
    */
   readonly sources: ReadonlyMap<string, unknown>;
-  /** Changes whenever a bundled document or pack file changes. */
+  /** Changes whenever a pack is added, removed or updated. */
   readonly digest: string;
+  /** Installed packs left out because they failed a check; the others load. */
+  readonly skipped: readonly SkippedRulePack[];
 }
 
 /**

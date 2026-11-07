@@ -58,10 +58,16 @@ pub(super) fn set_shortcuts_off(off: bool) {
     SHORTCUTS_OFF.set(off);
 }
 
-/// Whether the test oracle's work-skipping shortcuts run.
-#[cfg(test)]
+/// Whether the work-skipping shortcuts run: always, outside tests.
 pub(super) fn shortcuts_on() -> bool {
-    !SHORTCUTS_OFF.get()
+    #[cfg(test)]
+    {
+        !SHORTCUTS_OFF.get()
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
 }
 
 /// Whether this thread's budget is exhausted (never, without one). Callers that poll in a loop
@@ -86,8 +92,9 @@ pub(super) fn matcher_budget_observed() -> bool {
     })
 }
 
-/// Error-only diagnostics distinguish the outer clause from a SQL session's allowance.
+/// Error-only diagnostics distinguish the outer clause from a SQL session's allowance (D's).
 #[cfg(feature = "code-rule-profile")]
+#[allow(dead_code)]
 pub(super) fn profile() -> serde_json::Value {
     MATCH_BUDGET.with_borrow(|budget| {
         let Some(deadline) = budget else {
@@ -277,11 +284,14 @@ impl MatchDeadline {
 }
 
 /// An evaluation's suspended budget. Resuming restores its exact poll countdowns.
+#[allow(dead_code)]
 pub(super) struct Context {
     deadline: Option<MatchDeadline>,
     matcher: u32,
     steps: u32,
 }
+// P's suspended budgets, for its admission loop (outside the module tree until wired).
+#[allow(dead_code)]
 impl Context {
     pub(super) fn capture() -> Self {
         Self {
@@ -331,6 +341,7 @@ impl MatchBudget {
         Self::install(MatchDeadline::new(closed, Limit::Work(units)))
     }
 
+    #[allow(dead_code)]
     pub(super) fn resume(context: Context) -> Self {
         let deadline = context.deadline.expect("prepared file budget");
         MATCH_BUDGET.set(Some(deadline.clone()));

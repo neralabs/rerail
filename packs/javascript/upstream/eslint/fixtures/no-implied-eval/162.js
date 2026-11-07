@@ -1,1 +1,0 @@
-self.self.setTimeout(`foo${bar}`)

@@ -5,6 +5,11 @@ inputs:
   built:
     description: Download the `built` artifact (dist/ and the native engine) from the build job.
     default: "false"
+  npm-cache:
+    description: >-
+      Restore and save the npm cache. A job that runs a pull request's code under pull_request_target sets it to false:
+      setup-node saves on a miss, into the base branch's scope, which every workflow on main restores.
+    default: "true"
 
 runs:
   using: composite
@@ -13,7 +18,8 @@ runs:
       uses: actions/setup-node@v6
       with:
         node-version: "24"
-        cache: "npm"
+        cache: ${{ inputs.npm-cache == 'true' && 'npm' || '' }}
+        package-manager-cache: ${{ inputs.npm-cache == 'true' }}
         cache-dependency-path: |
           package-lock.json
           playground/package-lock.json

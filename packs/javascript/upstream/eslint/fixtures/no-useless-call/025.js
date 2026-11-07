@@ -1,1 +1,0 @@
-a.b(x, y).c.foo.call(a.b(x, y).c, 1, 2);

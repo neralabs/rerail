@@ -794,6 +794,1482 @@
                 ]
               }
             ]
+          },
+          "earlier-usage-0": {
+            "params": [
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "SqlAdminQuery$"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "inside": {
+                                              "kind": "call",
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "kind": "argument_list",
+                                              "stopBy": "neighbor",
+                                              "field": "superclasses"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "function_definition",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlAdminQuery"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^import$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "kind": "subscript"
+                                    },
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "kind": "generic_type"
+                                    },
+                                    {
+                                      "kind": "type"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlAdminQuery"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "eq": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "earlier-usage-1": {
+            "params": [
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "SqlBuiltQuery$"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "inside": {
+                                              "kind": "call",
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "kind": "argument_list",
+                                              "stopBy": "neighbor",
+                                              "field": "superclasses"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "function_definition",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlBuiltQuery"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^import$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "kind": "subscript"
+                                    },
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "kind": "generic_type"
+                                    },
+                                    {
+                                      "kind": "type"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlBuiltQuery"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "eq": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "earlier-usage-2": {
+            "params": [
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "SqlDdlStatement$"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "inside": {
+                                              "kind": "call",
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "kind": "argument_list",
+                                              "stopBy": "neighbor",
+                                              "field": "superclasses"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "function_definition",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlDdlStatement"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^import$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "kind": "subscript"
+                                    },
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "kind": "generic_type"
+                                    },
+                                    {
+                                      "kind": "type"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlDdlStatement"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "eq": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "earlier-usage-3": {
+            "params": [
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "SqlLegacy$"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "inside": {
+                                              "kind": "call",
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "kind": "argument_list",
+                                              "stopBy": "neighbor",
+                                              "field": "superclasses"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "function_definition",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlLegacy"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^import$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "kind": "subscript"
+                                    },
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "kind": "generic_type"
+                                    },
+                                    {
+                                      "kind": "type"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlLegacy"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "eq": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "earlier-usage-4": {
+            "params": [
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "SqlRawSql$"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "inside": {
+                                              "kind": "call",
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "kind": "argument_list",
+                                              "stopBy": "neighbor",
+                                              "field": "superclasses"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "function_definition",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlRawSql"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^import$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "kind": "subscript"
+                                    },
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "kind": "generic_type"
+                                    },
+                                    {
+                                      "kind": "type"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlRawSql"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "eq": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "earlier-usage-5": {
+            "params": [
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "SqlRawSqlWithParams$"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "inside": {
+                                              "kind": "call",
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "kind": "argument_list",
+                                              "stopBy": "neighbor",
+                                              "field": "superclasses"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "function_definition",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlRawSqlWithParams"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^import$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "kind": "subscript"
+                                    },
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "kind": "generic_type"
+                                    },
+                                    {
+                                      "kind": "type"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlRawSqlWithParams"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "eq": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "earlier-usage-6": {
+            "params": [
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "SqlUnsafe$"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "inside": {
+                                              "kind": "call",
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "kind": "argument_list",
+                                              "stopBy": "neighbor",
+                                              "field": "superclasses"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "function_definition",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlUnsafe"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^import$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "kind": "subscript"
+                                    },
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "kind": "generic_type"
+                                    },
+                                    {
+                                      "kind": "type"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^SqlUnsafe"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "eq": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "earlier-usage-7": {
+            "params": [
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "_SqlPrebuiltCondition$"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "inside": {
+                                              "kind": "call",
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "kind": "argument_list",
+                                              "stopBy": "neighbor",
+                                              "field": "superclasses"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "function_definition",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^_SqlPrebuiltCondition"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^import$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "kind": "subscript"
+                                    },
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "kind": "generic_type"
+                                    },
+                                    {
+                                      "kind": "type"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^_SqlPrebuiltCondition"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "eq": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "earlier-usage-8": {
+            "params": [
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "_SqlPrebuiltQuery$"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "inside": {
+                                              "kind": "call",
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "kind": "argument_list",
+                                              "stopBy": "neighbor",
+                                              "field": "superclasses"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "function_definition",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^_SqlPrebuiltQuery"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^import$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "kind": "subscript"
+                                    },
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "kind": "generic_type"
+                                    },
+                                    {
+                                      "kind": "type"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^_SqlPrebuiltQuery"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "eq": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
           }
         },
         "report_when": {
@@ -1497,14 +2973,178 @@
     {
       "id": "usage-0",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "SqlAdminQuery\\(|import SqlAdminQuery|, SqlAdminQuery",
-          "lines": {
-            "first": true,
-            "terminators": "lf",
-            "exclude": [
-              "^\\s*#"
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "SqlAdminQuery$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "attribute"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "argument_list",
+                                        "stopBy": "neighbor",
+                                        "field": "superclasses"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "function_definition",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlAdminQuery"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^import$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "kind": "attribute"
+                              },
+                              {
+                                "kind": "subscript"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "kind": "generic_type"
+                              },
+                              {
+                                "kind": "type"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlAdminQuery"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$CURRENT"
+                  },
+                  {
+                    "not": {
+                      "matches": {
+                        "earlier-usage-0": {
+                          "CURRENT": "$CURRENT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
             ]
           }
         }
@@ -1518,14 +3158,178 @@
     {
       "id": "usage-1",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "SqlBuiltQuery\\(|import SqlBuiltQuery|, SqlBuiltQuery",
-          "lines": {
-            "first": true,
-            "terminators": "lf",
-            "exclude": [
-              "^\\s*#"
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "SqlBuiltQuery$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "attribute"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "argument_list",
+                                        "stopBy": "neighbor",
+                                        "field": "superclasses"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "function_definition",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlBuiltQuery"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^import$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "kind": "attribute"
+                              },
+                              {
+                                "kind": "subscript"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "kind": "generic_type"
+                              },
+                              {
+                                "kind": "type"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlBuiltQuery"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$CURRENT"
+                  },
+                  {
+                    "not": {
+                      "matches": {
+                        "earlier-usage-1": {
+                          "CURRENT": "$CURRENT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
             ]
           }
         }
@@ -1539,14 +3343,178 @@
     {
       "id": "usage-2",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "SqlDdlStatement\\(|import SqlDdlStatement|, SqlDdlStatement",
-          "lines": {
-            "first": true,
-            "terminators": "lf",
-            "exclude": [
-              "^\\s*#"
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "SqlDdlStatement$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "attribute"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "argument_list",
+                                        "stopBy": "neighbor",
+                                        "field": "superclasses"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "function_definition",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlDdlStatement"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^import$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "kind": "attribute"
+                              },
+                              {
+                                "kind": "subscript"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "kind": "generic_type"
+                              },
+                              {
+                                "kind": "type"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlDdlStatement"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$CURRENT"
+                  },
+                  {
+                    "not": {
+                      "matches": {
+                        "earlier-usage-2": {
+                          "CURRENT": "$CURRENT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
             ]
           }
         }
@@ -1560,14 +3528,178 @@
     {
       "id": "usage-3",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "SqlLegacy\\(|import SqlLegacy|, SqlLegacy",
-          "lines": {
-            "first": true,
-            "terminators": "lf",
-            "exclude": [
-              "^\\s*#"
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "SqlLegacy$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "attribute"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "argument_list",
+                                        "stopBy": "neighbor",
+                                        "field": "superclasses"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "function_definition",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlLegacy"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^import$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "kind": "attribute"
+                              },
+                              {
+                                "kind": "subscript"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "kind": "generic_type"
+                              },
+                              {
+                                "kind": "type"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlLegacy"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$CURRENT"
+                  },
+                  {
+                    "not": {
+                      "matches": {
+                        "earlier-usage-3": {
+                          "CURRENT": "$CURRENT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
             ]
           }
         }
@@ -1581,14 +3713,178 @@
     {
       "id": "usage-4",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "SqlRawSql\\(|import SqlRawSql|, SqlRawSql",
-          "lines": {
-            "first": true,
-            "terminators": "lf",
-            "exclude": [
-              "^\\s*#"
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "SqlRawSql$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "attribute"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "argument_list",
+                                        "stopBy": "neighbor",
+                                        "field": "superclasses"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "function_definition",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlRawSql"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^import$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "kind": "attribute"
+                              },
+                              {
+                                "kind": "subscript"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "kind": "generic_type"
+                              },
+                              {
+                                "kind": "type"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlRawSql"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$CURRENT"
+                  },
+                  {
+                    "not": {
+                      "matches": {
+                        "earlier-usage-4": {
+                          "CURRENT": "$CURRENT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
             ]
           }
         }
@@ -1602,14 +3898,178 @@
     {
       "id": "usage-5",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "SqlRawSqlWithParams\\(|import SqlRawSqlWithParams|, SqlRawSqlWithParams",
-          "lines": {
-            "first": true,
-            "terminators": "lf",
-            "exclude": [
-              "^\\s*#"
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "SqlRawSqlWithParams$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "attribute"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "argument_list",
+                                        "stopBy": "neighbor",
+                                        "field": "superclasses"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "function_definition",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlRawSqlWithParams"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^import$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "kind": "attribute"
+                              },
+                              {
+                                "kind": "subscript"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "kind": "generic_type"
+                              },
+                              {
+                                "kind": "type"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlRawSqlWithParams"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$CURRENT"
+                  },
+                  {
+                    "not": {
+                      "matches": {
+                        "earlier-usage-5": {
+                          "CURRENT": "$CURRENT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
             ]
           }
         }
@@ -1623,14 +4083,178 @@
     {
       "id": "usage-6",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "SqlUnsafe\\(|import SqlUnsafe|, SqlUnsafe",
-          "lines": {
-            "first": true,
-            "terminators": "lf",
-            "exclude": [
-              "^\\s*#"
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "SqlUnsafe$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "attribute"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "argument_list",
+                                        "stopBy": "neighbor",
+                                        "field": "superclasses"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "function_definition",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlUnsafe"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^import$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "kind": "attribute"
+                              },
+                              {
+                                "kind": "subscript"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "kind": "generic_type"
+                              },
+                              {
+                                "kind": "type"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^SqlUnsafe"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$CURRENT"
+                  },
+                  {
+                    "not": {
+                      "matches": {
+                        "earlier-usage-6": {
+                          "CURRENT": "$CURRENT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
             ]
           }
         }
@@ -1644,14 +4268,178 @@
     {
       "id": "usage-7",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "_SqlPrebuiltCondition\\(|import _SqlPrebuiltCondition|, _SqlPrebuiltCondition",
-          "lines": {
-            "first": true,
-            "terminators": "lf",
-            "exclude": [
-              "^\\s*#"
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "_SqlPrebuiltCondition$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "attribute"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "argument_list",
+                                        "stopBy": "neighbor",
+                                        "field": "superclasses"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "function_definition",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^_SqlPrebuiltCondition"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^import$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "kind": "attribute"
+                              },
+                              {
+                                "kind": "subscript"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "kind": "generic_type"
+                              },
+                              {
+                                "kind": "type"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^_SqlPrebuiltCondition"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$CURRENT"
+                  },
+                  {
+                    "not": {
+                      "matches": {
+                        "earlier-usage-7": {
+                          "CURRENT": "$CURRENT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
             ]
           }
         }
@@ -1665,14 +4453,178 @@
     {
       "id": "usage-8",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "_SqlPrebuiltQuery\\(|import _SqlPrebuiltQuery|, _SqlPrebuiltQuery",
-          "lines": {
-            "first": true,
-            "terminators": "lf",
-            "exclude": [
-              "^\\s*#"
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "_SqlPrebuiltQuery$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "call",
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "attribute"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "argument_list",
+                                        "stopBy": "neighbor",
+                                        "field": "superclasses"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "function_definition",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^_SqlPrebuiltQuery"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^import$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "kind": "attribute"
+                              },
+                              {
+                                "kind": "subscript"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "kind": "generic_type"
+                              },
+                              {
+                                "kind": "type"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^_SqlPrebuiltQuery"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$CURRENT"
+                  },
+                  {
+                    "not": {
+                      "matches": {
+                        "earlier-usage-8": {
+                          "CURRENT": "$CURRENT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
             ]
           }
         }

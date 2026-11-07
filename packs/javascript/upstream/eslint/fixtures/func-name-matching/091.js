@@ -1,1 +1,0 @@
-class C { [1] = function x1() {}; }

@@ -1,1 +1,0 @@
-({ get 'abc'(){}, d(){}, set 'abc'(foo){} })

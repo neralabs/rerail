@@ -1,0 +1,18 @@
+.policy "n-prefer-global-crypto" revision 4
+.description "Use the global crypto object instead of reading webcrypto from the crypto module; Node.js provides it as a global."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-global/crypto: use the global crypto, not the crypto module's webcrypto. Option "always" (the
+// default) reports each use of the module's webcrypto; "never" reports each use of the global:
+//   const { webcrypto } = require("crypto")     import { webcrypto } from "node:crypto"     require("crypto").webcrypto
+//   export * from "crypto"                  reported (the export re-exports webcrypto)
+//   "never":  crypto  globalThis.crypto                                             reported
+// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rr).
+
+#include "tsx/node-trace.rr"   // prefer_global_use
+module_global("crypto", "crypto", "webcrypto").
+
+.violation prefer_global(at: node, msg: symbol) code "n/prefer-global/crypto" "{msg}"
+    suppress eslint "n/prefer-global/crypto"
+prefer_global(n, m) :- prefer_global_use(n, m).

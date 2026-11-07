@@ -1,1 +1,0 @@
-<template><div><div :style="a" style="b"></div></div></template>

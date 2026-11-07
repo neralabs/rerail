@@ -1,1 +1,0 @@
-class A { get b() {} static get a() {} set b(bar) {} }

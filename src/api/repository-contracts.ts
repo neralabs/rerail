@@ -39,6 +39,8 @@ export const repositorySummarySchema = z.object({
   configuredAt: z.number().int().nullable(),
   started: z.boolean().describe("The repository's own on/off, which every checkout without its own value follows."),
   state: startStateSchema.describe("The repository's own state, before any checkout's own value."),
+  followGitignore: z.boolean()
+    .describe("Whether audits leave out files Git ignores (.gitignore, .git/info/exclude, global excludes); sessions started after a change use the new value."),
   checkoutCount: z.number().int().nonnegative(),
 }).strict();
 
@@ -105,6 +107,9 @@ const effectiveRuleBase = {
   configError: z.string().nullable().describe("Why config does not apply to the rule's document; the rule then runs nowhere."),
   revision: z.number().int().positive(),
   payloadHash: z.string(),
+  addedAt: z.number().int().nullable()
+    .describe("Epoch milliseconds the attachment that brings the rule in (its pack, or the rule itself) was added at this folder."),
+  updatedAt: z.number().int().nullable().describe("Epoch milliseconds a rule created by you was last edited; null for rules by Rerail."),
 };
 export const effectiveRuleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
@@ -128,7 +133,7 @@ export const repositoryRulesSchema = z.object({
 
 const settingValues = {
   on: z.boolean().nullable().optional().describe("true/false sets on/off; null clears it; omitted keeps the stored value."),
-  mode: z.enum(RULE_MODES).nullable().optional().describe("Sets the mode; null clears it; omitted keeps the stored value."),
+  mode: z.enum(RULE_MODES).nullable().optional().describe("Sets the mode; null clears it; omitted keeps the stored value. block is in internal testing and is delivered like steer."),
   suppressions: z.enum(RULE_SUPPRESSIONS).nullable().optional()
     .describe("honour or ignore linters' suppression comments (eslint-disable, noqa, ...) for the rule; null clears it; omitted keeps the stored value."),
   config: ruleConfigSchema.nullable().optional()
@@ -199,7 +204,7 @@ export const quarantinedRuleSchema = z.object({
 }).strict();
 
 export const libraryUpsertBodySchema = z.object({
-  kind: z.enum(RULE_KINDS),
+  kind: z.enum(RULE_KINDS).describe("code, or conversation, which is in internal testing."),
   rule: z.union([codeRuleSchema, conversationRuleSchema]),
   revision: z.number().int().positive().optional().describe("Conversation rules only; code rules carry rule.revision."),
   ...targetShape,
@@ -245,4 +250,19 @@ export const startResultSchema = z.object({
 export const linkBodySchema = z.object({
   ...targetShape,
   address: z.string().min(1).describe("A remote address (https, ssh or scp form) that should resolve to this repository."),
+}).strict();
+
+export const followGitignoreBodySchema = z.object({
+  ...targetShape,
+  followGitignore: z.boolean()
+    .describe("true: files Git ignores (.gitignore, .git/info/exclude, global excludes) are not audited; tracked files always are. false: only Rerail's own ignores apply."),
+}).strict();
+
+export const resetBodySchema = z.object({ ...targetShape }).strict();
+
+export const resetResultSchema = z.object({
+  repositoryKey: z.string(),
+  sessions: z.number().int().nonnegative().describe("Ended sessions removed together with all of their history."),
+  openSessions: z.number().int().nonnegative()
+    .describe("Sessions still running: their rows stay so they carry on recording; their history so far is removed."),
 }).strict();

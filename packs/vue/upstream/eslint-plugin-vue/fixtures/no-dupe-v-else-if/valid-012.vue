@@ -1,1 +1,0 @@
-<template><div v-if="f" /><div v-else-if="f()" /></template>

@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-identical-always-true",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove strict === comparisons in Blade templates that are always true from values the template itself sets; the check is dead logic or hides a bug.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "kind": "binary_expression",
+            "has": {
+              "field": "operator",
+              "regex": "^===$"
+            },
+            "value": {
+              "eq": true,
+              "follow": true
+            },
+            "not": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "parenthesized_expression",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "else_if_clause",
+                  "field": "condition",
+                  "not": {
+                    "precedes": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "else_if_clause"
+                        },
+                        {
+                          "kind": "else_clause"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "identical.alwaysTrue",
+        "message": "Strict comparison using === will always evaluate to true."
+      }
+    }
+  ]
+}

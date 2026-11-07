@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import type { ConversationRuleRegistry } from "../../engine/catalog/registry.js";
 import { MUTATION_ENTRY_TYPE, type RuleMutation } from "../../runtime/session-state.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../../engine/catalog/rule-schema.js";
+import { internalTesting } from "../../engine/internal-testing.js";
 
 export interface PiConversationRulesToolRuntime {
   registry?: () => ConversationRuleRegistry;
@@ -34,11 +35,12 @@ function toolResult(details: Record<string, unknown>) {
   };
 }
 
+/** Internal testing: conversation rules, cosine (similarity) and command (tool-call) alike. */
 export function registerPiConversationRulesTool(pi: ExtensionAPI, runtime: PiConversationRulesToolRuntime): void {
   pi.registerTool({
     name: "conversation_rules",
     label: "Cosine Rules",
-    description: "Add, remove, inspect, or test session-scoped cosine-similarity trigger rules.",
+    description: internalTesting("Add, remove, inspect, or test session-scoped cosine-similarity trigger rules."),
     parameters,
     async execute(_toolCallId, input, signal) {
       if (signal?.aborted) throw signal.reason;

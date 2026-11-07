@@ -7,7 +7,9 @@ use crate::code_rule_dsl::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, Evaluation, FactQuery, FileInput, Projection,
     ProjectionSource, Query, ViolationSpec,
 };
+use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::query::crossfile::{self, Relation, Requirement};
+use crate::code_rule_dsl::tape::tape_doc;
 use crate::code_rule_dsl::violations::{self, NodeGroup, Witness};
 use ast_grep_core::Doc;
 use ast_grep_core::matcher::NodeMatch;
@@ -46,9 +48,14 @@ pub(crate) fn producer_violation(
     side: Side,
 ) -> ViolationSpec {
     let mut violation = clause.violation.clone();
-    violation.input_only = matches!(clause.kind, ClauseKind::Relational(_));
+    // P's relational inputs (test-only, open item O18) keep only their anchor and typed fields.
+    #[cfg(test)]
+    {
+        violation.input_only = matches!(clause.kind, ClauseKind::Relational(_));
+    }
     violation.project = relation.project.to_vec();
     violation.fix = None;
+    violation.fix_template = None;
     violation.fix_range = None;
     violation.each = relation.each.clone();
     violation.anchor = relation.anchor.clone();
@@ -59,85 +66,17 @@ pub(crate) fn producer_violation(
         Side::Evidence => violation.ignored_by = None,
         Side::Counted => violation.ignore_marks = true,
     }
-    if let Query::Ast { matchers, .. } = &relation.ast.query {
-        violation.node_regexes = matchers
-            .iter()
-            .filter_map(|grammar| {
-                let regexes = violations::witness_regexes(&grammar.matcher, &grammar.utils);
-                (!regexes.is_empty()).then_some((grammar.language, regexes))
-            })
-            .collect();
-    }
+    let Query::Ast { matchers, .. } = &relation.ast.query else {
+        unreachable!("evidence relations always use ast queries");
+    };
+    violation.node_regexes = matchers
+        .iter()
+        .filter_map(|grammar| {
+            let regexes = violations::witness_regexes(&grammar.matcher, &grammar.utils);
+            (!regexes.is_empty()).then_some((grammar.language, regexes))
+        })
+        .collect();
     violation
-}
-
-/// Typed projections for text matches retain shared source slices, as AST evidence does.
-pub(in crate::code_rule_dsl) fn project_text(
-    project: &[Projection],
-    file: &FileInput,
-    witness: &Witness,
-) -> violations::projection::Row {
-    use std::{borrow::Cow, sync::Arc};
-    use violations::projection::{self, Input};
-    let (directory, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
-    let values = project.iter().map(|column| {
-        let capture = |name: &str| {
-            witness
-                .captures
-                .get(name)
-                .and_then(|spans| Some((spans.first()?, spans.last()?)))
-        };
-        let value = match &column.source {
-            ProjectionSource::Path => Input::Text(Cow::Borrowed(&file.path)),
-            ProjectionSource::Directory => Input::Text(Cow::Borrowed(directory)),
-            ProjectionSource::Name => Input::Text(Cow::Borrowed(name)),
-            ProjectionSource::Stem => Input::Text(Cow::Borrowed(
-                name.split_once('.').map_or(name, |(stem, _)| stem),
-            )),
-            ProjectionSource::Module => file
-                .module
-                .as_deref()
-                .map_or(Input::Null, |m| Input::Text(Cow::Owned(m.text()))),
-            ProjectionSource::Package => file
-                .module
-                .as_deref()
-                .map_or(Input::Null, |m| Input::Text(Cow::Owned(m.package_text()))),
-            ProjectionSource::Capture(name) | ProjectionSource::CaptureText(name) => capture(name)
-                .map_or(Input::Null, |(first, last)| {
-                    Input::Source(&file.source, first.start_byte..last.end_byte)
-                }),
-            ProjectionSource::CaptureStart(name) => capture(name)
-                .map_or(Input::Null, |(first, _)| {
-                    Input::Integer(first.start_byte as i64)
-                }),
-            ProjectionSource::CaptureEnd(name) => capture(name).map_or(Input::Null, |(_, last)| {
-                Input::Integer(last.end_byte as i64)
-            }),
-            ProjectionSource::CaptureLine(name) => capture(name)
-                .map_or(Input::Null, |(first, _)| {
-                    Input::Integer(first.start_line as i64)
-                }),
-            ProjectionSource::CaptureKind(_) => Input::Null,
-        };
-        if let Some((regex, group)) = &column.extract {
-            value
-                .text()
-                .and_then(|text| regex.captures(text))
-                .and_then(|found| found.get(*group).map(|m| m.range()))
-                .map_or(Input::Null, |range| value.slice(range))
-        } else {
-            value
-        }
-    });
-    projection::append(
-        (
-            project.as_ptr() as usize,
-            Arc::as_ptr(&file.source) as usize,
-            file.path.as_ptr() as usize,
-        ),
-        || project.iter().map(|p| p.field.clone()).collect(),
-        values,
-    )
 }
 
 /// Project directly into typed columns; capture text retains a shared source slice.
@@ -150,6 +89,10 @@ pub(super) fn project<D: Doc>(
     use std::{borrow::Cow, sync::Arc};
     use violations::projection::{self, Input};
     let env = matched.get_env();
+    // A capture's position is the file's at the bytes it stands for (`origin`): an embedded
+    // program's ranges are mapped to the file's, and a capture standing for several file ranges
+    // reads its own text, never the file's bytes between them.
+    let place = InFile::of(matched.get_node()).expect("a witness's document is a file's");
     let capture_range = |capture: &str| {
         env.get_match(capture)
             .map(|node| node.range())
@@ -171,6 +114,30 @@ pub(super) fn project<D: Doc>(
             .filter(|r| file.source.get(r.clone()).is_some())
             .map_or(Input::Null, |r| Input::Source(&file.source, r))
     };
+    // The capture's own text over document range `range`, for a capture that is not one file range.
+    let own_text = |capture: &str, range: std::ops::Range<usize>| {
+        exported_text(env, capture)
+            .or_else(|| {
+                groups
+                    .iter()
+                    .find(|(name, _, _)| name == capture)
+                    .map(|(_, own, _)| own.to_string())
+            })
+            .or_else(|| {
+                tape_doc(matched.get_node())
+                    .and_then(|doc| doc.get_source().get(range).map(str::to_owned))
+            })
+    };
+    let file_range = |range: std::ops::Range<usize>| place.places(range).primary();
+    let capture_source = |capture: &str| match capture_range(capture) {
+        None => Input::Null,
+        Some(range) => match place.places(range.clone()).single() {
+            Some(file) => source(Some(file)),
+            None => {
+                own_text(capture, range).map_or(Input::Null, |text| Input::Text(Cow::Owned(text)))
+            }
+        },
+    };
     let values = project.iter().map(
         |Projection {
              source: from,
@@ -178,9 +145,10 @@ pub(super) fn project<D: Doc>(
              ..
          }| {
             let value = match from {
-                ProjectionSource::Capture(capture) => source(capture_range(capture)),
-                ProjectionSource::CaptureLine(capture) => {
-                    capture_range(capture).map_or(Input::Null, |r| {
+                ProjectionSource::Capture(capture) => capture_source(capture),
+                ProjectionSource::CaptureLine(capture) => capture_range(capture)
+                    .map(file_range)
+                    .map_or(Input::Null, |r| {
                         Input::Integer(
                             crate::code_rule_dsl::matcher::file_lines(
                                 &file.source,
@@ -189,14 +157,13 @@ pub(super) fn project<D: Doc>(
                             .span(r.start, r.end)
                             .start_line as i64,
                         )
-                    })
-                }
-                ProjectionSource::CaptureStart(capture) => {
-                    capture_range(capture).map_or(Input::Null, |r| Input::Integer(r.start as i64))
-                }
-                ProjectionSource::CaptureEnd(capture) => {
-                    capture_range(capture).map_or(Input::Null, |r| Input::Integer(r.end as i64))
-                }
+                    }),
+                ProjectionSource::CaptureStart(capture) => capture_range(capture)
+                    .map(file_range)
+                    .map_or(Input::Null, |r| Input::Integer(r.start as i64)),
+                ProjectionSource::CaptureEnd(capture) => capture_range(capture)
+                    .map(file_range)
+                    .map_or(Input::Null, |r| Input::Integer(r.end as i64)),
                 ProjectionSource::CaptureText(capture) => {
                     if let Some(text) = exported_text(env, capture).or_else(|| {
                         env.get_transformed(capture)
@@ -204,15 +171,17 @@ pub(super) fn project<D: Doc>(
                     }) {
                         Input::Text(Cow::Owned(text))
                     } else if let Some(node) = env.get_match(capture) {
-                        let range = node.range();
                         let text = node.text();
-                        if file.source.get(range.clone()) == Some(text.as_ref()) {
-                            source(Some(range))
-                        } else {
-                            Input::Text(Cow::Owned(text.into_owned()))
+                        match place.place(node).single() {
+                            Some(range)
+                                if file.source.get(range.clone()) == Some(text.as_ref()) =>
+                            {
+                                source(Some(range))
+                            }
+                            _ => Input::Text(Cow::Owned(text.into_owned())),
                         }
                     } else {
-                        source(capture_range(capture))
+                        capture_source(capture)
                     }
                 }
                 ProjectionSource::CaptureKind(capture) => env
@@ -739,6 +708,7 @@ mod tests {
         };
         let rows = || Rows {
             witnesses: vec![Witness {
+                sql_violation: None,
                 path: "pkg/a.py".to_owned(),
                 span: crate::code_rule_dsl::violations::Span {
                     start_byte: 0,

@@ -1,1 +1,0 @@
-foo[`isPrototypeOf`]('bar').baz

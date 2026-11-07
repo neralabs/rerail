@@ -1,1 +1,0 @@
-foo.notInsertBefore(foo, null)

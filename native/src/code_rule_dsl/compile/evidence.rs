@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// An AST `evidence` relation projected from matches across the code rule's scoped files.
-pub(super) fn compile_relation(
+pub(in crate::code_rule_dsl) fn compile_relation(
     value: &Value,
     path: &str,
     capabilities: &Capabilities,
@@ -41,17 +41,8 @@ pub(super) fn compile_relation(
         defines,
         required_ast,
     )?;
-    if !matches!(
-        query,
-        Query::Ast { .. }
-            | Query::Regex {
-                source: crate::code_rule_dsl::model::RegexSource::Content,
-                ..
-            }
-    ) {
-        return Err(invalid(format!(
-            "{path}/query must be an ast or file.content regex query"
-        )));
+    if !matches!(query, Query::Ast { .. }) {
+        return Err(invalid(format!("{path}/query must be an ast query")));
     }
     if !query.calls().is_empty() {
         return Err(invalid(format!(

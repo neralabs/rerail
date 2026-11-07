@@ -1,1 +1,0 @@
-const dns = process.getBuiltinModule('dns'); dns.promises.lookup()

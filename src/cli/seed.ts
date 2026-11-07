@@ -2,7 +2,7 @@ import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import type { ConversationRule } from "../engine/catalog/rule-schema.js";
 import { CODE_RULE_AST_LANGUAGES } from "../engine/code-rule/code-rule-languages.js";
 
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { openRerailDatabase } from "../engine/storage/database.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import { SqliteSessionStore, type WorkLink } from "../runtime/session-store.js";
@@ -128,9 +128,9 @@ export function seedRerailDatabase(path: string, options: SeedOptions = {}): See
   const now = options.now ?? Date.now();
   const database = openRerailDatabase(path);
   try {
-    const bundle = loadBundledCatalog();
-    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "code", { now });
-    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, bundle, rule, "conversation", { now, revision: 1 });
+    const ruleCatalog = loadRuleCatalog();
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, ruleCatalog, rule, "code", { now });
+    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, ruleCatalog, rule, "conversation", { now, revision: 1 });
   } finally {
     database.$client.close();
   }

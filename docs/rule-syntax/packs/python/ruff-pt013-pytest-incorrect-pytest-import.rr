@@ -1,0 +1,22 @@
+.policy "ruff-pt013-pytest-incorrect-pytest-import" revision 2
+.description "Import pytest as a plain module, without an alias or from-imports, and access its members through it; this keeps usage consistent across tests."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT013 (flake8-pytest-style): pytest imported under another name, or its members imported directly.
+// Reported at the import statement.
+//   import pytest as pt              ← PT013
+//   from pytest import fixture       ← PT013
+//   from pytest.mark import slow     ← PT013
+//   import pytest                    not reported
+//   from .pytest import x            not reported: a relative import is not pytest
+#include "python/pytest.rr"
+
+.violation PT013(at: node, id: symbol) code "PT013" "{id}"
+    suppress ruff "PT013"
+PT013(i, "Drop the alias: write `import pytest` and use `pytest.xxx` (for example `pytest.mark`); keep the alias only if another name `pytest` in this file would clash.") :-
+    kind(i, "import_statement"), field(i, "name", a), kind(a, "aliased_import"), field(a, "name", d), text(d, m),
+    glob("pytest{,.*}", m), field(a, "alias", al), !text(al, m).
+PT013(i, "Replace this with `import pytest` and refer to each member as `pytest.<name>`, such as `pytest.fixture`; leave it if this repo imports pytest names directly on purpose.") :-
+    kind(i, "import_from_statement"), field(i, "module_name", d), kind(d, "dotted_name"), text(d, m), glob("pytest{,.*}", m).

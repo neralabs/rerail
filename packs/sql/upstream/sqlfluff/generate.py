@@ -1,5 +1,6 @@
 """Records SQLFluff 4.4.0 for the SQL pack's chosen T4 rules (RULES; the pack's conformance.json lists them). Run
-offline by a maintainer, never in CI, with the pinned venv (fixtures/sql/common.py):
+by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request CI), with
+the pinned venv (fixtures/sql/common.py):
 
     <checkout>/.rerail/tools/sql/venv/bin/python generate.py fixtures
     <checkout>/.rerail/tools/sql/venv/bin/python generate.py corpus [<name> ...]   # default: every T4 corpus
@@ -38,7 +39,9 @@ import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[3] / "fixtures" / "sql"))
+sys.path.insert(0, str(HERE.parents[3] / "scripts" / "s3"))
 import common  # noqa: E402
+import pack_fixtures  # noqa: E402
 import reference  # noqa: E402
 
 TOOL = "sqlfluff"
@@ -213,6 +216,7 @@ def write_recording(path: pathlib.Path, source: dict, findings: list[dict]) -> N
     findings = sorted(findings, key=lambda f: (f["rule"], f["path"], f["line"], f.get("column", 0)))
     path.write_text(json.dumps({"tool": TOOL, "version": common.TOOLS["sqlfluff"], "source": source,
                                 "findings": findings}, indent=1, ensure_ascii=False) + "\n")
+    pack_fixtures.recording_written(path, source)
 
 
 def fixtures() -> None:
@@ -254,6 +258,7 @@ def fixtures() -> None:
     (HERE / "fixtures.cases.json").write_text(json.dumps(
         {"tool": TOOL, "version": common.TOOLS["sqlfluff"], "origin": ORIGIN, "portConfiguration": RULES,
          "leftOut": left_out, "cases": cases}, indent=1, ensure_ascii=False) + "\n")
+    pack_fixtures.written(HERE / "fixtures.cases.json")
     print(f"{len(files)} fixture files, {len(findings)} findings", file=sys.stderr)
 
 

@@ -115,32 +115,74 @@
     {
       "id": "text-str_union_expression",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bstr\\s*\\|\\s*Expression|\\bExpression\\s*\\|\\s*str",
-          "lines": {
-            "first": true
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "impl/common/l2060_query_spec/query_spec.py",
-              "impl/common/l2070_server_plan/base_server_plan.py",
-              "impl/common/l5200_sql_query/_base.py",
-              "impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query.py",
-              "impl/common/l7300_cross_branch/sql_cross_branch_query.py",
-              "l2055_lazy_result/lazy_reads.py",
-              "l2055_lazy_result/query_spec.py",
-              "l9700_graph_query/graph_pattern.py"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "regex": "^\\|$",
+                      "stopBy": "neighbor",
+                      "field": "operator"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "\\bstr$",
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^Expression",
+                      "stopBy": "neighbor",
+                      "field": "right"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "regex": "^\\|$",
+                      "stopBy": "neighbor",
+                      "field": "operator"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "\\bExpression$",
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^str",
+                      "stopBy": "neighbor",
+                      "field": "right"
+                    }
+                  }
+                ]
+              }
             ]
           },
-          "content": {
-            "include": [
-              "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
-            ]
-          }
+          "file": {
+            "path": {
+              "notRegex": "^(?:impl/common/l2060_query_spec/query_spec\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l5200_sql_query/_base\\.py|impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query\\.py|impl/common/l7300_cross_branch/sql_cross_branch_query\\.py|l2055_lazy_result/lazy_reads\\.py|l2055_lazy_result/query_spec\\.py|l9700_graph_query/graph_pattern\\.py)$"
+            }
+          },
+          "syntax": "valid"
         }
       },
       "violation": {
@@ -152,29 +194,74 @@
     {
       "id": "text-str_union_field",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bstr\\s*\\|\\s*Field|\\bField\\s*\\|\\s*str",
-          "lines": {
-            "first": true
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "impl/common/l2060_query_spec/query_spec.py",
-              "impl/common/l5200_sql_query/_base.py",
-              "impl/common/l7300_cross_branch/sql_cross_branch_query.py",
-              "impl/mongodb/query.py",
-              "l2060_query_builder/plan_query_builder.py"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "regex": "^\\|$",
+                      "stopBy": "neighbor",
+                      "field": "operator"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "\\bstr$",
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^Field",
+                      "stopBy": "neighbor",
+                      "field": "right"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "regex": "^\\|$",
+                      "stopBy": "neighbor",
+                      "field": "operator"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "\\bField$",
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^str",
+                      "stopBy": "neighbor",
+                      "field": "right"
+                    }
+                  }
+                ]
+              }
             ]
           },
-          "content": {
-            "include": [
-              "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
-            ]
-          }
+          "file": {
+            "path": {
+              "notRegex": "^(?:impl/common/l2060_query_spec/query_spec\\.py|impl/common/l5200_sql_query/_base\\.py|impl/common/l7300_cross_branch/sql_cross_branch_query\\.py|impl/mongodb/query\\.py|l2060_query_builder/plan_query_builder\\.py)$"
+            }
+          },
+          "syntax": "valid"
         }
       },
       "violation": {
@@ -186,48 +273,31 @@
     {
       "id": "text-expression_any_any",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bExpression\\s*\\[\\s*Any\\s*,\\s*Any\\s*\\]",
-          "lines": {
-            "first": true
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "impl/common/l2070_server_plan/steps/intent_cross_branch.py",
-              "impl/common/l2070_server_plan/steps/intent_history.py",
-              "impl/common/l2070_server_plan/steps/intent_versioning.py",
-              "impl/common/l2100_sql_grammar/versioned_aggregate.py",
-              "impl/common/l4000_policy_expression/translator.py",
-              "impl/common/l7300_cross_branch/permission_expression_compiler.py",
-              "impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py",
-              "impl/neo4j/backend_operations.py",
-              "l1000_schema/typed_field.py",
-              "l2000_connection/versioned_protocols.py",
-              "l2050_transaction/transaction.py",
-              "l2055_lazy_result/execution_context.py",
-              "l2055_lazy_result/lazy_reads.py",
-              "l2055_lazy_result/query_spec.py",
-              "l2060_query_builder/plan_query_builder.py",
-              "l2060_query_builder/query_builder.py",
-              "l2060_query_builder/tuple_query.py",
-              "l2080_lazy_orm/lazy_column.py",
-              "l2080_lazy_orm/lazy_table.py",
-              "l4000_permissions/permission_enforcement.py",
-              "l4000_permissions/policy_expressions.py",
-              "l4100_queue/hooks.py",
-              "l7200_versioned_transactions/revision_history_query.py",
-              "l7200_versioned_transactions/versioned_transactions.py"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "kind": "generic_type"
+                  }
+                ]
+              },
+              {
+                "regex": "\\bExpression\\s*\\[\\s*Any\\s*,\\s*Any\\s*\\]$"
+              }
             ]
           },
-          "content": {
-            "include": [
-              "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
-            ]
-          }
+          "file": {
+            "path": {
+              "notRegex": "^(?:impl/common/l2070_server_plan/steps/intent_cross_branch\\.py|impl/common/l2070_server_plan/steps/intent_history\\.py|impl/common/l2070_server_plan/steps/intent_versioning\\.py|impl/common/l2100_sql_grammar/versioned_aggregate\\.py|impl/common/l4000_policy_expression/translator\\.py|impl/common/l7300_cross_branch/permission_expression_compiler\\.py|impl/common/l7300_sql_versioned_transactions/sql_write_transaction\\.py|impl/neo4j/backend_operations\\.py|l1000_schema/typed_field\\.py|l2000_connection/versioned_protocols\\.py|l2050_transaction/transaction\\.py|l2055_lazy_result/execution_context\\.py|l2055_lazy_result/lazy_reads\\.py|l2055_lazy_result/query_spec\\.py|l2060_query_builder/plan_query_builder\\.py|l2060_query_builder/query_builder\\.py|l2060_query_builder/tuple_query\\.py|l2080_lazy_orm/lazy_column\\.py|l2080_lazy_orm/lazy_table\\.py|l4000_permissions/permission_enforcement\\.py|l4000_permissions/policy_expressions\\.py|l4100_queue/hooks\\.py|l7200_versioned_transactions/revision_history_query\\.py|l7200_versioned_transactions/versioned_transactions\\.py)$"
+            }
+          },
+          "syntax": "valid"
         }
       },
       "violation": {
@@ -239,23 +309,64 @@
     {
       "id": "text-deprecated_comparison_op",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\b(_lt|_gt|_le|_ge|_eq|_ne)\\s*[=:]",
-          "lines": {
-            "first": true
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": []
-          },
-          "content": {
-            "include": [
-              "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "regex": "^_(?:lt|gt|le|ge|eq|ne)$"
+                      }
+                    ]
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^(?:=|==|:|:=)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "regex": "^_(?:lt|gt|le|ge|eq|ne)$"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^(?:=|==|:|:=)$"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "attribute"
+                    }
+                  }
+                ]
+              }
             ]
-          }
+          },
+          "syntax": "valid"
         }
       },
       "violation": {
@@ -267,23 +378,37 @@
     {
       "id": "text-deprecated_filter_method",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\.filter_(gt|gte|lt|lte|ne|in|eq)\\s*\\(",
-          "lines": {
-            "first": true
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": []
-          },
-          "content": {
-            "include": [
-              "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "regex": "^filter_(?:gt|gte|lt|lte|ne|in|eq)$"
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "attribute"
+                    },
+                    {
+                      "inside": {
+                        "kind": "call",
+                        "stopBy": "neighbor",
+                        "field": "function"
+                      }
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "attribute"
+                }
+              }
             ]
-          }
+          },
+          "syntax": "valid"
         }
       },
       "violation": {

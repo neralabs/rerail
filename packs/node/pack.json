@@ -3,14 +3,17 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "22 eslint-plugin-n rules ported to Rerail, each scored against the plugin's own recorded findings on its rule tests.",
+  "covers": "No rules yet: its 24 eslint-plugin-n ports are candidates until they pass the port readiness gates.",
   "reason": "matches Node.js",
   "match": {
     "any": [
       {
-        "npmDependencies": [
-          "@types/node"
-        ]
+        "dependencies": {
+          "ecosystem": "npm",
+          "names": [
+            "@types/node"
+          ]
+        }
       },
       {
         "files": [
@@ -21,158 +24,5 @@
       }
     ]
   },
-  "rules": [
-    {
-      "id": "n-callback-return",
-      "document": "rules/n-callback-return.json",
-      "title": "n/callback-return: Callback return",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-exports-style",
-      "document": "rules/n-exports-style.json",
-      "title": "n/exports-style: Exports style",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-global-require",
-      "document": "rules/n-global-require.json",
-      "title": "n/global-require: Global require",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-handle-callback-err",
-      "document": "rules/n-handle-callback-err.json",
-      "title": "n/handle-callback-err: Handle callback err",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-no-callback-literal",
-      "document": "rules/n-no-callback-literal.json",
-      "title": "n/no-callback-literal: No callback literal",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-no-exports-assign",
-      "document": "rules/n-no-exports-assign.json",
-      "title": "n/no-exports-assign: No exports assign",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-no-mixed-requires",
-      "document": "rules/n-no-mixed-requires.json",
-      "title": "n/no-mixed-requires: No mixed requires",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-no-new-require",
-      "document": "rules/n-no-new-require.json",
-      "title": "n/no-new-require: No new require",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-no-path-concat",
-      "document": "rules/n-no-path-concat.json",
-      "title": "n/no-path-concat: No path concat",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-no-process-env",
-      "document": "rules/n-no-process-env.json",
-      "title": "n/no-process-env: No process env",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-no-process-exit",
-      "document": "rules/n-no-process-exit.json",
-      "title": "n/no-process-exit: No process exit",
-      "group": "eslint-plugin-n",
-      "examples": {
-        "caught": {
-          "path": "src/server.js",
-          "text": "if (!config) {\n  process.exit(1);\n}\n"
-        },
-        "passes": {
-          "path": "src/server.js",
-          "text": "if (!config) {\n  throw new Error(\"missing config\");\n}\n"
-        }
-      }
-    },
-    {
-      "id": "n-no-sync",
-      "document": "rules/n-no-sync.json",
-      "title": "n/no-sync: No sync",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-prefer-global-buffer",
-      "document": "rules/n-prefer-global-buffer.json",
-      "title": "n/prefer-global/buffer: Prefer global Buffer",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-prefer-global-console",
-      "document": "rules/n-prefer-global-console.json",
-      "title": "n/prefer-global/console: Prefer global console",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-prefer-global-process",
-      "document": "rules/n-prefer-global-process.json",
-      "title": "n/prefer-global/process: Prefer global process",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-prefer-global-text-decoder",
-      "document": "rules/n-prefer-global-text-decoder.json",
-      "title": "n/prefer-global/text-decoder: Prefer global TextDecoder",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-prefer-global-text-encoder",
-      "document": "rules/n-prefer-global-text-encoder.json",
-      "title": "n/prefer-global/text-encoder: Prefer global TextEncoder",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-prefer-global-url",
-      "document": "rules/n-prefer-global-url.json",
-      "title": "n/prefer-global/url: Prefer global URL",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-prefer-global-url-search-params",
-      "document": "rules/n-prefer-global-url-search-params.json",
-      "title": "n/prefer-global/url-search-params: Prefer global URLSearchParams",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-prefer-node-protocol",
-      "document": "rules/n-prefer-node-protocol.json",
-      "title": "n/prefer-node-protocol: Prefer node protocol",
-      "group": "eslint-plugin-n",
-      "examples": {
-        "caught": {
-          "path": "src/files.mjs",
-          "text": "import fs from \"fs\";\n\nexport const read = path => fs.readFileSync(path, \"utf8\");\n"
-        },
-        "passes": {
-          "path": "src/files.mjs",
-          "text": "import fs from \"node:fs\";\n\nexport const read = path => fs.readFileSync(path, \"utf8\");\n"
-        }
-      }
-    },
-    {
-      "id": "n-prefer-promises-dns",
-      "document": "rules/n-prefer-promises-dns.json",
-      "title": "n/prefer-promises/dns: Prefer promises dns",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-prefer-promises-fs",
-      "document": "rules/n-prefer-promises-fs.json",
-      "title": "n/prefer-promises/fs: Prefer promises fs",
-      "group": "eslint-plugin-n"
-    }
-  ]
+  "rules": []
 }

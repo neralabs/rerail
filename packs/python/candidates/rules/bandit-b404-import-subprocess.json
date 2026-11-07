@@ -3,7 +3,7 @@
   "id": "bandit-b404-import-subprocess",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of subprocess.",
+  "description": "Avoid importing subprocess unless you need it; running external commands risks command injection when arguments come from untrusted input.",
   "scope": {
     "include": [
       "**/*.py"

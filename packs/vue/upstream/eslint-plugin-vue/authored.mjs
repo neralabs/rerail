@@ -395,7 +395,7 @@ export default ({
 `,
   },
   {
-    // A native tag has no read in the view, so the descendant `<div>` is not seen (declared divergence).
+    // A native descendant tag (no read in the program) still counts as a use: the port reads it in the template tree.
     rule: "no-unused-vars",
     name: "native-tag-descendant",
     code: `<template>

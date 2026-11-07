@@ -4,6 +4,9 @@
 > `rm -rf`, `--no-verify` — with structural tool-call rules. Every example below was run through the
 > engine; **FLAG** means the rule fired, **PASS** means it stayed quiet.
 
+Internal testing: tool-call rules are not part of Rerail 0.1.0, which releases code rules only. See the README's
+[Internal testing](../README.md#internal-testing) section.
+
 - [Why a regex and not similarity](#why-a-regex-and-not-similarity)
 - [Anatomy of a rule](#anatomy-of-a-rule)
 - [The regex dialect](#the-regex-dialect)

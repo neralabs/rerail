@@ -1,0 +1,25 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.input doc
+.decl in_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("l9700_graph_query/graph_pattern.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9700_graph_query/query_builder.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/graph_lazy_sql.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/versioned_lazy_mixin.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/versioned_transactions.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/intent_graph.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/graph_path_relation_plan.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l9700_sql_graph_query/steps/graph_traverse.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9720_sparql/executor.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9720_sparql/ast.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9720_sparql/compiler.py", p).
+in_scope(d) :- doc(d, p, _), glob("docs/l9700_graph_query.rst", p).
+in_scope(d) :- doc(d, p, _), glob("docs/l7200_versioned_transactions.rst", p).
+in_scope(d) :- doc(d, p, _), glob("docs/l9720_sparql.rst", p).
+in_scope(d) :- doc(d, p, _), glob("docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst", p).
+in_scope(d) :- doc(d, p, _), glob("docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst", p).
+in_scope(d) :- doc(d, p, _), glob("scripts/lint_all.py", p).
+in_scope(d) :- doc(d, p, _), glob("docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md", p).
+in_scope(d) :- doc(d, p, _), glob("conform/l9700_graph_query/test_bounded_composed_paths.py", p).
+.output violation

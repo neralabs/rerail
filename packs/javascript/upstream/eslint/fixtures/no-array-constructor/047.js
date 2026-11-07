@@ -1,4 +1,0 @@
-
-                do Array();
-                while (a);
-                

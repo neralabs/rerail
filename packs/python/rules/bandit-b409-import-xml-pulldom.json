@@ -3,7 +3,7 @@
   "id": "bandit-b409-import-xml-pulldom",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of xml.dom.pulldom.",
+  "description": "Avoid importing xml.dom.pulldom to parse XML; it is open to XML attacks, so use defusedxml.",
   "scope": {
     "include": [
       "**/*.py"

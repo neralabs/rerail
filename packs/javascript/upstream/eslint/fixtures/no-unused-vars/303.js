@@ -1,1 +1,0 @@
-try {} catch ({ message }) { console.error(message); }

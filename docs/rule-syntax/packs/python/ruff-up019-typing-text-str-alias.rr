@@ -1,0 +1,18 @@
+.policy "ruff-up019-typing-text-str-alias" revision 2
+.description "Use str instead of typing.Text; Text is an alias of str that only exists for Python 2 compatibility and is deprecated."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP019 (pyupgrade): a use of `typing.Text` (or typing_extensions'), an alias of `str` kept for Python 2.
+// Every reference counts, in annotations and at runtime, under any import alias; the import itself is not one.
+//   from typing import Text
+//   def f(word: Text): ...                 ← UP019 at `Text`
+//   import typing as t; x = t.Text         ← UP019 at `t.Text`
+#include "python/upgrade.rr"
+//   typing_ref(e, x)   e names typing.x or typing_extensions.x
+
+.violation UP019(at: node) code "UP019"
+    "Replace this `Text` alias with the builtin `str` (the same type) and drop the import if nothing else uses it; if `str` is rebound in this scope, use `builtins.str`."
+    suppress ruff "UP019"
+UP019(e) :- typing_ref(e, "Text"), (ast_name(e, _) ; kind(e, "attribute")).

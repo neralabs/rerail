@@ -1,1 +1,0 @@
-function* foo(param: string) {} // allow: generatorFunctions

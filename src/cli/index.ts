@@ -10,6 +10,8 @@ export {
   signedUpdatePolicy,
 } from "./activation-cli.js";
 export { runRulesCommand } from "./project-cli.js";
+export { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
+export { runRuleApproveCommand } from "./rule-approval-cli.js";
 export {
   MOCK_CODE_RULES,
   MOCK_CONVERSATION_RULES,
@@ -26,8 +28,5 @@ export {
   SHOW_ME_VIOLATING,
   runShowMeCommand,
 } from "./show-me.js";
-export { type DashboardPage, type SetupEnvironment, startRerail } from "./repository-setup.js";
+export { type DashboardPage, type SetupEnvironment, type SetupRequest, startRerail } from "./repository-setup.js";
 export { type SetupContext, runSetupCommand, runSetupStepArgs, setupAnswerCommand } from "./setup-cli.js";
-export { configureDataLayerAudit, prepareDataLayerAudit, runDataLayerAudit, runDataLayerCommand, type DataLayerAuditOptions, type DataLayerAuditResult } from "./data-layer-audit.js";
-export { schemaApprovalMessage, type SchemaApprovals } from "./data-layer/approvals.js";
-export { decodePythonBase64 as decodeSchemaApprovalSignature } from "./data-layer/base64.js";

@@ -1,1 +1,0 @@
-class A { static set [f(a)](foo) {} static get [f(a)]() {} }

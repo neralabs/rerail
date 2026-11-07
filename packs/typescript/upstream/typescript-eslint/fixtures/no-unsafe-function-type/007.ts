@@ -1,5 +1,0 @@
-
-class Weird implements Function {
-  // ...
-}
-      

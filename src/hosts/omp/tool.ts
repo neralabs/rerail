@@ -2,6 +2,7 @@ import type { AgentToolResult, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { ConversationRuleRegistry } from "../../engine/catalog/registry.js";
 import { MUTATION_ENTRY_TYPE, type RuleMutation } from "../../runtime/session-state.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../../engine/catalog/rule-schema.js";
+import { internalTesting } from "../../engine/internal-testing.js";
 
 export interface ConversationRulesToolRuntime {
   registry?: () => ConversationRuleRegistry;
@@ -16,6 +17,7 @@ function toolResult(details: Record<string, unknown>): AgentToolResult<Record<st
   };
 }
 
+/** Internal testing: conversation rules, cosine (similarity) and command (tool-call) alike. */
 export function registerConversationRulesTool(pi: ExtensionAPI, runtime: ConversationRulesToolRuntime): void {
   const z = pi.zod;
   const sampleSchema = z.object({
@@ -35,7 +37,7 @@ export function registerConversationRulesTool(pi: ExtensionAPI, runtime: Convers
   pi.registerTool({
     name: "conversation_rules",
     label: "Cosine Rules",
-    description: "Add, remove, inspect, or test session-scoped cosine-similarity trigger rules.",
+    description: internalTesting("Add, remove, inspect, or test session-scoped cosine-similarity trigger rules."),
     parameters,
     approval: "write",
     loadMode: "discoverable",

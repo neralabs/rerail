@@ -62,7 +62,7 @@ export default async function fixture(api: ExtensionAPI): Promise<void> {
         try {
           // create() opens the store; the credential cache is only populated by reload().
           await storage.reload();
-          const credential = storage.get("openai-codex");
+          const credential = storage.credentials.get("openai-codex");
           const key = await storage.getApiKey("openai-codex");
           auth = {
             type: credential?.type,

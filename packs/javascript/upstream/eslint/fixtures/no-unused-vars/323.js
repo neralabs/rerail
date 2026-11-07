@@ -1,1 +1,0 @@
-const [{ a: a1 = aDefault }] = foo;

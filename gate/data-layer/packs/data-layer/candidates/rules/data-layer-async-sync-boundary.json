@@ -1,0 +1,4564 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-async-sync-boundary",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer async_sync_boundary at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "api/**/*.py",
+      "impl/**/*.py",
+      "conform/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "oracle-facade",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false,
+            "description": "Replay the original raw analyzer boundary instead of the production plugin reporter."
+          }
+        }
+      }
+    },
+    {
+      "id": "sync-wraps-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "function_definition",
+                    "regex": "^async\\b",
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "function_definition",
+                    "regex": "^async\\b",
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "(?:conform/l7000_versioned/test_column_evolution_versioned_e2e\\.py$)|(?:conform/l9800_rippling/test_async_handler_support\\.py$)|(?:impl/browser)|(?:impl/common/l1000_cache/invalidation_broadcast\\.py$)|(?:impl/common/l2070_server_plan/base_server_plan\\.py$)|(?:impl/common/l2550_storage_backend/backend\\.py$)|(?:impl/l1570_llm_client/client\\.py$)|(?:impl/mariadb/connection\\.py$)|(?:impl/postgres/connection\\.py$)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2000_connection/async_executor\\.py$)|(?:l2000_connection/connection_pool\\.py$)|(?:l2050_transaction/transaction\\.py$)|(?:l2060_query_builder/query_builder\\.py$)|(?:l2060_query_builder/tuple_query\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4170_inbound_bridge/process\\.py$)|(?:l4200_event_pipeline/persistent_metrics\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)|(?:l5000_subscriptions/deferred_dispatch\\.py$)|(?:l5000_subscriptions/dispatcher\\.py$)|(?:l6600_cleanup/reaper\\.py$)|(?:l8000_admin/tools/ipc_tools\\.py$)|tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-0",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:test_versioned_column_evolution_e2e)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "conform/l7000_versioned/test_column_evolution_versioned_e2e\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_process_event_with_async_connection)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "conform/l9800_rippling/test_async_handler_support\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_drain_loop)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/common/l1000_cache/invalidation_broadcast\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_execute_query_execute_aggregate_async|_execute_query_execute_windowed_async|_execute_query_keyset_paginate_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/common/l2070_server_plan/base_server_plan\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:delete_async|exists_async|get_metadata_async|get_stats_async|iter_content_hashes_async|retrieve_async|store_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/common/l2550_storage_backend/backend\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_sync)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/l1570_llm_client/client\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_common_close_resources|close)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/mariadb/connection\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_close_async_conn_sync|close)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/postgres/connection\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-10",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_sync)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2000_connection/async_executor\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-11",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_cleanup_connection_state|_create_connection)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2000_connection/connection_pool\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-12",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_execute_fragment_async|_execute_vector_query_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2050_transaction/transaction\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-13",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_execute_aggregate_async|count_async|cursor_paginate_async|execute_async|execute_one_async|execute_raw_async|execute_with_meta_async|exists_async|first_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2060_query_builder/query_builder\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-14",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:execute_async|execute_one_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2060_query_builder/tuple_query\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-25",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_sync)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l4170_inbound_bridge/process\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-26",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:run_in_thread|snapshot_now)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l4200_event_pipeline/persistent_metrics\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-29",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_async_callback_sync|dispatch_queued_events)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l5000_subscriptions/deferred_dispatch\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-30",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:dispatch_branch_event)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l5000_subscriptions/dispatcher\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-31",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:cleanup_expired_data_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l6600_cleanup/reaper\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "sync-wraps-allowed-file-32",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^asyncio\\.(run|run_coroutine_threadsafe)$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "function_definition",
+                        "regex": "^async\\b",
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:list_backends_handler)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l8000_admin/tools/ipc_tools\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SYNC_WRAPS_ASYNC",
+        "anchor": "witness.span",
+        "message": "Sync function bridges to async execution through asyncio.run(). Keep the execution boundary explicit."
+      }
+    },
+    {
+      "id": "async-wraps-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "regex": "^(asyncio\\.)?to_thread$",
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "kind": "function_definition"
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "regex": "^(asyncio\\.)?to_thread$",
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "kind": "function_definition"
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "(?:conform/l7000_versioned/test_column_evolution_versioned_e2e\\.py$)|(?:conform/l9800_rippling/test_async_handler_support\\.py$)|(?:impl/browser)|(?:impl/common/l1000_cache/invalidation_broadcast\\.py$)|(?:impl/common/l2070_server_plan/base_server_plan\\.py$)|(?:impl/common/l2550_storage_backend/backend\\.py$)|(?:impl/l1570_llm_client/client\\.py$)|(?:impl/mariadb/connection\\.py$)|(?:impl/postgres/connection\\.py$)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2000_connection/async_executor\\.py$)|(?:l2000_connection/connection_pool\\.py$)|(?:l2050_transaction/transaction\\.py$)|(?:l2060_query_builder/query_builder\\.py$)|(?:l2060_query_builder/tuple_query\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4170_inbound_bridge/process\\.py$)|(?:l4200_event_pipeline/persistent_metrics\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)|(?:l5000_subscriptions/deferred_dispatch\\.py$)|(?:l5000_subscriptions/dispatcher\\.py$)|(?:l6600_cleanup/reaper\\.py$)|(?:l8000_admin/tools/ipc_tools\\.py$)|tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-0",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:test_versioned_column_evolution_e2e)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "conform/l7000_versioned/test_column_evolution_versioned_e2e\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_process_event_with_async_connection)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "conform/l9800_rippling/test_async_handler_support\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_drain_loop)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/common/l1000_cache/invalidation_broadcast\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_execute_query_execute_aggregate_async|_execute_query_execute_windowed_async|_execute_query_keyset_paginate_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/common/l2070_server_plan/base_server_plan\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:delete_async|exists_async|get_metadata_async|get_stats_async|iter_content_hashes_async|retrieve_async|store_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/common/l2550_storage_backend/backend\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_sync)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/l1570_llm_client/client\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_common_close_resources|close)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/mariadb/connection\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_close_async_conn_sync|close)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/postgres/connection\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-10",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_sync)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2000_connection/async_executor\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-11",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_cleanup_connection_state|_create_connection)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2000_connection/connection_pool\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-12",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_execute_fragment_async|_execute_vector_query_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2050_transaction/transaction\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-13",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_execute_aggregate_async|count_async|cursor_paginate_async|execute_async|execute_one_async|execute_raw_async|execute_with_meta_async|exists_async|first_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2060_query_builder/query_builder\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-14",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:execute_async|execute_one_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2060_query_builder/tuple_query\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-25",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_sync)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l4170_inbound_bridge/process\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-26",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:run_in_thread|snapshot_now)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l4200_event_pipeline/persistent_metrics\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-29",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_async_callback_sync|dispatch_queued_events)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l5000_subscriptions/deferred_dispatch\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-30",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:dispatch_branch_event)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l5000_subscriptions/dispatcher\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-31",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:cleanup_expired_data_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l6600_cleanup/reaper\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "async-wraps-allowed-file-32",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "^(asyncio\\.)?to_thread$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:list_backends_handler)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l8000_admin/tools/ipc_tools\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC_WRAPS_SYNC",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through asyncio.to_thread(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "regex": "run_in_executor$",
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "kind": "function_definition"
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "regex": "run_in_executor$",
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "kind": "function_definition"
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "(?:conform/l7000_versioned/test_column_evolution_versioned_e2e\\.py$)|(?:conform/l9800_rippling/test_async_handler_support\\.py$)|(?:impl/browser)|(?:impl/common/l1000_cache/invalidation_broadcast\\.py$)|(?:impl/common/l2070_server_plan/base_server_plan\\.py$)|(?:impl/common/l2550_storage_backend/backend\\.py$)|(?:impl/l1570_llm_client/client\\.py$)|(?:impl/mariadb/connection\\.py$)|(?:impl/postgres/connection\\.py$)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2000_connection/async_executor\\.py$)|(?:l2000_connection/connection_pool\\.py$)|(?:l2050_transaction/transaction\\.py$)|(?:l2060_query_builder/query_builder\\.py$)|(?:l2060_query_builder/tuple_query\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4170_inbound_bridge/process\\.py$)|(?:l4200_event_pipeline/persistent_metrics\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)|(?:l5000_subscriptions/deferred_dispatch\\.py$)|(?:l5000_subscriptions/dispatcher\\.py$)|(?:l6600_cleanup/reaper\\.py$)|(?:l8000_admin/tools/ipc_tools\\.py$)|tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-0",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:test_versioned_column_evolution_e2e)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "conform/l7000_versioned/test_column_evolution_versioned_e2e\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_process_event_with_async_connection)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "conform/l9800_rippling/test_async_handler_support\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_drain_loop)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/common/l1000_cache/invalidation_broadcast\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_execute_query_execute_aggregate_async|_execute_query_execute_windowed_async|_execute_query_keyset_paginate_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/common/l2070_server_plan/base_server_plan\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:delete_async|exists_async|get_metadata_async|get_stats_async|iter_content_hashes_async|retrieve_async|store_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/common/l2550_storage_backend/backend\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_sync)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/l1570_llm_client/client\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_common_close_resources|close)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/mariadb/connection\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_close_async_conn_sync|close)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "impl/postgres/connection\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-10",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_sync)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2000_connection/async_executor\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-11",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_cleanup_connection_state|_create_connection)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2000_connection/connection_pool\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-12",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_execute_fragment_async|_execute_vector_query_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2050_transaction/transaction\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-13",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_execute_aggregate_async|count_async|cursor_paginate_async|execute_async|execute_one_async|execute_raw_async|execute_with_meta_async|exists_async|first_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2060_query_builder/query_builder\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-14",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:execute_async|execute_one_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l2060_query_builder/tuple_query\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-25",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_sync)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l4170_inbound_bridge/process\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-26",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:run_in_thread|snapshot_now)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l4200_event_pipeline/persistent_metrics\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-29",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:_run_async_callback_sync|dispatch_queued_events)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l5000_subscriptions/deferred_dispatch\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-30",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:dispatch_branch_event)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l5000_subscriptions/dispatcher\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-31",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:cleanup_expired_data_async)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l6600_cleanup/reaper\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    },
+    {
+      "id": "executor-allowed-file-32",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "regex": "run_in_executor$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:list_backends_handler)$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "l8000_admin/tools/ipc_tools\\.py$",
+              "notRegex": "tests/|benchmarks/|scripts/|data_layer_testing/|demos/|examples/|exploration/|integration_tests/|(?:impl/browser)|(?:impl/sqlite/native_async_wrapper\\.py$)|(?:l2550_storage_backend/azure_backend\\.py$)|(?:l2550_storage_backend/database_backend\\.py$)|(?:l2550_storage_backend/dual_write\\.py$)|(?:l2550_storage_backend/encryption\\.py$)|(?:l2550_storage_backend/gcs_backend\\.py$)|(?:l2550_storage_backend/local_backend\\.py$)|(?:l2550_storage_backend/memory_backend\\.py$)|(?:l2550_storage_backend/resilient_backend\\.py$)|(?:l2550_storage_backend/s3_backend\\.py$)|(?:l2550_storage_backend/tiered_backend\\.py$)|(?:l4300_ipc/client\\.py$)|(?:l4300_ipc/server_mixin\\.py$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXECUTOR_ESCAPE",
+        "anchor": "witness.span",
+        "message": "Async function bridges to sync execution through run_in_executor(). Use a native async implementation."
+      }
+    }
+  ]
+}

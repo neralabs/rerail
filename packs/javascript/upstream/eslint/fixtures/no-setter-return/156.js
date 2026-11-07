@@ -1,1 +1,0 @@
-Object.create({}, { baz: { set(val) { return 1; } }, bar: { set: (val) => 1 } })

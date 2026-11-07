@@ -1,5 +1,19 @@
 mod analysis;
 mod anchors;
+/// P's anchors module and SQL anchor engine as copied (2814d875), test-only (O20).
+#[cfg(test)]
+#[allow(dead_code, unused_imports)]
+pub(in crate::code_rule_dsl) mod p_anchors;
+// P's anchor corpus at P's paths, for P's relational workspace code and the `p-anchor-corpus` path.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) use p_anchors::sql::{Corpus, CorpusSlot, anchor_plans_for_file};
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+pub(in crate::code_rule_dsl) use p_anchors::sql::anchor_plans;
+/// D's anchors module and SQL anchor engine as copied (bb79b40a), test-only: the closure of D's
+/// plan-input statistics (O19).
+#[cfg(test)]
+#[allow(dead_code, unused_imports)]
+pub(in crate::code_rule_dsl) mod d_anchors;
 mod arguments;
 mod arguments_sql;
 mod binding;
@@ -10,9 +24,13 @@ mod collate;
 mod compare;
 mod count;
 mod each;
+mod embedded;
 mod exported;
 mod format_args;
 mod layout;
+// 06-first-slice S1: reached from the S1 gate only until the slice's wave (S4) calls it.
+#[cfg_attr(not(test), allow(dead_code))]
+mod lower;
 mod memo;
 mod nth_child;
 mod parse;
@@ -29,12 +47,12 @@ mod value;
 use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 pub(super) use analysis::RequiredText;
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(super) use lower::{Axis, Fact, FactFound, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
 pub(crate) use analysis::calls_positive_only;
-pub(super) use anchors::AnchorPlan;
-pub(super) use anchors::sql::{
-    Corpus, CorpusSlot, FileAnchorIndex, anchor_plans, anchor_plans_for_file,
-    candidate_frontier_audit,
-};
+pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
+// The prefilter lowers a plan's structure to SQL (`prefilter/lower.rs`).
+pub(super) use anchors::{Condition, Direction, Required, Requirement};
 pub(super) use arguments::{Arguments, Passed, SlotKind};
 pub(super) use arguments_sql::SQL_CALL_KINDS;
 use ast_grep_core::matcher::Matcher;
@@ -48,21 +66,26 @@ pub(super) use captures::{Capture, CaptureAnalysis, collect_variables, parse_exp
 pub(super) use compare::{Collation, CompareOp, CompareText, Comparison, EqClass, SemanticText};
 pub(super) use count::{Count, CountBinding};
 pub(crate) use each::binding_range;
+pub(crate) use embedded::EmbeddedTest;
 pub(crate) use exported::{
     WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable,
 };
 pub(crate) use format_args::{FormatArgs, Style};
 pub(crate) use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
+/// P's: the path of the file being matched (P's `calls` delta reads it).
+pub(in crate::code_rule_dsl) use resolve::file_path;
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
+pub(in crate::code_rule_dsl) use nth_child::SiblingPositions;
 #[cfg(test)]
 pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
+#[cfg(test)]
+pub(crate) use parse::parse_fact_tree;
 pub(crate) use parse::{HostTest, ParseTest};
 use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
-pub(in crate::code_rule_dsl) use resolve::file_path;
 pub(crate) use resolve::{
     FileGates, calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives,
     file_lines, file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,
@@ -76,6 +99,8 @@ pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]
 pub(crate) use run::{reset_roots_matched, roots_matched};
 pub(super) use semantic::Semantic;
+#[cfg(test)]
+pub(crate) use semantic::producer_facts;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -86,11 +111,11 @@ pub(crate) use transform::{
     line_table_constructions, note_line_table_construction, reset_line_table_constructions,
 };
 pub(super) use util::{
-    CallArgs, MAX_UTIL_INSTANCES, UtilCall, UtilLimit, UtilOrigin, UtilRef, UtilTable,
-    UtilitySummary,
+    CallArgs, MAX_UTIL_DEPTH, MAX_UTIL_INSTANCES, UtilCall, UtilLimit, UtilOrigin, UtilRef,
+    UtilTable, UtilitySummary,
 };
 use util::{
-    MAX_UTIL_DEPTH, MAX_UTIL_STACK_BYTES, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STACK_BASE,
+    MAX_UTIL_STACK_BYTES, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STACK_BASE,
     UTIL_STEPS_LEFT, stack_address,
 };
 use util::{THREE_VALUED, UNKNOWN};
@@ -98,7 +123,19 @@ pub(super) use value::{Bound, Reading, ValueTest};
 
 #[derive(Clone)]
 pub(super) struct GrammarMatcher {
+    /// The dialect of the document the matcher reads: the file's own, or for an embedded clause
+    /// (`ast.embedded`) its program's.
     pub(super) language: GrammarDialect,
+    /// The embedding whose program the matcher reads (`ast.embedded`); `None` for the file's own
+    /// tree.
+    pub(super) document: Option<crate::code_rule_dsl::language::Via>,
+    /// Keeps the utility tables of the file's other document alive (`embedded`, `host`), as
+    /// `utils` does the clause's own: their rules reach them only weakly (`UtilRef`).
+    #[allow(dead_code)]
+    pub(super) other_utils: Vec<Arc<UtilTable>>,
+    /// Whether the rule crosses to the file's other document (`embedded`, `host`): the syntax
+    /// errors of every document of the file then bear on it, not its own document's alone.
+    pub(super) crosses: bool,
     pub(super) matcher: AstMatcher,
     pub(super) anchors: Arc<anchors::AnchorPlan>,
     /// What a file must contain for the matcher to match in it (`RequiredText`); `None` where
@@ -106,7 +143,8 @@ pub(super) struct GrammarMatcher {
     pub(super) text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
     pub(super) sound_under_errors: bool,
-    /// Explicit whole-file syntax gate; true admits invalid files and their error regions.
+    /// Explicit whole-file syntax gate (P's `ast.syntax`); true admits invalid files and their
+    /// error regions.
     pub(super) invalid_syntax: Option<bool>,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
@@ -123,12 +161,14 @@ pub(super) struct GrammarMatcher {
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
     pub(super) transform: Option<Arc<Transform>>,
+    /// The query's content digest and this matcher's dialect: what its lowered fact labels are
+    /// keyed by (`lower::Fact::key`).
+    pub(super) source: ([u8; 32], GrammarDialect),
 }
 
-/// Whole-root matching: production matches each candidate root within a clause `begin_clause` set
-/// up (`match_rule`); `match_root` sets one up per root, for tests.
 impl GrammarMatcher {
-    /// Share cheap syntax and text admission across preparation and matching.
+    /// Share cheap syntax and text admission across preparation and matching (P's).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn admits_source<'a>(
         &'a self,
         source: &str,
@@ -145,7 +185,22 @@ impl GrammarMatcher {
                 })
             })
     }
+}
 
+impl GrammarMatcher {
+    /// The kinds of the roots its witnesses may have, as codes of the file's own tree (`None`
+    /// where any, or where it reads an embedded program, whose codes are its own grammar's).
+    pub(super) fn host_root_kinds(&self) -> Option<&std::collections::BTreeSet<u16>> {
+        self.document
+            .is_none()
+            .then(|| self.anchors.root_kinds())
+            .flatten()
+    }
+}
+
+/// Whole-root matching: production matches each candidate root within a clause `begin_clause` set
+/// up (`match_rule`); `match_root` sets one up per root, for tests.
+impl GrammarMatcher {
     /// Whether a file whose own source type is `file` may get this matcher: one its
     /// `when.sourceType` lists, or, while the file's syntax is unread (`None`), a module or
     /// CommonJS listed.
@@ -158,7 +213,7 @@ impl GrammarMatcher {
 
     /// This matcher's rule (with its constraints) at one root of the clause `begin_clause` set up:
     /// the root's match. A root whose verdict is unknown does not match.
-    fn match_rule<'tree, D: Doc>(&self, node: Node<'tree, D>) -> Option<NodeMatch<'tree, D>> {
+    pub(super) fn match_rule<'tree, D: Doc>(&self, node: Node<'tree, D>) -> Option<NodeMatch<'tree, D>> {
         UNKNOWN.set(false);
         self.matcher.match_node(node)
     }
@@ -229,6 +284,10 @@ impl Constrained {
 pub(super) enum AstMatcher {
     Pattern(Pattern),
     Kind(KindMatcher),
+    /// `kind` naming a grammar supertype (`expression`): the nodes the parser reported as its
+    /// members, which the tape stores per node (decision 0025). Membership is contextual (an
+    /// `identifier` assigned to is a `pattern`, not an `expression`), not a function of the kind.
+    Supertype(Supertype),
     Regex(Regex),
     All(Vec<AstMatcher>),
     Any(Vec<AstMatcher>),
@@ -259,6 +318,19 @@ pub(super) enum AstMatcher {
     TestUnknown(Regex),
 }
 
+/// A grammar supertype's id and the concrete kinds its members can have (`AstMatcher::Supertype`).
+#[derive(Clone, Debug)]
+pub(super) struct Supertype {
+    pub(super) class: u16,
+    pub(super) kinds: Arc<std::collections::BTreeSet<u16>>,
+}
+
+impl Supertype {
+    pub(super) fn new(class: u16, language: GrammarDialect) -> Self {
+        Self { class, kinds: Arc::new(language.supertype_kinds(class)) }
+    }
+}
+
 /// The matcher: production matches every AST rule with it (`run_clause`).
 impl Matcher for AstMatcher {
     fn match_node_with_env<'tree, D: Doc>(
@@ -272,6 +344,14 @@ impl Matcher for AstMatcher {
         match self {
             Self::Pattern(pattern) => pattern.match_node_with_env(node, env),
             Self::Kind(kind) => kind.match_node_with_env(node, env),
+            // Memberships are the tape's; a tree that is no tape's has none to read.
+            Self::Supertype(supertype) => match crate::code_rule_dsl::tape::tape_doc(&node) {
+                Some(tape) => tape.transducer_has_supertype(node.node_id() as u32, supertype.class).then_some(node),
+                None => {
+                    UNKNOWN.set(true);
+                    None
+                }
+            },
             // RegexMatcher uses exactly this engine and node-text operation.
             Self::Regex(regex) => regex.is_match(&node.text()).then_some(node),
             Self::All(matchers) => Self::match_all(matchers, node, env),
@@ -467,7 +547,7 @@ impl AstMatcher {
     fn binds_nothing(&self) -> bool {
         match self {
             Self::Semantic(semantic) => semantic.binds_nothing(),
-            Self::Kind(_) | Self::Regex(_) | Self::Not(_) | Self::Compare(_) | Self::Never => true,
+            Self::Kind(_) | Self::Supertype(_) | Self::Regex(_) | Self::Not(_) | Self::Compare(_) | Self::Never => true,
             // A count binds its value under `as`.
             Self::Count(count) => count.binding.is_none(),
             #[cfg(test)]
@@ -480,6 +560,25 @@ impl AstMatcher {
             Self::Field(relation) => relation.rule.binds_nothing(),
             Self::NthChild(nth) => nth.of_rule.as_ref().is_none_or(Self::binds_nothing),
             Self::Pattern(_) | Self::Util(_) | Self::Call(_) | Self::Constrained(_) => false,
+        }
+    }
+
+    /// Whether the rule calls a utility (whose meaning is its scope's) anywhere; `true` where it
+    /// cannot tell (a semantic predicate, a count, a comparison, a constrained rule).
+    pub(in crate::code_rule_dsl) fn calls_util(&self) -> bool {
+        let stop = |stop: &relation::StopBy| match stop {
+            relation::StopBy::Rule(rule) => rule.calls_util(),
+            _ => false,
+        };
+        match self {
+            Self::Kind(_) | Self::Supertype(_) | Self::Regex(_) | Self::Pattern(_) | Self::Never => false,
+            Self::All(items) | Self::Any(items) => items.iter().any(Self::calls_util),
+            Self::Not(item) => item.calls_util(),
+            Self::Inside(related, by) | Self::Has(related, by) | Self::Precedes(related, by) | Self::Follows(related, by) => {
+                related.rule().calls_util() || stop(by)
+            }
+            Self::NthChild(nth) => nth.of_rule.as_ref().is_some_and(Self::calls_util),
+            _ => true,
         }
     }
 
@@ -524,31 +623,6 @@ impl AstMatcher {
     }
 }
 
-/// The whole text of the file a host node belongs to, and its language; `None` for a node of a
-/// parsed literal's tree.
-pub(crate) fn host<'t, D: Doc>(
-    node: &ast_grep_core::Node<'t, D>,
-) -> Option<(&'t str, GrammarDialect)> {
-    let doc: &'t dyn std::any::Any = node.get_doc();
-    if let Some(doc) = doc.downcast_ref::<ast_grep_core::tree_sitter::StrDoc<GrammarDialect>>() {
-        return Some((doc.get_source().as_str(), *doc.get_lang()));
-    }
-    let doc = doc.downcast_ref::<crate::code_rule_dsl::tape::TapeDoc>()?;
-    Some((doc.get_source().as_str(), *doc.get_lang()))
-}
-
-/// The line table of the file a host node belongs to: its tape document's, which the evaluator
-/// built once for the file. `None` for a node of a parsed literal's tree.
-pub(crate) fn host_lines<'t, D: Doc>(
-    node: &ast_grep_core::Node<'t, D>,
-) -> Option<&'t crate::code_rule_dsl::lines::LineTable> {
-    let doc: &'t dyn std::any::Any = node.get_doc();
-    Some(
-        doc.downcast_ref::<crate::code_rule_dsl::tape::TapeDoc>()?
-            .line_table(),
-    )
-}
-
 /// Whether a matcher can reach an unknown verdict: it holds a `value` predicate or a comparison over
 /// values or property names, directly or through a composite, relation, stop rule, count,
 /// constraint or utility. Clauses without one never touch the `UNKNOWN` flag.
@@ -567,9 +641,11 @@ pub(super) fn reads_values(
                     .as_ref()
                     .is_some_and(|transform| transform.reads_values())
         }
-        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
-            false
-        }
+        AstMatcher::Pattern(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Never => false,
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             items.iter().any(|item| reads_values(item, seen))
         }
@@ -772,6 +848,24 @@ fn utility_steps_left() -> usize {
 /// matcher's, so nothing may remember them.
 fn util_limit_hit() -> bool {
     UTIL_EXCEEDED.get().is_some()
+}
+
+/// Whether the bounded producer in progress hit a utility limit (N's catalog backend).
+#[cfg(test)]
+pub(crate) fn bounded_producer_exceeded() -> bool {
+    UTIL_EXCEEDED.get().is_some()
+}
+
+/// Sets up this thread for one bounded producer call of N's catalog backend, with `work` left.
+#[cfg(test)]
+pub(crate) fn begin_bounded_producer(work: usize) {
+    UTIL_DEPTH.set(0);
+    UTIL_EXCEEDED.set(None);
+    UTIL_STACK_BASE.set(stack_address());
+    UTIL_STEPS_LEFT.set(work);
+    THREE_VALUED.set(true);
+    UNKNOWN.set(false);
+    resolve::CURRENT_CLAUSE.set(0);
 }
 
 /// Sets up this thread to evaluate `matcher`'s clause on one file, with `work` left of its

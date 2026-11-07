@@ -1,1 +1,0 @@
-function BEFORE_send() {};

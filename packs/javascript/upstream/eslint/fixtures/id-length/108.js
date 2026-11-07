@@ -1,1 +1,0 @@
-import longName from 'module';

@@ -3,7 +3,7 @@
  "id": "typescript-eslint-no-confusing-non-null-assertion",
  "revision": 3,
  "mode": "steer",
- "description": "Port of typescript-eslint's `no-confusing-non-null-assertion` rule (https://typescript-eslint.io/rules/no-confusing-non-null-assertion). Flags `=`, `==`, `===`, `in` and `instanceof` expressions whose left operand ends in a non-null assertion `!` (outside parentheses).",
+ "description": "Avoid a non-null assertion right before =, ==, ===, in or instanceof; it reads like != or a negated test.",
  "scope": {
   "include": [
    "**/*.ts",
@@ -69,7 +69,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-confusing-non-null-assertion",
-    "message": "Confusing combination of non-null assertion and assignment like `a! = b`, which looks very similar to `a != b`.",
+    "message": "Wrap the asserted left side in parentheses, `(a!) = b`, so it can't be read as `a != b`.",
     "suppress": {
      "eslint": {
       "rules": [
@@ -139,7 +139,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-confusing-non-null-assertion",
-    "message": "Confusing combination of non-null assertion and equality test like `a! == b`, which looks very similar to `a !== b`.",
+    "message": "Wrap the asserted left side in parentheses, `(a!) == b`, so it can't be read as `a !== b`.",
     "suppress": {
      "eslint": {
       "rules": [
@@ -210,7 +210,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-confusing-non-null-assertion",
-    "message": "Confusing combination of non-null assertion and `$OP` operator like `a! $OP b`, which might be misinterpreted as `!(a $OP b)`.",
+    "message": "Wrap the asserted left side in parentheses, `(a!) $OP b`, so it can't be read as `!(a $OP b)`.",
     "suppress": {
      "eslint": {
       "rules": [

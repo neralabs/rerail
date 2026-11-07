@@ -1,1 +1,0 @@
-var apply; foo[apply](null, args);

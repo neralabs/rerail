@@ -1,1 +1,0 @@
-var foo = 'aaa' + aaa; var bar = 'bbb' + bbb;

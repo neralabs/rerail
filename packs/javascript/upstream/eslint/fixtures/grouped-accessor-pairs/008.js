@@ -1,1 +1,0 @@
-({ a: function get(){}, b, a: function set(foo){} })

@@ -108,6 +108,16 @@ pub(crate) enum ParseError {
     Budget,
 }
 
+impl ParseError {
+    /// What stopped the parse, for a failure's message.
+    pub(crate) fn message(&self) -> &'static str {
+        match self {
+            Self::Depth(_) => "the Blade parser reached its nesting limit",
+            Self::Budget => "the Blade parser ran out of steps",
+        }
+    }
+}
+
 impl From<Exhausted> for ParseError {
     fn from(_: Exhausted) -> Self {
         ParseError::Budget

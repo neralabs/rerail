@@ -28,6 +28,8 @@ def program_inputs(files):
         marker = '/docs/rule-syntax/lib/'
         if marker in path.as_posix():
             logical = 'docs/rule-syntax/lib/' + path.as_posix().split(marker, 1)[1]
+            if path.resolve() != (ROOT / logical).resolve():
+                raise ValueError(f'Library is outside the active engine checkout: {path}')
         elif path.is_relative_to(ROOT):
             logical = path.relative_to(ROOT).as_posix()
         else:
@@ -126,7 +128,7 @@ def main():
         records = [{**record, 'expected': expected_result(record)} for record in records]
     if not records:
         raise ValueError('The selected check has no recorded cases')
-    rule = ROOT / 'packs/data-layer/candidates/rr' / (args.check.replace('_', '-') + '.rr')
+    rule = ROOT / 'gate/data-layer/packs/data-layer/candidates/rr' / (args.check.replace('_', '-') + '.rr')
     report = dict(format='rerail.rr-full-dto-replay/v1', rule=str(rule.relative_to(ROOT)),
                   ruleSha256=sha(rule.read_bytes()), corpusSha256=sha(raw),
                   engineSha256=sha(args.engine.read_bytes()), selectedCases=len(records),

@@ -1,1 +1,0 @@
-({}).prototype.hasOwnProperty.call(a, b);

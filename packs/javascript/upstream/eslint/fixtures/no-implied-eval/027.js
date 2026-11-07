@@ -1,1 +1,0 @@
-window[`SetTimeOut`]('foo', 100);

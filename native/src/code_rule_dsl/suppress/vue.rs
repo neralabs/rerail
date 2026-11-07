@@ -1,37 +1,50 @@
 //! `eslint-plugin-vue` 10.11.1 template comment directives, and the ESLint directives of a Vue
-//! file's scripts.
+//! file's scripts. A Vue file is two documents (`embed`): the component's own tree, which holds
+//! its template comments, and the program its scripts make, which holds theirs.
 
 use super::EslintDirectives;
 use crate::code_rule_dsl::lines::LineTable;
-use ast_grep_core::{Doc, Node};
+use crate::code_rule_dsl::origin::InFile;
+use crate::code_rule_dsl::tape::{TapeDoc, tape_doc};
+use ast_grep_core::{AstGrep, Doc, Node};
 use std::collections::HashSet;
+
+/// The component's own tree a node of a Vue file's documents belongs to.
+fn component(doc: &TapeDoc) -> &TapeDoc {
+    doc.host().unwrap_or(doc)
+}
 
 /// The ESLint directives of the Vue file `node` belongs to: those of the comments in its
 /// `<script>` blocks, the only ones vue-eslint-parser gives ESLint core (`getAllComments`); the
 /// template's comments are eslint-plugin-vue's (`VueDirectives`), and its expressions' comments
-/// neither's.
+/// neither's. The comments are the embedded program's, at the file bytes they copy.
 pub(crate) fn script_directives<D: Doc>(
     node: &Node<'_, D>,
     source: &str,
     lines: &LineTable,
 ) -> EslintDirectives {
-    let root = super::root(node);
-    let scripts = root
+    let Some(component) = tape_doc(node).map(component) else {
+        return EslintDirectives::default();
+    };
+    let scripts = AstGrep::doc(component.clone())
+        .root()
         .children()
         .filter(|child| child.kind() == "script_element")
         .map(|script| script.range())
         .collect::<Vec<_>>();
-    let program = crate::code_rule_dsl::vue::program(&root);
-    let comments = program
-        .iter()
-        .flat_map(|program| program.dfs())
-        .filter(|node| {
-            node.kind() == "comment"
-                && scripts
-                    .iter()
-                    .any(|script| script.contains(&node.range().start))
-        });
-    EslintDirectives::from_comments(comments, source, lines)
+    let mut comments = Vec::new();
+    for guest in component.guests().iter().flat_map(|guests| guests.iter()) {
+        let root = AstGrep::doc(guest.doc.clone());
+        let program = InFile::tape(&guest.doc);
+        comments.extend(
+            root.root()
+                .dfs()
+                .filter(|node| node.kind() == "comment")
+                .filter_map(|comment| program.copied(comment.range()))
+                .filter(|range| scripts.iter().any(|script| script.contains(&range.start))),
+        );
+    }
+    EslintDirectives::from_comments(comments.into_iter(), source, lines)
 }
 
 /// A sorted event replayed by [`VueDirectives::suppresses`].
@@ -66,9 +79,19 @@ pub(crate) struct VueDirectives {
 }
 
 impl VueDirectives {
-    /// Reads HTML comment directives in the template and top-level document comments.
+    /// Reads HTML comment directives in the template and top-level document comments of the Vue
+    /// file `node` belongs to.
     pub(crate) fn read<D: Doc>(node: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
-        let root = super::root(node);
+        match tape_doc(node).map(component) {
+            Some(component) => {
+                Self::read_root(&AstGrep::doc(component.clone()).root(), source, lines)
+            }
+            None => Self::read_root(&super::root(node), source, lines),
+        }
+    }
+
+    /// Reads the directives of the component whose own tree's root is `root`.
+    fn read_root<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
         let mut events = Vec::new();
         for child in root.children() {
             let kind = child.kind();

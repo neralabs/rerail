@@ -3,7 +3,7 @@
   "id": "ruff-f842-unused-annotation",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F842 (unused-annotation) with default settings (`dummy-variable-rgx` = `^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$`), on the engine's usedness (M10a `binds` with form `annotation`, Ruff's unused_annotation): the latest binding of a name in a function or lambda scope that is a bare annotation (`x: int`, `(x): int`) nothing reads, not a dummy name. Names in strings Ruff parses as type definitions are reads (M11a).",
+  "description": "Remove local variables that are annotated but never assigned or read; the annotation alone does nothing.",
   "scope": {
     "include": [
       "**/*"

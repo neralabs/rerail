@@ -5,8 +5,9 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
-import type { AdapterDelivery, RerailHost } from "../engine/adapter-contract.js";
+import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } from "../engine/adapter-contract.js";
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
+import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 
 export type HookInput = Record<string, unknown>;
 export type HookOutput = Record<string, unknown>;
@@ -44,6 +45,11 @@ export function deliveryText(deliveries: readonly AdapterDelivery[]): string | u
   return content === "" ? undefined : content;
 }
 
+/** The rules behind the deliveries `deliveryText` rendered, in order: what the person's lines are built from. */
+export function deliveryRules(deliveries: readonly AdapterDelivery[]): SteerRule[] {
+  return deliveries.filter(carriesText).flatMap(delivery => [...delivery.rules]);
+}
+
 /** Distinct rule ids behind the deliveries `deliveryText` rendered, so the hook's receipt can credit them. */
 export function deliveryRuleIds(deliveries: readonly AdapterDelivery[]): string[] {
   return [...new Set(deliveries.filter(carriesText).flatMap(delivery => [...delivery.ruleIds]))];
@@ -66,7 +72,7 @@ export async function readPending(path: string): Promise<AdapterDelivery[]> {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
     if (!Array.isArray(parsed)) throw new Error("Pending delivery state must be an array");
     return parsed
-      .filter((value): value is AdapterDelivery => {
+      .filter((value): value is Omit<AdapterDelivery, "rules"> & { rules?: unknown } => {
         if (value === null || typeof value !== "object") return false;
         const delivery = value as Partial<AdapterDelivery>;
         return typeof delivery.sessionId === "string"
@@ -77,7 +83,9 @@ export async function readPending(path: string): Promise<AdapterDelivery[]> {
           && typeof delivery.content === "string"
           && Array.isArray(delivery.ruleIds)
           && delivery.ruleIds.every(id => typeof id === "string");
-      });
+      })
+      // A steer held before deliveries carried their rules, or with rules that are not, shows no line.
+      .map(delivery => ({ ...delivery, rules: Array.isArray(delivery.rules) ? delivery.rules.filter(isSteerRule) : [] }));
   } catch (error) {
     if (errno(error, "ENOENT")) return [];
     throw error;
@@ -119,6 +127,47 @@ export async function routeDeliveries(
   const carried = contextEvents[hook] === true;
   await replacePending(path, carried ? [] : pendingSteers);
   return carried ? pendingSteers : [];
+}
+
+/** A steer held for the next context event; `shown` once the person has already seen its line, at `Stop`. */
+export type HeldDelivery = AdapterDelivery & { readonly shown?: true };
+
+/** The person's lines for `deliveries`, as the host draws them, in one `systemMessage`; nothing without a line. */
+export type SteerLines = (deliveries: readonly AdapterDelivery[]) => { systemMessage: string } | Record<string, never>;
+
+/**
+ * Holds `Stop`'s steers for the next context event, marking `shown` each one whose line the person sees at `Stop`.
+ * `Stop` reaches the model only through a block, which Claude Code shows it as an error and Codex records as the
+ * user's turn, so a steer never goes out there.
+ */
+export async function holdStopSteers(path: string, deliveries: readonly AdapterDelivery[]): Promise<AdapterDelivery[]> {
+  const held = deliveries.filter(delivery => steers(delivery.requested));
+  await persistPending(path, held.map(delivery => (delivery.rules.length > 0 ? { ...delivery, shown: true as const } : delivery)));
+  return held;
+}
+
+/**
+ * Steers reach the model as `additionalContext` at a context event, after `note`, and the person as one line per rule.
+ * At `Stop` only the person's lines go out; the steers wait for the next context event (design N4c), led as late steers.
+ * A steer counts once, when the person sees its line (D5): at `Stop` for a late steer, whose block later goes out uncounted.
+ */
+export function steerHookOutput(
+  hook: string,
+  deliveries: readonly HeldDelivery[],
+  contextEvents: EventTable,
+  lines: SteerLines,
+  note?: string,
+): HookOutput {
+  const unseen = deliveries.filter(delivery => delivery.shown !== true);
+  if (hook === "Stop") {
+    const shown = lines(unseen);
+    return "systemMessage" in shown ? prepareGuidanceOutput(shown, deliveryRuleIds(unseen.filter(delivery => delivery.rules.length > 0))) : shown;
+  }
+  const content = deliveryText(deliveries.map(delivery => (delivery.shown === true ? { ...delivery, content: asLateSteer(delivery.content) } : delivery)));
+  const context = [note, content].filter(text => text !== undefined).join("\n\n");
+  if (context === "" || contextEvents[hook] !== true) return {};
+  const output = { ...lines(unseen), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
+  return deliveryText(unseen) === undefined ? output : prepareGuidanceOutput(output, deliveryRuleIds(unseen));
 }
 
 interface LockOwner {

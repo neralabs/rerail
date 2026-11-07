@@ -1,1 +1,0 @@
-var a = 0, b; b = a += a + 1; foo(b);

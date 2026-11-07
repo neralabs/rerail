@@ -3,7 +3,7 @@
   "id": "ruff-b006-mutable-argument-default",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B006 (mutable-argument-default), stable behaviour: a function parameter default that is a list, dict or set display or comprehension, or a call of `dict`/`list`/`set` or `collections.Counter`/`OrderedDict`/`defaultdict`/`deque` (a subscripted callee judged by its value; parentheses transparent), unless the parameter's annotation is immutable by Ruff's `is_immutable_annotation`: an immutable builtin, `typing` or `collections.abc` type (generic ones also subscripted), `None`, `X | Y`, `Union[...]` of immutables, `Optional[X]`, `Annotated[X, ...]`. Names resolve with `resolves` (imports, their scope and order, and unshadowed builtins, as Ruff's semantic model sees them); `builtins.X` counts only where Ruff's table lists it. Stub files are skipped. Lambdas are not checked (Ruff runs B006 on `def` only). Reported on the default. Ruff's option `flake8-bugbear.extend-immutable-calls` adds immutable annotations.",
+  "description": "Avoid mutable default arguments such as lists, dicts and sets in Python functions; one object is shared across every call, so default to None instead.",
   "scope": {
     "include": [
       "**/*.py",

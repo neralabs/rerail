@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import type { z } from "zod";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
-import { openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { databaseInstalledAt, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
-import type { BundledCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
+import type { RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { createCheckoutResolver } from "../engine/catalog/repository-registry.js";
 import { workspaceStartState, startStateReader } from "../runtime/repository-start.js";
 import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
@@ -38,6 +38,8 @@ export class DatabaseApiStores implements RerailApiStores {
   #checkouts: ((workspace: string) => CheckoutContext | undefined) | undefined;
   /** Writes through this instance; `PRAGMA data_version` only counts other connections' commits. */
   #localRevision = 0;
+  /** {@link installedAt} once known; it never changes. */
+  #installedAt: number | null = null;
 
   constructor(path: string, options: DatabaseApiStoresOptions) {
     this.#path = path;
@@ -80,8 +82,8 @@ export class DatabaseApiStores implements RerailApiStores {
     return this.#database;
   }
 
-  bundle(): BundledCatalog {
-    return loadBundledCatalog();
+  ruleCatalog(): RuleCatalog {
+    return loadRuleCatalog();
   }
 
   checkouts(): (workspace: string) => CheckoutContext | undefined {
@@ -98,6 +100,13 @@ export class DatabaseApiStores implements RerailApiStores {
 
   historyVersion(): string | undefined {
     return existsSync(this.#path) ? this.dataVersion() : undefined;
+  }
+
+  /** When Rerail was installed on this machine; null before the database exists, without creating it. */
+  installedAt(): number | null {
+    if (this.#installedAt !== null || !existsSync(this.#path)) return this.#installedAt;
+    this.#installedAt = databaseInstalledAt(this.database());
+    return this.#installedAt;
   }
 
   markChanged(): void {

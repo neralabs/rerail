@@ -48,6 +48,14 @@
     "evidence": "ANSI folds an unquoted identifier to upper case and PostgreSQL to lower case, so the subquery's `\"A\".col_4` reads the alias `a` under ANSI but not under PostgreSQL, where `a` is never used; the engine resolves names as PostgreSQL does (scope/sql.rs, its oracle's declared QUOTED_CASE mismatch). Checked with sqlfluff 4.4.0: `--dialect ansi` reports nothing, `--dialect postgres` reports AL05 at 2:17, as the port does; fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
   },
   {
+    "rule": "sqlfluff-al05-aliasing-unused",
+    "source": "fixtures",
+    "path": "ansi/ST08/test_pass_distinct_subquery_inside_count.sql",
+    "line": 5,
+    "kind": "not-comparable",
+    "evidence": "`FROM UNNEST(tag) t` aliases a value table function, which SQLFluff's AL05 does not count as a table alias in a dialect that lists the function (utils/analysis/select.py `_has_value_table_function`): the postgres dialect lists UNNEST and GENERATE_SERIES, the ansi dialect none. The engine reads every .sql file as PostgreSQL. Checked with sqlfluff 4.4.0: `--dialect ansi` reports AL05 at 5:30 and `--dialect postgres` reports nothing, as the port does; fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
     "rule": "sqlfluff-al08-aliasing-unique-column",
     "source": "fixtures",
     "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
@@ -117,15 +125,7 @@
     "path": "ansi/RF01/test_fail_redundantly_bracketed_join_target_unknown_table.sql",
     "line": 1,
     "kind": "rerail-unknown",
-    "evidence": "Grammar gap: the vendored tree-sitter-sql 0.3.11 does not parse a redundantly bracketed join target, `INNER JOIN ((tbl_b AS b INNER JOIN tbl_c AS c ON ...)) ON ...`, which PostgreSQL accepts (fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts it, postgresDialect.sameFindings true). The file has a syntax error at 3:12 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), declines to decide on it and misses `z.x`."
-  },
-  {
-    "rule": "sqlfluff-rf01-references-from",
-    "source": "fixtures",
-    "path": "postgres/RF01/test_fail_postgres_create_policy_unreferenced_table.sql",
-    "line": 8,
-    "kind": "rerail-unknown",
-    "evidence": "Grammar gap: the vendored tree-sitter-sql 0.3.11 has no CREATE POLICY statement, which PostgreSQL accepts (fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file). The file has a syntax error at 1:1 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), declines to decide on it and misses `table_3.id` in the policy's USING subquery."
+    "evidence": "Grammar gap: the vendored tree-sitter-sql (0.3.11 with Rerail's patches, native/grammars/tree-sitter-sql/PATCHES.md) does not parse a redundantly bracketed join target, `INNER JOIN ((tbl_b AS b INNER JOIN tbl_c AS c ON ...)) ON ...`, which PostgreSQL accepts (fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts it, postgresDialect.sameFindings true). The file has a syntax error at 3:1 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), declines to decide on it and misses `z.x`."
   },
   {
     "rule": "sqlfluff-rf01-references-from",
@@ -149,7 +149,7 @@
     "path": "rslib/src/storage/upgrades/schema18_downgrade.sql",
     "line": 6,
     "kind": "not-comparable",
-    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, in which `type` is no keyword, so RF04 does not report the column definition `type integer NOT NULL`. `type` is an unreserved keyword in SQLFluff 4.4.0's ansi, postgres and mysql dialects (dialect_selector(d).sets('unreserved_keywords')), which the port reads without a dialect setting."
+    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, in which `type` is no keyword, so RF04 does not report the column definition `type integer NOT NULL`. `type` is an unreserved keyword in SQLFluff 4.4.0's postgres dialect (dialect_selector('postgres').sets('unreserved_keywords')), the keywords the port reads, since the engine reads every .sql file as PostgreSQL."
   },
   {
     "rule": "sqlfluff-rf04-references-keywords",
@@ -157,7 +157,7 @@
     "path": "ansi/RF04/test_fail_keyword_as_identifier_column_alias.sql",
     "line": 1,
     "kind": "not-comparable",
-    "evidence": "`parameter` is an unreserved keyword in SQLFluff 4.4.0's ansi and mysql dialects and no keyword in its postgres dialect, so RF04 reports it under ansi only. The engine has no dialect setting, so the port reports only ANSI unreserved keywords that the postgres and mysql dialects also list as unreserved or reserved; `parameter` is not one. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false (SQLFluff's postgres dialect reports nothing here, as the port does)."
+    "evidence": "`parameter` is an unreserved keyword in SQLFluff 4.4.0's ansi dialect and no keyword in its postgres dialect, so RF04 reports it under ansi only. The engine reads every .sql file as PostgreSQL, so the port reports SQLFluff's postgres unreserved keywords (dialect_selector('postgres').sets('unreserved_keywords')); `parameter` is not one. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false (SQLFluff's postgres dialect reports nothing here, as the port does)."
   },
   {
     "rule": "sqlfluff-rf04-references-keywords",
@@ -165,7 +165,7 @@
     "path": "ansi/RF04/test_fail_keyword_as_identifier_table_alias.sql",
     "line": 1,
     "kind": "not-comparable",
-    "evidence": "`parameter` is an unreserved keyword in SQLFluff 4.4.0's ansi and mysql dialects and no keyword in its postgres dialect, so RF04 reports it under ansi only. The engine has no dialect setting, so the port reports only ANSI unreserved keywords that the postgres and mysql dialects also list as unreserved or reserved; `parameter` is not one. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false (SQLFluff's postgres dialect reports nothing here, as the port does)."
+    "evidence": "`parameter` is an unreserved keyword in SQLFluff 4.4.0's ansi dialect and no keyword in its postgres dialect, so RF04 reports it under ansi only. The engine reads every .sql file as PostgreSQL, so the port reports SQLFluff's postgres unreserved keywords (dialect_selector('postgres').sets('unreserved_keywords')); `parameter` is not one. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false (SQLFluff's postgres dialect reports nothing here, as the port does)."
   },
   {
     "rule": "sqlfluff-rf04-references-keywords",

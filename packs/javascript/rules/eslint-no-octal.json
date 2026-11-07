@@ -3,13 +3,13 @@
   "id": "eslint-no-octal",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of ESLint's `no-octal` rule (https://eslint.org/docs/latest/rules/no-octal). Disallows legacy octal (and 0-prefixed decimal) numeric literals: a number whose raw text is 0 followed by a digit.",
+  "description": "Avoid numeric literals that start with a zero followed by a digit; legacy octal is deprecated and easily misread as decimal.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
       "id": "octal-literal",
       "forbid": { "ast": { "language": "typescript", "rule": { "kind": "number", "regex": "^0[0-9]" } } },
-      "violation": { "anchor": "witness.span", "code": "no-octal", "message": "Octal literals should not be used.", "suppress": { "eslint": { "rules": ["no-octal"] } } }
+      "violation": { "anchor": "witness.span", "code": "no-octal", "message": "Write this number with a 0o prefix if it is octal, or drop the leading zero if it is decimal.", "suppress": { "eslint": { "rules": ["no-octal"] } } }
     }
   ]
 }

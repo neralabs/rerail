@@ -1,0 +1,9 @@
+[project]
+name = "nera-rule-validation-upstream-bandit"
+version = "0"
+description = "Bandit as the validation gates run it: the release the ported documents name."
+requires-python = "==3.13.*"
+dependencies = ["bandit==1.9.4"]
+
+[tool.uv]
+package = false

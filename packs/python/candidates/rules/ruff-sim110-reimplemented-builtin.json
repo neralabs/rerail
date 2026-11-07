@@ -3,7 +3,7 @@
   "id": "ruff-sim110-reimplemented-builtin",
   "revision": 1,
   "mode": "steer",
-  "description": "Partial port of Ruff's SIM110 (reimplemented-builtin): in a function scope, a `for` loop whose body is one `if` (no `elif`/`else`) returning a boolean literal, followed by a `return` of the opposite literal in the loop's `else` or as the next statement; the loop target and the `if` test contain no `await`/`yield`. Missing: Ruff reports only when the generated `return any(...)`/`all(...)` fits the line length.",
+  "description": "Use any() or all() instead of a for loop that returns True or False from an if and the opposite value after the loop.",
   "scope": {
     "include": [
       "**/*"

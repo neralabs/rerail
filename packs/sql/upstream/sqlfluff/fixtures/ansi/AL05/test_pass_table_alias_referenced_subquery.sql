@@ -1,1 +1,0 @@
-SELECT * FROM (SELECT foo.bar FROM my_tbl AS foo)

@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../../src/engine/index.js";
-import { steerBlock } from "../../src/engine/index.js";
+import { editSteer } from "../support/steers.js";
 import { encodeRerailEventResult, RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/index.js";
 import { runRerailEventStream, serveRerailEventStream } from "../../src/harness/event-stream.js";
 import { startTestRepository } from "../support/started-repository.js";
@@ -84,7 +84,7 @@ describe("Rerail event stream", () => {
     expect(ingest).not.toHaveBeenCalled();
   });
 
-  it("links a steer's Why? to the session checkout's dashboard, recorded in the Rerail home's daemon.json", async () => {
+  it("links a steer's rules to the session checkout's dashboard, recorded in the Rerail home's daemon.json", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-event-stream-home-"));
     cleanups.push(() => rm(home, { recursive: true, force: true }));
     const checkout = join(home, "checkout");
@@ -93,7 +93,7 @@ describe("Rerail event stream", () => {
       version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home }));
     vi.stubEnv("RERAIL_HOME", home);
     cleanups.push(async () => { vi.unstubAllEnvs(); });
-    const steer: AdapterDelivery = { sessionId: "s1", requested: "steer", mechanism: "additional-context", content: steerBlock("acme:no-print", "Remove print.", { mode: "steer" }), ruleIds: ["acme:no-print"] };
+    const steer: AdapterDelivery = { sessionId: "s1", requested: "steer", mechanism: "additional-context", content: editSteer("acme:no-print", "Remove print."), ruleIds: ["acme:no-print"], rules: [{ id: "acme:no-print", state: "steered" }] };
     const ingest = vi.fn<(event: AdapterEvent) => Promise<readonly AdapterDelivery[]>>()
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([steer]);
@@ -105,7 +105,8 @@ describe("Rerail event stream", () => {
     ], { ingest }, "/elsewhere");
     expect(frames[1]).toEqual({ eventId: "result", deliveries: [{
       ...steer,
-      content: steer.content.replace("Why? → #rule/", "Why? → http://127.0.0.1:4791/#rule/"),
+      // The agent's text is the runtime's own; only the rules carry the link.
+      rules: [{ id: "acme:no-print", state: "steered", url: "http://127.0.0.1:4791/#rule/acme%3Ano-print" }],
     }] });
   });
 });
@@ -125,7 +126,7 @@ async function fakeEngineService(socketPath: string): Promise<EngineRequestBody[
     received.push(parsed);
     response.end(encodeRerailEventResult({
       eventId: parsed.event.eventId,
-      deliveries: [{ sessionId: "s", requested: "steer", mechanism: "native-queue", content: "from the daemon", ruleIds: [] }],
+      deliveries: [{ sessionId: "s", requested: "steer", mechanism: "native-queue", content: "from the daemon", ruleIds: [], rules: [] }],
     }));
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve));

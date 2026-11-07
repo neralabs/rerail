@@ -3,7 +3,7 @@
   "id": "ruff-b015-useless-comparison",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B015 (useless-comparison): an expression statement whose value is a comparison (parentheses transparent). When the statement is the last one of a function body the message asks whether the result was meant to be returned. Reported on the comparison.",
+  "description": "Remove comparisons whose result is discarded; assign, return or assert the result if it was meant to be used.",
   "scope": {
     "include": [
       "**/*"

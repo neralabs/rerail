@@ -23,12 +23,14 @@ use super::model::{
 };
 #[cfg(test)]
 use super::test_support::{Walk, record_walk};
+/// P's column batches for projected facts: P's typed evidence projections (its `violations` delta).
 pub(crate) mod projection;
 mod semantic;
 mod suppression;
 pub(crate) use super::lines::Span;
 use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::origin::InFile;
 use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::replacer::{Content, Replacer, TemplateFix};
@@ -106,7 +108,7 @@ pub(super) fn ast_captures<'a>(
     match matcher {
         AstMatcher::Pattern(pattern) => names.extend(pattern.defined_vars()),
         AstMatcher::Semantic(semantic) => semantic::ast_captures(semantic, utils, summaries, names),
-        AstMatcher::Kind(_)
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
@@ -325,7 +327,7 @@ fn node_regexes_in<'a>(
         }
         AstMatcher::Constrained(core) => node_regexes_in(&core.rule, utils, summaries, regexes),
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Count(_)
@@ -388,10 +390,9 @@ pub(super) fn bind(
 ) -> Result<()> {
     let query = match kind {
         ClauseKind::Forbid(query) => Some(emitting(query)),
-        ClauseKind::RequireEach { .. }
-        | ClauseKind::Budget { .. }
-        | ClauseKind::Relational(_)
-        | ClauseKind::Llm => None,
+        ClauseKind::RequireEach { .. } | ClauseKind::Budget { .. } | ClauseKind::Llm => None,
+        #[cfg(test)]
+        ClauseKind::Relational(_) => None,
     };
     let mut names = BTreeSet::new();
     // The values counts bind (`as`): text a message alone may interpolate.
@@ -457,8 +458,12 @@ pub(super) fn bind(
             )));
         };
         // A query's matchers are the dialects of one code-rule language, so of one family, which
-        // honours its own linters' comments or none.
-        let family = matchers.first().map(|grammar| Family::of(grammar.language));
+        // honours its own linters' comments or none: the file's, for a query over the program
+        // it embeds too.
+        let family = matchers.first().map(|grammar| match grammar.document {
+            Some(via) => via.host_family(),
+            None => Family::of(grammar.language),
+        });
         let language = family.map_or("empty", |family| with_adapter!(family, A => A::LABEL));
         for linter in suppress.requested() {
             if !family.is_some_and(|family| family.honours(linter)) {
@@ -578,6 +583,7 @@ pub(super) fn bind(
         return Ok(());
     };
     let template = Template::parse(fix);
+    let fix_template = template.clone();
     references(&template, "fix")?;
     let upstream = template.upstream();
     if upstream.is_some()
@@ -634,6 +640,7 @@ pub(super) fn bind(
             )));
         }
     };
+    violation.fix_template = Some(fix_template);
     violation.fix = Some(Arc::new(plan));
     Ok(())
 }
@@ -830,7 +837,7 @@ pub(super) fn ast_output<D: Doc>(
     language: GrammarDialect,
     matched: &NodeMatch<'_, D>,
     groups: &[NodeGroup],
-    span: impl Fn(usize, usize) -> Span,
+    place: &InFile<'_>,
 ) -> (Option<String>, Option<Value>) {
     let env = matched.get_env();
     let message = violation.message_template.as_ref().map(|template| {
@@ -885,8 +892,11 @@ pub(super) fn ast_output<D: Doc>(
                         (range, template.generate_replacement(&target))
                     }
                 };
+                // A fix rewrites the file's bytes: only those the range copies (in an embedded
+                // program, `embed`, the program wrote the rest).
+                let range = place.copied(range)?;
                 Some(json!({
-                    "span": span(range.start, range.end),
+                    "span": place.span(range),
                     "text": <D::Source as Content>::encode_bytes(&bytes),
                 }))
             }),
@@ -928,6 +938,8 @@ pub(crate) struct Witness {
     /// A `rerail-ignore` naming the code rule covers it, where its violation marks such witnesses
     /// instead of dropping them (`ViolationSpec::ignore_marks`: a `budget`'s rows).
     pub(crate) ignored: bool,
+    /// A complete violation projected by SQL. Publication returns it without host reconstruction.
+    pub(crate) sql_violation: Option<Value>,
 }
 
 /// The key under which a witness of an evidence producer carries its projected row.
@@ -992,6 +1004,8 @@ impl Captures {
         self.projection = projection.map(projection::Row::from_json);
     }
 
+    // Read by P's relational inputs (test-only, open item O18).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn take_projection(&mut self) -> Option<projection::Row> {
         self.projection.take()
     }
@@ -1076,6 +1090,7 @@ pub(super) fn regex_witness(
         _ => None,
     };
     Witness {
+        sql_violation: None,
         path: path.to_owned(),
         span: span(whole.start(), whole.end()),
         captures: Captures::from_spans(captures),

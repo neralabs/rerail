@@ -10,7 +10,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { z, ZodError } from "zod";
-import type { RerailDatabase } from "../engine/storage/database.js";
+import { resetRepositoryHistoryIn, type RerailDatabase } from "../engine/storage/database.js";
 import { CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import {
   normalizeFolder,
@@ -27,7 +27,7 @@ import {
   type RuleSuppressions,
 } from "../engine/catalog/repository-model.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
-import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, type RepositoryListing } from "../engine/catalog/repository-registry.js";
+import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, repositoryHistoryIds, type RepositoryListing } from "../engine/catalog/repository-registry.js";
 import { setCheckoutStarted, setRepositoryStarted } from "../runtime/repository-start.js";
 import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
 import {
@@ -47,6 +47,7 @@ import { ApiError, defineOperation, type Operation, type RerailApiStores } from 
 import {
   attachmentRecordSchema,
   attachmentsSetBodySchema,
+  followGitignoreBodySchema,
   inactiveOf,
   libraryRuleRecordSchema,
   libraryUpsertBodySchema,
@@ -56,6 +57,8 @@ import {
   repositoryContextSchema,
   repositoryRulesSchema,
   repositorySummarySchema,
+  resetBodySchema,
+  resetResultSchema,
   rerailRuleSchema,
   ruleSettingRecordSchema,
   settingsSetBodySchema,
@@ -192,22 +195,43 @@ export function repositorySummary(repository: RepositoryListing): z.infer<typeof
     configuredAt: repository.configuredAt,
     started: repository.started,
     state: stateOf({ started: repository.started, setUp: repository.configuredAt !== null, startedBy: "repository" }),
+    followGitignore: repository.followGitignore,
     checkoutCount: repository.checkouts.length,
   };
 }
 
 /**
- * The session `repository_id`s of a repository's history: its key, its aliases, and the clone ids of its checkouts
- * (rows recorded before sessions carried the repository key). An unknown key matches only itself.
+ * The session `repository_id`s of a repository's history (see {@link repositoryHistoryIds}). An unknown key matches
+ * only itself.
  */
 export function historyRepositoryIds(stores: RerailApiStores, key: string): string[] {
   const repository = findRepository(stores.database(), key);
-  if (repository === undefined) return [key];
-  return [...new Set([repository.repositoryKey, ...repository.aliases, ...repository.checkouts.map(checkout => checkout.cloneId)])];
+  return repository === undefined ? [key] : repositoryHistoryIds(repository);
 }
 
-function effectiveRuleRecord(rule: EffectiveRule): z.infer<typeof repositoryRulesSchema>["rules"][number] {
+/** When each effective rule was added here and, for a rule created by you, last edited. */
+interface RuleDates {
+  /** `created_at` by attachment: `sourceKind\0sourceId\0folder`. */
+  readonly added: ReadonlyMap<string, number>;
+  /** `updated_at` by library rule id. */
+  readonly updated: ReadonlyMap<string, number>;
+}
+
+function ruleDatesOf(db: RerailDatabase, repositoryKey: string): RuleDates {
+  const attachments = db.select({
+    sourceKind: ruleAttachments.sourceKind, sourceId: ruleAttachments.sourceId, folder: ruleAttachments.folder, createdAt: ruleAttachments.createdAt,
+  }).from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all();
+  const library = db.select({ ruleId: libraryRules.ruleId, updatedAt: libraryRules.updatedAt }).from(libraryRules).all();
+  return {
+    added: new Map(attachments.map(row => [`${row.sourceKind}\0${row.sourceId}\0${row.folder}`, row.createdAt])),
+    updated: new Map(library.map(row => [row.ruleId, row.updatedAt])),
+  };
+}
+
+function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typeof repositoryRulesSchema>["rules"][number] {
   const shared = {
+    addedAt: dates.added.get(`${rule.source.kind}\0${rule.source.id}\0${rule.attachmentFolder}`) ?? null,
+    updatedAt: rule.source.kind === "library_rule" ? dates.updated.get(rule.source.id) ?? null : null,
     source: { ...rule.source },
     folder: rule.attachmentFolder,
     on: rule.on,
@@ -283,7 +307,7 @@ function checkConfig(stores: RerailApiStores, change: SettingChange): void {
   if (change.folder !== "") throw new ApiError(400, "invalid-setting", "config applies to a rule over the whole repository; set it with folder \"\"");
   const library = stores.database().select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
   if (library !== undefined) throw new ApiError(400, "invalid-setting", `config applies to rules by Rerail; ${id} is your library rule`);
-  const configured = configureBundledCodeRule(stores.bundle(), id, change.config);
+  const configured = configureBundledCodeRule(stores.ruleCatalog(), id, change.config);
   if (!configured.ok) throw new ApiError(400, "invalid-setting", configured.reason);
 }
 
@@ -359,9 +383,9 @@ function libraryWrite<T>(write: () => T): T {
 }
 
 function ruleSourceExists(stores: RerailApiStores, kind: "pack" | "rerail_rule" | "library_rule", id: string): boolean {
-  const bundle = stores.bundle();
-  if (kind === "pack") return bundle.packs.has(id);
-  if (kind === "rerail_rule") return bundle.documents.has(id);
+  const ruleCatalog = stores.ruleCatalog();
+  if (kind === "pack") return ruleCatalog.packs.has(id);
+  if (kind === "rerail_rule") return ruleCatalog.documents.has(id);
   return getLibraryRule(stores.database(), id) !== undefined;
 }
 
@@ -420,15 +444,16 @@ export const repositoryOperations: readonly Operation[] = [
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, false);
       const db = stores.database();
-      const view = listRepositoryRules(db, stores.bundle(), target.repository.repositoryKey, target.checkout === undefined ? {} : {
+      const view = listRepositoryRules(db, stores.ruleCatalog(), target.repository.repositoryKey, target.checkout === undefined ? {} : {
         checkoutPath: target.checkout.checkoutPath,
         parentCheckoutPaths: parentCheckouts(db, target.checkout).map(parent => parent.checkoutPath),
       });
+      const dates = ruleDatesOf(db, target.repository.repositoryKey);
       return {
         repositoryKey: target.repository.repositoryKey,
         checkoutPath: target.checkout?.checkoutPath ?? null,
         setUp: target.repository.configuredAt !== null,
-        rules: view.rules.map(effectiveRuleRecord),
+        rules: view.rules.map(rule => effectiveRuleRecord(rule, dates)),
         unavailable: view.unavailable.map(reference => ({ ...reference })),
       };
     },
@@ -489,8 +514,6 @@ export const repositoryOperations: readonly Operation[] = [
             packs: add.filter(entry => entry.sourceKind === "pack").map(entry => ({ packId: entry.sourceId, folder: entry.folder })),
             rules: add.filter(entry => entry.sourceKind !== "pack"),
             settings,
-            // `/api` writes are the person's in the dashboard, where set-up's review sets the repository up.
-            inDashboard: caller.kind === "person",
           });
         } else {
           for (const entry of add) addAttachment(tx, { repositoryKey, ...entry });
@@ -520,6 +543,39 @@ export const repositoryOperations: readonly Operation[] = [
     handler: (stores, input, caller) => startOrStop(stores, input, caller, false),
   }),
   defineOperation({
+    id: "repository_reset",
+    method: "POST",
+    path: "/api/repository/reset",
+    summary: "Clear a repository's execution history across all its checkouts, as `rerail reset` does: sessions recorded under its key, aliases and clone ids, with their events, work links, audits and violations. Ended sessions are removed; running ones keep recording. Rules, settings and other repositories are unchanged. People only.",
+    body: resetBodySchema,
+    output: resetResultSchema,
+    handler: (stores, input, caller) => {
+      if (caller.kind === "agent") throw new ApiError(403, "agent-not-permitted", "only a person can clear a repository's history, in the dashboard or the CLI");
+      const target = resolveTarget(stores, input, caller, true);
+      return {
+        repositoryKey: target.repository.repositoryKey,
+        ...resetRepositoryHistoryIn(stores.database(), repositoryHistoryIds(target.repository)),
+      };
+    },
+  }),
+  defineOperation({
+    id: "repository_follow_gitignore_set",
+    method: "PUT",
+    path: "/api/repository/follow-gitignore",
+    summary: "Choose whether a repository's audits leave out files Git ignores (.gitignore, .git/info/exclude, global excludes; tracked files are always audited). On by default. It applies to every checkout of the repository, from the next session started there. A coding agent may change it only before the repository is set up.",
+    body: followGitignoreBodySchema,
+    output: z.object({ repository: repositorySummarySchema }),
+    handler: (stores, input, caller) => {
+      const target = resolveTarget(stores, input, caller, true);
+      guardAgent(stores, caller, target);
+      const db = stores.database();
+      const repositoryKey = target.repository.repositoryKey;
+      db.update(repositories).set({ followGitignore: input.followGitignore, updatedAt: Date.now() })
+        .where(eq(repositories.repositoryKey, repositoryKey)).run();
+      return { repository: repositorySummary(requireRepository(db, repositoryKey)) };
+    },
+  }),
+  defineOperation({
     id: "repository_link",
     method: "POST",
     path: "/api/repository/aliases",
@@ -540,7 +596,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "rule_packs_recommend",
     method: "GET",
     path: "/api/rule-packs/recommendations",
-    summary: "Recommend rule packs for a repository by matching a checkout's files and package.json dependencies against each pack, each with the folder to add it in (the whole repository for repository packs). Local; changes nothing. A checkout is rescanned at most once a minute.",
+    summary: "Recommend installed rule packs for a repository by matching a checkout's files and dependency manifests against each pack, each with the folder to add it in (the whole repository for repository packs). Local; changes nothing. A checkout is rescanned at most once a minute.",
     query: z.object({ ...targetShape }).strict(),
     output: rulePackRecommendationsSchema,
     handler: (stores, input, caller) => {
@@ -558,17 +614,17 @@ export const repositoryOperations: readonly Operation[] = [
     id: "rerail_rules_list",
     method: "GET",
     path: "/api/rerail-rules",
-    summary: "List the By Rerail rules that ship with Rerail, each with the pack it belongs to (null for rules in no pack).",
+    summary: "List the By Rerail rules of the installed rule packs, each with the pack it belongs to (null for rules in no pack).",
     query: kindFilter,
     output: z.object({ rules: z.array(rerailRuleSchema) }),
     handler: (stores, input) => {
-      const bundle = stores.bundle();
+      const ruleCatalog = stores.ruleCatalog();
       return {
-        rules: [...bundle.documents.values()]
+        rules: [...ruleCatalog.documents.values()]
           .filter(document => input.kind === undefined || document.kind === input.kind)
           .map(document => document.kind === "code"
-            ? { kind: "code" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null, ...inactiveOf("code", document.rule) }
-            : { kind: "conversation" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null }),
+            ? { kind: "code" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null, ...inactiveOf("code", document.rule) }
+            : { kind: "conversation" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null }),
       };
     },
   }),
@@ -611,13 +667,13 @@ export const repositoryOperations: readonly Operation[] = [
     handler: (stores, input, caller) => {
       if (input.rule.id !== input.id) throw new ApiError(400, "rule-id-mismatch", `path id ${input.id} does not match rule.id ${input.rule.id}`);
       const db = stores.database();
-      const bundle = stores.bundle();
+      const ruleCatalog = stores.ruleCatalog();
       const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();
       // A library rule a later release bundled the id of wins over the By Rerail rule, so writing it edits it.
-      if (existing === undefined && bundle.documents.has(input.id)) {
+      if (existing === undefined && ruleCatalog.documents.has(input.id)) {
         // Copy-on-edit: an agent may add the copy to a set-up repository, as people may.
         const target = resolveTarget(stores, input, caller, true);
-        const copied = libraryWrite(() => copyRerailRuleToLibrary(db, bundle, target.repository.repositoryKey, input.id, input.rule));
+        const copied = libraryWrite(() => copyRerailRuleToLibrary(db, ruleCatalog, target.repository.repositoryKey, input.id, input.rule));
         return {
           rule: libraryRecord(copied.rule),
           copiedFromRuleId: input.id,
@@ -633,7 +689,7 @@ export const repositoryOperations: readonly Operation[] = [
       const document = libraryWrite(() => validateLibraryDocument(input.rule, input.kind));
       // The rule, its attachment and a first set-up are one change.
       libraryWrite(() => db.transaction(tx => {
-        writeLibraryRule(tx, bundle, document, input.revision === undefined ? {} : { revision: input.revision });
+        writeLibraryRule(tx, ruleCatalog, document, input.revision === undefined ? {} : { revision: input.revision });
         if (target === undefined) return;
         const repositoryKey = target.repository.repositoryKey;
         const attachment = { folder: target.folder, sourceKind: "library_rule" as const, sourceId: input.id };
@@ -676,16 +732,16 @@ function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, rule
  */
 export function activityRules(stores: RerailApiStores, key: string | undefined): { id: string; kind: "code" | "conversation"; rule: unknown }[] {
   const db = stores.database();
-  const bundle = stores.bundle();
+  const ruleCatalog = stores.ruleCatalog();
   if (key === undefined) {
     return [
-      ...[...bundle.documents.values()].map(document => ({ id: document.rule.id, kind: document.kind, rule: document.rule as unknown })),
+      ...[...ruleCatalog.documents.values()].map(document => ({ id: document.rule.id, kind: document.kind, rule: document.rule as unknown })),
       ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, rule: rule.document.rule as unknown })),
     ];
   }
   const repository = findRepository(db, key);
   if (repository === undefined) return [];
-  const present = new Map(listRepositoryRules(db, bundle, repository.repositoryKey).rules
+  const present = new Map(listRepositoryRules(db, ruleCatalog, repository.repositoryKey).rules
     .map(rule => [rule.document.rule.id, { kind: rule.document.kind, rule: rule.document.rule as unknown }] as const));
   return [...present].map(([id, { kind, rule }]) => ({ id, kind, rule }));
 }

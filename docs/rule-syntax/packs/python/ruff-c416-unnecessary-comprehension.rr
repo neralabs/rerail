@@ -1,0 +1,56 @@
+.policy "ruff-c416-unnecessary-comprehension" revision 2
+.description "Pass the iterable to list, set or dict directly instead of a comprehension that rebuilds it unchanged."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C416 (flake8-comprehensions): a comprehension with one plain `for` and no `if` that yields its items
+// unchanged, while list, set or dict is the builtin there:
+//   [x for x in y]    {x for x in y}         ← C416: list(y), set(y)
+//   {k: v for k, v in y}                     ← C416: dict(y)
+//   [(k, v) for k, v in d.items()]           ← C416 when d is a dict (Ruff's typing::is_dict): list(d.items())
+//   [(k, v) for k, v in y]                   not reported: y's items may not be pairs
+//   [x for x in y if x]    [x for x, in y]   not reported
+// Only plain names are compared, as Ruff does. Its fix is unsafe; none here.
+#include "python/comprehensions.rr"
+//   c4_comp(e, k), c4_simple(e, fc), c4_elt(e, x), dict_ref(n), c4_builtin_here(n, x)
+
+.violation C416(at: node, kind: symbol, id: symbol, msg: symbol) code "C416" "{msg}"
+    suppress ruff "C416"
+C416(e, "list", "list-comprehension",
+    "Replace this comprehension with `list(<iterable>)`, which copies the same items; keep it inside `__len__`, where `list()` can recurse.") :-
+    unchanged(e, "list").
+C416(e, "set", "set-comprehension",
+    "Replace this comprehension with `set(<iterable>)`, which copies the same items; keep it inside `__len__`, where `set()` can recurse.") :-
+    unchanged(e, "set").
+C416(e, "dict", "dict-comprehension",
+    "Replace this comprehension with `dict(<iterable>)`; if the iterable is a mapping whose keys are pairs, use `dict(<iterable>.keys())`; keep it inside `__len__`, where `dict()` can recurse.") :-
+    unchanged(e, "dict").
+
+// unchanged(e, k): e rebuilds its iterable, and k is the builtin at e.
+.decl unchanged(e: node, k: symbol)
+unchanged(e, k) :- same_items(e, k), c4_builtin_here(e, k).
+c4_builtin_ask(e, k) :- same_items(e, k).
+.decl same_items(e: node, k: symbol)
+// `[x for x in y]`: the element is the target, both plain names.
+same_items(e, k) :- comp(e, k, t, x), (k = "list" ; k = "set"), kind(t, "identifier"), kind(x, "identifier"),
+    text(t, n), text(x, n).
+// `[(k, v) for k, v in d.items()]`, `[(k, v) for [k, v] in d.items()]`: only over a dict's items.
+same_items(e, k) :- comp(e, k, t, x), (k = "list" ; k = "set"), c4_simple(e, fc), field(fc, "right", i),
+    dict_items(i), (kind(t, "pattern_list") ; kind(t, "tuple_pattern") ; kind(t, "list_pattern")), kind(x, "tuple"),
+    name_at(t, 0, a), name_at(t, 1, b), name_at(x, 0, a), name_at(x, 1, b), two(t), two(x).
+// `{k: v for k, v in y}`.
+same_items(e, "dict") :- comp(e, "dict", t, p), (kind(t, "pattern_list") ; kind(t, "tuple_pattern")), two(t),
+    name_at(t, 0, a), name_at(t, 1, b), field(p, "key", kn), text(kn, a), kind(kn, "identifier"),
+    field(p, "value", vn), text(vn, b), kind(vn, "identifier").
+.decl comp(e: node, k: symbol, t: node, x: node)  // a one-`for` comprehension, its target t and element x
+comp(e, k, t, x) :- c4_comp(e, k), k != "generator", c4_simple(e, fc), field(fc, "left", t), c4_elt(e, x).
+.decl name_at(t: node, i: number, x: symbol)  // the i-th element of tuple t is the plain name x
+name_at(t, i, x) :- child(t, n, j), kind(n, "identifier"), text(n, x),
+    i = count : { child(t, o, j2), j2 < j, !kind(o, "comment") }.
+.decl two(t: node)
+two(t) :- kind(t, _), count : { child(t, o, _), !kind(o, "comment") } = 2.
+// dict_items(i): `d.items()`, d a name bound to a dict.
+.decl dict_items(i: node)
+dict_items(i) :- unparen(i, c), kind(c, "call"), call_nargs(c, 0), call_nkwargs(c, 0), field(c, "function", f),
+    attr_of(f, o, "items"), kind(o, "identifier"), dict_ref(o).

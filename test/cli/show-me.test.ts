@@ -12,7 +12,7 @@ import {
   libraryRules,
   listLibraryRules,
   listRepositoryRules,
-  loadBundledCatalog,
+  loadRuleCatalog,
   openRerailDatabase,
   recordCheckout,
   upsertLibraryRule,
@@ -73,7 +73,7 @@ function rulesOf(repo: string) {
     return {
       library: listLibraryRules(database).map(rule => rule.document.rule.id).sort(),
       setUp: checkoutStatus(database, checkout).setUp,
-      repository: listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey).rules.map(rule => rule.source.id).sort(),
+      repository: listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey).rules.map(rule => rule.source.id).sort(),
     };
   } finally {
     database.$client.close();
@@ -201,7 +201,7 @@ describe("rerail show-me", () => {
     const theirs = { ...OTHER_RULE, id: SHOW_ME_RULE_ID };
     const database = openRerailDatabase(defaultRerailDatabasePath());
     try {
-      upsertLibraryRule(database, loadBundledCatalog(), theirs, "code");
+      upsertLibraryRule(database, loadRuleCatalog(), theirs, "code");
     } finally {
       database.$client.close();
     }

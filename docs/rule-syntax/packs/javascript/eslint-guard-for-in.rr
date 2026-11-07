@@ -1,0 +1,31 @@
+.policy "eslint-guard-for-in" revision 4
+.description "Guard the body of every for-in loop with an if check; for-in also iterates inherited properties from the prototype chain."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   body, lone, first_stmt, empty_body
+
+// ESLint's guard-for-in: a for-in loop whose body does not start by filtering keys. A body is guarded when it is
+//   empty                    for (k in o) {}
+//   an if, alone             for (k in o) if (Object.hasOwn(o, k)) f(k);
+//   an if that skips         for (k in o) { if (!Object.hasOwn(o, k)) continue; f(k); }
+//                            (its consequent is `continue` or `{ continue; }`)
+// Everything else is reported at the loop:  for (k in o) f(k);   for-of loops are not checked. No options.
+.violation guard_for_in(at: node) code "guard-for-in"
+    "The body of a for-in should be wrapped in an if statement to filter unwanted properties from the prototype."
+    suppress eslint "guard-for-in"
+    suppress oxlint "guard-for-in"
+    suppress biome "lint/suspicious/useGuardForIn"
+guard_for_in(s) :- body(s, b, "for-in"), !guarded(b).
+
+.decl guarded(b: node)
+guarded(b) :- body(_, b, "for-in"), empty_body(b).
+guarded(b) :- body(_, b, "for-in"), lone(b, x), kind(x, "if_statement").
+guarded(b) :- body(_, b, "for-in"), first_stmt(b, x), kind(x, "if_statement"), field(x, "consequence", c),
+    lone_continue(c).
+// lone_continue(c): `continue;` or `{ continue; }`, but not `{ continue; f(); }`.
+.decl lone_continue(c: node)
+lone_continue(c) :- kind(c, "continue_statement").
+lone_continue(c) :- single_statement(c, x), kind(x, "continue_statement").

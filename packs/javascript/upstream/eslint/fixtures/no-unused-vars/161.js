@@ -1,1 +1,0 @@
-function foox() { return foox(); }

@@ -1,1 +1,0 @@
-if (f(a)) {} else if (f(b)) {}

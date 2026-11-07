@@ -2,7 +2,16 @@ name: Git LFS objects
 description: >-
   Replaces the checkout's Git LFS pointers (the embedding model, the engine's Unicode names table) with their content.
   The objects come from a cache keyed on their ids (`git lfs ls-files -l`), so a run downloads them from LFS only
-  when one of them changes. Use it right after `actions/checkout`, which leaves the pointers when `lfs` is false.
+  when one of them changes. Use it right after `actions/checkout`, which leaves the pointers when `lfs` is false. The
+  cache is saved by an explicit step straight after the pull, never in the post-job step: by the end of a port
+  readiness job the recorder may have run upstream's code, which could have rewritten .git/lfs.
+
+inputs:
+  save:
+    description: >-
+      Save the objects to the cache on a miss. A job that runs a pull request's code under pull_request_target sets it
+      to false: it would save into the base branch's scope, which every workflow on main restores.
+    default: "true"
 
 runs:
   using: composite
@@ -12,8 +21,10 @@ runs:
       shell: bash
       run: echo "digest=$(git lfs ls-files -l | sort | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
 
-    - name: Restore the LFS objects
-      uses: actions/cache@v6
+    # Restore only. actions/cache would save in its post-job step, after whatever the job ran.
+    - id: restored
+      name: Restore the LFS objects
+      uses: actions/cache/restore@v6
       with:
         path: .git/lfs
         key: lfs-${{ steps.objects.outputs.digest }}
@@ -27,3 +38,11 @@ runs:
       run: |
         auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
         git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" lfs pull
+
+    # Saved here, before any later step of the job runs, so what lands in the cache is what LFS served.
+    - name: Save the LFS objects
+      if: steps.restored.outputs.cache-hit != 'true' && inputs.save == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: .git/lfs
+        key: lfs-${{ steps.objects.outputs.digest }}

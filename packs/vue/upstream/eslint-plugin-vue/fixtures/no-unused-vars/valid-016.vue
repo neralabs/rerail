@@ -1,1 +1,0 @@
-<template><my-component #default="{ Comp }"><Comp /></my-component></template>

@@ -1,1 +1,0 @@
-foo(/* ignored */ a);

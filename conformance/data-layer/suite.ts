@@ -1,9 +1,5 @@
-import { policyPath } from "./policies.js";
 /** Measure all selected ports together against the upstream shared fact engine's repository snapshot. */
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
-import { configureDataLayerAudit } from "../../src/cli/index.js";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseArgs } from "node:util";
 import { z } from "zod";
@@ -21,7 +17,7 @@ const pageSchema = z.object({ done: z.boolean(), cursor: z.number(),
   failures: z.array(z.unknown()),
 });
 const { values } = parseArgs({ options: { recording: { type: "string" }, output: { type: "string" }, allocator: { type: "string", default: "unspecified" },
-  policies: { type: "string", default: "packs/data-layer/candidates/rules" }, source: { type: "string" }, python: { type: "string" }, progress: { type: "boolean", default: false }, "cold-only": { type: "boolean", default: false }, "memory-census": { type: "boolean", default: false }, "batch-files": { type: "string", default: "32" } } });
+  policies: { type: "string", default: "packs/data-layer/candidates/rules" }, progress: { type: "boolean", default: false }, "cold-only": { type: "boolean", default: false }, "memory-census": { type: "boolean", default: false }, "batch-files": { type: "string", default: "32" } } });
 if (values.recording === undefined || values.output === undefined) throw new Error("Usage: suite.ts --recording <json> --output <json>");
 const batchFiles = Number(values["batch-files"]);
 if (!Number.isInteger(batchFiles) || batchFiles < 1 || batchFiles > 2048) throw new Error("--batch-files must be an integer between 1 and 2048");
@@ -32,7 +28,6 @@ const native = loadNativeBinding();
 const nativeSha256 = createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex");
 const workspace = new native.CodeRuleDslWorkspace();
 const policyDigests: Record<string, string> = {};
-const policyFileSha256: Record<string, string> = {};
 const policyCompilationMs: Record<string, number> = {};
 const phaseCpuMs: Record<string, { userMs: number; systemMs: number }> = {};
 const memoryCheckpoints: unknown[] = [];
@@ -52,29 +47,22 @@ const finishCpu = (phase: string, started: NodeJS.CpuUsage): void => {
 const markPhase = (phase: string): void => {
   if (process.env.RERAIL_PROFILE_PHASES !== undefined) console.error(`RERAIL_PROFILE_PHASE ${JSON.stringify({ phase, startUnixUs: Date.now() * 1000 })}`);
 };
-let closed = false;
-const closeWorkspace = (): void => {
-  if (closed) return;
-  markPhase("close");
-  const cpu = process.cpuUsage(), started = performance.now();
-  const before = { memory: process.memoryUsage(), peakRssBytes: process.resourceUsage().maxRSS * 1024 };
-  workspace.close();
-  closed = true;
-  const elapsed = process.cpuUsage(cpu);
-  // Preserve the original cold/report order and separately record the later
-  // native close peak. The census path also closes through this function.
-  writeFileSync(`${values.output}.close.json`, JSON.stringify({ format: "rerail.workspace-close/v1", nativeSha256,
-    wallMs: performance.now() - started, cpuMs: { userMs: elapsed.user / 1000, systemMs: elapsed.system / 1000 },
-    before, after: { memory: process.memoryUsage(), peakRssBytes: process.resourceUsage().maxRSS * 1024 },
-    note: "Separate from the original cold phase. The operating-system full-process receipt remains the peak-RSS authority." }, null, 2) + "\n");
-};
-const files = recording.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : file.path.endsWith(".py") ? "python" : "text" }));
-const benchmarkPack = mkdtempSync(join(tmpdir(), "rerail-cumulative-pack-"));
+const files = recording.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" }));
 let revision = 0;
 let loadedFiles = 0;
+// With RERAIL_CODE_RULE_PROFILE, the engine's phase times (decision 0006): construction and
+// execution apart. Per-apply parse and match times sum; the phase clock is a running total.
+const engineProfile: { parseMs: number; matchMs: number; clock?: Record<string, number> } = { parseMs: 0, matchMs: 0 };
+const recordProfile = (result: unknown): void => {
+  if (typeof result !== "string" || !result.includes("phaseClock")) return;
+  const parsed = JSON.parse(result) as { phaseClock?: Record<string, number>; workspaceProfile?: Record<string, number> };
+  engineProfile.parseMs += (parsed.workspaceProfile?.astParseNanoseconds ?? 0) / 1e6;
+  engineProfile.matchMs += (parsed.workspaceProfile?.astMatchNanoseconds ?? 0) / 1e6;
+  if (parsed.phaseClock) engineProfile.clock = parsed.phaseClock;
+};
 const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<void> => {
   const cpu = process.cpuUsage(), started = performance.now();
-  const applied = JSON.parse(await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal })));
+  recordProfile(await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal })));
   loadedFiles += batchFiles.length;
   const elapsed = process.cpuUsage(cpu), memory = process.memoryUsage();
   applies.push({ revision, phase: deferGlobal ? "file-inputs" : "global-results", files: batchFiles.length,
@@ -82,11 +70,6 @@ const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<voi
     wallMs: performance.now() - started, cpuMs: (elapsed.user + elapsed.system) / 1000,
     peakRssBytes: process.resourceUsage().maxRSS * 1024, rssBytes: memory.rss, heapUsed: memory.heapUsed, external: memory.external, arrayBuffers: memory.arrayBuffers });
   if (values.progress) console.error(JSON.stringify({ phase: deferGlobal ? "file-inputs" : "global-results", loadedFiles, revision, rssBytes: process.memoryUsage().rss }));
-  if (applied.hasEvaluationFailures) {
-    const result = await collect();
-    writeFileSync(`${values.output}.failure.json`, JSON.stringify({ format: "rerail.incomplete-cumulative-run/v1", loadedFiles, revision, nativeSha256, failures: result.failures }, null, 2) + "\n");
-    throw new Error(`Cumulative run stopped after an engine failure: ${JSON.stringify(result.failures.slice(0, 3))}`);
-  }
 };
 const collect = async (): Promise<{ violations: z.infer<typeof pageSchema>["violations"]; failures: unknown[] }> => {
   const violations: z.infer<typeof pageSchema>["violations"] = [], failures: unknown[] = [];
@@ -100,30 +83,14 @@ const collect = async (): Promise<{ violations: z.infer<typeof pageSchema>["viol
 };
 const findingKeys = (rows: z.infer<typeof pageSchema>["violations"]): string[] => rows.map(f => JSON.stringify([f.ruleId, f.path, f.span.startLine + 1, f.code])).sort();
 try {
-  markPhase("host-prepare");
-  const preparationCpu = process.cpuUsage(), preparationStarted = performance.now();
-  const manifest = JSON.parse(readFileSync("packs/data-layer/pack.json", "utf8"));
-  mkdirSync(join(benchmarkPack, "rules"));
-  symlinkSync(resolve("packs/data-layer/runtime"), join(benchmarkPack, "runtime"), "dir");
-  manifest.rules = recording.events.map(event => {
-    const id = `data-layer-${event.check.replaceAll("_", "-")}`;
-    const path = policyPath(values.policies, id);
-    policyFileSha256[id] = createHash("sha256").update(readFileSync(path)).digest("hex");
-    symlinkSync(path, join(benchmarkPack, "rules", `${id}.json`));
-    return { id, document: `rules/${id}.json`, title: event.check, group: "Cumulative validation" };
-  });
-  writeFileSync(join(benchmarkPack, "pack.json"), JSON.stringify(manifest));
-  if (recording.events.some(event => event.check === "plan_composition_architecture") && !values.source) throw new Error("Cumulative production observation requires --source <pinned repository>");
-  const prepared = await configureDataLayerAudit({ repositoryRoot: values.source ?? ".", packDirectory: benchmarkPack,
-    ...(values.python === undefined ? {} : { python: values.python }), snapshot: { format: "rerail.repository-snapshot/v1", revision: 0, files } });
-  const hostPreparationMs = performance.now() - preparationStarted;
-  finishCpu("host-prepare", preparationCpu);
   markPhase("compile");
   const compileCpu = process.cpuUsage();
   const compileStarted = performance.now();
-  for (const { id, program: source } of prepared.programs) {
+  for (const event of recording.events) {
+    const id = `data-layer-${event.check.replaceAll("_", "-")}`;
     const policyStarted = performance.now();
-    if (id === "data-layer-sql-grammar-escape-hatches" && escapeHatchSignatureFailure(codeRuleSchema.parse(JSON.parse(source))) !== undefined) {
+    const source = readFileSync(`${values.policies}/${id}.json`, "utf8");
+    if (event.check === "sql_grammar_escape_hatches" && escapeHatchSignatureFailure(codeRuleSchema.parse(JSON.parse(source))) !== undefined) {
       throw new Error("Escape-hatch allowlist signature verification failed");
     }
     const compiled = native.CodeRuleDslRuntime.compile(source, "json", capabilitiesJson());
@@ -150,6 +117,10 @@ try {
   memoryCheckpoint("results-paged");
   const coldMs = performance.now() - started;
   finishCpu("cold", coldCpu);
+  const coldProfile = engineProfile.clock === undefined ? null : {
+    constructionMs: { parse: engineProfile.parseMs, indexPublish: engineProfile.clock.indexPublishNanoseconds! / 1e6, anchorCompile: (engineProfile.clock.anchorCompileNanoseconds ?? 0) / 1e6 },
+    executionMs: { match: engineProfile.matchMs, anchorSelect: engineProfile.clock.anchorSelectNanoseconds! / 1e6, relational: engineProfile.clock.relationalNanoseconds! / 1e6 },
+  };
   const file = files.find(file => file.path === "impl/common/l2200_sql_dialect/sql_connection.py") ?? files[0]!;
   const incrementalResults: { phase: string; result: Awaited<ReturnType<typeof collect>> }[] = [];
   let unchangedFileMs: number | null = null, editedFileMs: number | null = null;
@@ -170,7 +141,7 @@ try {
     incrementalResults.push({ phase: "trailing-newline-edit", result: editedResult });
   }
   markPhase("report");
-  if (values["memory-census"]) { closeWorkspace(); memoryCheckpoint("workspace-closed"); }
+  if (values["memory-census"]) { workspace.close(); memoryCheckpoint("workspace-closed"); }
   const expected = recording.events.flatMap(event => event.findings.map(f => JSON.stringify([`data-layer-${event.check.replaceAll("_", "-")}`, f.path, f.line, f.code]))).sort();
   const actual = findingKeys(violations);
   const difference = (a: string[], b: string[]) => { const rest = [...b]; return a.filter(key => { const at = rest.indexOf(key); if (at < 0) return true; rest.splice(at, 1); return false; }); };
@@ -181,13 +152,13 @@ try {
       : [{ phase, falsePositives, falseNegatives, failures: result.failures }];
   });
   const report = { commit: recording.commit, files: files.length, bytes: files.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
-    oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, policyDigests, policyFileSha256, recordingSha256: createHash("sha256").update(readFileSync(values.recording)).digest("hex"), policyCompilationMs, hostPreparationMs, compilationMs, coldMs, unchangedFileMs, editedFileMs, editedPath: file.path,
-    incrementalDifferences, phaseCpuMs, measuredPhases: Object.keys(phaseCpuMs), workloadSha256,
+    oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, policyDigests, policyCompilationMs, compilationMs, coldMs, unchangedFileMs, editedFileMs, editedPath: file.path,
+    incrementalDifferences, phaseCpuMs, measuredPhases: Object.keys(phaseCpuMs), coldProfile, workloadSha256,
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
     peakRssBytes: process.resourceUsage().maxRSS * 1024,
     allocator: values.allocator, policies: values.policies, nativeSha256, nativeWorkers: 4,
-    batchFiles, applies, memoryCheckpoints, measurementNote: "Phase CPU covers the current process and excludes child processes, including canonical CPython producers. Use an external process-family CPU receipt. Phase CPU includes explicit census overhead when --memory-census is supplied. Reference timings must omit this option." };
+    batchFiles, applies, memoryCheckpoints, measurementNote: "Phase CPU includes explicit census overhead when --memory-census is supplied. Reference timings must omit this option." };
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: failures.length, incrementalDifferences: incrementalDifferences.length }, null, 2));
   if (report.falsePositives.length + report.falseNegatives.length + failures.length + incrementalDifferences.length !== 0) process.exitCode = 1;
-} finally { closeWorkspace(); rmSync(benchmarkPack, { recursive: true, force: true }); }
+} finally { workspace.close(); }

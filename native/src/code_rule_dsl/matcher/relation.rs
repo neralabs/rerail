@@ -625,6 +625,16 @@ impl Related {
         })
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::code_rule_dsl) fn rule(&self) -> &AstMatcher {
+        &self.rule
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::code_rule_dsl) fn with_rule(&self, rule: AstMatcher) -> Box<Self> {
+        Self::new(rule)
+    }
+
     /// Whether the rule's verdict at a node is the node's alone: it mentions no capture and
     /// reads nothing beyond the node's tree and values (`node_local`).
     fn chains(&self) -> bool {
@@ -765,7 +775,7 @@ fn node_local(matcher: &AstMatcher) -> bool {
     let stop_local = |stop: &StopBy| stop_rule(stop).is_none_or(node_local);
     match matcher {
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Never
         | AstMatcher::Semantic(Semantic::Value(_)) => true,
@@ -843,6 +853,7 @@ fn node_kinds(
             kinds
         };
     match matcher {
+        AstMatcher::Supertype(supertype) => Some(supertype.kinds.iter().copied().collect()),
         AstMatcher::Kind(kind) => kind
             .potential_kinds()
             .map(|kinds| kinds.iter().map(|kind| kind as u16).collect()),

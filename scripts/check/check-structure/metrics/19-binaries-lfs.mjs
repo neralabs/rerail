@@ -2,25 +2,21 @@
 //
 // Predicate: every tracked binary larger than 100 KB is stored with Git LFS, i.e. the last
 // `.gitattributes` line whose pattern matches it sets `filter=lfs` (a later `-filter`, `!filter` or other
-// `filter=` unsets it). A file is binary when its first 8000 bytes hold a NUL byte (git's own test) or its
-// extension is a known binary format (BINARY_EXTENSIONS). `.gitattributes` patterns follow gitattributes
+// `filter=` unsets it). A file is binary as lib.mjs's `isBinaryFile` says: a NUL byte in its first 8000
+// bytes (git's own test) or a known binary extension. `.gitattributes` patterns follow gitattributes
 // rules: without a `/` a pattern matches the basename at any depth; with one it is anchored to the
 // directory of the `.gitattributes` file that declares it. Nested `.gitattributes` files apply below their
 // directory and override the root's.
 // A checkout without LFS content holds small text pointers in place of the binaries; those pass, and the
 // rule still catches any binary committed outside LFS.
 
-import { basename, compare, dirname, finding, globToRegExp, sortFindings } from "../lib.mjs";
+import { basename, compare, dirname, finding, globToRegExp, isBinaryFile, sortFindings } from "../lib.mjs";
 
 export const id = 19;
 export const title = "Large binaries committed without LFS";
 export const target = "0 (>100 KB)";
 
 export const LIMIT_BYTES = 100 * 1024;
-export const BINARY_EXTENSIONS = [
-  ".bin", ".safetensors", ".onnx", ".pt", ".wasm", ".node", ".so", ".dylib", ".dll", ".exe",
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".tgz", ".zst", ".7z", ".sqlite", ".db",
-];
 
 /** The `.gitattributes` rules in precedence order (root first; deeper files later, so they win). */
 export function parseGitattributes(repo) {
@@ -65,8 +61,7 @@ export function check(repo) {
   for (const path of repo.files) {
     const size = repo.size(path);
     if (size <= LIMIT_BYTES) continue;
-    const ext = basename(path).includes(".") ? basename(path).slice(basename(path).lastIndexOf(".")) : "";
-    if (!BINARY_EXTENSIONS.includes(ext) && !repo.isBinary(path)) continue;
+    if (!isBinaryFile(repo, path)) continue;
     if (isLfs(rules, path)) continue;
     findings.push(finding(path, `${(size / 1024).toFixed(0)} KB binary not tracked by LFS in .gitattributes`));
   }

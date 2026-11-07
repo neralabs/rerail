@@ -2,39 +2,75 @@ mod blade;
 mod budget;
 mod calls;
 mod compile;
-mod crypto;
+mod demand;
 mod embed;
 mod eval;
-mod execution;
+mod facts;
+// Wired to the findings layer in a later slice; until then only tests call it.
+#[allow(dead_code)]
+mod findings;
 mod identifier;
 mod json;
 mod language;
 mod lines;
 mod literal;
+mod logic;
+mod sql_executor;
 mod matcher;
 mod model;
 mod module_graph;
 mod module_path;
+mod origin;
 mod package_manifest;
+// P's phase clocks; read by profiling once stages are named (05 Phase 11 row 2).
+#[allow(dead_code)]
+mod phase_clock;
 mod php_literal;
 mod php_view;
 mod placement;
+#[allow(dead_code)]
 mod producers;
+// Published from the scan in a later slice; until then only tests call it.
+#[allow(dead_code)]
+pub(crate) mod prefilter;
+pub(in crate::code_rule_dsl) mod space;
+// Read by the prefilter's lowering; the compiled-plan cache is wired with the plans row.
+#[allow(dead_code)]
+mod stats;
+// Wall time by stage, with RERAIL_PROF set (O28).
+mod prof;
+// P's hooks are called from its matcher and relational code; W wires them with 03's stage names.
 #[cfg(feature = "code-rule-profile")]
+#[allow(dead_code)]
 mod profile;
 mod query;
-mod relational;
+// Admission reads these once the batch budget is wired; until then only tests call it.
+#[allow(dead_code)]
+mod residency;
+// P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
+#[cfg(test)]
+use residency::admission::relational;
 mod scope;
 mod semver;
+// The first slice's entry points (06 S6), called by hosts through `slice::napi::CodeRuleSlice`.
+mod slice;
 mod soundness;
 mod suppress;
 mod tape;
+pub(crate) mod text;
 #[cfg(test)]
 mod test_support;
+pub mod tools;
 mod transducer;
+// Typing's rounds run over T's facts in tests only until Phase 10 wires them.
+#[allow(dead_code)]
+mod typing;
 mod value;
 mod violations;
 mod vue;
+// Wired to the logic planner and the push path in a later slice; until then only tests call it.
+#[allow(dead_code)]
+mod waves;
 mod workspace;
 
 /// The conformance fixtures directory `native/build.rs` found: `RERAIL_ORACLES_DIR`, or the
@@ -77,17 +113,6 @@ pub struct CodeRuleDslRuntime;
 
 #[napi]
 impl CodeRuleDslRuntime {
-    /// Canonical front-end facts for one complete demand batch, including invalid syntax.
-    /// This only parses source; it never imports or executes a source module.
-    #[napi]
-    pub fn python_ast_batch(documents_json: String) -> Result<String> {
-        let documents: Vec<value::python_ast::Document> =
-            serde_json::from_str(&documents_json).map_err(json_error)?;
-        let response =
-            value::python_ast::batch_with_metrics(&documents).map_err(|error| invalid(error.0))?;
-        serde_json::to_string(&response).map_err(json_error)
-    }
-
     #[napi]
     pub fn compile(
         source: String,
@@ -106,7 +131,7 @@ impl CodeRuleDslRuntime {
                 id,
                 report_count_gt,
                 rule_mode,
-                canonical: canonical.into(),
+                canonical,
                 digest,
                 required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
                 clauses,
@@ -295,12 +320,12 @@ impl CompiledCodeRuleDsl {
     /// Audit the normal candidate compiler over fixed permutations. This executes no candidate SQL.
     #[napi]
     pub fn candidate_frontier_audit(&self) -> String {
-        matcher::candidate_frontier_audit(&self.inner).to_string()
+        prefilter::candidate_frontier_audit(&self.inner).to_string()
     }
 
     #[napi]
     pub fn canonical_json(&self) -> String {
-        self.inner.canonical.to_string()
+        self.inner.canonical.clone()
     }
 
     /// Whether a repository-relative path is inside this code rule's scope: the same

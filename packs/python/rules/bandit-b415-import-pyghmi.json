@@ -3,7 +3,7 @@
   "id": "bandit-b415-import-pyghmi",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of the insecure pyghmi package.",
+  "description": "Avoid importing pyghmi; IPMI is an insecure protocol, so prefer an encrypted management protocol.",
   "scope": {
     "include": [
       "**/*.py"
@@ -34,7 +34,7 @@
       "violation": {
         "code": "B415",
         "anchor": "witness.span",
-        "message": "An IPMI-related module is being imported. IPMI is insecure; use an encrypted protocol.",
+        "message": "Replace this pyghmi import with a client for an encrypted management protocol such as Redfish over HTTPS; IPMI is insecure.",
         "suppress": {
           "nosec": {
             "codes": [

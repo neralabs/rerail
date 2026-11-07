@@ -1,1 +1,0 @@
-const foo = () => { return ((bar = 123), 10) }

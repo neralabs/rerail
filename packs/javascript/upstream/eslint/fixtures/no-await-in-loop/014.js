@@ -1,1 +1,0 @@
-while (true) { const value = 0; }

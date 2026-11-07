@@ -1,1 +1,0 @@
-const B = class {@decorator() get foo(): string {}}; // allow: generatorFunctions

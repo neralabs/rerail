@@ -1,1 +1,0 @@
-foo["insertBefore"](bar, null)

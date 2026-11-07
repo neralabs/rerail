@@ -3,7 +3,7 @@
   "id": "phpstan-random-int-parameters",
   "revision": 1,
   "mode": "steer",
-  "description": "PHPStan 2.2.16 RandomIntParametersRule (identifier argument.type): a random_int() call whose $min and $max, bound as PHP binds them, are constants with $min > $max.",
+  "description": "Pass random_int() a minimum no greater than its maximum; otherwise it throws at runtime.",
   "scope": {
     "include": [
       "**/*.php"

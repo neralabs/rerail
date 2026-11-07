@@ -3,7 +3,7 @@
   "id": "react-react-in-jsx-scope",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/react-in-jsx-scope (pragma React): a JSX opening element or fragment where no `React` binding is visible: none declared at the top level (import, var/let/const, function), in an enclosing block's own declarations, or as an enclosing function's parameter. Files whose `@jsx X` comment names a factory other than React are not checked: upstream then requires that factory in scope, which the port does not check.",
+  "description": "Import React in every file that uses JSX; the classic JSX transform compiles tags to React.createElement calls.",
   "scope": {
     "include": [
       "**/*.ts",

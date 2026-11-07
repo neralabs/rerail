@@ -16,22 +16,6 @@
     "evidence": "`{{ $bar }}` reads view data. Bladestan reports `$bar` undefined only in tests/Rules/Fixture/file-with-recursive-include.php, which renders file_with_recursive_include.blade.php, whose `@include('file_with_include', ['foo' => 10, 'baz' => 'foobar'])` inlines this template with no `bar` (BladeRuleTest: \"Undefined variable: $bar\" at line 9); rendered by file-with-include.php (`view('file_with_include', ['foo' => 'bar'])`) the same read is \"might not be defined\". Rerail reads the template alone, where a top-level variable the template does not define is the caller's data and unknown."
   },
   {
-    "rule": "blade-parser-for-else-structure",
-    "source": "fixtures",
-    "path": "RequiredArgumentsTest/114.blade.php",
-    "line": 1,
-    "kind": "rerail-unknown",
-    "evidence": "The template is `@forelse($args)`: no `as`, no `@endforelse`. Blade does not compile it (illuminate/view 13.34.0 BladeCompiler::compileForelse throws `Malformed @forelse statement.`). Forte reads the unclosed loop as a block, and the view writes its head as Blade's loops are written, `foreach ($args):`, which is not PHP: the embedded program has an `ERROR` region from line 1, column 1. Rerail's AST checks run outside error regions only (`source-partial`), so the loop is not read. blade-parser reports the missing `@empty` of a loop that is never closed."
-  },
-  {
-    "rule": "blade-parser-for-else-structure",
-    "source": "fixtures",
-    "path": "DebugDirectiveTest/85.blade.php",
-    "line": 1,
-    "kind": "rerail-unknown",
-    "evidence": "The template is `Lead @forelse($arg) Trail`: no `as`, no `@endforelse`. Blade does not compile it (illuminate/view 13.34.0 BladeCompiler::compileForelse throws `Malformed @forelse statement.`). Forte reads the unclosed loop as a block, and the view writes its head as Blade's loops are written, `foreach ($arg):`, which is not PHP: the embedded program has an `ERROR` region from line 1, column 6. Rerail's AST checks run outside error regions only (`source-partial`), so the loop is not read. blade-parser reports the missing `@empty` of a loop that is never closed."
-  },
-  {
     "rule": "tlint-no-json-directive",
     "source": "bagisto",
     "path": "packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking.blade.php",

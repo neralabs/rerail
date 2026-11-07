@@ -1,6 +1,6 @@
 /**
  * typescript-eslint-no-unused-expressions (packs/typescript/) must not flag a type test written as an `as` or
- * `satisfies` expression statement whose type is a dotted name with two or more dots (NER-1778). tree-sitter reads
+ * `satisfies` expression statement whose type is a dotted name with two or more dots. tree-sitter reads
  * `e satisfies A.B.C` as a member access `.C` on `e satisfies A.B`, and a member access is an unused expression, so the
  * rule reported 39 `z.x() satisfies z.core.$ZodX;` type tests in one zod file and steered agents to delete them.
  * Upstream typescript-eslint 8.70.1 never reports a `satisfies` statement and judges an `as` statement by the
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { loadPackRuleDocuments } from "../../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
@@ -30,7 +30,7 @@ const evaluationSchema = z.object({
 
 function compile(): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadBundledRules([repositoryPath("packs", "typescript")]).find(candidate => candidate.rule.id === RULE_ID);
+  const document = loadPackRuleDocuments([repositoryPath("packs", "typescript")]).find(candidate => candidate.rule.id === RULE_ID);
   if (document === undefined) throw new Error(`${RULE_ID} is not in packs/typescript`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
@@ -72,7 +72,7 @@ const REPORTED: ReadonlyArray<[string, string]> = [
   ["a member access on a parenthesized `satisfies`", "(x satisfies A.B).c;"],
 ];
 
-describe(`${RULE_ID} with dotted type names (NER-1778)`, () => {
+describe(`${RULE_ID} with dotted type names`, () => {
   const compiled = compile();
 
   it.each(NOT_REPORTED)("does not report %s", (_name, source) => {

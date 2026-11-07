@@ -3,9 +3,32 @@
 //! JavaScript does not receive connections, SQL, row identifiers, or hash lanes.
 //! The code-rule runtime will call this module through coarse Rust operations.
 
+pub(crate) mod atoms;
+// Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
+#[allow(dead_code)]
+mod bounded_insert;
 mod compression;
 mod connection;
+mod corpus_runs;
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, StatIndex};
+#[cfg(not(any(windows, target_family = "wasm")))]
+pub(crate) use connection::sqlite_on_jemalloc;
+mod derivation;
+mod facts_memo;
 mod objects;
+pub(crate) use objects::ResidentFrames;
+mod postings;
+/// G's positional search index (value and text streams), for G's literal anchors (O21).
+#[cfg(test)]
+pub(crate) mod positional_search;
+pub(crate) mod vocabulary;
+#[allow(unused_imports)]
+pub(crate) use postings::append_delta;
+#[cfg(test)]
+pub(crate) use postings::segment_positions;
+#[allow(dead_code)]
+pub(crate) mod prefilter;
+pub(crate) use prefilter::TapePrefilter;
 mod publication;
 mod read_cache;
 mod reclamation;
@@ -15,14 +38,26 @@ mod rows;
 mod schema;
 mod search_index;
 mod snapshots;
+mod tree_diff;
+mod tree_pages;
+/// G's tree result segments as copied, beside `tree_pages` (O19).
+#[cfg(test)]
+#[allow(dead_code)]
+mod tree_result_segments;
 #[cfg(test)]
 mod tests;
 mod workspaces;
+pub(crate) mod working_set;
 
 pub(crate) use compression::compress;
 pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
+pub use atoms::Sym;
+pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
+pub use facts_memo::{FactsCompletion, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
+pub use tree_diff::{TreeChange, TreeDiff};
+pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
 
 #[cfg(test)]
 pub(crate) use connection::{
@@ -49,12 +84,15 @@ use std::time::Duration;
 const HASH_SHA256: i64 = 1;
 const HASH_GIT_SHA1: i64 = 2;
 const HASH_GIT_SHA256: i64 = 3;
+/// The facts engine's content key (blake3), stored only as a source alias.
+const HASH_BLAKE3: i64 = 4;
 const CODEC_ZSTD: i64 = 1;
 const STRING_PATH: i64 = 1;
 const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
 const STRING_CLAUSE_KEY: i64 = 5;
+/// Fact names (`derivation.rs`): bound names and derivation outputs.
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
@@ -173,6 +211,17 @@ impl HashKey {
         Self::from_padded(HASH_GIT_SHA1, padded)
     }
 
+    /// A Git SHA-1 id's twenty bytes.
+    pub(crate) fn git_sha1_bytes(self) -> Option<[u8; 20]> {
+        (self.algorithm == HASH_GIT_SHA1).then(|| {
+            let mut bytes = [0_u8; 32];
+            for (chunk, lane) in bytes.chunks_exact_mut(8).zip(self.lanes) {
+                chunk.copy_from_slice(&lane.to_be_bytes());
+            }
+            bytes[..20].try_into().expect("twenty bytes")
+        })
+    }
+
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
         Self::from_padded(HASH_GIT_SHA256, bytes)
     }
@@ -260,10 +309,18 @@ pub struct SourceId(i64);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
 
+impl TapeId {
+    /// The row id, for SQL over the store's tables (the prefilter's lowering).
+    pub(crate) fn row(self) -> i64 {
+        self.0
+    }
+}
+
 /// A stored tape whose search index is not built yet, with what building it reads.
 pub(crate) struct UnindexedTape {
     pub tape: TapeId,
-    /// The workspace's grammar id (`workspace::grammar_id`).
+    /// The workspace's grammar id (`workspace::grammar_id`, or a derived document's
+    /// `workspace::document_grammar_id`).
     pub grammar: i64,
     pub source: Vec<u8>,
     /// The decoded tape image.
@@ -365,6 +422,44 @@ pub struct TapePayload<'a> {
     pub grammar_version: i64,
     pub tape_format_version: i64,
     pub bytes: &'a [u8],
+    /// The documents derived from this tape's (`file_documents`), in ordinal order from 1: each
+    /// is stored as a source and a tape of its own, with this tape's grammar version and format,
+    /// in the transaction that stores this tape. Empty for a single-language file.
+    pub documents: &'a [DocumentPayload<'a>],
+}
+
+/// A document derived from a file's primary one, published with the primary's tape.
+#[derive(Clone, Copy, Debug)]
+pub struct DocumentPayload<'a> {
+    /// The document it was derived from: 0 the primary, `i` the `i`-th derived one.
+    pub parent_ordinal: i64,
+    /// What the document is to the file (`tape::DocumentRole::code`); never 0, the primary's.
+    pub role_id: i64,
+    /// The embedding that built it (`tape::via_code`).
+    pub via_id: i64,
+    /// Its text, stored as an ordinary source.
+    pub source: &'a [u8],
+    /// Its tape's grammar id: unique to derived documents (`workspace::document_grammar_id`).
+    pub grammar_id: i64,
+    pub tape: &'a [u8],
+    pub source_map: &'a [u8],
+    pub host_errors: &'a [u8],
+}
+
+/// A `file_documents` row: a document derived from a stored primary tape. `source` and
+/// `grammar_id` are its tape row's, `None` where that row is missing: the document is then not
+/// stored, and the file is not either.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredDocument {
+    pub ordinal: i64,
+    pub parent_ordinal: i64,
+    pub role_id: i64,
+    pub via_id: i64,
+    pub tape: TapeId,
+    pub source: Option<SourceId>,
+    pub grammar_id: Option<i64>,
+    pub source_map: Vec<u8>,
+    pub host_errors: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -492,6 +587,12 @@ pub struct ContentStore {
     compression_level: i32,
     decompressed_cache: Mutex<DecompressedReadCache>,
     local_result_cache: Mutex<LocalResultCache>,
+    /// Facts plan sets by digest (immutable once written: `facts_memo`).
+    facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
+    /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
+    atoms: std::sync::Arc<atoms::Atoms>,
+    /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
+    working_set: working_set::WorkingSet,
     #[cfg(test)]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(test)]
@@ -500,7 +601,24 @@ pub struct ContentStore {
     git_tree_transactions: AtomicUsize,
 }
 
+impl Drop for ContentStore {
+    /// Appends the atoms still pending (decision 0049 §4.3); another handle or the next open
+    /// writes them if this fails, and nothing durable names them meanwhile.
+    fn drop(&mut self) {
+        if self.atoms.pending()
+            && let Err(error) = self.immediate_transaction(|_| Ok(()))
+        {
+            eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
+        }
+    }
+}
+
 impl ContentStore {
+    /// The store's RAM working set (`working_set`, decision 0024 §5).
+    pub(crate) fn working_set(&self) -> &working_set::WorkingSet {
+        &self.working_set
+    }
+
     pub fn open(path: &Path) -> StoreResult<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -510,9 +628,10 @@ impl ContentStore {
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
-        retry_busy(&mut BusyRetries::default(), || {
+        let created = retry_busy(&mut BusyRetries::default(), || {
             Self::initialize(&mut connection)
         })?;
+        drop(connection);
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection {
@@ -524,6 +643,10 @@ impl ContentStore {
                 DEFAULT_DECOMPRESSED_CACHE_TTL,
             )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
+            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
+            // A store just created replaces any atoms this process held for a file at its path.
+            atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
+            working_set: working_set::WorkingSet::default(),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
             #[cfg(test)]

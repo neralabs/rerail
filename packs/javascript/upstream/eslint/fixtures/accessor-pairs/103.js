@@ -1,1 +1,0 @@
-A = class { static get a() {} static b() {} static set a(foo) {} };

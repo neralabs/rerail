@@ -1,1 +1,0 @@
-const _a = 5;const _b = _a + 5

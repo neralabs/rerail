@@ -153,7 +153,9 @@ function updateCorr(node, item) {
   // A rule taken out of the repository since keeps its card: named from its pack, else by id, with nothing to open.
   setText(node.querySelector("b"), c.rule === null ? `${packRuleOf(f.ruleId)?.rule.title ?? f.ruleId} (no longer in this repository)` : titleOf(c.rule));
   setText(node.querySelector(".mono"), f.ruleId);
-  setText(node.querySelector(".badge"), violationOutcome(f) === "logged" ? "Logged" : "Steered");
+  const result = violationOutcome(f);
+  node.dataset.outcome = result;
+  setText(node.querySelector(".badge"), result === "logged" ? "Logged" : "Steered");
   setAttr(node.querySelector("[data-act=detail]"), "data-i", f.ruleId);
   setAttr(node.querySelector("[data-act=detail]"), "hidden", c.rule === null);
   setText(node.querySelector(".said"), f.message);

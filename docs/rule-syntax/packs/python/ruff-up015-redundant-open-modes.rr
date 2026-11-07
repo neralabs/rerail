@@ -1,0 +1,47 @@
+.policy "ruff-up015-redundant-open-modes" revision 2
+.description "Remove redundant open() mode flags such as r, t and U; they are already the defaults."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP015 (pyupgrade): a mode argument of the builtin open(), or aiofiles.open(), that says what the
+// default says: `t` (text) always, `U` (universal newlines, the default since Python 3), and a lone `r`. The
+// mode is the second positional argument (before any `*xs`) or `mode=`, a str literal, valid as Ruff's
+// OpenMode reads it: no letter twice, not b with t, and exactly one of reading (`r`, `U`, or both), `w`, `x`
+// and `a`, so `rU+` is valid and `wU` is not. The finding is at the string.
+//   open("f", "rt")            ← UP015 "Remove this mode argument"
+//   open("f", "Ub")            ← UP015 "Drop the redundant flags": write "rb"
+//   open("f", "r+")  open("f", "rb")  open("f", "UU")       not reported (the last is invalid)
+#include "python/upgrade.rr"
+//   builtin_at(e, x), sym_at(e, q)
+#include "python/upgrade-format.rr"
+//   up_arg, up_kw, str_lit
+
+// mode_arg(at, v): the mode of an open call: the string literal, without parentheses, where Ruff reports.
+.decl mode_arg(at: node, v: symbol)
+mode_arg(a, v) :- open_call(c), up_arg(c, 1, a), !after_star(c, a), str_lit(a, v).
+mode_arg(m, v) :- open_call(c), call_kw(c, "mode", m), str_lit(m, v).
+.decl after_star(c: node, a: node)  // a positional argument past a `*xs`: its position is unknown
+after_star(c, a) :- up_arglist(c, s, j), kind(s, "list_splat"), up_arglist(c, a0, k), j < k, unparen(a0, a).
+.decl open_call(c: node)
+open_call(c) :- kind(c, "call"), field(c, "function", f), (builtin_at(f, "open") ; sym_at(f, "aiofiles.open")).
+
+.violation mode_only_redundant(at: node) code "UP015"
+    "Remove this mode argument; open() reads text by default, so `r`, `t` and `U` add nothing."
+    suppress ruff "UP015"
+mode_only_redundant(a) :- mode_arg(a, v), redundant(v), @replace_all(v, "[rtU]", "") = "".
+.violation mode_has_redundant_flags(at: node, v: symbol) code "UP015"
+    "Drop the redundant flags from this mode: `t` and `U` always, and `r` unless `b` or `+` is also there (`Ub` becomes `rb`, `wt` becomes `w`)."
+    suppress ruff "UP015"
+mode_has_redundant_flags(a, v) :- mode_arg(a, v), redundant(v), @replace_all(v, "[rtU]", "") != "".
+
+.decl redundant(v: symbol)
+redundant(v) :- valid_mode(v), (contains("U", v) ; contains("t", v) ; v = "r").
+// valid_mode(v): Ruff's OpenMode::from_chars accepts v.
+.decl valid_mode(v: symbol)
+valid_mode(v) :- mode_arg(_, v), match("[rwaxbt+U]+", v), count : { flag(re), @count_matches(re, v) > 1 } = 0,
+    (!contains("b", v) ; !contains("t", v)),
+    ( (contains("r", v) ; contains("U", v)), !match(".*[wax].*", v) ;
+      @count_matches("[wax]", v) = 1, !contains("r", v), !contains("U", v) ).
+.decl flag(re: symbol)  // each mode letter, as a regex
+flag("r"). flag("w"). flag("a"). flag("x"). flag("b"). flag("t"). flag("\\+"). flag("U").

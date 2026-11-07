@@ -1,1 +1,0 @@
-switch(foo) { case bar: case Number.NaN: default: break; }

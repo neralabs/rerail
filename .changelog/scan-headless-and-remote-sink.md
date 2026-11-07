@@ -1,0 +1,1 @@
+In internal testing: `rerail scan` without `--session` scans a checkout with no daemon or session and prints a stable JSON report, for CI. `rerail remote` sends this machine's sessions, events, audits and scans to an HTTPS endpoint you add; nothing is sent until you add one.

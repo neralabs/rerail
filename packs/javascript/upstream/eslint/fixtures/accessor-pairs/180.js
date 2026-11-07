@@ -1,1 +1,0 @@
-Object?.create(null, {foo: {set: function(value) {}}});

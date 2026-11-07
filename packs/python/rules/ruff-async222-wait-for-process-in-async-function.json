@@ -1,9 +1,9 @@
 {
  "format": "rerail.policy/v1",
  "id": "ruff-async222-wait-for-process-in-async-function",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC222 (wait-for-process-in-async-function): a call to `os.wait`, `os.wait3`, `os.wait4`, `os.waitid` or `os.waitpid` inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Don't call os.wait, os.waitpid or the other blocking os.wait functions inside async functions; they block the event loop.",
  "scope": {
   "include": [
    "**/*"
@@ -130,7 +130,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC222",
-    "message": "Async functions should not wait on processes with blocking methods",
+    "message": "Offload the wait with `await asyncio.to_thread(wait_fn, ...)`; preserve arguments and status. Await `proc.wait()` only for an async process.",
     "suppress": {
       "noqa": {
         "codes": [

@@ -1,1 +1,0 @@
-a['snake_case'];

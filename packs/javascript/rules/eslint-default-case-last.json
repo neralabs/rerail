@@ -3,7 +3,7 @@
   "id": "eslint-default-case-last",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `default-case-last` (https://eslint.org/docs/latest/rules/default-case-last). Flags a `default` clause followed by a `case` clause.",
+  "description": "Put the default clause last in a switch statement; a default in the middle is easy to misread.",
   "scope": {
     "include": [
       "**/*"

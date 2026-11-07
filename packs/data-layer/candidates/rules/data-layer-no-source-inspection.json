@@ -22,14 +22,28 @@
     {
       "id": "inspection-0",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\binspect\\.getsource\\s*\\(",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "attribute"
+                    },
+                    {
+                      "regex": "\\binspect\\s*\\.\\s*getsource$"
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
           }
         }
       },
@@ -42,14 +56,28 @@
     {
       "id": "inspection-1",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\binspect\\.getsourcelines\\s*\\(",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "attribute"
+                    },
+                    {
+                      "regex": "\\binspect\\s*\\.\\s*getsourcelines$"
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
           }
         }
       },
@@ -62,14 +90,28 @@
     {
       "id": "inspection-2",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\binspect\\.getsourcefile\\s*\\(",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "attribute"
+                    },
+                    {
+                      "regex": "\\binspect\\s*\\.\\s*getsourcefile$"
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
           }
         }
       },
@@ -82,14 +124,57 @@
     {
       "id": "inspection-3",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "from\\s+inspect\\s+import\\s+.*\\bgetsource\\b",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_from_statement"
+              },
+              {
+                "has": {
+                  "regex": "^inspect$",
+                  "stopBy": "neighbor",
+                  "field": "module_name"
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "regex": "^getsource$"
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "import_from_statement",
+                              "stopBy": "neighbor",
+                              "field": "module_name"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "kind": "aliased_import"
+                        },
+                        {
+                          "regex": "\\bgetsource\\b"
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
           }
         }
       },
@@ -102,14 +187,57 @@
     {
       "id": "inspection-4",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "from\\s+inspect\\s+import\\s+.*\\bgetsourcelines\\b",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_from_statement"
+              },
+              {
+                "has": {
+                  "regex": "^inspect$",
+                  "stopBy": "neighbor",
+                  "field": "module_name"
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "regex": "^getsourcelines$"
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "import_from_statement",
+                              "stopBy": "neighbor",
+                              "field": "module_name"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "kind": "aliased_import"
+                        },
+                        {
+                          "regex": "\\bgetsourcelines\\b"
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
           }
         }
       },

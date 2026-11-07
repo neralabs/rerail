@@ -1,0 +1,50 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.input doc, node, child, field, text, name, strprefix, line, syntax_error
+.decl k0(kind: symbol)
+k0("class_definition").
+.decl k1(kind: symbol)
+k1("module").
+.decl k2(kind: symbol)
+k2("import_from_statement").
+.decl in_scope(d: number)
+.decl m20(n: node)
+.decl m41(n: node)
+.decl m44(n: node)
+.decl m45(n: node)
+.decl m9(n: node)
+.decl out_scope(d: number)
+.decl u24(n: node)
+.decl u29(n: node)
+.decl u6(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l[0-9]*/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+violation("data-layer-grammar-fragment-usage", "forbidden-class", "sqlfragment_usage", p, l) :- node(_, n, "class_definition", _, _), field(n, "name", v1), node(_, v1, "identifier", _, _), text(v1, v2), (v2 = "SqlDeferredRenderable" ; v2 = "SqlPreRenderedFragment"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m9(n) :- field(n, "name", v7), node(_, v7, "identifier", _, _), text(v7, v8), (v8 = "SqlDeferredRenderable" ; v8 = "SqlFragment" ; v8 = "SqlPreRenderedFragment").
+m20(n) :- node(_, n, "function_definition", _, _), field(n, "name", v15), node(_, v15, "identifier", _, _), text(v15, v16), v16 = "render".
+m20(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v17), node(_, v17, "function_definition", _, _), field(v17, "name", v18), node(_, v18, "identifier", _, _), text(v18, v19), v19 = "render".
+u29(n) :- within(v30, n), node(_, v30, "import_from_statement", _, _), child(v30, v31, _), node(_, v31, "aliased_import", _, _), field(v31, "name", v32), name(v32, v33), (glob("*.SqlFragment", v33) ; glob("SqlFragment", v33)).
+m41(n) :- strprefix(n, v40), contains("f", v40).
+m44(n) :- child(n, v42, _), node(_, v42, "string", _, _), strprefix(v42, v43), contains("f", v43).
+m45(n) :- node(_, n, "string", _, _), !m41(n).
+m45(n) :- node(_, n, "concatenated_string", _, _), !m44(n).
+violation("data-layer-grammar-fragment-usage", "syntax-error", "python_parse_error", p, 1) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
+.output violation

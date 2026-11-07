@@ -1,1 +1,0 @@
-const foo: () => void = function(): void { this; }.bind(this);

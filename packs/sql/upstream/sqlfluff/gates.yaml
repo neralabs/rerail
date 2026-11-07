@@ -1,0 +1,36 @@
+adapter: sqlfluff
+# SQLFluff's documents in rerail's sql pack.
+rerail:
+  pack: sql
+  project: sqlfluff
+upstream:
+  name: sqlfluff/sqlfluff
+  repository: https://github.com/sqlfluff/sqlfluff
+  # The release rerail's sql pack records for every SQLFluff document (packs/sql/licenses/sqlfluff/UPSTREAM.md:
+  # SQLFluff 4.4.0); tag 4.4.0.
+  commit: 0348222a3bcdb0226563f7349c5a39beb0641955
+  version: 4.4.0
+  license: MIT
+  # The PyPI package on CPython 3.12.13 (uv-managed, the interpreter fixtures/sql/common.py pins), with pyyaml for the
+  # YAML test cases and pglast 8.5 (libpg_query, PostgreSQL 18) as the independent parser.
+  runtime: sqlfluff-4.4.0
+  # SQLFluff has no named configuration; `default` is its default configuration at the pin (`rules = all`), read from
+  # the rule registry for the postgres dialect. A rule with `force_enable` that reports nothing with it at its
+  # default (False) on its own cases where `force_enable = True` reports something is held off by default: PG01 and
+  # PG02, which are not `recommended` and ship off.
+  #
+  # The dialect (a decision for the team): the engine reads every .sql file as PostgreSQL, and the gates do not read
+  # divergences.json, so upstream runs as `dialect: postgres`, `templater: raw`, with the port's rule configuration
+  # (PG01 and PG02 `force_enable = True`, every other rule at its defaults), on every case and every corpus file. A
+  # YAML case written for another dialect is still linted as PostgreSQL, and its `violations` are not upstream's
+  # written expectation (`markup` is null); a case SQLFluff's postgres dialect cannot read whole, a Jinja case and a
+  # case configured otherwise are skipped, with the reason. So a rule SQLFluff leaves silent under postgres (AM02,
+  # whose UNION check is for the dialects where a bare UNION is ambiguous) cannot pass `fires`.
+  recommended_configs:
+    - default
+popularity:
+  observed_on: 2026-10-19
+  evidence:
+    - "PyPI: 2,391,178 downloads of sqlfluff in the last week and 9,355,581 in the last month, without mirrors (pypistats.org/api/packages/sqlfluff/recent, 2026-10-19)"
+    - "GitHub: sqlfluff/sqlfluff has 9,984 stars and 1,238 forks and is not archived (gh api repos/sqlfluff/sqlfluff, 2026-10-19)"
+known_gaps: []

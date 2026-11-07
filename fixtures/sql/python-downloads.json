@@ -1,0 +1,70 @@
+{
+  "cpython-3.12.13-darwin-aarch64-none": {
+    "name": "cpython",
+    "arch": {
+      "family": "aarch64",
+      "variant": null
+    },
+    "os": "darwin",
+    "libc": "none",
+    "major": 3,
+    "minor": 12,
+    "patch": 13,
+    "prerelease": "",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260408/cpython-3.12.13%2B20260408-aarch64-apple-darwin-install_only_stripped.tar.gz",
+    "sha256": "ac167e74961316ceabdbe4839f19aa6000c592b08e5a1fab4646cb225ede13d5",
+    "variant": null,
+    "build": "20260408"
+  },
+  "cpython-3.12.13-darwin-x86_64-none": {
+    "name": "cpython",
+    "arch": {
+      "family": "x86_64",
+      "variant": null
+    },
+    "os": "darwin",
+    "libc": "none",
+    "major": 3,
+    "minor": 12,
+    "patch": 13,
+    "prerelease": "",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260408/cpython-3.12.13%2B20260408-x86_64-apple-darwin-install_only_stripped.tar.gz",
+    "sha256": "1fee0596ba791fd83c33babf2ae8e00b0a1056b957955f2a34f7178ca8b80525",
+    "variant": null,
+    "build": "20260408"
+  },
+  "cpython-3.12.13-linux-aarch64-gnu": {
+    "name": "cpython",
+    "arch": {
+      "family": "aarch64",
+      "variant": null
+    },
+    "os": "linux",
+    "libc": "gnu",
+    "major": 3,
+    "minor": 12,
+    "patch": 13,
+    "prerelease": "",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260408/cpython-3.12.13%2B20260408-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    "sha256": "bd5011c956391391620931ea35632dc7aa7391a4558ced126ccf0708d1346915",
+    "variant": null,
+    "build": "20260408"
+  },
+  "cpython-3.12.13-linux-x86_64-gnu": {
+    "name": "cpython",
+    "arch": {
+      "family": "x86_64",
+      "variant": null
+    },
+    "os": "linux",
+    "libc": "gnu",
+    "major": 3,
+    "minor": 12,
+    "patch": 13,
+    "prerelease": "",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260408/cpython-3.12.13%2B20260408-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    "sha256": "ddd48f521f79395d9b8b094d34a86d7ec86772ab66c96b0de65a3b561ea7cf10",
+    "variant": null,
+    "build": "20260408"
+  }
+}

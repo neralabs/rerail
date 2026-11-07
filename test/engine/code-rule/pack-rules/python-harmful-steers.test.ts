@@ -1,5 +1,5 @@
 /**
- * Three Python ports (B406 and B610 on by default, F722 off) must not steer an agent into rewriting idiomatic code (NER-1827). Each reports what
+ * Three Python ports (B406 and B610 on by default, F722 off) must not steer an agent into rewriting idiomatic code. Each reports what
  * its upstream reports, but on these idioms the finding is wrong and the steer harmful:
  *
  * - bandit-b406-import-xml-sax: Bandit reports any import under xml.sax, including the xml.sax.saxutils writing and
@@ -9,7 +9,7 @@
  * - ruff-f722-forward-annotation-syntax-error: Ruff reads a jaxtyping shape (`Float[Array, "b n"]`) as a forward
  *   annotation; jaxtyping parses it with its own grammar.
  *
- * Each case is one file; the test asserts exactly which lines the shipped rule reports. The divergences are declared in
+ * Each case is one file; the test asserts exactly which lines the candidate rule reports. The divergences are declared in
  * each rule's description and, where the pinned corpus has one, in packs/python/divergences.json.
  */
 import { readFile } from "node:fs/promises";
@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { loadPackRuleDocuments } from "../../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
@@ -32,8 +32,10 @@ const evaluationSchema = z.object({
 
 function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadBundledRules([repositoryPath("packs", "python")]).find(candidate => candidate.rule.id === ruleId);
-  if (document === undefined) throw new Error(`${ruleId} is not in packs/python`);
+  // The three ports fail the port readiness gates (B406 differs from Bandit on a Django file, B610 names fixture words, F722
+  // fails compact), so they are candidates until they pass.
+  const document = loadPackRuleDocuments([repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
+  if (document === undefined) throw new Error(`${ruleId} is not in packs/python/candidates`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 
@@ -69,7 +71,7 @@ const B406: readonly Case[] = [
 ];
 
 const B610: readonly Case[] = [
-  ["a non-QuerySet receiver (NER-1827)", py("parser.extra(data)"), []],
+  ["a non-QuerySet receiver", py("parser.extra(data)"), []],
   ["a bare function named extra", py("extra(where=w)"), []],
   ["self in a class that is not a QuerySet", py("class Options(Base):", "    def f(self, w):", "        return self.extra(where=w)"), []],
   ["a receiver whose arguments merely mention objects", py("build(objects).extra(where=w)"), []],
@@ -95,7 +97,7 @@ const B610: readonly Case[] = [
 ];
 
 const F722: readonly Case[] = [
-  ["a jaxtyping shape (NER-1827)", py("from jaxtyping import Array, Float", "def f(x: Float[Array, 'b n']): ..."), []],
+  ["a jaxtyping shape", py("from jaxtyping import Array, Float", "def f(x: Float[Array, 'b n']): ..."), []],
   ["a jaxtyping shape through the module", py("import jaxtyping", "def f(x: jaxtyping.Float[Array, 'batch channels']): ..."), []],
   ["a jaxtyping shape through an alias", py("import jaxtyping as jt", "def f(x: jt.Shaped[Array, '*batch n']): ..."), []],
   ["a jaxtyping shape on a variable and in a return", py("from jaxtyping import Array, Float, Int", "y: Float[Array, 'b n'] = 1", "def f() -> Int[Array, 'b n']: ..."), []],

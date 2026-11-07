@@ -1,0 +1,17 @@
+.policy "ruff-pt002-pytest-fixture-positional-args" revision 2
+.description "Pass pytest fixture configuration such as scope or params as keyword arguments, not positionally, for clarity."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT002 (flake8-pytest-style): a fixture decorator given positional arguments; pytest's own signature makes
+// them keyword-only in recent versions. Only a function's first fixture decorator is read.
+//   @pytest.fixture("module")            ← PT002
+//   @pytest.fixture(scope="module")      not reported
+#include "python/pytest.rr"
+//   pytest_fixture(f, d, e), exc_item(c, a, j)
+
+.violation PT002(at: node, f: symbol) code "PT002"
+    "Pass the arguments of `{f}(...)` by keyword: positional ones map, in order, to `scope`, `params`, `autouse`, `ids` and `name`."
+    suppress ruff "PT002"
+PT002(d, x) :- pytest_fixture(_, d, e), exc_item(e, _, _), field(e, "function", g), text(g, x).

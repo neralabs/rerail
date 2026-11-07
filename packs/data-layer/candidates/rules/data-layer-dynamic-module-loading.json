@@ -115,78 +115,88 @@
     {
       "id": "pattern-0",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^def\\s+__getattr__\\s*\\(",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "\"\"\"",
-              "'''"
-            ],
-            "state": {
-              "initial": "code",
-              "emit": [
-                "code"
-              ],
-              "transitions": [
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "count": {
-                    "min": 2
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
                   },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "double",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "'''",
-                  "count": {
-                    "min": 2
+                  {
+                    "has": {
+                      "regex": "^__getattr__$",
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
                   },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "single",
-                  "pattern": "'''",
-                  "skip": true
-                },
-                {
-                  "from": "double",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "single",
-                  "to": "code",
-                  "pattern": "'''",
-                  "skip": true
+                  {
+                    "not": {
+                      "has": {
+                        "regex": "^async$",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "module",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "decorated_definition"
+                            },
+                            {
+                              "inside": {
+                                "kind": "module",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "if_statement"
+                            },
+                            {
+                              "has": {
+                                "regex": "TYPE_CHECKING",
+                                "stopBy": "neighbor",
+                                "field": "condition"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "consequence"
+                        }
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
                 }
-              ]
-            },
-            "indentation": {
-              "excludeUnder": "TYPE_CHECKING",
-              "reset": "^\\S",
-              "ignore": [
-                "^\\s*#",
-                "^\\s*$"
-              ]
-            }
-          },
-          "content": {
-            "include": [
-              "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+              }
             ]
           }
         }
@@ -200,78 +210,101 @@
     {
       "id": "pattern-1",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bglobals\\s*\\(\\s*\\)\\s*\\[.*\\]\\s*=",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "\"\"\"",
-              "'''"
-            ],
-            "state": {
-              "initial": "code",
-              "emit": [
-                "code"
-              ],
-              "transitions": [
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "count": {
-                    "min": 2
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "subscript"
                   },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "double",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "'''",
-                  "count": {
-                    "min": 2
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "call"
+                        },
+                        {
+                          "has": {
+                            "regex": "^globals$",
+                            "stopBy": "neighbor",
+                            "field": "function"
+                          }
+                        },
+                        {
+                          "has": {
+                            "regex": "^\\(\\s*\\)$",
+                            "stopBy": "neighbor",
+                            "field": "arguments"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "value"
+                    }
                   },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "single",
-                  "pattern": "'''",
-                  "skip": true
-                },
-                {
-                  "from": "double",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "single",
-                  "to": "code",
-                  "pattern": "'''",
-                  "skip": true
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "assignment",
+                          "stopBy": "neighbor",
+                          "field": "left"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "subscript"
+                            },
+                            {
+                              "inside": {
+                                "kind": "assignment",
+                                "stopBy": "neighbor",
+                                "field": "left"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "value"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "if_statement"
+                            },
+                            {
+                              "has": {
+                                "regex": "TYPE_CHECKING",
+                                "stopBy": "neighbor",
+                                "field": "condition"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "consequence"
+                        }
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
                 }
-              ]
-            },
-            "indentation": {
-              "excludeUnder": "TYPE_CHECKING",
-              "reset": "^\\S",
-              "ignore": [
-                "^\\s*#",
-                "^\\s*$"
-              ]
-            }
-          },
-          "content": {
-            "include": [
-              "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+              }
             ]
           }
         }
@@ -285,78 +318,86 @@
     {
       "id": "pattern-2",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\b__import__\\s*\\(",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "\"\"\"",
-              "'''"
-            ],
-            "state": {
-              "initial": "code",
-              "emit": [
-                "code"
-              ],
-              "transitions": [
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "count": {
-                    "min": 2
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
                   },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "double",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "'''",
-                  "count": {
-                    "min": 2
+                  {
+                    "regex": "^__import__$"
                   },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "single",
-                  "pattern": "'''",
-                  "skip": true
-                },
-                {
-                  "from": "double",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "single",
-                  "to": "code",
-                  "pattern": "'''",
-                  "skip": true
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "call",
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "inside": {
+                                "kind": "call",
+                                "stopBy": "neighbor",
+                                "field": "function"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "function_definition",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "if_statement"
+                            },
+                            {
+                              "has": {
+                                "regex": "TYPE_CHECKING",
+                                "stopBy": "neighbor",
+                                "field": "condition"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "consequence"
+                        }
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
                 }
-              ]
-            },
-            "indentation": {
-              "excludeUnder": "TYPE_CHECKING",
-              "reset": "^\\S",
-              "ignore": [
-                "^\\s*#",
-                "^\\s*$"
-              ]
-            }
-          },
-          "content": {
-            "include": [
-              "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+              }
             ]
           }
         }
@@ -370,81 +411,68 @@
     {
       "id": "pattern-3",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "importlib\\.import_module\\s*\\(",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "\"\"\"",
-              "'''",
-              "^def\\s+__getattr__\\s*\\(",
-              "\\bglobals\\s*\\(\\s*\\)\\s*\\[.*\\]\\s*=",
-              "\\b__import__\\s*\\("
-            ],
-            "state": {
-              "initial": "code",
-              "emit": [
-                "code"
-              ],
-              "transitions": [
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "count": {
-                    "min": 2
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
                   },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "double",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "'''",
-                  "count": {
-                    "min": 2
-                  },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "single",
-                  "pattern": "'''",
-                  "skip": true
-                },
-                {
-                  "from": "double",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "single",
-                  "to": "code",
-                  "pattern": "'''",
-                  "skip": true
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "regex": "importlib\\.import_module$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "if_statement"
+                            },
+                            {
+                              "has": {
+                                "regex": "TYPE_CHECKING",
+                                "stopBy": "neighbor",
+                                "field": "condition"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "consequence"
+                        }
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
                 }
-              ]
-            },
-            "indentation": {
-              "excludeUnder": "TYPE_CHECKING",
-              "reset": "^\\S",
-              "ignore": [
-                "^\\s*#",
-                "^\\s*$"
-              ]
-            }
-          },
-          "content": {
-            "include": [
-              "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+              },
+              {
+                "not": {
+                  "layout": {
+                    "line": "(?:^def\\s+__getattr__\\s*\\()|(?:\\bglobals\\s*\\(\\s*\\)\\s*\\[.*\\]\\s*=)|(?:\\b__import__\\s*\\()"
+                  }
+                }
+              }
             ]
           }
         }
@@ -458,81 +486,93 @@
     {
       "id": "pattern-4",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bimport_module\\s*\\(",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "\"\"\"",
-              "'''",
-              "^def\\s+__getattr__\\s*\\(",
-              "\\bglobals\\s*\\(\\s*\\)\\s*\\[.*\\]\\s*=",
-              "\\b__import__\\s*\\("
-            ],
-            "state": {
-              "initial": "code",
-              "emit": [
-                "code"
-              ],
-              "transitions": [
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "count": {
-                    "min": 2
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
                   },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "double",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "code",
-                  "pattern": "'''",
-                  "count": {
-                    "min": 2
+                  {
+                    "regex": "^import_module$"
                   },
-                  "skip": true
-                },
-                {
-                  "from": "code",
-                  "to": "single",
-                  "pattern": "'''",
-                  "skip": true
-                },
-                {
-                  "from": "double",
-                  "to": "code",
-                  "pattern": "\"\"\"",
-                  "skip": true
-                },
-                {
-                  "from": "single",
-                  "to": "code",
-                  "pattern": "'''",
-                  "skip": true
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "call",
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "inside": {
+                                "kind": "call",
+                                "stopBy": "neighbor",
+                                "field": "function"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "function_definition",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "if_statement"
+                            },
+                            {
+                              "has": {
+                                "regex": "TYPE_CHECKING",
+                                "stopBy": "neighbor",
+                                "field": "condition"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "consequence"
+                        }
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
                 }
-              ]
-            },
-            "indentation": {
-              "excludeUnder": "TYPE_CHECKING",
-              "reset": "^\\S",
-              "ignore": [
-                "^\\s*#",
-                "^\\s*$"
-              ]
-            }
-          },
-          "content": {
-            "include": [
-              "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+              },
+              {
+                "not": {
+                  "layout": {
+                    "line": "(?:^def\\s+__getattr__\\s*\\()|(?:\\bglobals\\s*\\(\\s*\\)\\s*\\[.*\\]\\s*=)|(?:\\b__import__\\s*\\()"
+                  }
+                }
+              }
             ]
           }
         }

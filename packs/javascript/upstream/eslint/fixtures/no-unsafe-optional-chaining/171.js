@@ -1,1 +1,0 @@
-async function foo() { bar + (foo || await obj?.foo); }

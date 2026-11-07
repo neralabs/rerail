@@ -1,1 +1,0 @@
-({ set a(val) { function b(){} return b(); } })

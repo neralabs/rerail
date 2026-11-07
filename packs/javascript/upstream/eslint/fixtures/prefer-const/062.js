@@ -1,1 +1,0 @@
-const x = [1,2]; let y; [,y] = x; y = 0;

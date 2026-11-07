@@ -3,7 +3,7 @@
   "id": "bandit-b607-start-process-with-partial-path",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect relative executable string literals passed to configured process APIs, honoring Bandit B607 nosec suppressions",
+  "description": "Use a full path for the executable when starting a process; a bare program name is looked up on PATH and can be hijacked.",
   "scope": {
     "include": [
       "**/*.py"
@@ -79,7 +79,7 @@
       "violation": {
         "code": "B607",
         "anchor": "capture.CMD",
-        "message": "Process executable uses a partial path.",
+        "message": "Use an absolute path for this executable; a bare program name is looked up on PATH and can be hijacked.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -157,7 +157,7 @@
       "violation": {
         "code": "B607",
         "anchor": "capture.CMD",
-        "message": "Process executable uses a partial path.",
+        "message": "Use an absolute path for this executable; a bare program name is looked up on PATH and can be hijacked.",
         "suppress": {
           "nosec": {
             "codes": [

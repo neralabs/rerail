@@ -12,7 +12,6 @@
   "files": [
     "pack.json",
     "rules",
-    "runtime",
     "LICENSE",
     "NOTICE",
     "README.md"

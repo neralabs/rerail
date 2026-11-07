@@ -1,1 +1,0 @@
-class Foo { abc = 1 }

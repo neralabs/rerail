@@ -4,7 +4,7 @@ import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-or
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bridge.js";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
@@ -67,9 +67,19 @@ export interface SessionPageQuery {
   cursor?: string;
 }
 
+/** Per page row: its history counts and when it last recorded an event. */
+export interface SessionPageRow extends StoredSessionSummary {
+  /** Violations in the session's history (as `/api/violations?sessionId=` totals it). */
+  violationCount: number;
+  /** Of those, the ones no audit recorded in Log mode: steered (or blocked). */
+  steeredViolations: number;
+  /** `observed_at` of the session's newest event; null when it has none. */
+  lastEventAt: number | null;
+}
+
 export interface SessionPage {
-  /** Newest first, each with its violation history count (as `/api/violations?sessionId=` totals it). */
-  sessions: Array<StoredSessionSummary & { violationCount: number }>;
+  /** Newest first. */
+  sessions: SessionPageRow[];
   /** Every session the query matches, on every page. */
   total: number;
   nextCursor: string | null;
@@ -379,7 +389,7 @@ export class SqliteSessionReader {
       // Coverage written before repository configuration has no rule signature and is never current.
       const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && coverage.ownerCheckoutPaths !== null
         && coverage.ruleSignature === ruleConfigurationSignature(
-          database, loadBundledCatalog(), coverage.repositoryId, JSON.parse(coverage.ownerCheckoutPaths) as string[],
+          database, loadRuleCatalog(), coverage.repositoryId, JSON.parse(coverage.ownerCheckoutPaths) as string[],
         );
       // Per rule, not per hook output (plan D5): the person counts the steer lines they saw, and one edit can steer two
       // rules. A receipt naming no rules still delivered one steer.
@@ -464,12 +474,19 @@ export class SqliteSessionReader {
     // The page is chosen first and counted after: sorting every session with its counts attached would count them all.
     // The page and its total come from one snapshot, so a commit between them cannot make them disagree.
     const { rows, total } = database.transaction(() => ({
-      rows: database.all<StoredSessionSummary & { violationCount: number }>(sql`
+      rows: database.all<SessionPageRow>(sql`
         SELECT
           page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
           page.started_at AS startedAt, page.ended_at AS endedAt,
           (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
-          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount
+          (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
+            ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
+          -- Steered is everything not logged: counted as total minus logged, both index-only (the logged count reads the
+          -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
+            - (SELECT count(*) FROM ${auditViolations}
+              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations
         FROM (
           SELECT * FROM ${sessions}
           WHERE ${and(matching, continuing) ?? sql`1 = 1`}

@@ -1,5 +1,5 @@
 /**
- * phpstan-if-always-false (packs/php/, candidate) must not steer an agent into deleting a declaration stub (NER-1810).
+ * phpstan-if-always-false (packs/php/, candidate) must not steer an agent into deleting a declaration stub.
  * `if (false) { class Router {} }` is a deliberate idiom: the class never exists at runtime (a class_alias call
  * declares the name), but Composer's class map, IDEs and static analysers see a declaration for it. Symfony ships it
  * for every deprecated alias (src/Symfony/Bundle/FrameworkBundle/Routing/Router.php:20 and 23 more on the pack's
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { readRuleDocument } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { readRuleDocument } from "../../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));

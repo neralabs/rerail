@@ -1,1 +1,0 @@
-function test(err) {try{} catch(err) {}}

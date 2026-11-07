@@ -1,1 +1,0 @@
-import React from 'react'; var y; function f() { 'use strict'; var x; var y; f(); }

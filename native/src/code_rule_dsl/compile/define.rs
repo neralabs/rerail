@@ -5,11 +5,12 @@
 use super::ast_rule::{compile_ast_rule, validate_ast_rule};
 use super::config::Options;
 use super::dialect::language_capability;
+use super::documents::{DocumentScopes, Side};
 use super::refuse_unavailable_semantics;
 use super::utils::{UtilDef, UtilIds, UtilScope, reject_util_cycles, util_map};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown, required_str};
-use crate::code_rule_dsl::language::CodeRuleLanguage;
-use crate::code_rule_dsl::matcher::UtilTable;
+use crate::code_rule_dsl::language::{CodeRuleLanguage, GrammarDialect};
+use crate::code_rule_dsl::matcher::{AstMatcher, UtilTable};
 use crate::code_rule_dsl::model::Capabilities;
 use napi::Result;
 use serde_json::Value;
@@ -17,14 +18,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// The constraint forms a clause other than a define holds.
-pub(super) const CLAUSE_KINDS: [&str; 5] =
-    ["forbid", "require_each", "budget", "relational", "llm"];
+#[cfg(not(test))]
+pub(super) const CLAUSE_KINDS: [&str; 4] = ["forbid", "require_each", "budget", "llm"];
+/// Tests also compile P's relational clauses (`residency::admission::relational`, open item O18).
+#[cfg(test)]
+pub(super) const CLAUSE_KINDS: [&str; 5] = ["forbid", "require_each", "budget", "relational", "llm"];
 
 /// Each language's shared utilities, by id.
 pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>>;
 
 /// What the document's defines hold: shared utilities and options.
-pub(super) struct Defines<'a> {
+pub(in crate::code_rule_dsl) struct Defines<'a> {
     pub(super) utils: SharedUtils<'a>,
     pub(super) options: Options,
 }
@@ -124,8 +128,9 @@ pub(super) fn collect_defines<'a>(
     Ok(shared)
 }
 
-/// Compiles the shared utilities of one language for each of its dialects: each must be whole in
-/// at least one, as a query's rule must.
+/// Compiles the shared utilities of one language for each of its dialects, and for an embedding
+/// language each dialect of the program its files embed (`embed`): each must be whole in at least
+/// one, as a query's rule must. A query reaches a utility from either document.
 fn check_dialects<'u>(
     language: &str,
     utils: &'u BTreeMap<String, UtilDef<'u>>,
@@ -133,6 +138,16 @@ fn check_dialects<'u>(
     capabilities: &Capabilities,
 ) -> Result<()> {
     let (grammars, _) = language_capability(language, capabilities)?;
+    let embedding = super::Embedding::of(&grammars);
+    let sides = grammars
+        .iter()
+        .map(|&grammar| (grammar, Side::Host))
+        .chain(
+            embedding
+                .iter()
+                .flat_map(|embedding| embedding.guests.iter().map(|&guest| (guest, Side::Guest))),
+        )
+        .collect::<Vec<_>>();
     let mut rejections = BTreeMap::<&str, Vec<(String, &str)>>::new();
     let mut whole = BTreeSet::new();
     // An `all` ordering conflict depends on what the callers bind; the queries that call a shared
@@ -144,12 +159,45 @@ fn check_dialects<'u>(
         false,
         capabilities.limits.max_regex_pattern_bytes,
     );
-    for (dialect, grammar) in &grammars {
-        let table = Arc::new(UtilTable::new(
+    let new_table = || {
+        Arc::new(UtilTable::new(
             utils.keys().cloned().collect(),
             utils.values().map(|util| !util.params.is_empty()).collect(),
             vec![None; utils.len()],
-        ));
+        ))
+    };
+    for ((dialect, grammar), side) in &sides {
+        let table = new_table();
+        // The other document's rules (`embedded`, `host`) compile against tables of their own,
+        // which this check does not fill: it asks only whether each utility is whole here.
+        let others = embedding
+            .as_ref()
+            .map_or_else(Vec::new, |embedding| match side {
+                Side::Host => embedding
+                    .guests
+                    .iter()
+                    .map(|&(_, guest)| (guest, new_table()))
+                    .collect(),
+                Side::Guest => vec![(embedding.host.1, new_table())],
+            });
+        let weak =
+            |dialect: GrammarDialect, table: &Arc<UtilTable>| (dialect, Arc::downgrade(table));
+        let documents = embedding.as_ref().map(|embedding| {
+            let own = weak(*grammar, &table);
+            let others = others.iter().map(|(dialect, table)| weak(*dialect, table));
+            match side {
+                Side::Host => DocumentScopes {
+                    via: embedding.via,
+                    host: own,
+                    guests: others.collect(),
+                },
+                Side::Guest => DocumentScopes {
+                    via: embedding.via,
+                    host: others.into_iter().next().expect("one host dialect"),
+                    guests: vec![own],
+                },
+            }
+        });
         let scope = UtilScope {
             table: Arc::downgrade(&table),
             ids,
@@ -159,13 +207,24 @@ fn check_dialects<'u>(
             conflicts: Some(&ignored),
             captures: Default::default(),
             calls: Some(&calls),
+            documents: documents.as_ref(),
+            side: *side,
         };
         let compile = |gaps: &mut BTreeMap<&'u str, Vec<String>>| {
             utils
                 .iter()
                 .map(|(id, util)| {
                     let gaps = gaps.entry(id.as_str()).or_default();
-                    compile_ast_rule(util.rule, *grammar, &util.rule_path, gaps, &scope)
+                    match compile_ast_rule(util.rule, *grammar, &util.rule_path, gaps, &scope) {
+                        // A utility of a language that embeds a program may be written for the
+                        // other document: what this one refuses (a `parse` its grammar hosts no
+                        // literal for) is a gap here, as an unknown kind is.
+                        Err(error) if embedding.is_some() => {
+                            gaps.push(error.reason);
+                            Ok(AstMatcher::Never)
+                        }
+                        compiled => compiled,
+                    }
                 })
                 .collect::<Result<Vec<_>>>()
         };

@@ -3,7 +3,7 @@
   "id": "bandit-b613-trojansource",
   "revision": 1,
   "mode": "steer",
-  "description": "Closest AST-only approximation of Bandit B613; detects bidirectional-control characters in parsed Python string literals.",
+  "description": "Remove bidirectional Unicode control characters from Python string literals; they can make code read differently from how it runs.",
   "scope": {
     "include": [
       "**/*.py"

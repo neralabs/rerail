@@ -1,0 +1,221 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-empty-object-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid empty TypeScript interfaces and the empty object type; both accept any non-nullish value, so use object, unknown or the extended type instead.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "member": {
+            "any": [
+              {
+                "kind": "property_signature"
+              },
+              {
+                "kind": "method_signature"
+              },
+              {
+                "kind": "call_signature"
+              },
+              {
+                "kind": "construct_signature"
+              },
+              {
+                "kind": "index_signature"
+              }
+            ]
+          },
+          "reported-parent": {
+            "any": [
+              {
+                "kind": "parenthesized_type",
+                "inside": {
+                  "matches": "reported-parent"
+                }
+              },
+              {
+                "kind": "adding_type_annotation"
+              },
+              {
+                "kind": "ambient_declaration"
+              },
+              {
+                "kind": "array_type"
+              },
+              {
+                "kind": "as_expression"
+              },
+              {
+                "kind": "conditional_type"
+              },
+              {
+                "kind": "constraint"
+              },
+              {
+                "kind": "constructor_type"
+              },
+              {
+                "kind": "default_type"
+              },
+              {
+                "kind": "flow_maybe_type"
+              },
+              {
+                "kind": "function_type"
+              },
+              {
+                "kind": "implements_clause"
+              },
+              {
+                "kind": "index_signature"
+              },
+              {
+                "kind": "index_type_query"
+              },
+              {
+                "kind": "infer_type"
+              },
+              {
+                "kind": "lookup_type"
+              },
+              {
+                "kind": "mapped_type_clause"
+              },
+              {
+                "kind": "omitting_type_annotation"
+              },
+              {
+                "kind": "opting_type_annotation"
+              },
+              {
+                "kind": "optional_type"
+              },
+              {
+                "kind": "readonly_type"
+              },
+              {
+                "kind": "rest_type"
+              },
+              {
+                "kind": "satisfies_expression"
+              },
+              {
+                "kind": "template_type"
+              },
+              {
+                "kind": "tuple_type"
+              },
+              {
+                "kind": "type_alias_declaration"
+              },
+              {
+                "kind": "type_annotation"
+              },
+              {
+                "kind": "type_arguments"
+              },
+              {
+                "kind": "type_predicate"
+              },
+              {
+                "kind": "union_type"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-interface",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "interface_declaration",
+            "all": [
+              {
+                "has": {
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "has": {
+                  "field": "body",
+                  "not": {
+                    "has": {
+                      "matches": "member"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "extends_type_clause",
+                    "has": {
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "@typescript-eslint/no-empty-object-type",
+        "message": "An empty interface allows any non-nullish value, and one extending a single type is equivalent to that supertype: use `object`, `unknown` or a type alias instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-empty-object-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-object-type",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "object_type",
+            "not": {
+              "has": {
+                "matches": "member"
+              }
+            },
+            "inside": {
+              "matches": "reported-parent"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-empty-object-type",
+        "message": "The `{}` (\"empty object\") type allows any non-nullish value, including literals like `0` and `\"\"`: use `object` for any object or `unknown` for any value.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-empty-object-type"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

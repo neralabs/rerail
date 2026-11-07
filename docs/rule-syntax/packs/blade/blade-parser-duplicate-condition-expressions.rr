@@ -1,0 +1,22 @@
+.policy "blade-parser-duplicate-condition-expressions" revision 3
+.description "Avoid repeating an earlier condition of the same chain in a Blade @elseif; that branch can never run."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/syntax.rr"
+//   blade_code(n)   n is in the PHP the template compiles to
+
+// stillat/blade-parser's DuplicateConditionExpressionsValidator: an @elseif whose condition repeats the @if's or an
+// earlier @elseif's in the same chain; its branch can never run. Read on the compiled PHP, where the chain is one
+// if_statement and its else_if_clauses, each condition the template's own bytes:
+//   @if($a) … @elseif($b) … @elseif($a) … @endif      reported at the second @elseif
+//   @if($a) … @elseif( $a ) … @endif                  not reported: the text differs (as the validator compares)
+.violation duplicate_condition(at: node, c: node) code "DuplicateConditionExpressionsValidator"
+    "Change or remove this @elseif; its condition ({c}) already appears earlier in the chain, so the branch never runs."
+duplicate_condition(d, c) :- branch(i, d, c), text(c, t), (field(i, "condition", p), child(p, e, 0), text(e, t) ;
+    branch(i, d0, e), d0 != d, precedes(d0, d), text(e, t)).
+// branch(i, d, c): else_if_clause d of the chain of if_statement i has condition c.
+.decl branch(i: node, d: node, c: node)
+branch(i, d, c) :- kind(i, "if_statement"), blade_code(i), child(i, d, _), kind(d, "else_if_clause"),
+    field(d, "condition", p), child(p, c, 0).

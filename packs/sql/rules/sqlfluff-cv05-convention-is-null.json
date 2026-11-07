@@ -1,0 +1,61 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-cv05-convention-is-null",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use IS NULL or IS NOT NULL instead of comparing to NULL with =, != or <>; such a comparison is never true.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "relational-null-comparison",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "binary_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "operator",
+                  "regex": "^(?:=|!=|<>)$",
+                  "pattern": "$$OP"
+                }
+              },
+              {
+                "has": {
+                  "field": "right",
+                  "kind": "literal",
+                  "has": {
+                    "kind": "keyword_null"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.OP",
+        "code": "CV05",
+        "message": "Comparisons with NULL should use IS or IS NOT.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "CV05",
+              "L049",
+              "all",
+              "convention",
+              "convention.is_null",
+              "core"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

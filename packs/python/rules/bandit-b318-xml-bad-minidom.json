@@ -3,7 +3,7 @@
   "id": "bandit-b318-xml-bad-minidom",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect unsafe xml.dom.minidom parsing calls",
+  "description": "Use defusedxml instead of xml.dom.minidom to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input.",
   "scope": {
     "include": [
       "**/*.py"

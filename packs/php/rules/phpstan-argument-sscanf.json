@@ -1,0 +1,174 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-argument-sscanf",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass sscanf() exactly as many output variables as its format string assigns, and keep the format valid.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "missing",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "pattern": "$FN($S, $F, $$$A)",
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "sscanf"
+                ]
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "argument",
+                    "nthChild": 3
+                  }
+                }
+              }
+            ],
+            "formatArgs": {
+              "style": "scanf",
+              "string": "F",
+              "args": "A",
+              "missing": {
+                "kind": "placeholder"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sscanf",
+        "anchor": "witness.start",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.sscanf"
+            ]
+          }
+        },
+        "message": "Pass sscanf() one output variable for each placeholder in its format, or remove the extra placeholders."
+      }
+    },
+    {
+      "id": "unused",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "pattern": "$FN($S, $F, $$$A)",
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "sscanf"
+                ]
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "argument",
+                    "nthChild": 3
+                  }
+                }
+              }
+            ],
+            "formatArgs": {
+              "style": "scanf",
+              "string": "F",
+              "args": "A",
+              "unused": {
+                "kind": "argument"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sscanf",
+        "anchor": "witness.start",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.sscanf"
+            ]
+          }
+        },
+        "message": "Remove the extra output variables passed to sscanf(), or add placeholders to fill them."
+      }
+    },
+    {
+      "id": "invalid",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "pattern": "$FN($S, $F, $$$A)",
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "sscanf"
+                ]
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "argument",
+                    "nthChild": 3
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "has": {
+                "parse": {
+                  "grammar": "scanfFormat",
+                  "has": {
+                    "kind": "error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sscanf",
+        "anchor": "witness.start",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.sscanf"
+            ]
+          }
+        },
+        "message": "Fix the invalid placeholder in this sscanf() format, or write a literal percent sign as %%."
+      }
+    }
+  ]
+}

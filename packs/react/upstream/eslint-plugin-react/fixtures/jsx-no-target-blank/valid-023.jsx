@@ -1,1 +1,0 @@
-<a target={targetValue} rel="noopener noreferrer"></a>

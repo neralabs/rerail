@@ -1,1 +1,0 @@
-var o = {[set]: function() {}}

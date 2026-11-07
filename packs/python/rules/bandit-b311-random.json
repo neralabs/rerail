@@ -3,7 +3,7 @@
   "id": "bandit-b311-random",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect insecure uses of Python pseudo-random generators",
+  "description": "Avoid the random module's generators for anything security-related; their output is predictable, so use the secrets module for tokens, passwords, and keys.",
   "scope": {
     "include": [
       "**/*.py"

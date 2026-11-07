@@ -3,7 +3,7 @@
   "id": "ruff-f524-string-dot-format-missing-arguments",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F524 (string-dot-format-missing-arguments): a `.format` call without `*` or `**` on a valid format string with a field (top level or nested in a spec) whose index is past the positional arguments or whose name no keyword argument passes. `formatArgs` reads the format string receiving `.format` (a str literal with no f/t/b prefix, implicit concatenations joined, escapes decoded, parentheses transparent) with the `braceFormat` grammar (a port of ruff_python_literal's format parser as pyflakes' FormatSummary reads it), and the call's arguments as Ruff's strings.rs does. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F524.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Pass an argument for every placeholder in a str.format() string; a missing one raises IndexError or KeyError at runtime.",
   "scope": {
     "include": [
       "**/*"

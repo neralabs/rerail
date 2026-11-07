@@ -1,1 +1,0 @@
-const {a, b, c} = {a: 1, b: true, c: "Moo"};

@@ -1,1 +1,0 @@
-parseInt("10", 1, ...args);

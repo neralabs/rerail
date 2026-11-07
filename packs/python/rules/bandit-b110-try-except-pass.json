@@ -3,7 +3,7 @@
   "id": "bandit-b110-try-except-pass",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect exception handlers whose only action is pass, silently discarding errors that can hide failures or attempted disruption. Handle or log the exception, or catch a specific expected exception when suppression is intentional.",
+  "description": "Don't write a bare or catch-all Exception handler whose only statement is pass; log or handle the error, or catch the specific exception you expect.",
   "scope": {
     "include": [
       "**/*.py"

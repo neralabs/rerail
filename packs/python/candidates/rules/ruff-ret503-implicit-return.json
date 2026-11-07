@@ -3,7 +3,7 @@
   "id": "ruff-ret503-implicit-return",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's RET503 (implicit-return): a function that has a `return` with a value other than `None` and whose last statement can fall through (Ruff's has_implicit_return: recursively the last statement of each `if`/`elif`/`else`, `for`/`while` `else`, `match` case and `with` body; an `if` without `else` and a loop without `else` fall through; `while True`, `assert False`, `return`, `raise`, `try` and calls of known no-return functions do not). No-return functions are `exit`/`quit` (builtin, `sys`, `_thread`, `pytest`), `os`/`posix` `_exit`/`abort`, `_winapi.ExitProcess`, `pytest.fail`/`skip`/`xfail`, `assert_never` from `typing`/`_typeshed`/`typing_extensions`, and functions defined before the analysed function with a `NoReturn`/`Never` return annotation; the callee names are resolved through the file's bindings and imports. Reported on the function, from its first decorator.",
+  "description": "Add an explicit return at the end of Python functions that return a value elsewhere, instead of falling through to an implicit None.",
   "scope": {
     "include": [
       "**/*"

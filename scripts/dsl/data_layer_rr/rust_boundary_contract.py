@@ -15,7 +15,7 @@ from migration import ROOT, PIN, git, sha, read_json, write_json, compare, fixtu
 from replay import execute_native
 
 CHECK = 'rust_sql_grammar_boundary'
-RULE = ROOT / 'packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr'
+RULE = ROOT / 'gate/data-layer/packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr'
 
 
 def cases():

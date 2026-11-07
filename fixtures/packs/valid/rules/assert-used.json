@@ -24,7 +24,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "EX101",
-        "message": "examplelint EX101 (assert-used)"
+        "message": "Replace this assert statement with an explicit check."
       }
     }
   ]

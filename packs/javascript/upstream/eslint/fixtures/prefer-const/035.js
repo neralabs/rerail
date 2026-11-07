@@ -1,1 +1,0 @@
-let a; if (true) a = 0; foo(a);

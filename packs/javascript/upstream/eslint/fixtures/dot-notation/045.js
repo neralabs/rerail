@@ -1,1 +1,0 @@
-foo['bar']instanceof baz

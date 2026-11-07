@@ -3,7 +3,7 @@
   "id": "react-jsx-no-undef",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/jsx-no-undef (allowGlobals: false, module code): a JSX tag name (not a DOM tag) or the root of a member tag name that no file-local binding declares; globals, even configured ones, do not count in a module.",
+  "description": "Import or declare every component used in JSX in the same file; an undefined component name crashes at render.",
   "scope": {
     "include": [
       "**/*.ts",

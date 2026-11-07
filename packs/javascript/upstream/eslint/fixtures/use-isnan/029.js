@@ -1,1 +1,0 @@
-x === (doStuff(), NaN, 1)

@@ -1,1 +1,0 @@
-/* comment */Math.pow(a, b)

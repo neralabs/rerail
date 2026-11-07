@@ -1,2 +1,0 @@
-/*
- *  jscs: enable */

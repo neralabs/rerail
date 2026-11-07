@@ -1,1 +1,0 @@
-var query = location.query.q ? location.query.q : ''

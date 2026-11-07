@@ -1,0 +1,67 @@
+/* Add rule packs, the review before starting (views/packs.js), and the pack sheet's own parts (render/pack-panel.js). */
+
+.catalog{margin-top:16px;max-width:880px}
+.catalog > .ghead h2{font-size:20px;letter-spacing:-.01em;line-height:28px}
+.catalog .list,.pcard{box-shadow:none}
+.cattools{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:14px 0 12px}
+.cathead{margin-bottom:10px}
+.cathead .btn{padding-inline:2px}
+
+/* One row per pack: icon, name, what it covers (three lines, always three lines of room), size; state and action end on one line. */
+.prow2{display:flex;align-items:flex-start;gap:16px;padding:16px;border-top:1px solid var(--border);cursor:pointer;text-align:left}
+.prow2:first-child{border-top:0}
+.prow2:hover{background:var(--subtle-fill)}
+.prow2 .pt2{flex:1;min-width:0;display:grid;gap:3px}
+.prow2 .pt2 b{font-size:14px;font-weight:600}
+.prow2 .pt2 .sub{font-size:13px;color:var(--foreground);line-height:1.45;max-width:72ch}
+.catalog:not(.rv) .prow2 .pt2 .sub{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:19px;min-height:57px}
+.prow2 .pt2 .meta{font-size:12.5px;color:var(--muted-foreground)}
+.prow2 .pend{flex:none;width:250px;align-self:center;display:flex;align-items:center;justify-content:flex-end;gap:22px;min-height:30px}
+.prow2 .pend .btn{white-space:nowrap}
+.prow2 .pend.ask{width:auto;max-width:70%}
+.prow2 .pstatus{font-size:12.5px;color:var(--muted-foreground);white-space:nowrap}
+.prow2 .pact2{flex:none;align-self:center;display:flex;justify-content:flex-end}
+.added{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--radius-md);background:var(--success-subtle);color:var(--success-foreground);font-size:11.5px;font-weight:500;white-space:nowrap}
+.added .ico{color:inherit}
+
+/* The review: why each pack was picked, and its switch with its state beside it. */
+.rv .prow2 .why{font-size:12.5px;color:var(--muted-foreground)}
+.rv .prow2 .why b{font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-right:6px}
+.swl{display:inline-flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted-foreground)}
+
+/* Narrow, or beside an open sheet: the row wraps, its text full width, the state and action under it. */
+@media (max-width:1100px){
+  .prow2{flex-wrap:wrap;row-gap:10px} .prow2 .pt2{flex:1 1 calc(100% - 52px)}
+  .prow2 .pend{width:100%;min-height:0} .prow2 .pend.ask{max-width:none}
+}
+body[data-panel="open"] .prow2{flex-wrap:wrap;row-gap:10px}
+body[data-panel="open"] .prow2 .pt2{flex:1 1 calc(100% - 52px)}
+body[data-panel="open"] .prow2 .pend{width:100%;min-height:0}
+body[data-panel="open"] .prow2 .pend.ask{max-width:none}
+
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:16px}
+.pcard{display:flex;flex-direction:column;gap:12px;padding:18px;min-height:220px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);cursor:pointer;text-align:left;min-width:0}
+.pcard:hover{border-color:var(--border-strong)}
+.pcard .pc-top{display:flex;align-items:center;gap:14px}
+.pcard .pc-top .pc-name{flex:1;min-width:0}
+.pcard .pc-top .pstatus{flex:none;align-self:flex-start}
+.pcard .pc-top .picon{width:40px;height:40px}
+.pcard .pc-top b{display:block;font-size:15px;font-weight:600}
+.pcard .pc-top .kind{display:block;font-size:12px;color:var(--muted-foreground);margin-top:1px}
+.pcard .sub{font-size:13.5px;line-height:1.5;flex:none}
+.pcard .meta{font-size:12.5px;color:var(--muted-foreground)}
+.pcard .pc-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:14px;margin-top:auto;border-top:1px solid var(--border);min-height:42px}
+.pcard .pc-foot .btn,.pcard .pc-foot .rmask{margin-left:auto;white-space:nowrap}
+.pcard .pc-foot .rmask{white-space:normal}
+
+/* The pack sheet: its rules as one list, a filter box for a large pack, and Remove pack in a footer that pins to the
+ * bottom while the list runs past it and rests at the end when it does not. */
+.pwrap.pack .pbody{display:flex;flex-direction:column;padding-bottom:0}
+.pwrap.pack .pbody > *{flex:none}
+.pwrap.pack .search.pk{margin-top:16px}
+.pwrap.pack .pgrp.flat .prow{padding-left:14px}
+.pwrap.pack .pgrp.flat .prow:first-child{border-top:0}
+.pwrap.pack .pgrp.flat > .pintro{margin:12px 14px}
+.pwrap.pack .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--sheet-bg)}
+.pwrap.pack .pgrp.flat{margin-bottom:32px}
+.pwrap.pack .pfoot .rmask{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px 10px;font-size:13px;line-height:1.5}

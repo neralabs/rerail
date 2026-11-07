@@ -51,6 +51,7 @@ describe("Rerail event protocol", () => {
       mechanism: "additional-context" as const,
       content: "No raw SQL.",
       ruleIds: ["rerail:no-raw-sql", "team:api-auth"],
+      rules: [{ id: "rerail:no-raw-sql", state: "steered" as const, origin: "From Rerail's own rules." }, { id: "team:api-auth", state: "steered" as const }],
     };
     const encoded = encodeRerailEventResult({ eventId: "session-1:prompt-1", deliveries: [delivery] });
     expect(JSON.parse(encoded).deliveries[0].ruleIds).toEqual(["rerail:no-raw-sql", "team:api-auth"]);
@@ -58,5 +59,8 @@ describe("Rerail event protocol", () => {
 
     const { ruleIds: _omitted, ...unattributed } = delivery;
     expect(() => decodeRerailEventResult(JSON.stringify({ eventId: "session-1:prompt-1", deliveries: [unattributed] }))).toThrow();
+    // A daemon that predates deliveries carrying their rules names none.
+    const { rules: _rules, ...older } = delivery;
+    expect(decodeRerailEventResult(JSON.stringify({ eventId: "session-1:prompt-1", deliveries: [older] })).deliveries).toEqual([{ ...older, rules: [] }]);
   });
 });

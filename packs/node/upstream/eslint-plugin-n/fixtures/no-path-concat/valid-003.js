@@ -1,1 +1,0 @@
-if (fullPath === __dirname) {}

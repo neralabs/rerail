@@ -8,38 +8,6 @@
     "evidence": "The finding is inside the token tree of `assert_eq!` (line 64): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
-    "rule": "clippy-double-parens",
-    "source": "fixtures",
-    "path": "tests/ui/double_parens.rs",
-    "line": 89,
-    "kind": "rerail-unknown",
-    "evidence": "The finding is inside the body of `macro_rules! bar` (line 88): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
-  },
-  {
-    "rule": "clippy-double-parens",
-    "source": "fixtures",
-    "path": "tests/ui/double_parens.rs",
-    "line": 110,
-    "kind": "rerail-unknown",
-    "evidence": "The finding is inside the body of `macro_rules! double_parens` (line 107): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
-  },
-  {
-    "rule": "clippy-double-parens",
-    "source": "fixtures",
-    "path": "tests/ui/double_parens.rs",
-    "line": 112,
-    "kind": "rerail-unknown",
-    "evidence": "The finding is inside the body of `macro_rules! double_parens` (line 107): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
-  },
-  {
-    "rule": "clippy-double-parens",
-    "source": "fixtures",
-    "path": "tests/ui/double_parens.rs",
-    "line": 114,
-    "kind": "rerail-unknown",
-    "evidence": "The finding is inside the body of `macro_rules! double_parens` (line 107): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
-  },
-  {
     "rule": "clippy-else-if-without-else",
     "source": "ripgrep",
     "path": "crates/index/src/literal.rs",
@@ -125,7 +93,7 @@
     "path": "tokio/tests/io_buf_reader.rs",
     "line": 188,
     "kind": "rerail-unknown",
-    "evidence": "`let expected = 9_223_372_036_854_775_802;` is 0x7FFF_FFFF_FFFF_FFFA, which Clippy 0.1.99 reports (clippy_lints/src/literal_representation.rs, DecimalLiteralRepresentation::check_lit and do_lint: `val >= threshold`, then a hexadecimal representation of 4 digits or more whose first digit is 7 and whose middle digits are all F). The port expresses the hexadecimal shapes as `value` ranges and `bitsAny` masks, and a rule's numbers are JSON numbers the host parses as IEEE-754 doubles: the range this literal needs, 0x7FFF_FFFF_FFFF_FFF0 (9223372036854775792) up to 2^63, rounds to the empty range [2^63, 2^63), so the port reads values below 2^52 only (its description says so). The engine reads the literal's value exactly; the rule cannot name it."
+    "evidence": "`let expected = 9_223_372_036_854_775_802;` is 0x7FFF_FFFF_FFFF_FFFA, which Clippy 0.1.99 reports (clippy_lints/src/literal_representation.rs, DecimalLiteralRepresentation::check_lit and do_lint: `val >= threshold`, then a hexadecimal representation of 4 digits or more whose first digit is 7 and whose middle digits are all F). The rule language has no hexadecimal reading of a value, so the port reads the digits as `value` ranges and `bitsAny` masks, and a bundled rule's text reaches the engine through JavaScript (src/engine/code-rule/code-rule-dsl-catalog.ts compiles stableJsonText of the parsed document), whose numbers are IEEE-754 doubles: 0x7FFF_FFFF_FFFF_FFF0 (9223372036854775792) and 2^63 both become 9223372036854776000, so the range this literal needs is empty, and no power of two from 2^55 to 2^69 (the masks and bounds of every digit there) keeps its value. The port reads values below 2^53 only (its description says so). The engine reads the literal's value exactly; the rule cannot name it."
   },
   {
     "rule": "clippy-decimal-literal-representation-threshold",
@@ -149,7 +117,7 @@
     "path": "tokio/tests/io_buf_reader.rs",
     "line": 188,
     "kind": "rerail-unknown",
-    "evidence": "`let expected = 9_223_372_036_854_775_802;` is 0x7FFF_FFFF_FFFF_FFFA, which Clippy 0.1.99 reports (clippy_lints/src/literal_representation.rs, DecimalLiteralRepresentation::check_lit and do_lint: `val >= threshold`: the corpus recording's default 16384 and this variant's 0xFFFFFF alike, which the value exceeds, then a hexadecimal representation of 4 digits or more whose first digit is 7 and whose middle digits are all F). The port expresses the hexadecimal shapes as `value` ranges and `bitsAny` masks, and a rule's numbers are JSON numbers the host parses as IEEE-754 doubles: the range this literal needs, 0x7FFF_FFFF_FFFF_FFF0 (9223372036854775792) up to 2^63, rounds to the empty range [2^63, 2^63), so the port reads values below 2^52 only (its description says so). The engine reads the literal's value exactly; the rule cannot name it."
+    "evidence": "`let expected = 9_223_372_036_854_775_802;` is 0x7FFF_FFFF_FFFF_FFFA, which Clippy 0.1.99 reports (clippy_lints/src/literal_representation.rs, DecimalLiteralRepresentation::check_lit and do_lint: `val >= threshold`: the corpus recording's default 16384 and this variant's 0xFFFFFF alike, which the value exceeds, then a hexadecimal representation of 4 digits or more whose first digit is 7 and whose middle digits are all F). The rule language has no hexadecimal reading of a value, so the port reads the digits as `value` ranges and `bitsAny` masks, and a bundled rule's text reaches the engine through JavaScript (src/engine/code-rule/code-rule-dsl-catalog.ts compiles stableJsonText of the parsed document), whose numbers are IEEE-754 doubles: 0x7FFF_FFFF_FFFF_FFF0 (9223372036854775792) and 2^63 both become 9223372036854776000, so the range this literal needs is empty, and no power of two from 2^55 to 2^69 (the masks and bounds of every digit there) keeps its value. The port reads values below 2^53 only (its description says so). The engine reads the literal's value exactly; the rule cannot name it."
   },
   {
     "rule": "clippy-needless-raw-strings",

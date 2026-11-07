@@ -3,7 +3,7 @@
   "id": "ruff-f704-yield-outside-function",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F704 (yield-outside-function, a semantic syntax error) with default settings: `yield`, `yield from` or `await` whose scope does not allow it. Scopes are found by climbing: a function or lambda body allows both; a class body or the module allows neither; a list, set or dict comprehension rejects `yield` and is transparent for `await`; a generator expression rejects `yield` and allows `await`. The first iterable of a comprehension, parameter defaults, decorators and class bases belong to the enclosing scope. Reported on the expression.",
+  "description": "Use yield and await only inside function bodies; Python rejects them at module or class level, and yield inside a comprehension.",
   "scope": {
     "include": [
       "**/*"

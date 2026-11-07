@@ -31,12 +31,15 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 | `native/src/code_rule_dsl/semver/subset_cases.json` | `scripts/generate/semver/semver-subset-cases.mjs` | `node scripts/generate/semver/semver-subset-cases.mjs <tools>/node_modules/semver` (semver 7.8.5); the oracle `semver/mod.rs`'s tests check the port against |
 | `native/src/code_rule_dsl/value/ecma/builtins.generated.rs` | `scripts/generate/value/ecma-builtins.mjs` | `npx -y node@25.2.1 scripts/generate/value/ecma-builtins.mjs <tools>/node_modules` (@eslint-community/eslint-utils 4.10.1; the output records the Node.js version) |
 | `native/src/code_rule_dsl/value/ecma/entities.generated.rs` | `scripts/generate/value/ecma-entities.mjs` | `node scripts/generate/value/ecma-entities.mjs <tools>/node_modules` (@typescript-eslint/typescript-estree 8.70.1) |
+| `native/src/code_rule_dsl/value/python/words.generated.rs` | `scripts/generate/languages/python-word-ranges.py` | `python3.13 scripts/generate/languages/python-word-ranges.py` (CPython 3.13, Unicode 15.1.0) |
 | `native/src/code_rule_dsl/value/names/names.bin` | `scripts/generate/value/names.py` | `python3.13 scripts/generate/value/names.py <NameAliases.txt of Unicode 15.1.0>`; read by `include_bytes!` at this path, kept in Git LFS |
+| `native/grammars/tree-sitter-sql/src/parser.generated.c.gz` | `scripts/generate/grammars/committed-parsers.mjs` | `node scripts/generate/grammars/committed-parsers.mjs` (tree-sitter-generate as Cargo.lock pins it; about 15 minutes with the release build it runs): the engine's build script generates it and writes it back; every other build refuses it when its first line names another grammar.json, grammar version or tree-sitter-generate. Kept in Git LFS |
 
 ## Host (`src/`, `ui/`)
 
 | Generated file | Generator | Command |
 |---|---|---|
+| `src/engine/catalog/pack-list.generated.ts` | `scripts/generate/packs/pack-list.ts` | `npm run generate:packs`; pack check 7 (`test/engine/catalog/packs.test.ts`) fails when it is stale |
 | `src/engine/code-rule/code-rule-language-registry.generated.ts` | `scripts/generate/languages/registry.ts` | `npm run generate:languages`; `test/engine/code-rule/language-registry.test.ts` fails when it is stale |
 | `src/engine/storage/schema-sql.generated.ts` | `scripts/generate/schema/schema-sql.ts` | `npm run generate:schema`; `test/engine/catalog/rule-store.test.ts` fails when it is stale |
 | `src/presentation/terminal-brand.generated.ts` | `scripts/generate/ui/terminal-brand.mjs` | `node scripts/generate/ui/terminal-brand.mjs <landing>` |
@@ -61,64 +64,53 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 
 | Generated file | Generator | Command |
 |---|---|---|
-| `packs/node/rules/` | `scripts/generate/packs/node_policies.py` | `python3 scripts/generate/packs/node_policies.py [--tools <dir>] [--root <dir>]` (eslint-plugin-n 18.4.1, globals 17.13.0); every rule but `n-no-process-exit.json`, which is written by hand. Writes `suppress.eslint`, and `suppress.oxlint` for the rules oxlint 1.88.0's `node` plugin implements; copies each violation's `suppress.biome` from the committed document. A document keeps its committed revision when nothing else changes; a shipped one that changes gets the next revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
-| `packs/node/candidates/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/rules/` |
-| `packs/node/candidates/probes/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/rules/` |
+| `packs/node/candidates/rules/` | `scripts/generate/packs/node_policies.py` | `python3 scripts/generate/packs/node_policies.py [--tools <dir>] [--root <dir>]` (eslint-plugin-n 18.4.1, globals 17.13.0); every rule but `n-no-process-exit.json`, which is written by hand. Writes `suppress.eslint`, and `suppress.oxlint` for the rules oxlint 1.88.0's `node` plugin implements; copies each violation's `suppress.biome` from the committed document. A document keeps its committed revision when nothing else changes; a shipped one (under `packs/node/rules/`) that changes gets the next revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
+| `packs/node/candidates/probes/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/candidates/rules/` |
 | `packs/typescript/candidates/rules/vitest-expect-expect.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | `node scripts/generate/packs/typescript-vitest-policies.mjs` (reads no tools; writes the three @vitest/eslint-plugin 1.6.27 candidates). Writes `suppress.eslint` and `suppress.oxlint` (oxlint 1.88.0's `vitest` plugin implements all three); copies each violation's `suppress.biome` from the committed document and keeps its revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
 | `packs/typescript/candidates/rules/vitest-no-disabled-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
 | `packs/typescript/candidates/rules/vitest-no-focused-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
 | `conformance/biome-same-sources.generated.ts` | `scripts/generate/packs/biome-suppression.mjs` | as `native/src/code_rule_dsl/suppress/biome_registry.generated.rs`; the run also sets `suppress.biome` on every violation of `packs/<id>/rules/` and `packs/<id>/candidates/` that carries `suppress.eslint`, bumping a shipped document's revision when it changes |
 
-## Data-layer batch nine
-
-Use the pinned data-layer checkout as `<upstream>`. Set `PYTHONHASHSEED=0` for reproducible diagnostic ordering.
+## Data-layer migration gate
 
 | Generated file | Generator | Command |
 |---|---|---|
-| `packs/data-layer/rules/data-layer-connection-mode-split.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-| `packs/data-layer/rules/data-layer-connection-structural-boundaries.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-| `packs/data-layer/rules/data-layer-connection-service-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-| `packs/data-layer/rules/data-layer-schema-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-| `packs/data-layer/rules/data-layer-schema-bootstrap-contracts.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-| `packs/data-layer/rules/data-layer-bootstrap-engine-invariants.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-| `packs/data-layer/rules/data-layer-bootstrap-lazy-sql.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-| `packs/data-layer/rules/data-layer-bootstrap-eager-resolve.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-| `packs/data-layer/rules/data-layer-bootstrap-cache-health.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-| `packs/data-layer/rules/data-layer-plan-composition-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
-
-## Imported `.rr` tables
-
-These files are snapshots from the syntax branch. The migration manifest records their original bytes and source commit.
-The importer adds the repository header and resolves adjacent table includes. It does not recompute the upstream tables.
-
-| Generated file | Importer | Command |
-|---|---|---|
-| `packs/data-layer/candidates/rr/bootstrap-engine-invariants.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
-| `packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.symbols.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
-| `packs/data-layer/candidates/rr/eager-resolve.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
-| `packs/data-layer/candidates/rr/lazy-architecture.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
-| `packs/data-layer/candidates/rr/plan-helpers-allowlist.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
-| `packs/data-layer/candidates/rr/schema-introspection-data-paths.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-connection-mode-split.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-connection-structural-boundaries.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-connection-service-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-schema-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-schema-bootstrap-contracts.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-engine-invariants.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-lazy-sql.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-eager-resolve.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-cache-health.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/rules/data-layer-plan-composition-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/bootstrap-engine-invariants.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.symbols.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/eager-resolve.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/lazy-architecture.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/plan-helpers-allowlist.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/schema-introspection-data-paths.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
 | `docs/rule-syntax/lib/python/security-blacklist.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
 | `docs/rule-syntax/lib/vue/elements.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
-| `packs/data-layer/candidates/rr/pure-lazy-runtime-purity.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
-| `packs/data-layer/candidates/rr/removed-compat-surfaces.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/no-source-inspection.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/serverplan-name-inference.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/permission-error.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/hasattr-async.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/admin-async-purity.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/async-executor.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/dynamic-module-loading.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/classvar-check.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/type-safety-patterns.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/forwardref.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/data-layer-compat-aliases.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/sync-async-signatures.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/data-layer-facade-purity.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/backend-coupling.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/connection-caches.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
-| `packs/data-layer/candidates/rr/no-api-root-imports.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.tables.rr` | `scripts/generate/packs/data_layer_rr.py` | `python3 scripts/generate/packs/data_layer_rr.py sync <syntax-worktree>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/async-executor.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/classvar-check.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/type-safety-patterns.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/data-layer-compat-aliases.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/sync-async-signatures.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/data-layer-facade-purity.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/backend-coupling.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/connection-caches.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |
+| `gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr` | `scripts/generate/packs/data_layer_rr_author.py` | `python3.13 scripts/generate/packs/data_layer_rr_author.py --source <upstream>` |

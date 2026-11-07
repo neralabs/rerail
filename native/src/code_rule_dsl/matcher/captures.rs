@@ -115,7 +115,7 @@ fn collect_counts(
         AstMatcher::Constrained(core) => collect_counts(&core.rule, summaries, names),
         // Semantic sub-rules are not followed: a count there is not one a message may name.
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
@@ -169,7 +169,7 @@ fn collect_binds(
                 collect_binds(constraint, summaries, names);
             }
         }
-        AstMatcher::Kind(_)
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
@@ -290,7 +290,7 @@ fn binds_and_reads(
             read.retain(|name| !bound.contains(name));
             (bound, read)
         }
-        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
             (Names::new(), Names::new())
         }
         #[cfg(test)]
@@ -379,7 +379,7 @@ fn collect_mentions(
                 collect_mentions(constraint, summaries, names);
             }
         }
-        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {}
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {}
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}
     }
@@ -434,7 +434,7 @@ fn collect_in(
     match matcher {
         AstMatcher::Pattern(pattern) => pattern_variables(&pattern.node, variables),
         // Comparisons and counts bind nothing; counts are not upstream's.
-        AstMatcher::Kind(_)
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Never
         | AstMatcher::Compare(_)

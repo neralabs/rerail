@@ -1,1 +1,0 @@
-var [a] = foo;'use strict';b(00);

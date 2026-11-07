@@ -1,1 +1,0 @@
-Object.create(null, {set: {value: function() {}}});

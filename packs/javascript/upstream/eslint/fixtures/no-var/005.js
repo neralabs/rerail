@@ -1,1 +1,0 @@
-using moo = 'car';

@@ -1,1 +1,0 @@
-do var x = f(), y = b(); while (x < y);

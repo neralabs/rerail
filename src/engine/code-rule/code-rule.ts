@@ -1,8 +1,9 @@
+import type { SteerRule } from "../adapter-contract.js";
 import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
-import { steerBlock } from "./rerail-steer.js";
+import { steerBlock, steerRules, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
 import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
@@ -198,16 +199,11 @@ export interface CodeRuleDslRelational {
   references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
   stages?: ({ name: string } & (
     | { query: string; indexes?: string[][]; deferred?: Record<string, string>; reachability?: never }
-    | { pythonAst: { roots: string; syntax?: string; source?: string; fields: ("syntax_error" | "dump" | "body_sha256" | "signature_sha256" | "identifier" | "unparse" | "literal_json" | "dump_sha256" | "column" | "repr_unparse" | "ast_kind" | "ast_name" | "ast_alias" | "ast_module" | "ast_value" | "ast_value_kind" | "ast_preorder" | "ast_breadth_order" | "ast_depth" | "ast_parent" | "ast_parent_kind" | "ast_field" | "ast_index" | "ast_end" | "ast_function" | "ast_class" | "ast_op" | "ast_op_count" | "ast_start" | "ast_stop" | "ast_line" | "ast_context" | "source_lines" | "source_line" | "previous_line" | "annotation_names" | "ast_name_repr" | "ast_value_repr" | "ast_annotation" | "ast_annotation_repr")[]; expand?: "annotation_names" | "nodes" | "annotations" }; query?: never; indexes?: never; deferred?: never; reachability?: never }
-    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest"; selection?: "memoized-first"; memo?: string; visiting?: string; emit?: "memo"; sinks?: string; match?: "node" | "edge" }; query?: never; indexes?: never; deferred?: never }
+    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest" }; query?: never; indexes?: never; deferred?: never }
   ))[];
   query: string;
   key?: string[];
   code?: string;
-  /** Output column containing the exact diagnostic message. */
-  message?: string;
-  /** One-based diagnostic line within the result's proven input witness span. */
-  line?: string;
 }
 
 
@@ -248,6 +244,14 @@ export interface CodeRuleDslAstQuery {
     syntax?: "valid" | "invalid";
     language: CodeRuleLanguageId;
     rule: CodeRuleDslAstRule;
+    /**
+     * The `via` of an embedding `language` declares (Blade's `compiled-view`, Vue's `script-block`): the query runs on
+     * the file's embedded program of that via, a document of its own in the embedded language's grammar, instead of
+     * the file's own tree. Kinds, patterns and utilities are the embedded language's; witnesses, captures and fixes
+     * map to the bytes of the file they stand for, and a fix applies only where its range lies in one copied stretch.
+     * `host` reaches the file's own tree from a node of the program.
+     */
+    embedded?: string;
     /**
      * Named rules that `rule`, `constraints`, and other utilities reference with `matches` (ast-grep's local
      * utilities). A utility shares the caller's metavariables and may recurse through a relation. A `define` clause
@@ -587,7 +591,7 @@ export interface CodeRuleDslEvidenceQuery {
   evidence: {
     as: string;
     paths?: { include?: string[]; exclude?: string[] };
-    query: CodeRuleDslAstQuery | CodeRuleDslRegexQuery;
+    query: CodeRuleDslAstQuery;
     project: Record<string, string | { source: string; regex: string; group: number }>;
     where?: CodeRuleDslPredicate;
     /** Ordered, cycle-safe name closures over raw projected fields. */
@@ -1354,6 +1358,11 @@ export interface CodeRuleEditBatch {
   revision: number;
   checkpoints: CodeRuleCheckpoint[];
   edits: CodeRuleEdit[];
+  /**
+   * Audits these edits in this mode rather than the session's: Rerail's own rollback of an edit (`rewind`) is audited
+   * in `log` mode, so the restored source is judged and recorded but steers nothing.
+   */
+  mode?: AuditMode;
 }
 
 export interface CodeRuleSourceSpan {
@@ -1382,7 +1391,7 @@ export interface CodeRuleViolation {
   path?: string | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native violations carry `path: undefined`
   span?: CodeRuleSourceSpan | undefined; // NOSONAR - as `path`
   captures: Record<string, CodeRuleSourceSpan[]>;
-  variables: Record<string, CodeRuleDslValue>;
+  variables: Record<string, boolean | number | string>;
   fix?: CodeRuleViolationFix | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native violations carry `fix: undefined`
 }
 
@@ -1395,15 +1404,28 @@ export interface CodeRuleResponse {
   failures: AuditFailure[];
 }
 
+/**
+ * The findings a generated-edit steer renders, kept apart from its text: a steer that arrives after the boundary that
+ * waited for its edit gave up is not delivered on its own, but folded with the others into the session's yield digest.
+ */
+export interface GeneratedEditFindings {
+  /** The violations rendered into the steer's content, their paths as the session sees them. */
+  readonly violations: readonly CodeRuleViolation[];
+  /** Where each of their rules comes from, as the content names it. */
+  readonly sourceOf: SteerSourceOf;
+}
+
 export interface SteerMetadata {
   revision: number;
   /** Source inputs whose newer revisions invalidate this result. */
   scope: string[];
   /** Rule ids rendered into the delivered content; absent for deliveries that carry no code-rule violations. */
   ruleIds?: readonly string[];
+  /** The rules behind the content, for the person's line (`buildSteer`); absent with `ruleIds`. */
+  rules?: readonly SteerRule[];
   background?: boolean;
-  /** Marks a steer produced by the generated edit settling at a native tool boundary. */
-  generatedEdit?: boolean;
+  /** Marks a steer produced by the session's generated edits settling, with the findings it renders. */
+  generatedEdit?: GeneratedEditFindings;
 }
 
 export interface RuleSteerDelivery {
@@ -1420,6 +1442,11 @@ export interface RuleSteerDelivery {
    * whose findings the auditor steers again.
    */
   revised?(sessionId: string, revision: number, paths: readonly string[]): readonly string[];
+  /**
+   * Whether a newer revision of `path` dropped a steer for it before the agent received it since the last call; the
+   * answer is consumed. An ai-output auditor then reports that steer's lines again with the source's next edit.
+   */
+  undelivered?(sessionId: string, path: string): boolean;
 }
 export interface AuditSettings {
   scope?: AuditScope;
@@ -1444,6 +1471,11 @@ export interface CodeRuleAuditor {
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
   acceptsPath(path: string): boolean;
+  /**
+   * Whether `path` (as for `acceptsPath`) is left out because Git ignores it and the session follows `.gitignore`:
+   * a shell-write walk neither descends into such a folder (`directory`) nor observes such a file. Absent: nothing is.
+   */
+  ignoresPath?(path: string, directory: boolean): boolean;
   /**
    * The folder whose real path must contain an accepted `path`'s real path (its owning checkout); the session folder
    * when undefined or absent.
@@ -1474,44 +1506,55 @@ export interface AuditorCloseOptions {
   readonly interruptAudits?: boolean;
 }
 
-function violationLocation(violation: CodeRuleViolation): string {
-  if (violation.path === undefined) return "";
-  if (violation.span === undefined) return ` (${violation.path})`;
+/** `path:line:col`, or `path` alone for a finding about a whole file; undefined when the finding has no path. */
+function violationLocation(violation: CodeRuleViolation): string | undefined {
+  if (violation.path === undefined) return undefined;
+  if (violation.span === undefined) return violation.path;
   const { startColumn, startLine } = violation.span;
-  return ` (${violation.path}:${startLine + 1}:${startColumn + 1})`;
+  return `${violation.path}:${startLine + 1}:${startColumn + 1}`;
 }
 
 /** Longest fix text rendered inline in a steer; a longer fix is cut with a note. */
 export const STEER_FIX_CHARS = 240;
 
+/** `text` as CommonMark inline code: a backtick fence longer than any backtick run in it, padded where it starts or ends with one. */
+function inlineCode(text: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/gu)].map(([run]) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const padding = text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${fence}${padding}${text}${padding}${fence}`;
+}
+
+/** The fix's lines under its finding: a deletion, a one-line replacement inline, or a longer one in a `~~~` fence. */
 function suggestedFix(fix: CodeRuleViolationFix): string {
   const { startLine, startColumn, endLine, endColumn } = fix.span;
-  const range = `${startLine + 1}:${startColumn + 1}-${endLine + 1}:${endColumn + 1}`;
+  const range = `${startLine + 1}:${startColumn + 1}–${endLine + 1}:${endColumn + 1}`;
   if (fix.text === "") return `  Suggested fix: delete ${range}`;
   const text = fix.text.length > STEER_FIX_CHARS ? `${fix.text.slice(0, STEER_FIX_CHARS)}… (truncated)` : fix.text;
-  if (!text.includes("\n")) return `  Suggested fix: replace ${range} with \`${text}\``;
-  const indented = text.split("\n").map(line => `    ${line}`).join("\n");
-  return `  Suggested fix: replace ${range} with:\n${indented}`;
+  if (!text.includes("\n")) return `  Suggested fix: replace ${range} with ${inlineCode(text)}`;
+  const longest = Math.max(0, ...[...text.matchAll(/^ *(~{3,})/gmu)].map(([, run]) => run!.length));
+  const fence = `  ${"~".repeat(Math.max(3, longest + 1))}`;
+  const lines = text.split("\n").map(line => (line === "" ? "" : `  ${line}`));
+  return [`  Suggested fix, replacing ${range}:`, fence, ...lines, fence].join("\n");
 }
 
 /** Where each rule a steer names was added from; undefined when the rule's provenance is not recorded. */
 export type SteerSourceOf = (ruleId: string) => SteerRuleSource | undefined;
 
-/**
- * One block per rule (`steerBlock`), its violations in first-seen order, each with its location and any fix. The block
- * names the rule's pack (or library) and its mode, from the first violation of that rule.
- */
-export function renderSteer(violations: readonly CodeRuleViolation[], sourceOf: SteerSourceOf = () => undefined): string {
-  const byRule = new Map<string, { mode: RuleMode; lines: string[] }>();
-  for (const violation of violations) {
-    const line = `${violation.message}${violationLocation(violation)}`;
-    const entry = byRule.get(violation.ruleId) ?? { mode: violation.mode, lines: [] };
-    entry.lines.push(violation.fix === undefined ? line : `${line}\n${suggestedFix(violation.fix)}`);
-    byRule.set(violation.ruleId, entry);
-  }
-  return [...byRule]
-    .map(([ruleId, { mode, lines }]) => steerBlock(ruleId, lines.join("\n"), { mode, origin: steerOrigin(ruleId, sourceOf(ruleId)) }))
-    .join("\n\n");
+/** Each violation as a steer finding, in the order given: its location, message and any fix. */
+function steerFindings(violations: readonly CodeRuleViolation[]): SteerFinding[] {
+  return violations.map(violation => ({
+    ruleId: violation.ruleId,
+    mode: violation.mode,
+    message: violation.message,
+    location: violationLocation(violation),
+    fix: violation.fix === undefined ? undefined : suggestedFix(violation.fix),
+  }));
+}
+
+/** The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default). */
+export function renderSteer(violations: readonly CodeRuleViolation[], trigger: SteerTrigger = { kind: "edit" }): string {
+  return steerBlock(trigger, steerFindings(violations));
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
@@ -1519,13 +1562,19 @@ export function steerRuleIds(violations: readonly CodeRuleViolation[]): string[]
   return [...new Set(violations.map((violation) => violation.ruleId))];
 }
 
-/** The rendered steer text with its contributing rule ids; the text is byte-identical to `renderSteer`. */
+/**
+ * The rendered steer text with its contributing rule ids and rules (`steerRules`, each naming where it comes from);
+ * the text is byte-identical to `renderSteer`.
+ */
 export function buildSteer(
   violations: readonly CodeRuleViolation[],
-  sourceOf?: SteerSourceOf,
-): { content: string; ruleIds: string[] } {
+  trigger: SteerTrigger,
+  sourceOf: SteerSourceOf = () => undefined,
+): { content: string; ruleIds: string[]; rules: SteerRule[] } {
+  const findings = steerFindings(violations);
   return {
-    content: renderSteer(violations, sourceOf),
+    content: steerBlock(trigger, findings),
     ruleIds: steerRuleIds(violations),
+    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId))),
   };
 }

@@ -3,7 +3,7 @@
   "id": "ruff-pie796-non-unique-enums",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PIE796 (non-unique-enums): in a class with an `enum.Enum` base, a plain assignment whose value equals the value of an earlier assignment in the same body as Ruff's ComparableExpr (`text: \"structure\"`: literals by type and value, `1 == 0x1`, `'a' == \"a\"`, `-1 == -(1)`, not `1 == 1.0 == True`; names compared without NFKC normalization); `enum.auto()` values (alone or in a tuple) are skipped, and in stubs (`.pyi`) so are `...` and `typing.cast(T, ...)`. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/PIE796.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it, and its `.py`/`.pyi` split read per file (`ast.file.path`): the suite's `select_when` gate holds wherever a matching file exists anywhere in the workspace, so in a repository it would read stubs as modules and modules as stubs.",
+  "description": "Give each Enum member a unique value; a duplicate becomes an alias of the earlier member instead of a new one.",
   "scope": {
     "include": [
       "**/*"

@@ -3,7 +3,7 @@
   "id": "ruff-b020-loop-variable-overrides-iterator",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B020 (loop-variable-overrides-iterator): a name in a `for` loop's target that also occurs as a name in its iterable, where comprehensions in the iterable contribute only the iterables of their `for` clauses and lambdas the children of their body (Ruff's `NameFinder` walks the body's children, so `lambda: x` adds nothing). A name that is a (non-variadic) parameter of a lambda in the iterable is exempt unless it occurs again after that lambda, as Ruff's walk removes it and a later occurrence adds it back. Reported on each such target name (Ruff reports only the last occurrence of a name repeated in the target).",
+  "description": "Don't name a for-loop variable after a name used in the loop's iterable; the loop overwrites the original value.",
   "scope": {
     "include": [
       "**/*"

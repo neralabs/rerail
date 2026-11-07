@@ -5,6 +5,16 @@
   "category": "repository",
   "covers": "A fixture pack whose rule writes a string option into a regex.",
   "reason": "a fixture pack, added by hand",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.ts"
+        ],
+        "label": "*.ts files"
+      }
+    ]
+  },
   "rules": [
     {
       "id": "comment-pattern",

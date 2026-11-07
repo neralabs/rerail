@@ -1,1 +1,0 @@
-let f = (function() { let g = x; })(); f = 1;

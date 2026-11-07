@@ -1,5 +1,6 @@
-"""Records PHPStan 2.2.16 for the PHP pack's ported rules (rerail/packs/php/conformance.json). Run offline,
-never in CI, with PHP 8.5.11:
+"""Records PHPStan 2.2.16 for the PHP pack's ported rules (rerail/packs/php/conformance.json). Run by
+`npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request CI), with
+PHP 8.5.11:
 
     python3 generate.py fixtures <phpstan-src checkout at tag 2.2.16> <composer project with phpstan/phpstan 2.2.16>
     python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]

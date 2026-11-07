@@ -1,0 +1,22 @@
+.policy "ruff-n815-mixed-case-variable-in-class-scope" revision 2
+.description "Name class-level variables in snake_case instead of mixedCase, as PEP 8 recommends for variable names."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N815 (pep8-naming): a name stored in a class body in mixedCase: not all lowercase, and its first letter
+// (after one `_`) lowercase. Exempt: namedtuple/NamedTuple assignments, the fields of a TypedDict class
+// (directly or through classes of this file), and names matching `pep8-naming.ignore-names`.
+//   class C:
+//       mixedCase = 0                 ← N815
+//   class D(TypedDict):
+//       mixedCase: bool               not reported
+#include "python/naming.rr"
+
+.violation N815(at: node, x: symbol) code "N815"
+    "Rename the class variable `{x}` to snake_case and update its uses; keep the name if outside code depends on it or it mirrors an external schema."
+    suppress ruff "N815"
+N815(n, x) :- store_name(n, x, c), kind(c, "class_definition"), mixed_name(x), !store_makes(n, "namedtuple"),
+    !typed_dict(c), !naming_ignored(x).
+.decl typed_dict(c: node)
+typed_dict(c) :- class_def(c, q), subclass(q, b), (b = "typing.TypedDict" ; b = "typing_extensions.TypedDict").

@@ -23,6 +23,7 @@ use crate::code_rule_dsl::model::Limits;
 use crate::code_rule_dsl::soundness::sound_under_errors;
 use ast_grep_core::matcher::KindMatcher;
 use napi::Result;
+use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -155,7 +156,7 @@ pub(super) fn validate_sub_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        super::regex_cache::compile(source)
+        Regex::new(source)
             .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
     }
     if let Some(capture) = rule.get("capture") {
@@ -386,11 +387,7 @@ pub(super) fn compile_parse(
                 language,
                 &["string", "encapsed_string", "heredoc", "nowdoc"],
             ),
-            // A template's own `{{-- --}}` comments are no PHP doc comments.
-            LiteralHost::PhpComment => with_adapter!(family, A => kind_ids(language, &["comment"])
-                .into_iter()
-                .filter(|id| <A as SyntaxRules>::php_comment(language, *id))
-                .collect()),
+            LiteralHost::PhpComment => kind_ids(language, &["comment"]),
             LiteralHost::RustString => {
                 kind_ids(language, &["string_literal", "raw_string_literal"])
             }
@@ -451,10 +448,9 @@ pub(super) fn compile_sub_rule(
         ));
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(
-            super::regex_cache::compile(regex)
-                .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?,
-        ));
+        terms.push(AstMatcher::Regex(Regex::new(regex).map_err(|_| {
+            invalid(format!("{path}/regex: Parsing text matcher fails."))
+        })?));
     }
     if let Some(capture) = rule.get("capture") {
         terms.push(AstMatcher::Semantic(Semantic::Capture(

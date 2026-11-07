@@ -3,7 +3,7 @@
   "id": "bandit-b104-hardcoded-bind-all-interfaces",
   "revision": 1,
   "mode": "steer",
-  "description": "Flag Python string constants whose decoded value is exactly 0.0.0.0.",
+  "description": "Avoid hardcoding 0.0.0.0 in Python; binding to it exposes a service on every network interface, so bind to a specific, configurable address.",
   "scope": {
     "include": [
       "**/*.py"
@@ -27,7 +27,7 @@
       "violation": {
         "code": "B104",
         "anchor": "witness.span",
-        "message": "Possible binding to all network interfaces.",
+        "message": "Bind to a specific address read from configuration, such as 127.0.0.1, instead of hardcoding 0.0.0.0.",
         "suppress": {
           "nosec": {
             "codes": [

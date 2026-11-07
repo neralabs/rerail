@@ -3,7 +3,7 @@
   "id": "bandit-b405-import-xml-etree",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of xml.etree.cElementTree and xml.etree.ElementTree.",
+  "description": "Avoid importing xml.etree.ElementTree or cElementTree; use defusedxml instead, since the standard parsers are open to XML attacks on untrusted input.",
   "scope": {
     "include": [
       "**/*.py"

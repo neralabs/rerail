@@ -1,1 +1,0 @@
-switch (foo) { default: bar(); break; }

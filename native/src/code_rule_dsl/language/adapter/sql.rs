@@ -16,7 +16,7 @@ use super::{
 };
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
-use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
     Arguments, Passed, SQL_CALL_KINDS, ScopeName, SemanticText, Unresolved, file_sqlfluff,
@@ -487,13 +487,5 @@ impl SyntaxRules for Sql {
         document: &Options,
     ) -> napi::Result<QueryWhen> {
         Ok((options::compile_option_when(value, path, document)?, None))
-    }
-
-    fn embedded_pattern(_: &str) -> Option<GrammarDialect> {
-        None
-    }
-
-    fn php_comment(_: GrammarDialect, _: u16) -> bool {
-        true
     }
 }

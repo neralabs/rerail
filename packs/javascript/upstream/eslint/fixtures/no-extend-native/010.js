@@ -1,1 +1,0 @@
-with(Object) { prototype.p = 0; }

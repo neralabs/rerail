@@ -3,7 +3,7 @@
   "id": "unicorn-prefer-node-protocol",
   "revision": 1,
   "mode": "steer",
-  "description": "An import of a Node.js built-in module without the `node:` prefix.",
+  "description": "Import Node.js built-in modules with the node: prefix; it makes clear they are built-ins, not npm packages.",
   "scope": {
     "include": [
       "**/*.js",

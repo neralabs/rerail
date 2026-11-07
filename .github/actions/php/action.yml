@@ -1,0 +1,112 @@
+name: PHP and Composer
+description: >-
+  PHP and Composer at the exact versions the port readiness recorder pins, on PATH ahead of the runner's own PHP. The
+  recorder refuses any PHP but the one `conformance/recorders/port-readiness/runtimes/php/.php-version` names, built
+  with exactly the extensions `runtimes/php/extensions.txt` lists, and setup-php takes only a minor version and
+  installs its newest patch, so PHP is built from php.net's release source by `runtimes/php/build.sh`, the script a
+  maintainer records locally with. The source and Composer's phar are each checked against the sha256 their publishers
+  list before use, and the build is cached on this file, the script and the extension list. The cache is saved by an
+  explicit step straight after the build, never in the post-job step: by the end of the job the recorder has run
+  upstream PHP code and unlocked Composer packages, which could have rewritten the prefix.
+
+inputs:
+  save:
+    description: >-
+      Save the build to the cache on a miss. A job that runs a pull request's code under pull_request_target sets it
+      to false: it would save into the base branch's scope, which every workflow on main restores.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # The checksum is getcomposer.org's, as published with the release. PHP's version and checksum are build.sh's.
+    - id: pin
+      name: Read the pinned PHP version
+      shell: bash
+      env:
+        COMPOSER_VERSION: 2.10.3
+        COMPOSER_SHA256: 7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6
+        RUNTIME: conformance/recorders/port-readiness/runtimes/php
+      run: |
+        set -euo pipefail
+        pinned="$(tr -d '[:space:]' < "$RUNTIME/.php-version")"
+        {
+          echo "composer-version=$COMPOSER_VERSION"
+          echo "composer-sha256=$COMPOSER_SHA256"
+          echo "prefix=$RUNNER_TOOL_CACHE/rerail-php/$pinned"
+          echo "key=rerail-php-$(. /etc/os-release && echo "$ID-$VERSION_ID")-$(uname -m)-$(cat "$GITHUB_ACTION_PATH/action.yml" "$RUNTIME/build.sh" "$RUNTIME/extensions.txt" | sha256sum | cut -d ' ' -f 1)"
+        } >> "$GITHUB_OUTPUT"
+
+    # The development packages, so a build can link against them and a cached build finds their libraries.
+    - name: Install PHP's libraries
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -q
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+          pkg-config libxml2-dev libsqlite3-dev libonig-dev libssl-dev zlib1g-dev libcurl4-openssl-dev libzip-dev libicu-dev
+
+    # Restore only. actions/cache would save in its post-job step, after the recorder's untrusted code has run.
+    - id: restored
+      name: Restore the PHP build
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.pin.outputs.prefix }}
+        key: ${{ steps.pin.outputs.key }}
+
+    # build.sh checks the source's sha256, compiles every extension in (so the binary needs no php.ini), and fails
+    # unless the build is the pinned version with exactly extensions.txt's extensions.
+    - name: Build PHP
+      if: steps.restored.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PREFIX: ${{ steps.pin.outputs.prefix }}
+      run: conformance/recorders/port-readiness/runtimes/php/build.sh "$PREFIX"
+
+    # Saved here, before any later step of the job runs the recorder, so what lands in the cache is build.sh's output.
+    - name: Save the PHP build
+      if: steps.restored.outputs.cache-hit != 'true' && inputs.save == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.pin.outputs.prefix }}
+        key: ${{ steps.pin.outputs.key }}
+
+    # Downloaded and checked on every run, cache hit or not, into a directory the cache does not hold.
+    - name: Install Composer
+      shell: bash
+      env:
+        COMPOSER_VERSION: ${{ steps.pin.outputs.composer-version }}
+        COMPOSER_SHA256: ${{ steps.pin.outputs.composer-sha256 }}
+        PREFIX: ${{ steps.pin.outputs.prefix }}
+      run: |
+        set -euo pipefail
+        bin="$RUNNER_TEMP/composer/bin"
+        mkdir -p "$bin"
+        curl -fsSL --retry 3 -o "$bin/composer" "https://getcomposer.org/download/$COMPOSER_VERSION/composer.phar"
+        echo "$COMPOSER_SHA256  $bin/composer" | sha256sum --check --strict
+        chmod +x "$bin/composer"
+        echo "$bin" >> "$GITHUB_PATH"
+        echo "$PREFIX/bin" >> "$GITHUB_PATH"
+
+    # The recorder runs the `php` on PATH with no php.ini, so this checks that one, as the recorder does, against the
+    # pinned version and extensions.
+    - name: Check the PHP on PATH is the pinned one
+      shell: bash
+      env:
+        PREFIX: ${{ steps.pin.outputs.prefix }}
+        RUNTIME: conformance/recorders/port-readiness/runtimes/php
+      run: |
+        set -euo pipefail
+        pinned="$(tr -d '[:space:]' < "$RUNTIME/.php-version")"
+        php="$(command -v php)"
+        version="$(php -n -r 'echo PHP_VERSION;')"
+        if [ "$php" != "$PREFIX/bin/php" ] || [ "$version" != "$pinned" ]; then
+          echo "::error::the php on PATH is $php, PHP $version; the recorder pins PHP $pinned"
+          exit 1
+        fi
+        if ! extensions="$(diff <(php -n -m | grep -v -e '^\[' -e '^$' | LC_ALL=C sort -u) "$RUNTIME/extensions.txt")"; then
+          echo "::error::the php on PATH loads other extensions than $RUNTIME/extensions.txt lists (< loaded, > pinned): $(echo "$extensions" | tr '\n' ' ')"
+          exit 1
+        fi
+        echo "$php is PHP $version with the extensions extensions.txt lists"
+        composer --version

@@ -1,1 +1,0 @@
-Number['prototype']['p'] = 0

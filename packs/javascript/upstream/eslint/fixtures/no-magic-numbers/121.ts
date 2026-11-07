@@ -1,1 +1,0 @@
-type Foo = Parameters<Bar>[2];

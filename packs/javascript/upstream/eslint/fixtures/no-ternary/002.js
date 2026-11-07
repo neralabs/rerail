@@ -1,1 +1,0 @@
-var foo = true ? thing : stuff;

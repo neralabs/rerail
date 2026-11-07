@@ -1,1 +1,0 @@
-Lead @yield($arg) Trail

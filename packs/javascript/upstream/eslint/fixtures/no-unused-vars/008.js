@@ -1,1 +1,0 @@
-var a=10; (function() { alert(a); })();

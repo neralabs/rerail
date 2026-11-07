@@ -1,1 +1,0 @@
-callback(null, data)

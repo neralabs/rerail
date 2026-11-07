@@ -259,7 +259,7 @@ pub(crate) struct NoqaIndex {
 
 /// The statements whose start is a violation's parent offset (Ruff's `set_parent`: an import
 /// statement for F401 and F811, the `__all__` definition for F822).
-const PARENT_KINDS: &[&str] = &[
+pub(crate) const PARENT_KINDS: &[&str] = &[
     "import_statement",
     "import_from_statement",
     "future_import_statement",
@@ -364,6 +364,28 @@ impl NoqaIndex {
                 directive,
             });
         }
+    }
+
+    /// The file exemptions: every rule, and these codes.
+    pub(crate) fn exemptions(&self) -> (bool, &[String]) {
+        (self.file_all, &self.file_codes)
+    }
+
+    /// Each directive's line without its terminator, whether it also holds at the line's end, and
+    /// its codes (`None`: every code).
+    pub(crate) fn directives(&self) -> impl Iterator<Item = (Range<usize>, bool, Option<&[String]>)> + '_ {
+        self.lines.iter().map(|line| {
+            let codes = match &line.directive {
+                Directive::All => None,
+                Directive::Codes(codes) => Some(codes.as_slice()),
+            };
+            (line.line.clone(), line.includes_end, codes)
+        })
+    }
+
+    /// The ranges an offset inside reads the directive at the range's end of (`resolve`).
+    pub(crate) fn mapping(&self) -> &[Range<usize>] {
+        &self.mapping
     }
 
     /// `NoqaMapping::resolve`.

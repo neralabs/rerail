@@ -1,4 +1,0 @@
-
-                foo = this.return
-                Object()
-                

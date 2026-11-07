@@ -221,11 +221,8 @@ class Options {
     let value = option;
     const escape = field("escape");
     if (escape !== undefined) {
-      if (escape !== "regex" && escape !== "sql") fail([...path, "escape"], `unknown escape \`${escape}\`; expected regex or sql`);
-      const encode = (item: CodeRuleDslValue) => escape === "sql"
-        ? `CAST(X'${Buffer.from(text(item, path), "utf8").toString("hex")}' AS TEXT)`
-        : escapeRegex(text(item, path));
-      value = Array.isArray(value) ? value.map(encode) : encode(value);
+      if (escape !== "regex") fail([...path, "escape"], `unknown escape \`${escape}\`; expected regex`);
+      value = Array.isArray(value) ? value.map(item => escapeRegex(text(item, path))) : escapeRegex(text(value, path));
     }
     const map = field("map");
     if (map !== undefined) {

@@ -3,7 +3,7 @@
   "id": "bandit-b701-jinja2-autoescape-false",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect Jinja environments without safe autoescaping",
+  "description": "Enable autoescaping on Jinja2 environments with autoescape=True or select_autoescape(); without it rendered templates are open to XSS.",
   "scope": {
     "include": [
       "**/*.py"
@@ -292,7 +292,7 @@
       "violation": {
         "code": "B701",
         "anchor": "witness.span",
-        "message": "Jinja autoescaping is not statically safe.",
+        "message": "Set autoescape to True or select_autoescape() directly instead of a variable, so escaping is guaranteed on and XSS is blocked.",
         "suppress": {
           "nosec": {
             "codes": [

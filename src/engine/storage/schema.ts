@@ -1,6 +1,6 @@
 import { inArray, sql, type SQL } from "drizzle-orm";
 import { blob, check, index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
-import { ADAPTER_CAPABILITIES, type RerailHost } from "../adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type RerailHost, type SteerStrategy } from "../adapter-contract.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import {
   AUDIT_MODES,
@@ -154,7 +154,8 @@ export const ruleCatalogIdentities = sqliteTable(
  * A repository Rerail knows on this machine. The key is `remote:<host>/<path>` from the normalised
  * `origin` (or sole) remote, else `clone:<clone id>`; `aliases_json` lists other keys that resolve here.
  * `configured_at` null means Not set up, so nothing runs; `started` is the default every checkout follows, and null
- * means nobody started or stopped the repository yet (off).
+ * means nobody started or stopped the repository yet (off). `follow_gitignore` leaves files Git ignores out of every
+ * audit of the repository's checkouts; a session reads it when it opens.
  */
 export const repositories = sqliteTable(
   "repositories",
@@ -164,6 +165,7 @@ export const repositories = sqliteTable(
     aliases: text("aliases_json", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
     configuredAt: integer("configured_at"),
     started: integer("started", { mode: "boolean" }),
+    followGitignore: integer("follow_gitignore", { mode: "boolean" }).notNull().default(true),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -328,6 +330,32 @@ export const workLinks = sqliteTable(
   table => [
     unique("work_links_session_reference").on(table.sessionId, table.kind, table.reference),
     index("work_links_reference").on(table.kind, table.reference),
+  ],
+);
+
+/**
+ * A coding agent's one-line reason for not following a steer (`rerail feedback`), kept on this computer for tuning
+ * the rule; `rerail feedback list` prints them for the person to attach to a rule misfire issue. Rerail sends none
+ * anywhere. The repository is the checkout's, so a reset deletes the repository's notes, and the session is where the
+ * rule last steered there, when Rerail found one; like `work_links`, no foreign key.
+ */
+export const steerFeedback = sqliteTable(
+  "steer_feedback",
+  {
+    id: text("id").primaryKey(),
+    ruleId: text("rule_id").notNull(),
+    packId: text("pack_id"),
+    packVersion: text("pack_version"),
+    host: text("host").$type<RerailHost>(),
+    sessionId: text("session_id"),
+    repositoryId: text("repository_id").notNull(),
+    reason: text("reason").notNull(),
+    rerailVersion: text("rerail_version").notNull(),
+    recordedAt: integer("recorded_at").notNull(),
+  },
+  table => [
+    index("steer_feedback_rule_recorded").on(table.ruleId, table.recordedAt),
+    index("steer_feedback_repository").on(table.repositoryId),
   ],
 );
 
@@ -515,7 +543,8 @@ export const auditUnlistedFailures = sqliteTable(
 );
 export const auditSettings = sqliteTable("audit_settings", {
   workspaceRoot: text("workspace_root").primaryKey(),
-  settings: text("settings_json", { mode: "json" }).$type<{ scope: AuditScope; mode: AuditMode }>().notNull(),
+  // `steerStrategy` is absent from rows saved before it existed; they read as `message`.
+  settings: text("settings_json", { mode: "json" }).$type<{ scope: AuditScope; mode: AuditMode; steerStrategy?: SteerStrategy }>().notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
 
@@ -594,7 +623,7 @@ export function sessionsOfRepository(repositoryIds: string | readonly string[], 
  * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`; `sessions` and `policy_session_owners`
  * lose only ended sessions, so running ones keep recording.
  */
-export const SESSION_HISTORY_TABLES = [events, workLinks, audits, auditRequests, repositoryAudits] as const;
+export const SESSION_HISTORY_TABLES = [events, workLinks, steerFeedback, audits, auditRequests, repositoryAudits] as const;
 
 export type RuleRow = typeof rules.$inferSelect;
 export type NewRuleRow = typeof rules.$inferInsert;

@@ -3,7 +3,7 @@
   "id": "ruff-b904-raise-without-from-inside-except",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B904 (raise-without-from-inside-except): a `raise X` without `from` in an `except`/`except*` body, reached only through `if`/`elif`/`else`, `with`, `for` and `while` bodies (not their `else`) and `match` cases; nested `try`, `def` and `class` are not entered. `raise name` re-raising the handler's own `as` name is exempt. Reported on the raise statement.",
+  "description": "Use raise ... from err (or from None) when raising a new exception inside an except block; it keeps the cause chain clear instead of looking like a bug in the handler.",
   "scope": {
     "include": [
       "**/*.py",
@@ -180,7 +180,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B904",
-        "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+        "message": "Raise this exception with `from err` or `from None` so the cause chain is clear.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -1,1 +1,0 @@
-<template><div><custom :my-prop="prop" v-model:foo-bar="fooBar"></custom></div></template>

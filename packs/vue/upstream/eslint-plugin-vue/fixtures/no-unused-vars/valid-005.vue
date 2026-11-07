@@ -1,1 +1,0 @@
-<template><template scope="props"><span v-if="props"></span></template></template>

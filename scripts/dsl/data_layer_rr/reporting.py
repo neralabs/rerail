@@ -149,7 +149,7 @@ def main():
     parser.add_argument('--engine', type=Path)
     parser.add_argument('--oracle', type=Path)
     parser.add_argument('--cases', type=Path, required=True)
-    parser.add_argument('--rule-root', type=Path, default=ROOT / 'packs/data-layer/candidates/rr',
+    parser.add_argument('--rule-root', type=Path, default=ROOT / 'gate/data-layer/packs/data-layer/candidates/rr',
                         help='Policy directory; mutation controls supply disabled policies')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()

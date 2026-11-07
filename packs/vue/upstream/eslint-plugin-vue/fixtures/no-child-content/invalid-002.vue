@@ -1,1 +1,0 @@
-<template><div v-html="foo"><span /></div></template>

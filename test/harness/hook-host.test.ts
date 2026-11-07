@@ -23,7 +23,7 @@ import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } fr
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 
 function delivery(content: string, ruleIds: readonly string[] = []): AdapterDelivery {
-  return { sessionId: "session-1", requested: "steer", mechanism: "deferred-context", content, ruleIds };
+  return { sessionId: "session-1", requested: "steer", mechanism: "deferred-context", content, ruleIds, rules: [] };
 }
 
 function receiptCount(root: string): number {
@@ -95,6 +95,17 @@ describe("hook steers", () => {
     const empty = await run(input(root), options);
     await emitHookOutput(empty, new Writable({ write(_chunk, _encoding, callback) { callback(); } }));
     expect(receiptCount(root)).toBe(1);
+  });
+
+  it("keeps a held steer's rules, so its lines can still be drawn, and reads a steer held before they were kept as naming none", async () => {
+    const root = await temporaryDirectory();
+    const path = pendingPath(hookOptions(root).storageRoot!, "claude-code", "session-1");
+    const held: AdapterDelivery = { ...delivery("first", ["rule:a"]), rules: [{ id: "rule:a", state: "steered", origin: "From your rule library." }] };
+    await persistPending(path, [held]);
+    expect(await readPending(path)).toEqual([held]);
+    const { rules: _rules, ...older } = delivery("older", ["rule:b"]);
+    await writeFile(path, JSON.stringify([older, { ...older, rules: [{ id: 3 }, { id: "rule:b", state: "steered" }] }]));
+    expect(await readPending(path)).toEqual([{ ...older, rules: [] }, { ...older, rules: [{ id: "rule:b", state: "steered" }] }]);
   });
 
   it("does not count synchronous, asynchronous or serialization failures", async () => {

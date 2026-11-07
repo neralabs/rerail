@@ -1,0 +1,11 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-redundant-at-rest-pattern",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Bind a whole Rust slice directly instead of through a slice pattern holding only a rest binding.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    { "id": "redundant-slice-rest-binding", "forbid": { "ast": { "language": "rust", "rule": { "kind": "slice_pattern", "regex": "(?s)^\\[\\s*(?:(?:ref\\s+mut|ref|mut)\\s+)?[A-Za-z_][A-Za-z0-9_]*\\s*@\\s*\\.\\.\\s*\\]$" } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::redundant_at_rest_pattern", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "redundant_at_rest_pattern", "message": "Bind the whole slice directly, e.g. rest instead of [rest @ ..]." } }
+  ]
+}

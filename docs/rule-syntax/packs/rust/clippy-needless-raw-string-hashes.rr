@@ -1,0 +1,23 @@
+.policy "clippy-needless-raw-string-hashes" revision 2
+.description "Use no more hashes on a Rust raw string literal than its contents need to close it."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   raw_str(n, hashes, body)   a raw string literal's `#` count and contents
+//   hashes_needed(n, k)        the `#`s its contents need, as Clippy counts them
+
+// Clippy's needless_raw_string_hashes (pedantic): a raw string with more `#`s than its contents need. One
+// `#` is needed for a `"` inside, two for `"#`, and so on.
+//   r#"\d"#   r##"a "b" c"##   r###"a"#b"###      reported
+//   r"\d"     r#"a "b" c"#    r##"a"#b"##        not reported
+// Clippy leaves a raw string with neither `\` nor `"` (`r#"x"#`) to needless_raw_strings when that lint is
+// enabled too, which the recording has; with it off, needless_raw_string_hashes reports `r#"x"#` itself.
+// Lint levels are not facts here, so the rule takes both as enabled (NOTES-rust.md (f)).
+// Clippy's config allow-one-hash-in-raw-strings is false here (clippy-needless-raw-string-hashes-one-allowed).
+.violation needless_raw_string_hashes(at: node) code "needless_raw_string_hashes"
+    "Remove the extra # marks from this raw string, keeping only as many as its contents need to close it."
+    suppress clippy "clippy::needless_raw_string_hashes", "clippy::pedantic", "warnings"
+needless_raw_string_hashes(n) :- raw_str(n, k, b), (contains("\\", b) ; contains("\"", b)),
+    hashes_needed(n, j), j < k.

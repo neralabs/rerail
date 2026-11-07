@@ -3,6 +3,7 @@ import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
 import { z } from "zod";
+import { isPackFixture, packFixtureAbsence, requirePackFixture } from "../../scripts/s3/pack-fixtures.mjs";
 import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
 import {
   IGNORED_DIRECTORIES,
@@ -14,6 +15,7 @@ import {
   CODE_RULE_AST_LANGUAGES,
   CODE_RULE_DIALECTS,
   codeRuleLanguageFamily,
+  codeRuleLanguageEmbedVias,
   compareDeterministicStrings,
   isUnreadFailure,
 } from "../../src/engine/index.js";
@@ -135,7 +137,8 @@ function unreadLocation(failure: Page["failures"][number]): SyntaxErrorLocation 
  * The first syntax error the grammar reports in each of `files` that skipped a clause with `SYNTAX_ERROR_FAILURE`.
  * A probe clause sound under errors (it matches `ERROR` nodes, which are never witnesses, so it reports nothing) is
  * evaluated over those files through the same workspace path; its `source-partial` failure confirms the syntax error
- * and locates it.
+ * and locates it. A language whose files embed a program probes each document (`ast.embedded`): each has its own
+ * syntax errors.
  */
 async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, files: readonly SourceFile[]): Promise<Map<string, SyntaxErrorLocation>> {
   const failed = new Set(
@@ -146,6 +149,7 @@ async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, 
   const locations = new Map<string, SyntaxErrorLocation>();
   if (failed.size === 0) return locations;
   const runtime = loadNativeBinding().CodeRuleDslRuntime;
+  const violation = { anchor: "witness.span", code: "SYNTAX-PROBE", message: "syntax probe" };
   const probes = CODE_RULE_AST_LANGUAGES.filter(language => codeRuleLanguageFamily(language) === loaded.pack.family).map(language =>
     runtime.compile(
       JSON.stringify({
@@ -155,7 +159,14 @@ async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, 
         mode: "log",
         description: "Locates the grammar's syntax errors; reports nothing.",
         scope: { include: ["**/*"], exclude: [] },
-        clauses: [{ id: "probe", forbid: { ast: { language, rule: { kind: "ERROR" } } }, violation: { anchor: "witness.span", code: "SYNTAX-PROBE", message: "syntax probe" } }],
+        clauses: [
+          { id: "probe", forbid: { ast: { language, rule: { kind: "ERROR" } } }, violation },
+          ...codeRuleLanguageEmbedVias(language).map(via => ({
+            id: `probe-${via}`,
+            forbid: { ast: { language, embedded: via, rule: { kind: "ERROR" } } },
+            violation,
+          })),
+        ],
       }),
       "json",
       capabilitiesJson(),
@@ -277,10 +288,15 @@ function familyLanguages(loaded: LoadedPack): Set<string> {
   return new Set(Object.values(CODE_RULE_DIALECTS).filter(dialect => dialect.family === loaded.pack.family).map(dialect => dialect.label));
 }
 
+/** A fixture's text; pack test data missing from the checkout fails with the instruction to pull it. */
+function readCaseSource(path: string): string {
+  return readFileSync(isPackFixture(path) ? requirePackFixture(path) : path, "utf8");
+}
+
 /** The recording at `path`, checked against the pack's pins, or why it cannot be used. */
 function pinnedRecording(loaded: LoadedPack, tool: string, path: string, corpus: PackCorpus | undefined): Recording | string {
   const where = relative(RERAIL_ROOT, path);
-  if (!existsSync(path)) return `no recording at ${where}`;
+  if (!existsSync(path)) return packFixtureAbsence(path) ?? `no recording at ${where}`;
   let recording: Recording;
   try {
     recording = loadRecording(path);
@@ -333,14 +349,14 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
       for (const path of paths) {
         const language = languageFor(path);
         if (language !== undefined && ridesAlong(path)) {
-          manifests.push({ path, language, source: readFileSync(join(fixturesDirectory(loaded, tool), path), "utf8") });
+          manifests.push({ path, language, source: readCaseSource(join(fixturesDirectory(loaded, tool), path)) });
           continue;
         }
         if (language === undefined || !languages.has(language)) {
           errors.push(`fixtures ${tool}: ${path} is not a ${loaded.pack.family} source by the host's routing`);
           continue;
         }
-        files.push({ path, language, source: readFileSync(join(fixturesDirectory(loaded, tool), path), "utf8") });
+        files.push({ path, language, source: readCaseSource(join(fixturesDirectory(loaded, tool), path)) });
       }
       if (files.length === 0) continue;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));

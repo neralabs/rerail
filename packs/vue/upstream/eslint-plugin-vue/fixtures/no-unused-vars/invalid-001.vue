@@ -1,1 +1,0 @@
-<template><template scope="props"></template></template>

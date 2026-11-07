@@ -9,6 +9,10 @@ export { compare };
 
 export const CODE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".rs", ".py", ".php", ".sh"];
 export const SCRIPT_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"];
+export const BINARY_EXTENSIONS = [
+  ".bin", ".safetensors", ".onnx", ".pt", ".wasm", ".node", ".so", ".dylib", ".dll", ".exe",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".tgz", ".zst", ".7z", ".sqlite", ".db",
+];
 
 export function extension(path) {
   const base = basename(path);
@@ -31,6 +35,15 @@ export function isCode(path) {
 
 export function isScript(path) {
   return SCRIPT_EXTENSIONS.includes(extension(path)) && !path.endsWith(".d.ts");
+}
+
+/**
+ * A binary file: its first bytes hold a NUL (git's own test), or its extension is a known binary format
+ * (BINARY_EXTENSIONS). The extension decides in a checkout without LFS content, where the file is a small
+ * text pointer.
+ */
+export function isBinaryFile(repo, path) {
+  return BINARY_EXTENSIONS.includes(extension(path)) || repo.isBinary(path);
 }
 
 /**

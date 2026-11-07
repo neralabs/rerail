@@ -78,10 +78,13 @@ pub(super) struct CallsState {
 }
 
 impl CallsState {
+    // P's global workspace path (`workspace/global.rs`) reads these, under test (O18).
+    #[allow(dead_code)]
     pub(super) fn take_dirty_globals(&mut self) -> BTreeSet<usize> {
         std::mem::take(&mut self.dirty_globals)
     }
 
+    #[allow(dead_code)]
     pub(super) fn evaluation_slot(&self) -> Option<calls::EvaluationSlot> {
         self.view.as_ref().map(|view| {
             calls::EvaluationSlot::install(calls::EvaluationCalls {
@@ -175,7 +178,12 @@ impl CallsState {
                 producer.violation.fix = None;
                 code_rule.clauses.push(producer);
             }
-            if matches!(&template.kind, ClauseKind::Relational(_)) {
+            // P's relational clauses are test-only in W (O18).
+            #[cfg(test)]
+            let global = matches!(&template.kind, ClauseKind::Relational(_));
+            #[cfg(not(test))]
+            let global = false;
+            if global {
                 self.globals.insert(index);
             } else {
                 self.consumers.insert((index, clause_index), ids);
@@ -739,10 +747,20 @@ pub(super) fn summarize_file(
                     &matcher_budget_exhausted,
                 ),
             };
-            match doc {
+            // A file that embeds code reads its calls from its embedded program
+            // (`calls::calls_document`); one without such a program calls nothing.
+            match doc.map(|doc| calls::calls_document(doc, language)) {
                 Err(_) => (opaque(file), false),
-                Ok(doc) => {
-                    let errors = !doc.syntax_error_ranges().is_empty();
+                Ok(None) => (
+                    Summary {
+                        bytes: u32::try_from(file.input.source.len()).unwrap_or(u32::MAX),
+                        ..Summary::default()
+                    },
+                    true,
+                ),
+                Ok(Some((doc, language))) => {
+                    let errors =
+                        !crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&doc).is_empty();
                     let root = Root::doc(doc);
                     // The table the file's evaluation built, where it reads as `calls` does.
                     let reading = calls::reading(&file.input.path);

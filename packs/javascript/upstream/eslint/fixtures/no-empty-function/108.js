@@ -1,3 +1,0 @@
-var A = class {static set foo(value) {
-    // empty
-}};

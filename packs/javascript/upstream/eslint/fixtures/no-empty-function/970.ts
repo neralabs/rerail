@@ -1,1 +1,0 @@
-const B = class {@decorator() static get foo(): string {}}; // allow: decoratedFunctions

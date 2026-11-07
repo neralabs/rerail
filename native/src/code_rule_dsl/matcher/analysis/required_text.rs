@@ -18,27 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Clauses a file's text must all satisfy, each by holding at least one of its literals.
 #[derive(Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct RequiredText {
-    clauses: Vec<Vec<Needle>>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-enum Requirement {
-    Literal(String),
-    Regex(String),
-}
-#[derive(Debug)]
-enum Needle {
-    Literal(Box<str>),
-    Regex(regex::Regex),
-}
-impl PartialEq for Needle {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Literal(a), Self::Literal(b)) => a == b,
-            (Self::Regex(a), Self::Regex(b)) => a.as_str() == b.as_str(),
-            _ => false,
-        }
-    }
+    clauses: Vec<Vec<Box<str>>>,
 }
 
 /// Literals of an `any`'s clause, beyond which the clause is dropped: a long disjunction rarely
@@ -67,17 +47,7 @@ impl RequiredText {
         (!clauses.is_empty()).then_some(Self {
             clauses: clauses
                 .into_iter()
-                .map(|clause| {
-                    clause
-                        .into_iter()
-                        .map(|term| match term {
-                            Requirement::Literal(text) => Needle::Literal(text.into_boxed_str()),
-                            Requirement::Regex(pattern) => Needle::Regex(
-                                regex::Regex::new(&pattern).expect("validated relaxed regex"),
-                            ),
-                        })
-                        .collect()
-                })
+                .map(|clause| clause.into_iter().map(String::into_boxed_str).collect())
                 .collect(),
         })
     }
@@ -96,27 +66,17 @@ impl RequiredText {
         text: &str,
         found: &mut impl FnMut(&str, &'a str) -> bool,
     ) -> bool {
-        self.clauses.iter().all(|clause| {
-            clause.iter().any(|term| match term {
-                Needle::Literal(literal) => found(text, literal),
-                Needle::Regex(regex) => regex.is_match(text),
-            })
-        })
+        self.clauses
+            .iter()
+            .all(|clause| clause.iter().any(|literal| found(text, literal)))
     }
 }
 
-type Clause = BTreeSet<Requirement>;
+type Clause = BTreeSet<String>;
 
 /// How much a clause narrows the files that satisfy it: its shortest literal's length.
 fn selectivity(clause: &Clause) -> usize {
-    clause
-        .iter()
-        .map(|term| match term {
-            Requirement::Literal(text) => text.len(),
-            Requirement::Regex(_) => 1,
-        })
-        .min()
-        .unwrap_or(0)
+    clause.iter().map(String::len).min().unwrap_or(0)
 }
 
 /// Where a requirement's text must be: anywhere in the file, or in the tested node's own text.
@@ -218,45 +178,17 @@ fn util_needs(util: &UtilRef, utilities: &mut Utilities, reach: Reach) -> Vec<Cl
 /// empty.
 fn regex_clause(pattern: &str) -> Option<Clause> {
     let hir = regex_syntax::parse(pattern).ok()?;
-    let extracted = Extractor::new().extract(&hir);
-    if let Some(literals) = extracted.literals() {
-        if !literals.is_empty() && literals.len() <= MAX_ALTERNATIVES {
-            let clause: Option<Clause> = literals
-                .iter()
-                .map(|literal| {
-                    let text = std::str::from_utf8(literal.as_bytes()).ok()?;
-                    (!text.is_empty()).then(|| Requirement::Literal(text.to_owned()))
-                })
-                .collect();
-            if clause.is_some() {
-                return clause;
-            }
-        }
+    let literals = Extractor::new().extract(&hir).literals()?.to_vec();
+    if literals.is_empty() || literals.len() > MAX_ALTERNATIVES {
+        return None;
     }
-    // A node is a source slice. Removing zero-width assertions makes matching its
-    // regex against the complete file conservative, including ^, $, and word boundaries.
-    fn relax(hir: regex_syntax::hir::Hir) -> regex_syntax::hir::Hir {
-        use regex_syntax::hir::{Hir, HirKind};
-        match hir.into_kind() {
-            HirKind::Look(_) => Hir::empty(),
-            HirKind::Concat(items) => Hir::concat(items.into_iter().map(relax).collect()),
-            HirKind::Alternation(items) => Hir::alternation(items.into_iter().map(relax).collect()),
-            HirKind::Capture(mut capture) => {
-                capture.sub = Box::new(relax(*capture.sub));
-                Hir::capture(capture)
-            }
-            HirKind::Repetition(mut repetition) => {
-                repetition.sub = Box::new(relax(*repetition.sub));
-                Hir::repetition(repetition)
-            }
-            HirKind::Empty => Hir::empty(),
-            HirKind::Literal(literal) => Hir::literal(literal.0),
-            HirKind::Class(class) => Hir::class(class),
-        }
-    }
-    let pattern = relax(hir).to_string();
-    let regex = regex::Regex::new(&pattern).ok()?;
-    (!regex.is_match("")).then(|| Clause::from([Requirement::Regex(pattern)]))
+    literals
+        .iter()
+        .map(|literal| {
+            let text = std::str::from_utf8(literal.as_bytes()).ok()?;
+            (!text.is_empty()).then(|| text.to_owned())
+        })
+        .collect()
 }
 
 /// A clause of one literal for every named leaf of a pattern: a match holds each leaf's text.
@@ -266,7 +198,7 @@ fn pattern_leaves(node: &PatternNode, clauses: &mut Vec<Clause>) {
             text,
             is_named: true,
             ..
-        } if !text.is_empty() => clauses.push(Clause::from([Requirement::Literal(text.clone())])),
+        } if !text.is_empty() => clauses.push(Clause::from([text.clone()])),
         PatternNode::Internal { children, .. } => {
             for child in children {
                 pattern_leaves(child, clauses);
@@ -292,27 +224,6 @@ mod tests {
         let compiled =
             compile_typescript_ast(ast).unwrap_or_else(|error| panic!("{}", error.reason));
         RequiredText::of_node(&grammar_matchers(&compiled)[0].matcher)
-    }
-
-    #[test]
-    fn broad_unicode_regexes_reject_irrelevant_files_without_changing_node_boundaries() {
-        let text = file_text(json!({ "rule": { "regex": r"^\b[α-ω]{2,3}\b$" } }))
-            .expect("regex admission");
-        assert!(!text.holds("const ascii = value;"));
-        assert!(
-            text.holds("const x = αβ;"),
-            "node anchors must not become file anchors"
-        );
-        assert!(
-            text.holds("prefixαβsuffix"),
-            "node word boundaries must not become file boundaries"
-        );
-        let text = file_text(
-            json!({ "rule": { "inside": { "stopBy": "end", "regex": "[a-zA-Z0-9_]cached" } } }),
-        )
-        .expect("ancestor admission");
-        assert!(!text.holds("const x = safe;"));
-        assert!(text.holds("const x = uncached;"));
     }
 
     #[test]

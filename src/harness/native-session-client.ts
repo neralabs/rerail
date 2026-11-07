@@ -28,6 +28,19 @@ const CLOSE_RECORD_WAIT_MS = 5_000;
 /** First wait before a failed gap record is tried again; it doubles with each further failure up to the ceiling, and a success resets it. */
 const RECORD_BACKOFF_MS = 1_000;
 const RECORD_BACKOFF_CEILING_MS = 60_000;
+/**
+ * How long one request waits for the daemon's answer. The daemon answers within its reply bound, with the reply or
+ * with a ticket for an operation it is still working on, so only a daemon that is not answering runs past this.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * How long one operation may keep a live daemon working before the client gives up on it as an outage, so a session
+ * whose daemon never finishes does not queue events without end. The daemon caps its own waits (the source walk, the
+ * audits of a turn's edits) at seconds, so only a pathologically slow or stuck operation runs this long; the margin is
+ * for a loaded machine. A poll does no work of its own: one still waiting is stuck behind an operation this client
+ * already gave up on, so it gets the request timeout, and an outage probe costs the events behind it no more than that.
+ */
+const OPERATION_BUDGET_MS = 120_000;
 /** What a streamed request resolves to when the stream was shut and the event was counted in a gap instead of sent. */
 const DROPPED = Symbol("dropped");
 
@@ -53,6 +66,8 @@ export interface NativeSessionReply {
   resultRevisionEntry?: number;
   deliveries: AdapterDelivery[];
   entries: Array<{ customType: string; data: unknown }>;
+  /** The daemon is still working on the operation; its reply is asked for again with this ticket. */
+  pendingReply?: string;
 }
 
 export interface NativeSessionClientOptions {
@@ -265,6 +280,24 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
   }
 
   /**
+   * Settles once the daemon has indexed the session's repository and opened its code rules (or failed to), however
+   * long that takes; rejects when the daemon cannot say, or once this runtime closes. Not queued behind the session's
+   * events, which go on meanwhile.
+   */
+  async awaitCodeRules(): Promise<void> {
+    await this.#send("await-code-rules");
+  }
+
+  /**
+   * The end of the agent's run. Once the daemon has waited for the session's edit checks, as a turn end does, the
+   * steers it still holds, with the digest of the findings that missed their step, are delivered like any reply's.
+   * Streamed like a poll: while the stream is shut it carries nothing, and a failure is the outage's to report.
+   */
+  async yieldDeliveries(): Promise<void> {
+    await this.#request("yield");
+  }
+
+  /**
    * Closed gaps of this session that were counted elsewhere (by the host while the session was failing
    * to attach, or by the runtime this one replaced), to be recorded in the session's history once the
    * daemon acknowledges them. Whoever closed a gap has already marked it in the host session.
@@ -433,7 +466,7 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
   }
 
   #request(
-    operation: "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "close",
+    operation: "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "yield" | "close",
     payload: { event?: unknown; eventEncoding?: "superjson"; input?: unknown; entries?: readonly unknown[] } = {},
     event?: AdapterEvent,
   ): Promise<unknown> {
@@ -441,7 +474,7 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
       // The breaker owns only the event stream. Explicit operations (tools, reload, reattach)
       // always reach the daemon and carry their own error to the caller: a rejected reload is a
       // fact about that reload, not about the live session. Any success reopens the stream.
-      const streamed = operation === "ingest" || operation === "poll";
+      const streamed = operation === "ingest" || operation === "poll" || operation === "yield";
       if (operation === "close") {
         // Events dropped while the queue drained are in the gap too; the daemon accepts its record only before the close.
         // A daemon that does not answer must not double the time the host waits to retire this runtime.
@@ -465,6 +498,8 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
       try {
         reply = await this.#send(operation, payload);
       } catch (error) {
+        // A daemon older than `yield` refuses it; the steers it holds still arrive by poll.
+        if (operation === "yield" && permanentRejection(error)) return DROPPED;
         // A session still being built reports through its caller; only a live runtime owns an outage.
         if (!streamed || !this.#active) throw error;
         this.#fail(error);
@@ -484,27 +519,44 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
     return pending;
   }
 
+  /**
+   * One operation's reply. A daemon still working on it answers with a ticket instead, and is asked again with that
+   * ticket until the reply is ready: a busy daemon is waited for, never taken for a lost one, for up to the operation's budget.
+   */
   async #send(
-    operation: "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "close" | "record-steering-delivery" | "record-gap",
+    operation: "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "yield" | "close" | "record-steering-delivery" | "record-gap" | "await-code-rules",
     payload: { event?: unknown; eventEncoding?: "superjson"; input?: unknown; entries?: readonly unknown[] } = {},
   ): Promise<NativeSessionReply> {
-    const { instance, sessionId, host } = this.#options;
     const { entries, ...rest } = payload;
     const branch = operation === "initialize" || operation === "semantic" || operation === "cosine"
       ? entries ?? this.#options.entries()
       : undefined;
+    const startedAt = Date.now();
+    // Indexing a repository has no bound of its own: its wait ends when this runtime does.
+    const budget = operation === "poll" ? REQUEST_TIMEOUT_MS : operation === "await-code-rules" ? Number.POSITIVE_INFINITY : OPERATION_BUDGET_MS;
+    let reply = await this.#post({
+      operation,
+      ...(branch === undefined ? {} : { entries: superjson.serialize(branch), entriesEncoding: "superjson" }),
+      ...rest,
+      deferReply: true,
+    });
+    while (reply.pendingReply !== undefined) {
+      if (operation === "await-code-rules" && this.#closing) throw new Error("Rerail runtime closed while its repository was still being indexed");
+      if (Date.now() - startedAt >= budget) {
+        throw new Error(`Rerail daemon was still working on ${operation} after ${budget / 1000}s`);
+      }
+      reply = await this.#post({ operation: "await-reply", input: { ticket: reply.pendingReply } });
+    }
+    return reply;
+  }
+
+  async #post(request: Record<string, unknown>): Promise<NativeSessionReply> {
+    const { instance, sessionId, host } = this.#options;
     const response = await fetch(new URL("/native/session", instance.url), {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${this.#options.token}` },
-      body: JSON.stringify({
-        workspaceRoot: instance.workspaceRoot,
-        sessionId,
-        host,
-        operation,
-        ...(branch === undefined ? {} : { entries: superjson.serialize(branch), entriesEncoding: "superjson" }),
-        ...rest,
-      }),
-      signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify({ workspaceRoot: instance.workspaceRoot, sessionId, host, ...request }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     const text = await response.text();
     if (!response.ok) throw new NativeRequestError(response.status, text);
@@ -612,7 +664,8 @@ function isReply(value: unknown): value is NativeSessionReply {
   if (value === null || typeof value !== "object" || Array.isArray(value)
     || !("deliveries" in value) || !Array.isArray(value.deliveries) || !value.deliveries.every(hasRuleMode)
     || !("entries" in value) || !Array.isArray(value.entries)
-    || !value.entries.every(hasCustomType)) {
+    || !value.entries.every(hasCustomType)
+    || ("pendingReply" in value && value.pendingReply !== undefined && (typeof value.pendingReply !== "string" || value.pendingReply === ""))) {
     return false;
   }
   if (!("resultRevisionEntry" in value) || value.resultRevisionEntry === undefined) return true;

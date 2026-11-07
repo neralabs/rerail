@@ -1,1 +1,0 @@
-<template><div><slot my-prop></slot></div></template>

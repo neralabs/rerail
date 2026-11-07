@@ -3,7 +3,7 @@
   "id": "ruff-e731-lambda-assignment",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's E731 (lambda-assignment): a plain or annotated assignment statement with a single name target whose value is a `lambda` (parentheses are transparent), reported on the statement. Chained assignments are skipped, as are annotated assignments whose enclosing scope is a class body.",
+  "description": "Use def instead of assigning a lambda to a name; a def gets a real name in tracebacks and can carry a docstring.",
   "scope": {
     "include": [
       "**/*"

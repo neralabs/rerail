@@ -32,8 +32,9 @@ pub(crate) struct SqlArgument<'r, D: Doc> {
 ///   keep their source order, as do `substring`'s written `FROM m FOR n`.
 /// * `substring(s FOR n)` passes `(s, 1, n)` (`substr_list: a_expr FOR a_expr` gives
 ///   `list_make3($1, makeIntConst(1, -1), $3)`): its start is a constant no source holds, so the
-///   arguments do not read (`None`). `substring(s FOR n FROM m)`, which PostgreSQL passes as
-///   `(s, m, n)`, is a parse error in the grammar, so it is `None` too.
+///   arguments do not read (`None`). `substring(s FOR n FROM m)` passes `(s, m, n)`
+///   (`a_expr FOR a_expr FROM a_expr` gives `list_make3($1, $5, $3)`), so its last two operands
+///   are swapped.
 /// * `VARIADIC x`: the grammar reads it as a `field` named `VARIADIC` with `x` as its `alias`.
 ///   The `VARIADIC` marker is dropped and the argument is `x` (the alias identifier), positioned
 ///   last as PostgreSQL does (`func_arg_list` keeps it in place, `variadic` only flags the call).
@@ -72,6 +73,9 @@ pub(crate) fn sql_arguments<'r, D: Doc>(call: &Node<'r, D>) -> Option<Vec<SqlArg
     }
     if is_swapped_form(call, arguments.len()) {
         arguments.swap(0, 1);
+    }
+    if arguments.len() == 3 && is_named(call, "substring") && is_for_before_from(call) {
+        arguments.swap(1, 2);
     }
     if arguments.len() == 1 && is_star(&operands[0]) {
         arguments.clear();
@@ -183,6 +187,16 @@ fn is_swapped_form<D: Doc>(call: &Node<'_, D>, count: usize) -> bool {
     has("keyword_from") && is_named(call, "trim")
 }
 
+/// `substring(s FOR n FROM m)`: its `FOR` is written before its `FROM`.
+fn is_for_before_from<D: Doc>(call: &Node<'_, D>) -> bool {
+    let at = |kind: &str| {
+        call.children()
+            .find(|child| child.kind() == kind)
+            .map(|child| child.range().start)
+    };
+    matches!((at("keyword_for"), at("keyword_from")), (Some(f), Some(m)) if f < m)
+}
+
 /// Whether `call`'s callee is the unqualified function `name`.
 fn is_named<D: Doc>(call: &Node<'_, D>, name: &str) -> bool {
     call.field("function")
@@ -209,10 +223,6 @@ mod tests {
     /// Oracle calls the grammar does not read as an `invocation`, by (name, line): none; the
     /// oracle holds no `cast` (PostgreSQL's TypeCast is not a FuncCall).
     const MISMATCHES: &[(&str, u64, &str)] = &[];
-
-    /// Oracle calls whose arguments the grammar errors on, by (name, line), so `sql_arguments`
-    /// is `None`: `substring(s FOR 2 FROM 1)`.
-    const UNREADABLE: &[(&str, u64)] = &[("substring", 22)];
 
     #[test]
     fn matches_postgres_oracle() {
@@ -247,12 +257,9 @@ mod tests {
                 continue;
             };
             let expected = call["args"].as_array().unwrap();
-            // An argument PostgreSQL supplies (`substring(s FOR n)`'s start) has no source, and a
-            // call the grammar errors in has no operands to read: either way every slot is unknown.
-            let unreadable = UNREADABLE
-                .iter()
-                .any(|(name, line)| *line == at.0 && call["name"][0].as_str() == Some(name));
-            if unreadable || expected.iter().any(|want| want["implicit"] == true) {
+            // An argument PostgreSQL supplies (`substring(s FOR n)`'s start) has no source, so
+            // every slot is unknown.
+            if expected.iter().any(|want| want["implicit"] == true) {
                 assert!(
                     sql_arguments(node).is_none(),
                     "arguments read at {at:?}: {call}"

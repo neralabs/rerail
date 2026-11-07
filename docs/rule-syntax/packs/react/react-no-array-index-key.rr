@@ -1,0 +1,75 @@
+.policy "react-no-array-index-key" revision 2
+.description "Do not key elements by their array index."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-array-index-key: inside an array method's callback that names its index parameter, a key built from
+// that name. The methods and the index's position: map, forEach, filter, some, every, find, findIndex, flatMap (the
+// second parameter), reduce and reduceRight (the third); React.Children.map/forEach take the callback second.
+//   xs.map((x, i) => <li key={i} />)                     reported at `i`
+//   key={`row-${i}`}   key={"a" + i}   key={i.toString()}   key={String(i)}    reported
+//   React.cloneElement(child, { key: i })                reported
+// As in the rule, the name is not resolved: inside the call, any key that uses a name some enclosing iterator call
+// gave its index is reported, even if an inner scope rebinds it.
+#include "tsx/react.rr"
+#include "tsx/eslint-a-common.rr"
+
+.violation index_key(at: node)
+    code "react/no-array-index-key"
+    "Key this element by a stable id from the item instead of the array index; keep the index only for static lists that never reorder."
+    suppress eslint "react/no-array-index-key"
+    suppress oxlint "no-array-index-key"
+    suppress biome "lint/suspicious/noArrayIndexKey"
+index_key(at) :- key_value(k, v), index_use(k, v, at), docof(k, d), react_doc(d).
+
+// key_value(k, v): v is the value of key prop or property k: key={v}, or { key: v } in createElement/cloneElement.
+.decl key_value(k: node, v: node)
+key_value(a, v) :- jsx_prop(_, "key", a), child(a, j, 1), kind(j, "jsx_expression"), prop_value(a, x), deparen(x, v).
+key_value(p, v) :- clone_call(c), call_arg(c, o, 1), kind(o, "object"), child(o, p, _), key_ident(p, "key"),
+    (field(p, "value", x), deparen(x, v) ; kind(p, "shorthand_property_identifier"), v = p).
+.decl clone_call(c: node)  // React.createElement / React.cloneElement, or either imported from react
+clone_call(c) :- kind(c, "call_expression"), field(c, "function", f), field(f, "object", o), field(f, "property", p),
+    (text(p, "createElement") ; text(p, "cloneElement")), docof(c, d), pragma(d, x), text(o, x).
+clone_call(c) :- kind(c, "call_expression"), field(c, "function", f), (sym_of(f, "react#createElement") ;
+    sym_of(f, "react#cloneElement")).
+// index_use(k, v, at): v uses an index name in scope at k; at is where the rule reports it.
+.decl index_use(k: node, v: node, at: node)
+index_use(k, v, v) :- key_value(k, v), index_name(k, v).
+index_use(k, v, v) :- key_value(k, v), kind(v, "template_string"), child(v, s, _), kind(s, "template_substitution"),
+    child(s, x, 0), deparen(x, i), index_name(k, i).
+index_use(k, v, v) :- key_value(k, v), plain_binary(v), sum_leaf(v, i), index_name(k, i).
+index_use(k, v, v) :- key_value(k, v), kind(v, "call_expression"), field(v, "function", m), kind(m, "member_expression"),
+    field(m, "property", p), text(p, "toString"), !field(m, "optional_chain", _), field(m, "object", i),
+    index_name(k, i).                         // i?.toString() is a ChainExpression to ESTree: not checked
+index_use(k, v, i) :- key_value(k, v), kind(v, "call_expression"), field(v, "function", f), text(f, "String"),
+    call_arg(v, a, 0), deparen(a, i), index_name(k, i).
+// sum_leaf(b, i): identifier i is a leaf of the arithmetic b: "a" + i + "b". && and || are not binary in ESTree.
+.decl plain_binary(b: node)
+plain_binary(b) :- kind(b, "binary_expression"), !op(b, "&&"), !op(b, "||"), !op(b, "??").
+.decl sum_leaf(b: node, i: node)
+sum_leaf(b, i) :- plain_binary(b), (field(b, "left", x) ; field(b, "right", x)), deparen(x, y),
+    (kind(y, "identifier"), i = y ; plain_binary(y), sum_leaf(y, i)).
+// index_name(k, i): i is an identifier named as the index of an iterator call around k; the shorthand
+// `{ key }` of cloneElement(x, { key }) reads the variable key.
+.decl index_name(k: node, i: node)
+index_name(k, i) :- key_value(k, _), (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), text(i, x), inside(k, c, "call_expression"), index_param(c, x).
+// index_param(c, x): call c is an array iteration whose callback names its index x (a plain parameter).
+.decl index_param(c: node, x: symbol)
+index_param(c, x) :- kind(c, "call_expression"), field(c, "function", m), kind(m, "member_expression"),
+    field(m, "property", p), text(p, f), index_position(f, k), (react_children(m), j = 1 ; !react_children(m), j = 0),
+    call_arg(c, a, j), deparen(a, fn), (kind(fn, "arrow_function") ; kind(fn, "function_expression")),
+    callback_param(fn, q, k), kind(q, "identifier"), text(q, x).
+.decl index_position(f: symbol, k: number)
+index_position("every", 1). index_position("filter", 1). index_position("find", 1). index_position("findIndex", 1).
+index_position("flatMap", 1). index_position("forEach", 1). index_position("map", 1). index_position("some", 1).
+index_position("reduce", 2). index_position("reduceRight", 2).
+// Children.map(children, fn), React.Children.forEach(children, fn): the callback is the second argument.
+.decl react_children(m: node)
+react_children(m) :- field(m, "property", p), (text(p, "map") ; text(p, "forEach")), field(m, "object", o),
+    (text(o, "Children") ; field(o, "object", r), docof(m, d), pragma(d, x), text(r, x)).
+// callback_param(f, p, k): the k-th parameter of f; `x => …` has x as its only one.
+.decl callback_param(f: node, p: node, k: number)
+callback_param(f, p, k) :- field(f, "parameters", l), child(l, p0, j), !kind(p0, "comment"),
+    k = count : { child(l, b, i), i < j, !kind(b, "comment") }, (field(p0, "pattern", p) ; !field(p0, "pattern", _), p = p0).
+callback_param(f, p, 0) :- kind(f, "arrow_function"), field(f, "parameter", p).

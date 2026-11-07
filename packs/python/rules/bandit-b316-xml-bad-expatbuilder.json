@@ -3,7 +3,7 @@
   "id": "bandit-b316-xml-bad-expatbuilder",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect vulnerable xml.dom.expatbuilder parsing calls",
+  "description": "Use defusedxml instead of xml.dom.expatbuilder to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input.",
   "scope": {
     "include": [
       "**/*.py"

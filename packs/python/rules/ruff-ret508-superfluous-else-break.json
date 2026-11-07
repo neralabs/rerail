@@ -3,7 +3,7 @@
   "id": "ruff-ret508-superfluous-else-break",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's RET508 (superfluous-else-break): the first `elif`/`else` clause of an `if` statement inside a function whose `if` body has a direct `break` statement and no earlier direct return/raise/continue statement, reported on the `elif`/`else` keyword. As in Ruff, only the `if` body and the first clause are compared, nested functions and classes are separate, and generator functions and functions whose body is a lone `return` are skipped.",
+  "description": "Remove the else or elif after an if branch that breaks out of the loop, and dedent its code; the branch already exits the loop.",
   "scope": {
     "include": [
       "**/*"

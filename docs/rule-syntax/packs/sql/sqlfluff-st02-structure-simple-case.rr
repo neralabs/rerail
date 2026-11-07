@@ -1,0 +1,47 @@
+.policy "sqlfluff-st02-structure-simple-case" revision 2
+.description "Replace a single-branch SQL CASE that only returns TRUE/FALSE or fills in a NULL with the condition itself or COALESCE."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's ST02 (structure.simple_case). A searched CASE with one WHEN that says something simpler; the
+// finding is at the condition:
+//   case when fab > 0 then true else false end         the condition itself: coalesce(fab > 0, false)
+//   case when fab > 0 then false else true end         not coalesce(fab > 0, false)
+//   case when bar is null then '123' else bar end      coalesce(bar, '123')
+//   case when bar is not null then bar end             just bar
+// "The same column" compares quoted parts exactly and unquoted parts in any case: x."B" and X."B" are the same,
+// x."B" and X."b" are not.
+
+#include "sql/syntax.rr"
+
+.violation ST02(at: node, x: node) code "ST02" "Unnecessary CASE statement. Use {x} instead."
+    suppress sqlfluff "ST02", "L043", "all", "structure", "structure.simple_case"
+// then TRUE else FALSE, or the reverse.
+ST02(c, c) :- one_when(k, c), branch(k, "keyword_then", t), branch(k, "keyword_else", e), bool_lit(t, v),
+    bool_lit(e, w), v != w.
+// when x IS NULL then … else x.
+ST02(c, x) :- one_when(k, c), kind(c, "binary_expression"), field(c, "operator", o), kind(o, "keyword_is"),
+    null_check(c, x), branch(k, "keyword_else", e), same_ref(x, e).
+// when x IS NOT NULL then x ….
+ST02(c, x) :- one_when(k, c), kind(c, "binary_expression"), field(c, "operator", o), kind(o, "is_not"),
+    null_check(c, x), branch(k, "keyword_then", t), same_ref(x, t).
+
+// one_when(k, c): CASE k has no operand and exactly one WHEN, whose condition is c.
+.decl one_when(k: node, c: node)
+one_when(k, c) :- kind(k, "case"), child(k, kc, _), kind(kc, "keyword_case"), next_code(kc, w), kind(w, "keyword_when"),
+    count : { child(k, w2, _), kind(w2, "keyword_when") } = 1, next_code(w, c).
+// branch(k, kw, v): v is the value after keyword kw (THEN, ELSE) in CASE k.
+.decl branch(k: node, kw: symbol, v: node)
+branch(k, kw, v) :- one_when(k, _), child(k, b, _), kind(b, kw), next_code(b, v).
+// null_check(c, x): c is `x IS [NOT] NULL` for a column x, or an element of one with constant subscripts.
+.decl null_check(c: node, x: node)
+null_check(c, x) :- field(c, "right", n), null_lit(n), field(c, "left", x), column_like(x).
+.decl column_like(x: node)
+column_like(x) :- kind(x, "field").
+column_like(x) :- kind(x, "subscript"), field(x, "expression", b), column_like(b),
+    count : { field(x, f, i), f != "expression", !kind(i, "literal") } = 0.
+// same_ref(x, y): the same text, except that unquoted parts may differ in case.
+.decl same_ref(x: node, y: node)
+same_ref(x, y) :- null_check(c, x), one_when(k, c), branch(k, _, y), text(x, a), text(y, b),
+    @replace_all(a, "(\"[^\"]*\")|[^\"]", "$1") = @replace_all(b, "(\"[^\"]*\")|[^\"]", "$1"),
+    @lower(@replace_all(a, "\"[^\"]*\"", "\"\"")) = @lower(@replace_all(b, "\"[^\"]*\"", "\"\"")).

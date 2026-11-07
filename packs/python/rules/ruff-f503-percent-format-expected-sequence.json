@@ -3,7 +3,7 @@
   "id": "ruff-f503-percent-format-expected-sequence",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F503 (percent-format-expected-sequence): a valid `%`-format string consuming more than one positional value (placeholders without a key, and `*` widths and precisions) applied to a dict display or comprehension. The format string is a str literal (no f/t/b prefix; implicit concatenations joined, escapes decoded, parentheses transparent) left of `%`, read with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser).",
+  "description": "Pass a tuple, not a dict, to a %-format string with several positional placeholders; the call fails at run time.",
   "scope": {
     "include": [
       "**/*"

@@ -1,1 +1,0 @@
-foo(function() { bar(thing, function(data) { baz(function() {}); }); });

@@ -1,0 +1,22 @@
+.policy "clippy-decimal-literal-representation-threshold" revision 3
+.description "Write Rust integer literals of 16,777,215 and up in hexadecimal when they are a power of two or a bit mask; the hex form shows the bit pattern."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   dec_lit_repr(n)   a decimal literal of at least lit_repr_threshold whose hex digits show a bit pattern
+//                     (a power of two or a mask, Clippy's test)
+
+// Clippy's decimal_literal_representation (restriction) with a raised threshold: a decimal integer literal
+// of at least `literal-representation-threshold` (here 0xFFFFFF, 16777215) whose hex form
+// shows a bit pattern.
+//   32_773 (0x8005)   65_280 (0xFF00)   2_147_483_647 (0x7FFF_FFFF)   32_773usize   reported
+//   16_371 (0x3FF3)   61_683 (0xF0F3)   2_131_750_925 (0x7F0F_F00D)                  not reported
+// Literals of 19 digits and more are not read (int_lit_value is 64-bit). Clippy lints a macro_rules! body
+// once per use; it is read here as written, used or not, as the JSON does.
+.violation decimal_literal_representation(at: node) code "decimal_literal_representation"
+    "Write this integer literal in hexadecimal, e.g. 0x1000_0000 instead of 268435456, to show its bit pattern."
+    suppress clippy "clippy::decimal_literal_representation", "clippy::restriction", "warnings"
+decimal_literal_representation(n) :- dec_lit_repr(n).
+lit_repr_threshold(16777215).   // clippy.toml: literal-representation-threshold = 0xFFFFFF

@@ -3,7 +3,7 @@
 Upstream: [phpstan/phpstan-src](https://github.com/phpstan/phpstan-src/tree/08e3736efd29631ab8f32596c5dd2362dec8dc26) at tag `2.2.16` (commit `08e3736efd29631ab8f32596c5dd2362dec8dc26`). License: MIT (Copyright (c) 2016 Ondřej Mirtes, Copyright (c) 2025 PHPStan s.r.o.); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
 The files listed below are test data of the rules the PHP pack ports (the pack's `conformance.json`), analysed by their RuleTestCase tests, and remain under PHPStan's license. Every other file in this
-pack is Rerail's. The rule documents in `candidates/rules/` are Rerail's re-implementations of PHP_CodeSniffer's, PHPStan's and
+pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of PHP_CodeSniffer's, PHPStan's and
 Psalm's rules, published under the pack's licence expression, `Apache-2.0 AND BSD-3-Clause AND MIT`, as `REUSE.toml`
 annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py`
 and `upstream/phpstan/generate.py`, `upstream/phpstan/read_tests.php` and the recordings they write from the tests'

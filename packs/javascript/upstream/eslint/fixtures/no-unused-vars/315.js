@@ -1,1 +1,0 @@
-function a([[a = aDefault]]) { } a();

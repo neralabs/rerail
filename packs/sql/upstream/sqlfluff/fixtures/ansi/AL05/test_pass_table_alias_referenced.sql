@@ -1,1 +1,0 @@
-SELECT * FROM my_tbl AS foo JOIN other_tbl on other_tbl.x = foo.x

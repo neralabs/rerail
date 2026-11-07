@@ -3,7 +3,7 @@
   "id": "ruff-b002-unary-prefix-increment-decrement",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B002 (unary-prefix-increment-decrement): a unary `+` whose operand is a unary `+`, or a unary `-` whose operand is a unary `-` (parentheses around the operand are transparent, as in Ruff's AST). Reported on the outer unary expression.",
+  "description": "Don't write a doubled plus or minus prefix to increment or decrement a value; Python has no such operators, so the value is left unchanged.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
@@ -26,7 +26,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "B002", "message": "Python does not support the unary prefix increment operator (`++`)", "suppress": { "noqa": { "codes": ["B002"] } } }
+      "violation": { "anchor": "witness.span", "code": "B002", "message": "Replace this `++` prefix with `+= 1`; Python reads `++x` as `x`, so nothing is incremented.", "suppress": { "noqa": { "codes": ["B002"] } } }
     },
     {
       "id": "unary-prefix-decrement",
@@ -48,7 +48,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "B002", "message": "Python does not support the unary prefix decrement operator (`--`)", "suppress": { "noqa": { "codes": ["B002"] } } }
+      "violation": { "anchor": "witness.span", "code": "B002", "message": "Replace this `--` prefix with `-= 1`; Python reads `--x` as `x`, so nothing is decremented.", "suppress": { "noqa": { "codes": ["B002"] } } }
     }
   ]
 }

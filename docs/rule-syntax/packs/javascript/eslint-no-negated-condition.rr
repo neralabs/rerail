@@ -1,0 +1,24 @@
+.policy "eslint-no-negated-condition" revision 4
+.description "Avoid negated conditions in an if with an else or in a ternary; swap the branches and drop the negation."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   negated, else_of
+
+// ESLint's no-negated-condition: a negated test (`!a`, `a != b`, `a !== b`) where both branches exist, so the
+// negation can go by swapping them:
+//   if (!a) f(); else g();       → reported
+//   !a ? f() : g()               → reported
+//   if (!a) f();                 fine: no else
+//   if (!a) f(); else if (b) g();   fine: the else is another if
+// No options.
+.violation no_negated_condition(at: node) code "no-negated-condition"
+    "Remove the negation from this condition and swap the two branches."
+    suppress eslint "no-negated-condition"
+    suppress oxlint "no-negated-condition"
+    suppress biome "lint/style/noNegationElse"
+no_negated_condition(s) :- kind(s, "if_statement"), field(s, "condition", c), negated(c),
+    else_of(s, x), !kind(x, "if_statement").
+no_negated_condition(t) :- kind(t, "ternary_expression"), field(t, "condition", c), negated(c).

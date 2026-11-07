@@ -2,11 +2,12 @@
 //! program `illuminate/view` 13.34.0's `BladeCompiler` compiles the template to, without the
 //! bookkeeping Blade's runtime adds (`$__env`, `e()`, output buffering).
 //!
-//! The program is written out as PHP text and parsed with tree-sitter-php's PHP-only grammar; each
-//! of its nodes maps back to the template bytes it came from. The PHP a template spells (an echo's
-//! expression, a directive's arguments, a `@php` block, a component's bound attribute) is copied
-//! byte for byte, so its nodes map exactly onto the template. The PHP Blade wraps it in is
-//! written around it, each token anchored to the Blade token it stands for:
+//! The program is written out as PHP text and parsed with tree-sitter-php's PHP-only grammar: a
+//! document of its own (`embed`), whose text maps back to the template bytes it came from. The PHP
+//! a template spells (an echo's expression, a directive's arguments, a `@php` block, a
+//! component's bound attribute) is copied byte for byte, so its nodes stand for exactly those
+//! template bytes. The PHP Blade wraps it in is written around it, each token anchored to the
+//! Blade token it stands for:
 //!
 //! | Template | Program |
 //! |---|---|
@@ -52,28 +53,27 @@
 //! Forte leaves unpaired (in an attribute's value) is not read: the view reads no half of a
 //! structure.
 
+use crate::code_rule_dsl::blade::forte::ParseError;
 use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
-use crate::code_rule_dsl::embed::segments::SegmentMap;
+use crate::code_rule_dsl::embed::{Program, segments::SegmentMap};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::php_literal::literal_end;
 use ast_grep_core::source::SgNode;
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
-use tree_sitter::{Node as TsNode, Parser, Tree};
+#[cfg(test)]
+use tree_sitter::Node as TsNode;
+use tree_sitter::{Parser, Tree};
 
 /// The embedded PHP program and its map back to the template.
 pub(crate) struct View {
+    text: String,
     segments: SegmentMap,
     tree: Tree,
-}
-
-/// A template as Blade reads it (`View::build`).
-pub(crate) struct Reading {
-    /// The PHP it embeds, `None` where it embeds none.
-    pub(crate) view: Option<View>,
-    /// Its syntax errors, sorted: Forte's, but where Forte read a directive's arguments Blade
-    /// does not (`Emitter::stray_arguments`), those of the template Blade reads there instead.
-    pub(crate) syntax_errors: Vec<Range<usize>>,
+    /// The template's syntax errors, sorted: Forte's, but where Forte read a directive's arguments
+    /// Blade does not (`Emitter::stray_arguments`), those of the template Blade reads there
+    /// instead.
+    syntax_errors: Vec<Range<usize>>,
 }
 
 /// Directives Blade compiles to control flow (a condition, a loop, a `@php` block, a guard):
@@ -274,14 +274,31 @@ pub(crate) fn compiles(name: &str) -> bool {
         .any(|directive| directive.eq_ignore_ascii_case(name))
 }
 
+/// A template as Blade reads it (`View::read`).
+pub(crate) struct Read {
+    /// Its syntax errors: Forte's, except in the arguments Forte read after a line break, which
+    /// Blade reads as text: there, that text's (`syntax_errors`).
+    pub(crate) syntax_errors: Vec<Range<usize>>,
+    /// The program it embeds; `None` where it embeds none.
+    pub(crate) view: Option<View>,
+}
+
+/// Why a template could not be read (`View::read`).
+#[derive(Debug)]
+pub(crate) enum ReadError {
+    /// The budget interrupted it (polled before each sub-template is parsed, `Emitter::template`).
+    Interrupted,
+    /// Forte stopped at a limit on a template the template holds: nothing about its syntax.
+    Parser(ParseError),
+}
+
 impl View {
-    /// The template `tree` reads as Blade reads it. `Err` where `budget` interrupted it (polled
-    /// before each sub-template is parsed, `Emitter::template`).
-    pub(crate) fn build(
+    /// The template `tree` as Blade reads it: its syntax errors, and the program it embeds.
+    pub(crate) fn read(
         tree: &BladeTree,
         template: &str,
         budget: &dyn Fn() -> bool,
-    ) -> Result<Reading, String> {
+    ) -> Result<Read, ReadError> {
         let mut emitter = Emitter {
             template,
             out: String::new(),
@@ -294,45 +311,78 @@ impl View {
             depth: 0,
             budget,
             interrupted: false,
+            failed: None,
             strays: Vec::new(),
             reporting: true,
         };
         emitter.body(tree.root());
+        if let Some(error) = emitter.failed {
+            return Err(ReadError::Parser(error));
+        }
         if emitter.interrupted {
-            return Err("tape operation interrupted".into());
+            return Err(ReadError::Interrupted);
         }
         let syntax_errors = syntax_errors(tree.error_ranges(), &emitter.strays);
-        let view = (!emitter.segments.is_empty())
-            .then(|| {
-                let mut parser = Parser::new();
-                parser
-                    .set_language(&GrammarDialect::Php.get_ts_language())
-                    .ok()?;
-                parser.parse(&emitter.out, None)
-            })
-            .flatten()
-            .map(|tree| Self {
-                segments: emitter.segments,
-                tree,
+        if emitter.segments.is_empty() {
+            return Ok(Read {
+                syntax_errors,
+                view: None,
             });
-        Ok(Reading {
-            view,
+        }
+        let mut parser = Parser::new();
+        let program = parser
+            .set_language(&GrammarDialect::Php.get_ts_language())
+            .ok()
+            .and_then(|()| parser.parse(&emitter.out, None));
+        let view = program.map(|program| {
+            let mut segments = emitter.segments;
+            segments.index();
+            Self {
+                text: emitter.out,
+                segments,
+                tree: program,
+                syntax_errors: syntax_errors.clone(),
+            }
+        });
+        Ok(Read {
             syntax_errors,
+            view,
         })
     }
 
+    /// The view as the template's embedded program (`compiled-view`): PHP, read through the
+    /// template's syntax errors.
+    pub(crate) fn into_program(self) -> Program {
+        Program {
+            dialect: GrammarDialect::Php,
+            tree: self.tree,
+            text: self.text,
+            segments: self.segments,
+            host_errors: self.syntax_errors,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn root(&self) -> TsNode<'_> {
         self.tree.root_node()
     }
 
-    /// The template bytes a node of the program stands for.
-    pub(crate) fn span(&self, node: TsNode<'_>) -> Range<usize> {
-        self.segments.span(node)
+    /// The program's text.
+    #[cfg(test)]
+    pub(crate) fn text(&self) -> &str {
+        &self.text
     }
 
-    /// Whether a node is part of a placeholder the view does not keep.
-    pub(crate) fn omitted(&self, node: TsNode<'_>) -> bool {
-        self.segments.omitted(node)
+    /// Where the program's text stands in the template.
+    #[cfg(test)]
+    pub(crate) fn segments(&self) -> &SegmentMap {
+        &self.segments
+    }
+
+    /// The template's syntax errors as Blade reads them.
+    #[cfg(test)]
+    pub(crate) fn syntax_errors(&self) -> &[Range<usize>] {
+        &self.syntax_errors
     }
 
     /// The template ranges the program copies byte for byte, in program order.
@@ -362,6 +412,8 @@ struct Emitter<'t> {
     /// more is read.
     budget: &'t dyn Fn() -> bool,
     interrupted: bool,
+    /// Forte stopped at a limit on a sub-template; once set, nothing more is read.
+    failed: Option<ParseError>,
     /// The `stray_arguments` read as the template, each with that template's syntax errors.
     strays: Vec<(Range<usize>, Vec<Range<usize>>)>,
     /// Whether the tree being read reports its syntax errors: the template's, and a stray
@@ -754,7 +806,7 @@ impl<'t> Emitter<'t> {
     /// `None` where it was not parsed. Past `TEMPLATE_DEPTH` nested sub-templates, the range is
     /// read as text.
     fn sub_template(&mut self, range: Range<usize>) -> Option<Vec<Range<usize>>> {
-        if range.is_empty() || self.interrupted {
+        if range.is_empty() || self.interrupted || self.failed.is_some() {
             return None;
         }
         if (self.budget)() {
@@ -765,7 +817,13 @@ impl<'t> Emitter<'t> {
             self.loose(range);
             return None;
         }
-        let tree = parse_tree(&self.template.as_bytes()[range.clone()]);
+        let tree = match parse_tree(&self.template.as_bytes()[range.clone()]) {
+            Ok(tree) => tree,
+            Err(error) => {
+                self.failed = Some(error);
+                return None;
+            }
+        };
         let origin = std::mem::replace(&mut self.origin, range.start);
         self.depth += 1;
         self.body(tree.root());

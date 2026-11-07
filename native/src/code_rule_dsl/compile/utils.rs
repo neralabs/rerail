@@ -1,3 +1,4 @@
+use super::documents::{DocumentScopes, Side};
 use super::order::AllOrderConflict;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::matcher::{CaptureAnalysis, MAX_UTIL_INSTANCES, Transform, UtilTable};
@@ -219,7 +220,7 @@ pub(super) fn reject_util_cycles(utils: &BTreeMap<String, UtilDef>) -> Result<()
     Ok(())
 }
 
-impl UtilScope<'_> {
+impl<'a> UtilScope<'a> {
     /// Records a parameterized call of utility `index`: a query makes at most
     /// `MAX_UTIL_INSTANCES` distinct ones (a utility and a mapping) per grammar.
     pub(super) fn instance(
@@ -233,6 +234,23 @@ impl UtilScope<'_> {
                 "{path}: more than {MAX_UTIL_INSTANCES} distinct parameterized utility calls in one query"
             ))),
             _ => Ok(()),
+        }
+    }
+
+    /// The scope a rule over the other document of the query's file compiles in (`embedded`,
+    /// `host`): that document's utility table, on its side.
+    pub(super) fn on(&self, table: Weak<UtilTable>, side: Side) -> UtilScope<'a> {
+        UtilScope {
+            table,
+            ids: self.ids,
+            options: self.options.clone(),
+            python: self.python.clone(),
+            transform: self.transform.clone(),
+            conflicts: self.conflicts,
+            captures: RefCell::default(),
+            calls: self.calls,
+            documents: self.documents,
+            side,
         }
     }
 }
@@ -255,6 +273,11 @@ pub(crate) struct UtilScope<'a> {
     pub(in crate::code_rule_dsl) captures: RefCell<CaptureAnalysis>,
     /// Where the query collects its `calls` terms; `None` where `calls` is not supported.
     pub(crate) calls: Option<&'a crate::code_rule_dsl::calls::CallsCollector>,
+    /// The documents of the file a query of an embedding language reads (`embed`), with the
+    /// tables its `embedded` and `host` rules compile with; `None` for another language's.
+    pub(crate) documents: Option<&'a DocumentScopes>,
+    /// The document the rule being compiled reads.
+    pub(crate) side: Side,
 }
 
 #[cfg(test)]

@@ -1,0 +1,2227 @@
+{
+  "format": "rerail.data-layer-rr-migration/v1",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "syntaxSource": {
+    "branch": "jeremybarnes/final-rerail-shape",
+    "commit": "879486272cd1b44b3567320c85847ba0fd19a918",
+    "uncommitted": []
+  },
+  "legacyBaseline": "ce3669ddba89d09acec1094e006446a16a7b296d",
+  "contract": "Full original assertions, DTOs, messages, order and multiplicity; no semantic fallbacks",
+  "files": [
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/authentication-plan-purity.rr",
+      "sha256": "eb5b60a4f015cf102a597992f4aa5487b9d790736fb42187b4aef5666770628f"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/bootstrap-cache-health.rr",
+      "sha256": "73b8e9d8495ee2a0a7a21ec49d89f09fc87e941b69ad3696c17695a69de674cc"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/bootstrap-eager-resolve.rr",
+      "sha256": "346aca71d2d316a17f3b3a6cf8629ab44772d7297a106c0111a04de5b5e48be0"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/bootstrap-engine-invariants.rr",
+      "sha256": "38ce4a4787d01b747c58facfec1794ba2b314ec0d9325bbb9bddc39a99e6ac0d",
+      "importedSha256": "ff1e87c710f9a042c871438c9644a764ebd2facba6d86766358403d2f64399c0",
+      "repairs": [
+        {
+          "before": "ff1e87c710f9a042c871438c9644a764ebd2facba6d86766358403d2f64399c0",
+          "after": "618b1e3c47bef8b575c9ee86c407c17df32a0a1fe4f899ffb47098a92ce55a22",
+          "reason": "Resolve generated tables beside their policy after moving the policy out of docs/rule-syntax/data-layer"
+        }
+      ],
+      "upstreamSha256": "de8df8443c829492d80edadb93f022c25345ab712c0482f0a646bc9b2cf6468f",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/bootstrap-engine-invariants.tables.rr",
+      "sha256": "4022230387ca05ab723ccceec8b1719fb5e4b7a1f237741e27c22c6877f2389e",
+      "importedSha256": "c1254b893852a84af78335a7130e2aec1e0f48e779c35a4831e85f0c12f23b22",
+      "repairs": [
+        {
+          "before": "c1254b893852a84af78335a7130e2aec1e0f48e779c35a4831e85f0c12f23b22",
+          "after": "e3d5b6d36935121c4ad1b97d47eabca44ffe59589a27a0d5a871d7b5a3879531",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "e3d5b6d36935121c4ad1b97d47eabca44ffe59589a27a0d5a871d7b5a3879531",
+          "after": "4022230387ca05ab723ccceec8b1719fb5e4b7a1f237741e27c22c6877f2389e",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/bootstrap-lazy-sql.rr",
+      "sha256": "60e7cca51e37d596e9d731273968d3ddbbf019e6a66d402f583345320cf435d7"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/bounded-composed-graph-paths.rr",
+      "sha256": "123005d47faaa0f8066ad856fcf241fe232108334e3e501f54644df470feea9e"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.rr",
+      "sha256": "a7a65e2f69efc36c3fc497c8497fc6ff058c6c08884a18081eecb3ffa10802d1",
+      "importedSha256": "1463aa716e8706bdad294ed77ecb69c8e26995872b81ca5044ee14c855b42905",
+      "repairs": [
+        {
+          "before": "1463aa716e8706bdad294ed77ecb69c8e26995872b81ca5044ee14c855b42905",
+          "after": "86ef75d6706ae64d49b53543f09a2c382be7845347d9ce5f265a7a244206258c",
+          "reason": "Resolve generated tables beside their policy after moving the policy out of docs/rule-syntax/data-layer"
+        },
+        {
+          "before": "7bef63d1277e6391d52a4e51321ac61f47b98008d298c321e4ba49102c7622ef",
+          "after": "a7a65e2f69efc36c3fc497c8497fc6ff058c6c08884a18081eecb3ffa10802d1",
+          "reason": "Remove the upstream re-signing proposal and identify structural hash expressions as unaccepted placeholders"
+        }
+      ],
+      "upstreamSha256": "fb346baa724d25ba9e10d2181c54bba8493b01eb8910524654cd290beb945dae",
+      "upstreamCommit": "fa50cd94c1bb2621647cc73c31e119f1db9f3be2"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.symbols.rr",
+      "sha256": "a302b5cf84f3eb0169f2afb3b8469f1341523d6f552d1cb6f9d232588e938bd0",
+      "importedSha256": "83177598b81e4b154e3af8d37900a31ec2bafb1bb2885c1c1e78cdcb3bfcdcac",
+      "repairs": [
+        {
+          "before": "83177598b81e4b154e3af8d37900a31ec2bafb1bb2885c1c1e78cdcb3bfcdcac",
+          "after": "efab30d94c9148c6b9fc5d8590fb1a102e146bfe716adb457d42a9e2e895f18c",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "efab30d94c9148c6b9fc5d8590fb1a102e146bfe716adb457d42a9e2e895f18c",
+          "after": "a302b5cf84f3eb0169f2afb3b8469f1341523d6f552d1cb6f9d232588e938bd0",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/conditional-architecture.rr",
+      "sha256": "bd8769cc8c143805725c5db78839da869fd6af565462b9698b9149adbbffa5d3",
+      "upstreamSha256": "bd8769cc8c143805725c5db78839da869fd6af565462b9698b9149adbbffa5d3",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/connection-mode-split.rr",
+      "sha256": "e5f127f719570f933f9f54cca84ca46869e0755c71b34bbebfb07b87c092afc6"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/connection-service-architecture.rr",
+      "sha256": "793308cfb9dbd47504af5b67b299d0892589d68d807fa1569169d9a888d05449",
+      "upstreamSha256": "793308cfb9dbd47504af5b67b299d0892589d68d807fa1569169d9a888d05449",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/connection-structural-boundaries.rr",
+      "sha256": "59d9fe026e3cd4e4dbdc21b710fa885bada227df5e7d504fbc302745f576b5de",
+      "upstreamSha256": "59d9fe026e3cd4e4dbdc21b710fa885bada227df5e7d504fbc302745f576b5de",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/declared-fact-interrogation.rr",
+      "sha256": "5f1e06ecc40eb3ced1ac712189a08b38e327017638684e1ee4dc35fef23dd347"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/eager-resolve.tables.rr",
+      "sha256": "5afc70049f2751c7795c80f207019d092c649fd422d09440fb6952c4f01d68e3",
+      "importedSha256": "3b56db15c8e007b677755f63ad6aeb3547850a937c1e2184121ba125ab229505",
+      "repairs": [
+        {
+          "before": "3b56db15c8e007b677755f63ad6aeb3547850a937c1e2184121ba125ab229505",
+          "after": "86acef24c88d8a227aa5ac7f64b9bcdba9027a8f36ebdc4a2841db570633f809",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "86acef24c88d8a227aa5ac7f64b9bcdba9027a8f36ebdc4a2841db570633f809",
+          "after": "5afc70049f2751c7795c80f207019d092c649fd422d09440fb6952c4f01d68e3",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/embedding-vector-orchestration.rr",
+      "sha256": "86cd1846921d986bdefaa26d6edc105b96103c7d009e3e5bb34a92fe0b94104b"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/executor-publication-repairs.rr",
+      "sha256": "27c532103650a119411384b27c9d5b4c0dbff612a3274e12f6a30a9d7364dd72"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/file-length.rr",
+      "sha256": "40acb915dfd45d64ec050c80e2be10ef6af4614ebfca16f4621bf42317b8658c"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "sha256": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1",
+      "importedSha256": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1",
+      "repairs": [
+        {
+          "before": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1",
+          "after": "044afec8e629614ef57ba317c3cea3027651938d5a62ac54911222870c58ebcb",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "044afec8e629614ef57ba317c3cea3027651938d5a62ac54911222870c58ebcb",
+          "after": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/grammar-mutation-invalidation.rr",
+      "sha256": "3b2e8f8ad36e62197f640eadd8af77ec32f0df97cac3937149f59d30e75de646",
+      "upstreamSha256": "3b2e8f8ad36e62197f640eadd8af77ec32f0df97cac3937149f59d30e75de646",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/graph-lazy-sql-plan.rr",
+      "sha256": "2b9946c18093ef7bef9ed8e2c92a3cfdb9da30c16fb8855b2b6187bf8ffc4452",
+      "upstreamSha256": "2b9946c18093ef7bef9ed8e2c92a3cfdb9da30c16fb8855b2b6187bf8ffc4452",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/graphql-plan-ownership.rr",
+      "sha256": "cf881a65cd844498ed8c704119a7a91f58e5e0cc1fbb3e451d2069c87e4c62fd"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/history-serverplan-projection.rr",
+      "sha256": "5de318502888f8012756e66bebe5906fdc3fcfa4ef12ce492d0d174be510f230"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/hnsw-architecture.rr",
+      "sha256": "70159a44e04340bf6b478084645ed4d8ec906e21d257649e5167523df55207c1",
+      "importedSha256": "7f6aa1428a8c1ffb9b1f1e806213b05bf3ab9d2286e167e76a4ffbd07f2c5147",
+      "repairs": [
+        {
+          "before": "7f6aa1428a8c1ffb9b1f1e806213b05bf3ab9d2286e167e76a4ffbd07f2c5147",
+          "after": "dce2b2c20e289ab7a903944c34455d9e47412a7bbbc072aa9adc2eff3108416c",
+          "reason": "Strict recorded HNSW replay: preserve definition messages, reject invalid syntax, retain standalone inventory context and configured directory scope, join import modules, and use the pinned CPython 3.13 word character set"
+        },
+        {
+          "before": "dce2b2c20e289ab7a903944c34455d9e47412a7bbbc072aa9adc2eff3108416c",
+          "after": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100",
+          "reason": "Souffle match tests the complete string; wrap the exact CPython search expression without changing its character set"
+        },
+        {
+          "before": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100",
+          "after": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e",
+          "reason": "Match Python identifier normalization, normalized import components, and parenthesized SqlFragment receivers"
+        },
+        {
+          "before": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e",
+          "after": "f229140c59da19643bcdd901b6cb70274eaf5bc5226ffb1291ce1cc83e8bfc4a",
+          "reason": "Retain each decoded string constant occurrence as a distinct diagnostic witness"
+        },
+        {
+          "before": "f229140c59da19643bcdd901b6cb70274eaf5bc5226ffb1291ce1cc83e8bfc4a",
+          "after": "8302654cdad430023c1e1f4db9987be4595408d9ee91876379565c750478b708",
+          "reason": "Use exact constant coordinates, original configured scope and source gates, and explicit source reporter severity"
+        },
+        {
+          "before": "8302654cdad430023c1e1f4db9987be4595408d9ee91876379565c750478b708",
+          "after": "70159a44e04340bf6b478084645ed4d8ec906e21d257649e5167523df55207c1",
+          "reason": "Preserve Unicode word-query semantics for Python Constant values and identify docstrings from syntax, including lone surrogates"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/layer-violations.rr",
+      "sha256": "8b34df3b425306ea079d43f784f4275dedc99760c3a2ed819666b2532539dc1a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/lazy-adapter-ownership.rr",
+      "sha256": "dc5d73841c2d0aad6e0d88e7377cc0532abd41c1df2563ace522939ef7be6091"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/lazy-architecture.rr",
+      "sha256": "6c695ad5771ef6d178f7f2f179df9d2b895447007d1c5222b8e75ba9cab59a39",
+      "importedSha256": "b41a0d43693983898aa71c60ce92b0aa642dee73c627fa85ebf4e715119a8533",
+      "repairs": [
+        {
+          "before": "b41a0d43693983898aa71c60ce92b0aa642dee73c627fa85ebf4e715119a8533",
+          "after": "7dbfbb347e12e8cd02d2962fe345ad841439307a2624ec576522d01b353199c5",
+          "reason": "Resolve generated tables beside their policy after moving the policy out of docs/rule-syntax/data-layer"
+        }
+      ],
+      "upstreamSha256": "3d5058d2fc426777ed48096bbb8a2cba688537c500ec654f5e25359e8fe271b9",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/lazy-architecture.tables.rr",
+      "sha256": "a2cc16ca516260a24fc94a53cedfd6984e7665186551adbc312bdabec0a5009d",
+      "importedSha256": "1e8897a3d5cf5b35eaaf08f4f4b9c76e794e86684fb4833b301b14b8181d72a1",
+      "repairs": [
+        {
+          "before": "1e8897a3d5cf5b35eaaf08f4f4b9c76e794e86684fb4833b301b14b8181d72a1",
+          "after": "7c6a619eb303630fdb9c9d756a7f8fcb0aed880bddfcc355adeceb35e9935b3a",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "7c6a619eb303630fdb9c9d756a7f8fcb0aed880bddfcc355adeceb35e9935b3a",
+          "after": "a2cc16ca516260a24fc94a53cedfd6984e7665186551adbc312bdabec0a5009d",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/lazy-sql-surface.rr",
+      "sha256": "8b08d5709acd2b90b4bc4fe4b4a02b55253b053f7fd316b58b19855875e8b5df",
+      "upstreamSha256": "8b08d5709acd2b90b4bc4fe4b4a02b55253b053f7fd316b58b19855875e8b5df",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/legacy-callback-quarantine.rr",
+      "sha256": "b428d6b64611793cc255130693ddf1a38e8c6d16850b6d493afc2a3aef047855"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/matching-architecture.rr",
+      "sha256": "edb33d60fe6d8603e079a337ac1cd1af0854645890de29cdf43e44f634b4fd90",
+      "upstreamSha256": "edb33d60fe6d8603e079a337ac1cd1af0854645890de29cdf43e44f634b4fd90",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/missing-async-pairs.rr",
+      "sha256": "55f6a5df4930506108e0865977715ac6b4b0baa5d05367ca8324196557d385f5"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/noqa-sec-ratchet.rr",
+      "sha256": "220a0db5328726f3d12270a0a13239f4841810d31cd7980d35dbaeb71615dcac"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-composition-architecture.rr",
+      "sha256": "3a341800275caf104d668d3999675ad55666e3feb8b12c4664a668e293de0e36"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-helpers-allowlist.rr",
+      "sha256": "00350696f0498b34671a6bf662a285ea2165f051dba02d5150bceaeeeafd31e3",
+      "importedSha256": "349b34b0a9783a1ec7b4e5c901ff70c2d6d00e457d4b8be63a1f61faaf07d717",
+      "repairs": [
+        {
+          "before": "349b34b0a9783a1ec7b4e5c901ff70c2d6d00e457d4b8be63a1f61faaf07d717",
+          "after": "d1d08623cfe8d49795933a04a4e9eef6b11b9774719a3a1203ce59d010621416",
+          "reason": "Resolve generated tables beside their policy after moving the policy out of docs/rule-syntax/data-layer"
+        }
+      ],
+      "upstreamSha256": "9aa4beff4d3d88949b584a5ec961bbb52e2879e17b8f2ab729d9585e11cb5b5c",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-helpers-allowlist.tables.rr",
+      "sha256": "be37c8d23aec3615c63098f5237d86e7833049b6eca234eb063744d6ef3c9ec5",
+      "importedSha256": "d1f4f73dc79843f6a8e5dacd2a65f31628a6ef88cb2fb9195a899ddc1c8e0039",
+      "repairs": [
+        {
+          "before": "d1f4f73dc79843f6a8e5dacd2a65f31628a6ef88cb2fb9195a899ddc1c8e0039",
+          "after": "2825effa7c0a1e211e56193bed5fbdab66ec4efc2a96fb8c5dd5f0e9627b92ce",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "2825effa7c0a1e211e56193bed5fbdab66ec4efc2a96fb8c5dd5f0e9627b92ce",
+          "after": "be37c8d23aec3615c63098f5237d86e7833049b6eca234eb063744d6ef3c9ec5",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-optimizer-v2.rr",
+      "sha256": "02903161b89ae13d161341844c43884ee19091f4d23b6f2bd8173ca08801d7df",
+      "upstreamSha256": "02903161b89ae13d161341844c43884ee19091f4d23b6f2bd8173ca08801d7df",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
+      "sha256": "9e7cdbc9b36a272bed5d65a5072133735a208ef3a90532efc13ca51753e3359f"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/post-op-no-internal-dispatch.rr",
+      "sha256": "438efffbb9074070263ca670024ddcdcc3afaee1e1c6da04688aa7d5a4e8ddf0"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/post-op-side-effects.rr",
+      "sha256": "06accc101ec744b9836dda0c68308cb07aee2629721cc01e96ed5ae486f7a2f6",
+      "upstreamSha256": "06accc101ec744b9836dda0c68308cb07aee2629721cc01e96ed5ae486f7a2f6",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/public-api-triples.rr",
+      "sha256": "8255686561a1b74bf650d0df6d0be4e95ff1c5d5a75e6fe270e2cf5ec67b738b",
+      "upstreamSha256": "8255686561a1b74bf650d0df6d0be4e95ff1c5d5a75e6fe270e2cf5ec67b738b",
+      "upstreamCommit": "acacaa500dd624452c0a09cf70d46ccb880df31d"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/publication-registry-writes.rr",
+      "sha256": "5c0ed38e1acd339802781da8b4d7578ab640d8c4477aff4443d12985224ec66e"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/readthrough-authority-architecture.rr",
+      "sha256": "f8e83726103e89c6a8702758a2018c39f7db6e4af30e324b0f1fa8fb9c3285e6"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/revision-ancestry-invariants.rr",
+      "sha256": "92b4d5ccf6bad0d36175216a78eaef6520dbe477a6c8b00e3d7266cd20788228"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/schema-architecture.rr",
+      "sha256": "bccae020e42fdee07df677387035af80c5cc5ae1cd41aeac884b9db67d8345a7",
+      "importedSha256": "b2ab3f6e1518fe921649a03a8e85667aab3f05f527ed6edf1edf5e9e5dc9011e",
+      "repairs": [
+        {
+          "before": "b2ab3f6e1518fe921649a03a8e85667aab3f05f527ed6edf1edf5e9e5dc9011e",
+          "after": "c63c2b318f5c9e57658e65ee2a7fa1bc52a444c9bca1fd184037c06b83ca31df",
+          "reason": "SAP004 binds only at; retain the source message by reading the finding function name from at"
+        },
+        {
+          "before": "c63c2b318f5c9e57658e65ee2a7fa1bc52a444c9bca1fd184037c06b83ca31df",
+          "after": "bccae020e42fdee07df677387035af80c5cc5ae1cd41aeac884b9db67d8345a7",
+          "reason": "Adopt reviewed syntax-branch revisions: expanded purity tables/signatures and exact schema scopes/messages; retain SAP004 bound-name correction"
+        }
+      ],
+      "upstreamSha256": "bccae020e42fdee07df677387035af80c5cc5ae1cd41aeac884b9db67d8345a7",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/schema-bootstrap-contracts.rr",
+      "sha256": "5747d7dbb2968be6a55215e7a9c0b88634aa5c02fd5265bfdeb367e44010db17"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/schema-introspection-data-paths.rr",
+      "sha256": "94b8f234b59aed5f4753f6fac8062abede14f93a9a7a79f5184943dfb2b58afa",
+      "importedSha256": "c732772fd12b6783e3a1d95e13d7d1565d5e8dc3f22796737a711d6162ced931",
+      "repairs": [
+        {
+          "before": "c732772fd12b6783e3a1d95e13d7d1565d5e8dc3f22796737a711d6162ced931",
+          "after": "94b8f234b59aed5f4753f6fac8062abede14f93a9a7a79f5184943dfb2b58afa",
+          "reason": "Resolve generated tables beside their policy after moving the policy out of docs/rule-syntax/data-layer"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/schema-introspection-data-paths.tables.rr",
+      "sha256": "3716cc7a2d40e35fe04e0e677ee7da389b397b8d659295d92c1ad99cbfa942ad",
+      "importedSha256": "c31861c844f0ff5e31e518f49a9babe50133999e4d348237fb86834e80481c07",
+      "repairs": [
+        {
+          "before": "c31861c844f0ff5e31e518f49a9babe50133999e4d348237fb86834e80481c07",
+          "after": "03a2ef3c4da0ffcf75e3cc55e1eecdc3112a788c45aa14069040832bb2c51793",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "03a2ef3c4da0ffcf75e3cc55e1eecdc3112a788c45aa14069040832bb2c51793",
+          "after": "3716cc7a2d40e35fe04e0e677ee7da389b397b8d659295d92c1ad99cbfa942ad",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/swallowed-exceptions.rr",
+      "sha256": "e366919ece5d6fa427a16fe28610b2fe327a0672133b20e7a0b322218d080cee"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/test-budget.rr",
+      "sha256": "fa8300c5b53e16912b49f01818e3c9fc8267c313effd2d18516c807a33ad3885"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/unknown-contract-defaults.rr",
+      "sha256": "6f4e445a716fb8681aa94ea46d48ace1ad8d10801dd6705bcb39a81df15b22df"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/versioned-merged-identity.rr",
+      "sha256": "7bcd82e3bff062451a5f5f118cf33a6113067751e9137032a97216a3d0e8392a",
+      "upstreamSha256": "7bcd82e3bff062451a5f5f118cf33a6113067751e9137032a97216a3d0e8392a",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/versioned-table-names.rr",
+      "sha256": "89e8ebae9c9e0a767dd799909afaa273e78fa1980447306293bd3cbd02f81873"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/blade/syntax.rr",
+      "sha256": "aa3abe37f5ff88cdf57a805b713cd5d9ed013efb68e605b229f145876f05c99d",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/blade/values.rr",
+      "sha256": "213d536691ef01298a2ea7c04a47a1659a9c54442192c23ce4e3bd73cabfb58e",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/complexity/cyclomatic.rr",
+      "sha256": "7d01598d9db1689c71d88e9be03911b5f5ec5c008df9f91f10960d654150c1e9",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/complexity/ecma.rr",
+      "sha256": "d5f57d0dfdf3344a9833ddfc5250d90f79a952c473047cecb19490a8ad1cc52e",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/complexity/php.rr",
+      "sha256": "89713384f7085b6ab5e964b8fd353843214ac1763d1bdf996b1941844ad2a136",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/complexity/python.rr",
+      "sha256": "7e74ef68ca9cc6b2dc56dcc5e81dcb973ec9aaf7c94c78b80326c55e82a8eb58",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/complexity/rust.rr",
+      "sha256": "6c0dac4e91a753c9f20ca634965e70c9d7bb12882572dc21e3558ea1f2b83b81",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/core.rr",
+      "sha256": "8dcb01912bcda4021a0112ce7621ca5823f7e91a37d52c6448ed4846ff861768",
+      "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
+      "repairs": [
+        {
+          "before": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
+          "after": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c",
+          "reason": "Add a demanded text-line relation with exact CPython splitlines semantics; preserve physical AST lines"
+        },
+        {
+          "before": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c",
+          "after": "696825f987e1404fd195a1b24dabf1176af36cdd9dcd1f7b701cf274dd911f86",
+          "reason": "Add the demanded LF-only source view required by async_executor str.split(newline); preserve all other separators and trailing empty lines"
+        },
+        {
+          "before": "696825f987e1404fd195a1b24dabf1176af36cdd9dcd1f7b701cf274dd911f86",
+          "after": "e763df6886a6023f30bb87f94e5938386ce3362c457315a68bc1936287ded4fa",
+          "reason": "Expose exact Python constant byte starts and retain the existing signed-hash contract without re-signing"
+        },
+        {
+          "before": "e763df6886a6023f30bb87f94e5938386ce3362c457315a68bc1936287ded4fa",
+          "after": "af322eea5497debb1e72513fec0f31670d90c4951a6f4964ce56d0081537057f",
+          "reason": "Distinguish structural digests from CPython AST identity and signed canonical bytes"
+        },
+        {
+          "before": "af322eea5497debb1e72513fec0f31670d90c4951a6f4964ce56d0081537057f",
+          "after": "60dfb07916dd1c4f56d7700d447a7f226d97d670e6092db6d22dcd957fa7e5ec",
+          "reason": "Preserve Unicode word-query semantics for Python Constant values and identify docstrings from syntax, including lone surrogates"
+        },
+        {
+          "before": "60dfb07916dd1c4f56d7700d447a7f226d97d670e6092db6d22dcd957fa7e5ec",
+          "after": "960e0e4b20860c2e90def7246c94dfe7a46e1d6c6e68e5653f6e179467e48226",
+          "reason": "Merge guest document declarations from Final rerail shape b22763660b6b96c7ee1aeaa08565a5833af25649"
+        },
+        {
+          "before": "960e0e4b20860c2e90def7246c94dfe7a46e1d6c6e68e5653f6e179467e48226",
+          "after": "8dcb01912bcda4021a0112ce7621ca5823f7e91a37d52c6448ed4846ff861768",
+          "reason": "Merge Final rerail shape 34bfb09451f6849be5f0b2e5c447d159a89bc46a: declared typing and derived values"
+        },
+        {
+          "before": "8dcb01912bcda4021a0112ce7621ca5823f7e91a37d52c6448ed4846ff861768",
+          "after": "8d0dcfc059515ae3351b78ec0a76c8f62c6399a2f0bd13856f973fca28054cac",
+          "reason": "Document positional regex occurrences used by source linter finditer loops"
+        },
+        {
+          "before": "8d0dcfc059515ae3351b78ec0a76c8f62c6399a2f0bd13856f973fca28054cac",
+          "after": "8dcb01912bcda4021a0112ce7621ca5823f7e91a37d52c6448ed4846ff861768",
+          "reason": "Adopt authoritative Final rerail shape library resolutions",
+          "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+        }
+      ],
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/boot-lazy-sql.rr",
+      "sha256": "dc7770983b9f2182f082a2890e0867d2678196022ee25a3c42bce9f1e81be8a0",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/boot-python.rr",
+      "sha256": "f8e8f09241ab8fa2c8826d3910248e43f991c684c2a2b3604236e6856c05bdfc",
+      "upstreamSha256": "f8e8f09241ab8fa2c8826d3910248e43f991c684c2a2b3604236e6856c05bdfc",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/lazy-analyzer.rr",
+      "sha256": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
+      "upstreamSha256": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/match-frames.rr",
+      "sha256": "b68a7359729ff3e25015f176492307a76fc3a1fac74bb11e0cf681f8146a83c7",
+      "upstreamSha256": "b68a7359729ff3e25015f176492307a76fc3a1fac74bb11e0cf681f8146a83c7",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/pub-lines.rr",
+      "sha256": "f2efd4bb7206fc4ae4affc3aa50c91aa6673c38fa3c8c9670c264656092a3f39",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/purity-ast.rr",
+      "sha256": "4587d4d0aa768d82deab155c42eb2a480d1b7bcb9c3394d82c91767820010201",
+      "upstreamSha256": "4587d4d0aa768d82deab155c42eb2a480d1b7bcb9c3394d82c91767820010201",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/signing.rr",
+      "sha256": "07d42ecda753194a32566b35c088913f8a6774b8535cc3d84203450b6cf6a94d",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/php/arrays.rr",
+      "sha256": "2cfb920594f093b4981066d62503df0cae37aabc209da97d01c607d1eead52c5",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/php/format.rr",
+      "sha256": "e6fcd78c639ee0e067ee2f68e5a68e19d103e537e7f1151589e9d00688014016",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/php/names.rr",
+      "sha256": "9b4a74418c81a849a7acf249d5378f0dc4c6ba946fce02c95b25b466d1d03709",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/php/phpdoc.rr",
+      "sha256": "ce5598cdb06510a57dbde2a6810a3feecfe20514619695190e5ec3360a4f7cb8",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/php/values.rr",
+      "sha256": "a681fe7dabbb2f749ad227e5ce6f0d689f67536aca153f09895d579216eb6fe7",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/annotations.rr",
+      "sha256": "cb15fe34ea8758ce4b3b4bb7297cb01f7a1531535149eb54b58a091189ddb305",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/ast.rr",
+      "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a",
+      "upstreamSha256": "5f72729eba6db24aed31dde22e5b6a2c7c35b77f8e0d1be0179e055ddece88f4",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918",
+      "repairs": [
+        {
+          "before": "5f72729eba6db24aed31dde22e5b6a2c7c35b77f8e0d1be0179e055ddece88f4",
+          "after": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a",
+          "reason": "Preserve Unicode word-query semantics for Python Constant values and identify docstrings from syntax, including lone surrogates"
+        }
+      ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/bugbear-loops.rr",
+      "sha256": "8bec3bc714fcab76202bf68ae506db3f01ef9a0632375bbffa1746210d3bf495",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/bugbear.rr",
+      "sha256": "ac443b1b539de5f7cfd70783d3c90635cdf3e562bb6ec63585871f672ea1f82a",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/calls.rr",
+      "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a",
+      "upstreamSha256": "b086577eaec7d4c5856d838b5077294c188885be67ee1c4af9bdf6b55fb67120",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918",
+      "repairs": [
+        {
+          "before": "b086577eaec7d4c5856d838b5077294c188885be67ee1c4af9bdf6b55fb67120",
+          "after": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a",
+          "reason": "Merge Final rerail shape 34bfb09451f6849be5f0b2e5c447d159a89bc46a: declared typing and derived values"
+        }
+      ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/compare.rr",
+      "sha256": "1fcdd3620b05b090c1cba2d7574556a8b510ec136760fb731c6461ca3cdfad72",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/comprehensions.rr",
+      "sha256": "e314cc0c626d313aae433267c659e67c5af1102a310e9201e46ad4baba48e9f7",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/datetime.rr",
+      "sha256": "2d74f26908a9bd778d68833677237c788a8f4c8f1bb3f6c4d0d94def5f699ead",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/docstrings-sections.rr",
+      "sha256": "5d09583aa3814cf7733faea47e48a9553d593e9e86b2a27162a1fc4e7ee75c4b",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/docstrings.rr",
+      "sha256": "aed0d0a570881ae04731b42944cb6d37dbea62f55c4d63624791574fe3a47e68",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/exceptions.rr",
+      "sha256": "9d6c35ea0aba5876fb7c5e7e3ec81f968019a5c2fbd5ddd733d0de0dc22feb59",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/flow-return.rr",
+      "sha256": "4539cffb384e9c066f900206b04897bd621c3c9297b87b7a59dd39b395f5e50d",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/flow.rr",
+      "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/imports.rr",
+      "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/logging.rr",
+      "sha256": "b27442bd1551615844342fac6d8987693eb782b9053fcf5b3a3d78df3b0bcdd1",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc-airflow.rr",
+      "sha256": "a38376f883fb917868e4bb6f8c01319315732593c3627c42f9bf4776edd0f4e3",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc-boolean-trap.rr",
+      "sha256": "29095a956dfe99bf50557c65c555f7526eff618cf49f6a15ba6bc667f6027bae",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc-comments.rr",
+      "sha256": "9a1e35dcea0afd6bc00f5d89b0aa95c00e78acf96c9589c50afedc634600bfbc",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc-seen.rr",
+      "sha256": "23d5e7ca82cb073f9a5fedc45d1407ea3ce06e8bc74f2ea79c271aafb1ec5457",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-args.rr",
+      "sha256": "dc69077dbc4e41f8dd8f8789cddde223fcb63dc89f6108484eb37b4561d0f4b9",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-async.rr",
+      "sha256": "79608e8b3c095ca1b7df2d5675e6c00d0bea5fac8c7f5dc7615b01a69474fcfa",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-case.rr",
+      "sha256": "3e360fd55112447cb0a005b79715ce69dbfbcf610bbb3608945fbf5012ced911",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-fastapi.rr",
+      "sha256": "8907ea07d91d099f45a0eeb47316ef0dddb8602c5ec267e20c2927cad5feb6da",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-messages.rr",
+      "sha256": "2223ed671c2fe0bb2048d0ac78eab0274c3486397b81bd2d2bb118022f90e1b2",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-noqa.rr",
+      "sha256": "eaba84d2a79eab1ddac867748be7ffa5eca86176dcbbe05613f99f91e36bb5b3",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-numpy.rr",
+      "sha256": "919c1ab318a64acffdb37d099a23939d5f747b176e006a8c5efb107349d738e7",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-perf.rr",
+      "sha256": "8696db58923ff7d488d18a9d7f93b8a386c0051fa52bb20e32a7ad261349a565",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-self.rr",
+      "sha256": "efdd7ef57c6a838e1ab27fce19c9aa5e0b970d2d11b79a5daaecf449bfcc75d6",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-slots.rr",
+      "sha256": "113d03bf4e29a9b672fc899ca83ae55ff9499802bae6703ddba34bc5e6c84460",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-todo-span.rr",
+      "sha256": "bb3072dc8c34a2440fe45768590b65b1a578455a0dedf921aa418d522e46518e",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-todo.rr",
+      "sha256": "5036c2434d35179883fd8c7e562624d460808b032501a01a3ff34542403e5cda",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-typecheck.rr",
+      "sha256": "ab680bfd8d8b5dde949a164eb02007c19b5206c0d0a585c57376e0149a9af455",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/misc2-version.rr",
+      "sha256": "45a5974dddf126cff0e1aa9f4446bad25087b12eae9c12bf31249bc51b7c5ee4",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/names.rr",
+      "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/naming.rr",
+      "sha256": "aefbabc3e046e5c64813a7562c3a330ff0dcd3c6d836ed028778fc1963fde458",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/pathlib.rr",
+      "sha256": "c7793aa57b608bae3960e12464bcdc3b0fc81858238d081d3dcc5699341246fe",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/pyflakes-format.rr",
+      "sha256": "7b7361f67368ad6ee3f9c961d7a18ded6125723e7dbe142a62b9e305adf59c28",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/pyflakes.rr",
+      "sha256": "c5dc1a2d35d4a703a2fd2c58559ab64d7c15f5e5c90deddeb6f6c28d06a7dd41",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/pytest.rr",
+      "sha256": "73bbf132df858c1ad05e625bd9eb0975f9adb462fe1a4459ec750dcf94f4998b",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/ruff-classes.rr",
+      "sha256": "14e0ed7c1b253e10f27604592c96fb0866ed79fc10713f881738699481013656",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/ruff-sorting.rr",
+      "sha256": "b69269eea6e49ed8016c9deb0e95c5178b2f6efa2c251dcd7dae6d0ca5fbd331",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/ruff.rr",
+      "sha256": "49bcb306de32f4115f2c534221aca9d431b2fc468d65747eb7cc1f276787c758",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/security-blacklist.rr",
+      "sha256": "7f06137760d1c26fe8d3ecdcf22c854d7a9694db879e2e4ca6276d9eafc6acae",
+      "importedSha256": "9e82c8151f2832b73b6d5106f5a55ccbb74ac62ba42f1cc7145995d43331a7cf",
+      "repairs": [
+        {
+          "before": "9e82c8151f2832b73b6d5106f5a55ccbb74ac62ba42f1cc7145995d43331a7cf",
+          "after": "89ef52c025b4f299f40df0c6daf14efd90655a7fb5bce97811fa3e425e39676b",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "89ef52c025b4f299f40df0c6daf14efd90655a7fb5bce97811fa3e425e39676b",
+          "after": "7f06137760d1c26fe8d3ecdcf22c854d7a9694db879e2e4ca6276d9eafc6acae",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        }
+      ],
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/security.rr",
+      "sha256": "c9ca13a7e8e502b04425b205ce8a1b936541c5d33105a47557d89bcbc2f024fa",
+      "upstreamSha256": "c9ca13a7e8e502b04425b205ce8a1b936541c5d33105a47557d89bcbc2f024fa",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/simplify.rr",
+      "sha256": "ff27d1e6a5b79cee65948c4c7757d53a254ff6ab98d660fa6cdecc41da02b415",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/typing-context.rr",
+      "sha256": "2ea9556b8ebee64bc060b31e3f94b9931b136be124f346e30025b21ae387e959",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/typing.rr",
+      "sha256": "64ce1afc83e6c8cb98a9b292523cfb9297eff92967b393fa8434b98fa7aef1d2",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/upgrade-format.rr",
+      "sha256": "c05166d25cfc6e0c31fc98998ea37fe28d6b6c405d47086dc84ad472e6fc2ea8",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/upgrade-imports.rr",
+      "sha256": "c761abd535ba490684c1106f0948181ba673a088e7a93b321e65212799db1f8b",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/upgrade-typing.rr",
+      "sha256": "caa44251d1a5692fe430500ad5b6f357a6b5c3d627468434b19a4e40bb0f034b",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/upgrade.rr",
+      "sha256": "c533f0a6e8ebb508aeaf216a17ffac37a670286f9c2520e84948ec5ddefaee69",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/version.rr",
+      "sha256": "9f311c6853d186f320393f0d770f9bb8bf7e66b1222102a030c2f3b54096d682",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/rust/syntax-attrs.rr",
+      "sha256": "b023724ddb183b5cc07deccd4757f19afc20be4556d550e465d0b2b2df46e3f1",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/rust/syntax-literals.rr",
+      "sha256": "6b7b67216af5f4bedf9216537f6d198df1a31b8b5fd9e5316dd297a0ff63292a",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/rust/syntax-patterns.rr",
+      "sha256": "4bbf73d66a9064009f4117f11f397c9d77a19d5e045cbebac334d3240af70569",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/rust/syntax.rr",
+      "sha256": "670a2e969f29939d5c37718e61fd88c3e57e9b61d63fb674390be8c1b686fbae",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/sql/syntax.rr",
+      "sha256": "e644a35bdf6438686677238360bece57fdaa3d1910af46b949400363c0dc0a45",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-a-common.rr",
+      "sha256": "391f05e8ebd97493c51f6007118ee2582e89ae73fc3e2d5e47ad7f0875be0ef8",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-a-control.rr",
+      "sha256": "9c66ab1c2106707f48dc9de58756fa2c215209998261cb5bf61bfbb517fc47c2",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-a-expressions.rr",
+      "sha256": "12b39fa956c17bd81bf2f7596f1c86b0a452b51315cb731850509e59c771e046",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-a-functions.rr",
+      "sha256": "9bda03916c1b1b773ea9d59d0eed4b55db9084b95fe8d6989e2187eb638335dc",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-a-globals.rr",
+      "sha256": "7e04004e6a114b0c85764ff2ba711acc8487349fa0b301a2d4756e276e7ecfc1",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-a-text.rr",
+      "sha256": "05e8ec0b8bf7a2c1c79d6b835364493fd289b0c17cc47d85ab87ae1a89053bbc",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-b-control.rr",
+      "sha256": "54c20e7422edf681f68f4daf39ca1fe0946b265083a01c64e14ee1c82eaa926c",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-b-literals.rr",
+      "sha256": "2b5f63dfb954c2df8004a856c80b31bc2051a8708dd68588d22d8d71a9088b71",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-b-objects.rr",
+      "sha256": "65678ee9adbfed4c0fda3fbf7bd8a4e870d643798e54c9ba2451ff70fb095384",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/eslint-b-scope.rr",
+      "sha256": "79ed2c42a8d1b207c73a3e409cb39fe1082fac88c6f90fc8eee35ad143b1ecd1",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/jsx.rr",
+      "sha256": "f1b3936280fb35c212ba8db1772e14f224ecb7f0897c25eea00964e4e3d95182",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/modules.rr",
+      "sha256": "305ade4633dd650b1d777f1b50f84540166aa6e7b027afb139072484e501571f",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/names.rr",
+      "sha256": "5eba9aa507bcf66977546b9c52eb6f200df16d50c14e74dd439404c2e02ff9a9",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/next.rr",
+      "sha256": "228be3cf5bc4fbf81c9698d018d5e0459996e8e5a862541c7b70becc3e1cfaa3",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/node-package.rr",
+      "sha256": "afcde1aefbff397c033aa5a4a8f97ab4f421374164ab3259b35b1086d092bee5",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/node-resolve.rr",
+      "sha256": "0ce98a3bdbced82c16a460eb3d094bb5183388d8c47b40498c3f1dc67fda73a1",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/node-trace.rr",
+      "sha256": "e1a750be5dcc7ec43ce1db6024b34310d39f033342fa1e5cc2404fa48b3f7e1f",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/node.rr",
+      "sha256": "3f351fd764649fef21d4540771c71e629aee86a8427fb617eb03a25e77879a00",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/react-class.rr",
+      "sha256": "f1460a643769d9af2d4420746dc60de3896d8b19e1c8470f0dc1a75b07a91f8f",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/react-compiler.rr",
+      "sha256": "8a6e823f93436fd563d445ee7c336817baa789a9c6b7e623bc26942a1105c215",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/react-hooks.rr",
+      "sha256": "76fa3d175858eeb062789056aac4322cda1de6c2245e8cd558dca410b95d1086",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/react.rr",
+      "sha256": "b28ad9cf5979b9b2bc7ef5a3bc05178a0691d72adc5614a792bfe5939090c8ee",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/statements.rr",
+      "sha256": "567b392deb1cbb678f227a52a73e4f2df0dddc57600cdffd451b3c1f59e76f2d",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/ts-a-returns.rr",
+      "sha256": "23307e41c5e3f6310cb6d2d5856c940afd91b07a873e3c0551af2b74555c835e",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/ts-a.rr",
+      "sha256": "3ab6507eacfd5d8767031085906b42031c7448c7a010c719f4f737c093c64c60",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/ts-b-scope.rr",
+      "sha256": "6c341471801bc9de8ca5731a2cd2852b0fa10ec77dcadfb86caf1e3996d1a06f",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/ts-b-vitest.rr",
+      "sha256": "f4ba2e9e97076daa5584e1fc57a93093f9edd2174b82338f915c9c1a5de4c7a2",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/ts-b.rr",
+      "sha256": "1041397d2b59ecbcb2e3087ff6d769be8f8b4e29c5c9c9afbec2468e97a5ac22",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tsx/values.rr",
+      "sha256": "82d9cc1537efcf6d1a8b2f1fb6613a0bb3361ec717ef90ff79f874466c8e5d76",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/vue/code.rr",
+      "sha256": "17ab35d9f96cff891a9404e94265527238038da95c7c5594be0693b1b5280592",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/vue/component.rr",
+      "sha256": "73f6ed3d68f28bf48f06ff86cb0d7dfab483489003eec6740cfebae589d106cd",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/vue/elements.rr",
+      "sha256": "4e0513af18839d723352a977cffcf1f735e2e2a5414302497cea4f4c3dd36a57",
+      "importedSha256": "50c962b25a30fe57cc1f59cd8ca8d83b6a744cc43f4fcdc680d4a8aa92e21e7e",
+      "repairs": [
+        {
+          "before": "50c962b25a30fe57cc1f59cd8ca8d83b6a744cc43f4fcdc680d4a8aa92e21e7e",
+          "after": "f59f9378786bb9f1ce264cc757b7fa8d140f1122043221d174dbcd9dbe50b4cb",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "f59f9378786bb9f1ce264cc757b7fa8d140f1122043221d174dbcd9dbe50b4cb",
+          "after": "4e0513af18839d723352a977cffcf1f735e2e2a5414302497cea4f4c3dd36a57",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        }
+      ],
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/vue/flow.rr",
+      "sha256": "2d4c218243e1f7227b55004fa5897bc2c7a4f466bc04e6f8a4342874a437c9be",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/vue/mutation.rr",
+      "sha256": "2771c84eed49cc30dff95672ed074339e26e92a69bba4a67da299fe2b1ae07ff",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/vue/template.rr",
+      "sha256": "40b7ab398c6b0bcf8d6a48d119fb28b259c4cc30ab5eae552de5912636921c42",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/eager-resolve.rr",
+      "importedSha256": "8e754b1da2953eaa2cf192075d940583c257b37d64b543d591060e578f7fc26b",
+      "sha256": "8b2cc5c4608d0ff01a92dcf10183971d7496c25d1289b0bf6af4f859f07d9c4a",
+      "upstreamSha256": "4d8cf1246c6b70428f29f827f8e7dc086cbfcb3fe6a59912de0cf32497fd1251",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.rr",
+      "importedSha256": "94011e711c29b05777f7fa50469341ea064f2ee19b8d8157eecf17bf73ace96b",
+      "sha256": "9664b4812f0d82dc522d2674cf5593c1046ebbf457531f5767dbeb941f47474e",
+      "upstreamSha256": "340ad5eee1c5bf7ea073c08a0e879840250df97b5f4a0d68e166bbdd2fb682a1",
+      "upstreamCommit": "fa50cd94c1bb2621647cc73c31e119f1db9f3be2"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.tables.rr",
+      "importedSha256": "281dfa879e3f72a3fcc475c30e277881fe883ff430527ad401b3706e1b6343fa",
+      "sha256": "89675566b3ffc45e471e52b6afdb56596f08cd01ba117ab8743b964afd890643",
+      "upstreamSha256": "870782ca51abf27b29919640d9e46ae3df16bea71856b2d0cb32f7cdb043c4ba",
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1",
+      "repairs": [
+        {
+          "before": "281dfa879e3f72a3fcc475c30e277881fe883ff430527ad401b3706e1b6343fa",
+          "after": "e22e4364cad0effb8bb726c2727d6b0788cc1d6743b32aece5a2881eeb28c2e7",
+          "reason": "Record imported generated tables under the repository generator and provenance convention"
+        },
+        {
+          "before": "e22e4364cad0effb8bb726c2727d6b0788cc1d6743b32aece5a2881eeb28c2e7",
+          "after": "5910db58038969f0a3455ef08fc4bfa5f2f1bf0b5d34b4fa5221a0b46a67d800",
+          "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        },
+        {
+          "before": "5910db58038969f0a3455ef08fc4bfa5f2f1bf0b5d34b4fa5221a0b46a67d800",
+          "after": "89675566b3ffc45e471e52b6afdb56596f08cd01ba117ab8743b964afd890643",
+          "reason": "Adopt reviewed syntax-branch revisions: expanded purity tables/signatures and exact schema scopes/messages; retain SAP004 bound-name correction"
+        }
+      ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/purity-calls.rr",
+      "importedSha256": "d379099a7677d64b46a268f38923d84687d462e976bfa50218d45132ee4cafd1",
+      "sha256": "d379099a7677d64b46a268f38923d84687d462e976bfa50218d45132ee4cafd1",
+      "upstreamSha256": "d379099a7677d64b46a268f38923d84687d462e976bfa50218d45132ee4cafd1",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/types.rr",
+      "origin": "Final rerail shape",
+      "sha256": "b93a1ec08fd31b7bbf8e8387ebb2b0e6321a0114ff8ed8c09896b168a94b336a",
+      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
+      "sha256": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_removed_compat_surfaces.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "fe6cb20060963766c446edae143d49d4f1dd0da51e0ec31cb3fc5c8cb74ea120",
+          "after": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
+          "reason": "Preserve normalized identifiers, semantic visit order, distinct configured reporter events, and exact configured scope/source gates"
+        }
+      ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
+      "sha256": "1a7cd837c201cb4daa6f8ff15484c794be5cc80f5da7fa778ee7251f849a2514",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_versioned_lifecycle_legacy_surfaces.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
+      "sha256": "879eb5309ccf547e9696f406e0f892c50645b5d8b3160c7cc65535b7778b0433",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_permission_error.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
+      "sha256": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_no_source_inspection.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
+      "sha256": "5823f95fa8fc70bf202f8f037ab7ae4e2c99d0e86de660c1607e1a88a84aa977",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_hasattr_async.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
+      "sha256": "f1a0bcd726c819e73740b6c48b4803d4aff24dfea6b8ced19706e4c9c3f5d024",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_no_blanket_grammar_bypass.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
+      "sha256": "129f66b23d3b0cac00cfeeb28e9e8ea6a3bbf3ff6ee5e234d7d382f3e8e5f8f2",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_admin_async_purity.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-executor.rr",
+      "sha256": "1a62227537854952d9324502e079f376e8a1bd854fb76d9f83b1b536769f304f",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_async_executor.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr",
+      "sha256": "4c5505d988b1df7b0e9415a466a5cf0aa6f97a9f248bebaa5f748409e1f0cd92",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_rust_sql_grammar_boundary.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
+      "sha256": "6ae4bd9834aa34a287bf1a1f5fd2a4c36bbead1cc4a336825b69efa5fe0d6223",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_dynamic_module_loading.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/classvar-check.rr",
+      "sha256": "2594f851a6d9f651ad1c823d0bca7de9d92325dd8a48a8533658bd68f3629d37",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_classvar_check.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/type-safety-patterns.rr",
+      "sha256": "263e57fbe02603c6000cd64a32a8abea2ac9e5859c46a334c213f388b952e373",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_type_safety_patterns.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "sha256": "5a270def9a5c798919a65add13d66bef02846b4c1de2ca4337d8745bab782839",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_forwardref.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/data-layer-compat-aliases.rr",
+      "sha256": "396e41bfe9b936559aa1bb4f6579564a2531e982daeddd5ee5277ca21a644581",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_data_layer_compat_aliases.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/data-layer-facade-purity.rr",
+      "sha256": "c6c5af4c479456d15861a1e1edd8744d7c04f57d332edf84a1f788accfe0a7cf",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_data_layer_facade_purity.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/sync-async-signatures.rr",
+      "sha256": "e53898844d12fe6686deec8a36692f2b854da475d16948a79ba7efcff4e083c4",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_sync_async_signatures.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/backend-coupling.rr",
+      "sha256": "1359a0157fce427aac01ed8904c0af4fca8004398b75513dbfbe8a54ddb60e31",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_backend_coupling.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/connection-caches.rr",
+      "sha256": "b45e23c0dac62cb1429db5bb3fcd3c1839921c46fc41465e0c7d916cc5bf11fb",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_connection_caches.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr",
+      "sha256": "6ffc0dcfcb1929261cb1fe6f5c7b941ed9eaff582111d1e6ad3f87b930852675",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_no_api_root_imports.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/error-handling.rr",
+      "sha256": "2d34f25cd124820349e2f6860794fbf935a93ae148d6ce03e5e814f9fe2b4fc0",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_error_handling.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
+      "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_serverplan_name_inference.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    }
+  ],
+  "rules": [
+    {
+      "check": "removed_compat_surfaces",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-removed-compat-surfaces.json",
+      "legacySha256": "4c8214eb6c3e30bc6afd0f3d02d25cc2a522e0af1f0343e1e1c64242ead43d6e",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
+      "ruleSha256": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6"
+    },
+    {
+      "check": "versioned_lifecycle_legacy_surfaces",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-versioned-lifecycle-legacy-surfaces.json",
+      "legacySha256": "931b8c73be253bff264bf63ea46bd145f8d01fc7bc66290e367841b881465b97",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
+      "ruleSha256": "1a7cd837c201cb4daa6f8ff15484c794be5cc80f5da7fa778ee7251f849a2514"
+    },
+    {
+      "check": "no_api_root_imports",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-no-api-root-imports.json",
+      "legacySha256": "48b8a8762bec65d2ac3a648893e8e745094ff84ef5906d6a1b5cd73f8034b377",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr",
+      "ruleSha256": "6ffc0dcfcb1929261cb1fe6f5c7b941ed9eaff582111d1e6ad3f87b930852675"
+    },
+    {
+      "check": "backend_type_strings",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-backend-type-strings.json",
+      "legacySha256": "0ecc6dab424746bfd6007dfd0684f460851d26361ea3a5c0b1a2734d8f9d190c",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "hasattr_async",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-hasattr-async.json",
+      "legacySha256": "ca10f10fb53277ead5302d5b08e70696bd89d0c454ea8c328006c9148a461208",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
+      "ruleSha256": "5823f95fa8fc70bf202f8f037ab7ae4e2c99d0e86de660c1607e1a88a84aa977"
+    },
+    {
+      "check": "no_source_inspection",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-no-source-inspection.json",
+      "legacySha256": "89f2000f352654e02459f7e7bef1609b0e846a46c64bb1d6606169ef7872185f",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
+      "ruleSha256": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172"
+    },
+    {
+      "check": "serverplan_name_inference",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-name-inference.json",
+      "legacySha256": "c1326f54d9381d1efad6d898b9bb0c7d61cd801243d4cf7a9b5132499cef351c",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
+      "ruleSha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670"
+    },
+    {
+      "check": "no_blanket_grammar_bypass",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-no-blanket-grammar-bypass.json",
+      "legacySha256": "700460f3a9868afe3abd8254af2b39324ee22cc13ba4132867b8870a2d4d96da",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
+      "ruleSha256": "f1a0bcd726c819e73740b6c48b4803d4aff24dfea6b8ced19706e4c9c3f5d024"
+    },
+    {
+      "check": "serverplan_grammar_surface",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-grammar-surface.json",
+      "legacySha256": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "permission_error",
+      "batch": 1,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-permission-error.json",
+      "legacySha256": "f95c0bc0626da3c96900d5bbe3aa72fd9709a3aad7557c0930e4d00db34de3f1",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
+      "ruleSha256": "879eb5309ccf547e9696f406e0f892c50645b5d8b3160c7cc65535b7778b0433"
+    },
+    {
+      "check": "dynamic_module_loading",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-dynamic-module-loading.json",
+      "legacySha256": "60a9cff5845cb22edfd90b365ba5ac41e948b605115c0233af66a81ab68d6478",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
+      "ruleSha256": "6ae4bd9834aa34a287bf1a1f5fd2a4c36bbead1cc4a336825b69efa5fe0d6223"
+    },
+    {
+      "check": "forwardref",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-forwardref.json",
+      "legacySha256": "9bccddea5856ae1e41d834d68d7da4d96fdebe512c93c03bcef605a818f35333",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "ruleSha256": "5a270def9a5c798919a65add13d66bef02846b4c1de2ca4337d8745bab782839"
+    },
+    {
+      "check": "unresolved_forward_refs",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-unresolved-forward-refs.json",
+      "legacySha256": "084da92045c5621c0305bfaeee185abc331c46a6e1ad45de61e89ee3c382d231",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "classvar_check",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-classvar-check.json",
+      "legacySha256": "9056ad18066c1d44a2d9c8d6ae676f25a4aada9c2130cd698976d64c48857eda",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/classvar-check.rr",
+      "ruleSha256": "2594f851a6d9f651ad1c823d0bca7de9d92325dd8a48a8533658bd68f3629d37"
+    },
+    {
+      "check": "type_safety_patterns",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-type-safety-patterns.json",
+      "legacySha256": "311eda52dff8cfc9108b52fcb2971412c59f1ea97c1784d6b4e47173ac8e61ca",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/type-safety-patterns.rr",
+      "ruleSha256": "263e57fbe02603c6000cd64a32a8abea2ac9e5859c46a334c213f388b952e373"
+    },
+    {
+      "check": "conn_or_txn_union",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-conn-or-txn-union.json",
+      "legacySha256": "8d783578a716e46d038ed1f28d288355f48f5f40338123e13a38a4f6f0901daa",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "async_executor",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-async-executor.json",
+      "legacySha256": "0e64fd634326c0bb3676f2cf8ed817f4508cde8a5dbc33ea8934afae6b88751b",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-executor.rr",
+      "ruleSha256": "1a62227537854952d9324502e079f376e8a1bd854fb76d9f83b1b536769f304f"
+    },
+    {
+      "check": "async_patterns",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-async-patterns.json",
+      "legacySha256": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "async_sync_boundary",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-async-sync-boundary.json",
+      "legacySha256": "f342876eef567090dd1493a0a8411a057fb14915dca5d5184e023322f18a483a",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "admin_async_purity",
+      "batch": 2,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-admin-async-purity.json",
+      "legacySha256": "7c77aef231725a946398a941b9b1a9d2adac72f1506073b5881dd84796bfeb2a",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
+      "ruleSha256": "129f66b23d3b0cac00cfeeb28e9e8ea6a3bbf3ff6ee5e234d7d382f3e8e5f8f2"
+    },
+    {
+      "check": "plan_scope_side_effects",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-plan-scope-side-effects.json",
+      "legacySha256": "2716f11ec3592689333631110eb74d3ec513d0ee82ca1701023621072347f12d",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
+      "ruleSha256": "9e7cdbc9b36a272bed5d65a5072133735a208ef3a90532efc13ca51753e3359f"
+    },
+    {
+      "check": "plan_scope_ownership",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-plan-scope-ownership.json",
+      "legacySha256": "a51c7f0406a0cc42984dcea94914f0613e48f1c420b91e49a1e6f42a49dfc1ab",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "transaction_closures",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-transaction-closures.json",
+      "legacySha256": "83f35c1e002c5f11945b0fdf18a02ecae99f2a976a0124b87ffcdb84f0e8da56",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "transaction_callback_wrappers",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-transaction-callback-wrappers.json",
+      "legacySha256": "ccfa86dd6d1f393a80e969d148af343376bafa36d36358a18d4834e7d5561205",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "transaction_patterns",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-transaction-patterns.json",
+      "legacySha256": "8fcc8c1a6690883cf3816ff28e59efbe255baf37de3bff1efb49fd8da857b1ae",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "lazy_result_usage",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-lazy-result-usage.json",
+      "legacySha256": "c221f7bbf5c4c5f9c8fcfa55a10ed4fd72f4ffbff4986eb72985aaba8dc623df",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "swallowed_exceptions",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-swallowed-exceptions.json",
+      "legacySha256": "df25e1c35068c80e36a14a244feda3958b04a4fcc812ec0a7d8b25e8a292f1b5",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/swallowed-exceptions.rr",
+      "ruleSha256": "e366919ece5d6fa427a16fe28610b2fe327a0672133b20e7a0b322218d080cee"
+    },
+    {
+      "check": "error_handling",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-error-handling.json",
+      "legacySha256": "3bbdc70fb1ffb9552218b98d02ff5663c28b57c99d09c34fa2742dc6f80dbe33",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/error-handling.rr",
+      "ruleSha256": "2d34f25cd124820349e2f6860794fbf935a93ae148d6ce03e5e814f9fe2b4fc0"
+    },
+    {
+      "check": "module_level_caches",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-module-level-caches.json",
+      "legacySha256": "2ba31a57f2ff59881cb6f7dd472ea0cdc10546264dcc80c812943032c0370019",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "connection_caches",
+      "batch": 3,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-connection-caches.json",
+      "legacySha256": "d3e65fbd29b0cc1de9e23085ef4cb2ce7b5e3a6b92d19e3bc60f4c0d9ad96225",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/connection-caches.rr",
+      "ruleSha256": "b45e23c0dac62cb1429db5bb3fcd3c1839921c46fc41465e0c7d916cc5bf11fb"
+    },
+    {
+      "check": "render_fstrings",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-render-fstrings.json",
+      "legacySha256": "acf31f86d4de43c251c67d570f09c69b3eb645b24fa4948e45734775db69561c",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "render_raw_strings",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-render-raw-strings.json",
+      "legacySha256": "bf6911d01528b8e06342a6a0094ade70ff3d6cd94bacba7d3958bb2d4a3c883b",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "regex_sql_parsing",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-regex-sql-parsing.json",
+      "legacySha256": "4f1d38624a792094896568b970af80d55fab32eb5ef431dec84b9ce1f84067c9",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "sql_grammar_escape_hatches",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-sql-grammar-escape-hatches.json",
+      "legacySha256": "9fe021819a3cbd3410f74b99ec1e33758d4eb680fd7e744e73c4cc8c186fbd1c",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "grammar_render_methods",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-grammar-render-methods.json",
+      "legacySha256": "a2b24d816be228ad74cfdb5e48ee6076720df931800803cd72f76d15e0c379c5",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "grammar_str_params",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-grammar-str-params.json",
+      "legacySha256": "7a8a088b745e9b5abd434e56c38dcdad832bd7ad5b2533144554c3d82aabd446",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "grammar_callable_constructors",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-grammar-callable-constructors.json",
+      "legacySha256": "90faab3f9f14820402ab2ec031344e3587287c1e4facdc83a757f15a1574ba85",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "grammar_fragment_usage",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-grammar-fragment-usage.json",
+      "legacySha256": "6072ae2c92cde1d7b570ede8a0f48b8e24c771b399c6bfb40b66db63be4a28e3",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "grammar_allowlist_burndown",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-grammar-allowlist-burndown.json",
+      "legacySha256": "0596978d51eeddec03b1db10fcf33f1792ac5c7b9cd16d881bb5c0ce374c813f",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "rust_sql_grammar_boundary",
+      "batch": 4,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-rust-sql-grammar-boundary.json",
+      "legacySha256": "80d7fab57e7782b6b7c49316084305fdaf5899389f1c2fa8a7f4d48c8cdfef65",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr",
+      "ruleSha256": "4c5505d988b1df7b0e9415a466a5cf0aa6f97a9f248bebaa5f748409e1f0cd92"
+    },
+    {
+      "check": "missing_async_pairs",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-missing-async-pairs.json",
+      "legacySha256": "5d2bdf11502aa39982bfc6ea19a4e6cd91e7ddf1f6d63b75fdcaaa392c290bee",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/missing-async-pairs.rr",
+      "ruleSha256": "55f6a5df4930506108e0865977715ac6b4b0baa5d05367ca8324196557d385f5"
+    },
+    {
+      "check": "sync_async_signatures",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-sync-async-signatures.json",
+      "legacySha256": "ef99509b0a370a866cf85e124284c7bf90ce2e8d3e34f1decf10fae408c8a3c7",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/sync-async-signatures.rr",
+      "ruleSha256": "e53898844d12fe6686deec8a36692f2b854da475d16948a79ba7efcff4e083c4"
+    },
+    {
+      "check": "async_sync_delegation",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-async-sync-delegation.json",
+      "legacySha256": "fec7c4bd3e7d6ea27e522f2da3aa18436599d6cc6cbdc170af8d1102ef6c96f8",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "public_api_triples",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-public-api-triples.json",
+      "legacySha256": "9a221d0403753d8c179a154553cff0da2c5f2f0de4c3d4e1c50b9013ce59a85a",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/public-api-triples.rr",
+      "ruleSha256": "8255686561a1b74bf650d0df6d0be4e95ff1c5d5a75e6fe270e2cf5ec67b738b"
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-data-layer-facade-purity.json",
+      "legacySha256": "f08348732dcf1827030a1059efb3e6b85e7d92bf3193fd171ae93f9098fdced5",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/data-layer-facade-purity.rr",
+      "ruleSha256": "c6c5af4c479456d15861a1e1edd8744d7c04f57d332edf84a1f788accfe0a7cf"
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-data-layer-compat-aliases.json",
+      "legacySha256": "821e77b0f992fe9397f7820a5e8391c4be607c0a0cd9326233793295f5d24eb4",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/data-layer-compat-aliases.rr",
+      "ruleSha256": "396e41bfe9b936559aa1bb4f6579564a2531e982daeddd5ee5277ca21a644581"
+    },
+    {
+      "check": "layer_violations",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-layer-violations.json",
+      "legacySha256": "7e6429288e52ee44640555298374c589b7a66cc777f9bceb4416320ef1302f32",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/layer-violations.rr",
+      "ruleSha256": "8b34df3b425306ea079d43f784f4275dedc99760c3a2ed819666b2532539dc1a"
+    },
+    {
+      "check": "backend_coupling",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-backend-coupling.json",
+      "legacySha256": "54a16169fbba1e0d4372fa9e85a3d2b0b6e05a342620e30cb34c2fa8d3d20d0d",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/backend-coupling.rr",
+      "ruleSha256": "1359a0157fce427aac01ed8904c0af4fca8004398b75513dbfbe8a54ddb60e31"
+    },
+    {
+      "check": "internal_dead_code",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-internal-dead-code.json",
+      "legacySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "imperative_private_functions",
+      "batch": 5,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-imperative-private-functions.json",
+      "legacySha256": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "serverplan_bypass",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-bypass.json",
+      "legacySha256": "1dc17f26cd4f28f2405ecf0b51067aa45864416fb1933385dcf1e57f54e12cdb",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "serverplan_steps",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json",
+      "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "serverplan_state_tripwires",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json",
+      "legacySha256": "7680e1e3f3e6d2d46ac491905ecd39bd79fb9a469f2d8e8c9566470bdcf7f032",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "serverplan_dispatch_architecture",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-dispatch-architecture.json",
+      "legacySha256": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "serverplan_quality",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json",
+      "legacySha256": "d1ad882170e7a577cde80cbfdd6f7c538261b2ea40ac6690a7c1d45dd6c1d966",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "serverplan_target_architecture",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-target-architecture.json",
+      "legacySha256": "f8ca589ed2cda0828a22e4abaf4316bfbfd2f8dc3cb25f46596851770cbd6b4a",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "execution_authority_bypass",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-execution-authority-bypass.json",
+      "legacySha256": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "impl_direct_execution",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-impl-direct-execution.json",
+      "legacySha256": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "raw_execute_regression",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-raw-execute-regression.json",
+      "legacySha256": "a6f3834fc9a74b85e5df4706b13efb0943b6bb0ae82e5e0f59a80f048df53c04",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "legacy_execution_surfaces",
+      "batch": 6,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-legacy-execution-surfaces.json",
+      "legacySha256": "de41585f5b7a3f05666570665980055923b70e3f1c4c447636b50ce181d47866",
+      "status": "absent",
+      "rulePath": null
+    },
+    {
+      "check": "post_op_side_effects",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-post-op-side-effects.json",
+      "legacySha256": "655ff5697718438456d6a1e01767157a7c99b68689779cb60bb9f4ebc40fcb98",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/post-op-side-effects.rr",
+      "ruleSha256": "06accc101ec744b9836dda0c68308cb07aee2629721cc01e96ed5ae486f7a2f6"
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-post-op-no-internal-dispatch.json",
+      "legacySha256": "f04e536ac07edc1151120f17c76a18e2791de9af91fb151d37d6901c5586d14c",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/post-op-no-internal-dispatch.rr",
+      "ruleSha256": "438efffbb9074070263ca670024ddcdcc3afaee1e1c6da04688aa7d5a4e8ddf0"
+    },
+    {
+      "check": "executor_publication_repairs",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-executor-publication-repairs.json",
+      "legacySha256": "8bb06158b6c487c677eca9afd9af8524adb158ec3a92b3689d82336c6e658f2c",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/executor-publication-repairs.rr",
+      "ruleSha256": "27c532103650a119411384b27c9d5b4c0dbff612a3274e12f6a30a9d7364dd72"
+    },
+    {
+      "check": "history_serverplan_projection",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-history-serverplan-projection.json",
+      "legacySha256": "167e4569d9cee4534df7514ffd927151fa4f4531197eaa9f5f5c818244a57886",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/history-serverplan-projection.rr",
+      "ruleSha256": "5de318502888f8012756e66bebe5906fdc3fcfa4ef12ce492d0d174be510f230"
+    },
+    {
+      "check": "revision_ancestry_invariants",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-revision-ancestry-invariants.json",
+      "legacySha256": "29d46248597921efeb90a3c0de5c284ff07f5d5207487b04d67a5fb1077e46d1",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/revision-ancestry-invariants.rr",
+      "ruleSha256": "92b4d5ccf6bad0d36175216a78eaef6520dbe477a6c8b00e3d7266cd20788228"
+    },
+    {
+      "check": "versioned_merged_identity",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-versioned-merged-identity.json",
+      "legacySha256": "4f3cde5a7d1ad20dd91e7d7f4fc79b666ed37b578b799d9f839a2e0d6f11096f",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/versioned-merged-identity.rr",
+      "ruleSha256": "7bcd82e3bff062451a5f5f118cf33a6113067751e9137032a97216a3d0e8392a"
+    },
+    {
+      "check": "publication_registry_writes",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-publication-registry-writes.json",
+      "legacySha256": "4078d413576a8c2f7dddb3a5e1171825f5415a3e1c581bccd059a793b2000926",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/publication-registry-writes.rr",
+      "ruleSha256": "5c0ed38e1acd339802781da8b4d7578ab640d8c4477aff4443d12985224ec66e"
+    },
+    {
+      "check": "declared_fact_interrogation",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-declared-fact-interrogation.json",
+      "legacySha256": "0fa2269f092b0af0ebae7b0dc14e940c03c20fee4ce2e08ced21699deb6e91f9",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/declared-fact-interrogation.rr",
+      "ruleSha256": "5f1e06ecc40eb3ced1ac712189a08b38e327017638684e1ee4dc35fef23dd347"
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-grammar-mutation-invalidation.json",
+      "legacySha256": "37bd90ecc337a8ca5e89cacd5bee302d799a89f9157e16372065b3b87dcdb977",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/grammar-mutation-invalidation.rr",
+      "ruleSha256": "3b2e8f8ad36e62197f640eadd8af77ec32f0df97cac3937149f59d30e75de646"
+    },
+    {
+      "check": "unknown_contract_defaults",
+      "batch": 7,
+      "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-unknown-contract-defaults.json",
+      "legacySha256": "319a5ef09dda569d69cde3d4010887c1fc348a8180df7301268757e2477520e2",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/unknown-contract-defaults.rr",
+      "ruleSha256": "6f4e445a716fb8681aa94ea46d48ace1ad8d10801dd6705bcb39a81df15b22df"
+    },
+    {
+      "check": "eager_resolve",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-eager-resolve.json",
+      "legacySha256": "ea04fb60a27b8cb60c48f426b38bebf06a76e62a46629fb06d37c609ba325e3d",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/eager-resolve.rr",
+      "ruleSha256": "8b2cc5c4608d0ff01a92dcf10183971d7496c25d1289b0bf6af4f859f07d9c4a"
+    },
+    {
+      "check": "lazy_architecture",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-lazy-architecture.json",
+      "legacySha256": "aa6829187db40df122163b82441638f86d85ab5738e3220dc23422c900a05163",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/lazy-architecture.rr",
+      "ruleSha256": "6c695ad5771ef6d178f7f2f179df9d2b895447007d1c5222b8e75ba9cab59a39"
+    },
+    {
+      "check": "pure_lazy_runtime_purity",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-pure-lazy-runtime-purity.json",
+      "legacySha256": "be297814ee19579d51c19690c05196511deef47126642134ac3bf08feb9acc29",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.rr",
+      "ruleSha256": "9664b4812f0d82dc522d2674cf5593c1046ebbf457531f5767dbeb941f47474e"
+    },
+    {
+      "check": "cached_pure_lazy_allowlist",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-cached-pure-lazy-allowlist.json",
+      "legacySha256": "30a298621259d10251e0591993b11d45d28a8b7df8fee8b40e7ebec7fb95fe46",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.rr",
+      "ruleSha256": "a7a65e2f69efc36c3fc497c8497fc6ff058c6c08884a18081eecb3ffa10802d1"
+    },
+    {
+      "check": "lazy_sql_surface",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-lazy-sql-surface.json",
+      "legacySha256": "8899e4d9de0ce78a4f5f225c93fc8179dd15b9321f68b6489ac7f500b2e04d9a",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/lazy-sql-surface.rr",
+      "ruleSha256": "8b08d5709acd2b90b4bc4fe4b4a02b55253b053f7fd316b58b19855875e8b5df"
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-plan-helpers-allowlist.json",
+      "legacySha256": "05214cca095b138864bce6adaee900e5c8711aa2148250f025ec66954d5e33ec",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-helpers-allowlist.rr",
+      "ruleSha256": "00350696f0498b34671a6bf662a285ea2165f051dba02d5150bceaeeeafd31e3"
+    },
+    {
+      "check": "legacy_callback_quarantine",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-legacy-callback-quarantine.json",
+      "legacySha256": "6a33622ad5fb04f0ebbe0965a1ceb7358213d63f8f3551e4e3d08b0e701e1f6a",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/legacy-callback-quarantine.rr",
+      "ruleSha256": "b428d6b64611793cc255130693ddf1a38e8c6d16850b6d493afc2a3aef047855"
+    },
+    {
+      "check": "readthrough_authority_architecture",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-readthrough-authority-architecture.json",
+      "legacySha256": "c05024235f75cee789b0153dea8145b107afd0d3896259b4136e09b25b96b04c",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/readthrough-authority-architecture.rr",
+      "ruleSha256": "f8e83726103e89c6a8702758a2018c39f7db6e4af30e324b0f1fa8fb9c3285e6"
+    },
+    {
+      "check": "authentication_plan_purity",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-authentication-plan-purity.json",
+      "legacySha256": "ccfc568bc6a298bb64a553cadb0f094ae723a6da3610adcd57464e0cc6235dd5",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/authentication-plan-purity.rr",
+      "ruleSha256": "eb5b60a4f015cf102a597992f4aa5487b9d790736fb42187b4aef5666770628f"
+    },
+    {
+      "check": "lazy_adapter_ownership",
+      "batch": 8,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-lazy-adapter-ownership.json",
+      "legacySha256": "09d019e2deb70ea8478e0f86d72cfc416d69b995ca764ce14a6ff6ddd554120f",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/lazy-adapter-ownership.rr",
+      "ruleSha256": "dc5d73841c2d0aad6e0d88e7377cc0532abd41c1df2563ace522939ef7be6091"
+    },
+    {
+      "check": "connection_mode_split",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-connection-mode-split.json",
+      "legacySha256": "d943ca53deaca8c745c2fb8c7fd41f5b986739276df08d5c73d14573cbeba272",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/connection-mode-split.rr",
+      "ruleSha256": "e5f127f719570f933f9f54cca84ca46869e0755c71b34bbebfb07b87c092afc6"
+    },
+    {
+      "check": "connection_structural_boundaries",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-connection-structural-boundaries.json",
+      "legacySha256": "66e2731bb6b83e0d712bff916d0ed6dd38fd24955558d3adafb0c1a18ef94867",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/connection-structural-boundaries.rr",
+      "ruleSha256": "59d9fe026e3cd4e4dbdc21b710fa885bada227df5e7d504fbc302745f576b5de"
+    },
+    {
+      "check": "connection_service_architecture",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-connection-service-architecture.json",
+      "legacySha256": "41242e7ccb231d7b7206efaea883ffee62f9a0c71e69817d8d700eb85b35919c",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/connection-service-architecture.rr",
+      "ruleSha256": "793308cfb9dbd47504af5b67b299d0892589d68d807fa1569169d9a888d05449"
+    },
+    {
+      "check": "schema_architecture",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-schema-architecture.json",
+      "legacySha256": "30856bfd29ae32869ff08f23a48c889ce803bcb4cbf35266a1d8adf7981dcc12",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/schema-architecture.rr",
+      "ruleSha256": "bccae020e42fdee07df677387035af80c5cc5ae1cd41aeac884b9db67d8345a7"
+    },
+    {
+      "check": "schema_bootstrap_contracts",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-schema-bootstrap-contracts.json",
+      "legacySha256": "416b458ae676bb46cd8b56926095632cb807e0bd139110df3884a59536e1a1b2",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/schema-bootstrap-contracts.rr",
+      "ruleSha256": "5747d7dbb2968be6a55215e7a9c0b88634aa5c02fd5265bfdeb367e44010db17"
+    },
+    {
+      "check": "bootstrap_engine_invariants",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-engine-invariants.json",
+      "legacySha256": "4c94ccfc58c52deb0fbc35c290ef73235639384763744f8e711e3d462849d480",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/bootstrap-engine-invariants.rr",
+      "ruleSha256": "38ce4a4787d01b747c58facfec1794ba2b314ec0d9325bbb9bddc39a99e6ac0d"
+    },
+    {
+      "check": "bootstrap_lazy_sql",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-lazy-sql.json",
+      "legacySha256": "e210b5c3fb9a93698cee84e4b4bcf53827bfea37c43c2d67f60dedff59ee2750",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/bootstrap-lazy-sql.rr",
+      "ruleSha256": "60e7cca51e37d596e9d731273968d3ddbbf019e6a66d402f583345320cf435d7"
+    },
+    {
+      "check": "bootstrap_eager_resolve",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-eager-resolve.json",
+      "legacySha256": "de45969e800ffe9cab7bedfa3eb37196cb04a2b472c764c6004da45e5912ee58",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/bootstrap-eager-resolve.rr",
+      "ruleSha256": "346aca71d2d316a17f3b3a6cf8629ab44772d7297a106c0111a04de5b5e48be0"
+    },
+    {
+      "check": "bootstrap_cache_health",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-cache-health.json",
+      "legacySha256": "cfb152530a226a898cca6e8c65c0cfcfaf2b32ac13d763991a7650322962dee8",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/bootstrap-cache-health.rr",
+      "ruleSha256": "73b8e9d8495ee2a0a7a21ec49d89f09fc87e941b69ad3696c17695a69de674cc"
+    },
+    {
+      "check": "plan_composition_architecture",
+      "batch": 9,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-plan-composition-architecture.json",
+      "legacySha256": "5079ff97db88eeee2a757c66613e13c1be0c280a4f358a884411f867f388bacf",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-composition-architecture.rr",
+      "ruleSha256": "3a341800275caf104d668d3999675ad55666e3feb8b12c4664a668e293de0e36"
+    },
+    {
+      "check": "graph_lazy_sql_plan",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-graph-lazy-sql-plan.json",
+      "legacySha256": "7430ecb2d14f80b16991b1b8c619a320f671cb936e2035009e589f73735f57b7",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/graph-lazy-sql-plan.rr",
+      "ruleSha256": "2b9946c18093ef7bef9ed8e2c92a3cfdb9da30c16fb8855b2b6187bf8ffc4452"
+    },
+    {
+      "check": "bounded_composed_graph_paths",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-bounded-composed-graph-paths.json",
+      "legacySha256": "832ec357249713c1c095548abd456e2485ce6bc6fa9a40c236cc2c8e7d74ec95",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/bounded-composed-graph-paths.rr",
+      "ruleSha256": "123005d47faaa0f8066ad856fcf241fe232108334e3e501f54644df470feea9e"
+    },
+    {
+      "check": "graphql_plan_ownership",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-graphql-plan-ownership.json",
+      "legacySha256": "74ec53e0178e02528a5d73ac12e77d6609ef0112ee64a3144678dddb3aadc17a",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/graphql-plan-ownership.rr",
+      "ruleSha256": "cf881a65cd844498ed8c704119a7a91f58e5e0cc1fbb3e451d2069c87e4c62fd"
+    },
+    {
+      "check": "plan_optimizer_v2",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-plan-optimizer-v2.json",
+      "legacySha256": "9f53e84139951dc2ca480178d040f52882f404b30104aca86578f2b7ad4f510d",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-optimizer-v2.rr",
+      "ruleSha256": "02903161b89ae13d161341844c43884ee19091f4d23b6f2bd8173ca08801d7df"
+    },
+    {
+      "check": "conditional_architecture",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-conditional-architecture.json",
+      "legacySha256": "3fd6bb19129bc33f49d9c15ee9b26e2f2535a40bc7085faf0f6b7a98e55acb2d",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/conditional-architecture.rr",
+      "ruleSha256": "bd8769cc8c143805725c5db78839da869fd6af565462b9698b9149adbbffa5d3"
+    },
+    {
+      "check": "schema_introspection_data_paths",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-schema-introspection-data-paths.json",
+      "legacySha256": "56357ef19b9202fff3f5adb5edbd61f32823debe349e470761551e3493a98330",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/schema-introspection-data-paths.rr",
+      "ruleSha256": "94b8f234b59aed5f4753f6fac8062abede14f93a9a7a79f5184943dfb2b58afa"
+    },
+    {
+      "check": "matching_architecture",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-matching-architecture.json",
+      "legacySha256": "b4b78dc19436fcb52d32e756738ad754f51aec55952031ecb679d8f5e4e26742",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/matching-architecture.rr",
+      "ruleSha256": "edb33d60fe6d8603e079a337ac1cd1af0854645890de29cdf43e44f634b4fd90"
+    },
+    {
+      "check": "hnsw_architecture",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-hnsw-architecture.json",
+      "legacySha256": "c7545b1fb8197b746548e00b4318a65710dd54c39bee35790a1ebd8a7e80ebd6",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/hnsw-architecture.rr",
+      "ruleSha256": "70159a44e04340bf6b478084645ed4d8ec906e21d257649e5167523df55207c1"
+    },
+    {
+      "check": "embedding_vector_orchestration",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-embedding-vector-orchestration.json",
+      "legacySha256": "bf0ca5b87f8fcf733dd7526aefa65b2aee1307a56c479dcf12525ea41ae57e0f",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/embedding-vector-orchestration.rr",
+      "ruleSha256": "86cd1846921d986bdefaa26d6edc105b96103c7d009e3e5bb34a92fe0b94104b"
+    },
+    {
+      "check": "generated_index_sources",
+      "batch": 10,
+      "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-generated-index-sources.json",
+      "legacySha256": "80fba2624934f3f927a0777746fe9af604c63c6df6391e532ef739c5c36e3f5f",
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "ruleSha256": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1"
+    }
+  ],
+  "syntaxSnapshots": [
+    {
+      "branch": "jeremybarnes/More-ergonomic-rule-syntax",
+      "commit": "574102166239b096227268dcbaf8f0298ca8faf1",
+      "uncommitted": [
+        "?? docs/rule-syntax/data-layer/authentication-plan-purity.rr",
+        "?? docs/rule-syntax/data-layer/cached-pure-lazy-allowlist.rr",
+        "?? docs/rule-syntax/data-layer/cached-pure-lazy-allowlist.symbols.rr",
+        "?? docs/rule-syntax/data-layer/conditional-architecture.rr",
+        "?? docs/rule-syntax/data-layer/eager-resolve.tables.rr",
+        "?? docs/rule-syntax/data-layer/embedding-vector-orchestration.rr",
+        "?? docs/rule-syntax/data-layer/gen-cached-pure-lazy-allowlist.py",
+        "?? docs/rule-syntax/data-layer/gen-eager-resolve.py",
+        "?? docs/rule-syntax/data-layer/gen-lazy-architecture.py",
+        "?? docs/rule-syntax/data-layer/gen-plan-helpers-allowlist.py",
+        "?? docs/rule-syntax/data-layer/generated-index-sources.rr",
+        "?? docs/rule-syntax/data-layer/hnsw-architecture.rr",
+        "?? docs/rule-syntax/data-layer/lazy-adapter-ownership.rr",
+        "?? docs/rule-syntax/data-layer/lazy-architecture.rr",
+        "?? docs/rule-syntax/data-layer/lazy-architecture.tables.rr",
+        "?? docs/rule-syntax/data-layer/lazy-sql-surface.rr",
+        "?? docs/rule-syntax/data-layer/matching-architecture.rr",
+        "?? docs/rule-syntax/data-layer/plan-composition-architecture.rr",
+        "?? docs/rule-syntax/data-layer/plan-helpers-allowlist.rr",
+        "?? docs/rule-syntax/data-layer/plan-helpers-allowlist.tables.rr",
+        "?? docs/rule-syntax/data-layer/plan-optimizer-v2.rr",
+        "?? docs/rule-syntax/data-layer/readthrough-authority-architecture.rr",
+        "?? docs/rule-syntax/lib/data-layer/lazy-analyzer.rr",
+        "?? docs/rule-syntax/lib/data-layer/match-frames.rr",
+        "?? docs/rule-syntax/lib/data-layer/purity-ast.rr"
+      ]
+    },
+    {
+      "branch": "jeremybarnes/More-ergonomic-rule-syntax",
+      "commit": "acacaa500dd624452c0a09cf70d46ccb880df31d",
+      "uncommitted": []
+    },
+    {
+      "branch": "jeremybarnes/More-ergonomic-rule-syntax",
+      "commit": "244b95a15724be32936b9350996a1e09fd9f71b1",
+      "uncommitted": [
+        "M docs/rule-syntax/data-layer/gen-pure-lazy-runtime-purity.py",
+        " M docs/rule-syntax/data-layer/pure-lazy-runtime-purity.rr",
+        " M docs/rule-syntax/data-layer/pure-lazy-runtime-purity.tables.rr",
+        "?? docs/rule-syntax/lib/data-layer/purity-calls.rr"
+      ]
+    },
+    {
+      "branch": "jeremybarnes/More-ergonomic-rule-syntax",
+      "commit": "fa50cd94c1bb2621647cc73c31e119f1db9f3be2",
+      "uncommitted": []
+    }
+  ],
+  "engineSource": {
+    "checkout": ".",
+    "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918",
+    "status": "Final rerail shape engine is the sole active engine; build and test from the repository root",
+    "retiredCheckout": ".rerail/rr-migration-20261106/engine"
+  }
+}

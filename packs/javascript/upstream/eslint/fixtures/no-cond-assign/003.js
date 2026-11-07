@@ -1,1 +1,0 @@
-if ((someNode = someNode.parentNode) !== null) { }

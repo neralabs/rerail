@@ -1,1 +1,0 @@
-Lead @readonly($arg) Trail

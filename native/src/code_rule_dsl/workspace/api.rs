@@ -4,9 +4,9 @@
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
-use super::global::{
-    compile_query_plan, compile_relation_producer, evaluate_batched_relations, evaluate_global,
-};
+#[cfg(test)]
+use super::global::evaluate_batched_relations;
+use super::global::{compile_query_plan, compile_relation_producer, evaluate_global};
 use super::index::{RepositoryIndexOptions, WorkspaceIndexTask, reusable_directories};
 use super::ingest::{
     Request, apply_request, decode_buffer_request, file_needs_update, inline_input, is_cheap,
@@ -63,16 +63,6 @@ pub struct CodeRuleDslWorkspace {
     pub(super) closed: Arc<AtomicBool>,
 }
 
-impl CodeRuleDslWorkspace {
-    pub(in crate::code_rule_dsl) fn with_corpus(
-        corpus: Arc<crate::code_rule_dsl::matcher::Corpus>,
-    ) -> Self {
-        let workspace = Self::new();
-        workspace.state.lock().expect("new workspace").anchor_corpus = corpus;
-        workspace
-    }
-}
-
 impl Default for CodeRuleDslWorkspace {
     fn default() -> Self {
         Self::new()
@@ -98,6 +88,8 @@ impl CodeRuleDslWorkspace {
 
     /// Attaches the content store file at `store_path` to the Git repository containing `root`.
     /// The host chooses the file (each build owns its own); the binding never derives one.
+    /// Not in a `headless` build, where `#[napi(object)]` derives nothing (napi-derive `noop`).
+    #[cfg(not(feature = "headless"))]
     #[napi]
     pub fn enable_storage_async(
         &self,
@@ -211,6 +203,8 @@ impl CodeRuleDslWorkspace {
                             .relation_plans
                             .insert((index, clause.id.clone()), vec![id]);
                     }
+                    // P's relational producers (test-only, open item O18).
+                    #[cfg(test)]
                     ClauseKind::Relational(plan) => {
                         let ids = plan
                             .inputs
@@ -602,6 +596,7 @@ fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
         }
         ClauseKind::Budget { query, .. } => in_manifest_family(&query.ast.query),
         ClauseKind::Llm => false,
+        #[cfg(test)]
         ClauseKind::Relational(plan) => plan
             .inputs
             .iter()
@@ -729,6 +724,7 @@ pub struct WorkspaceStorageTask {
     store_path: PathBuf,
 }
 
+#[cfg(not(feature = "headless"))]
 impl Task for WorkspaceStorageTask {
     type Output = StorageAttachment;
     type JsValue = StorageAttachment;
@@ -912,8 +908,10 @@ impl WorkspaceApplyTask {
         let storage = state.storage.clone();
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
+        #[cfg(all(test, feature = "p-anchor-corpus"))]
         let anchor_corpus = Arc::clone(&state.anchor_corpus);
         let context = JobContext {
+            #[cfg(all(test, feature = "p-anchor-corpus"))]
             anchor_corpus: &anchor_corpus,
             code_rules: &code_rules,
             storage: storage.as_ref(),
@@ -1109,8 +1107,10 @@ impl WorkspaceApplyTask {
             let mut file = state.files.remove(&path).expect("checked above");
             if file.stays_resident() {
                 let only = BTreeSet::from([path.clone()]);
+                // A read that failed comes back transient: its clauses are marked below.
                 if let Ok(Some(stored)) =
                     evicted_file_states(&state, Some(&only), false).map(|mut stored| stored.pop())
+                    && !stored.transient_failure
                 {
                     file.join_other_clauses(stored);
                 }
@@ -1143,8 +1143,13 @@ impl WorkspaceApplyTask {
                 files: Vec::new(),
             };
             let dirty = std::mem::take(&mut state.dirty_globals);
+            // P's relational clauses, batched across rules (test-only, open item O18).
+            #[cfg(test)]
             let mut relational =
                 evaluate_batched_relations(&mut state, &dirty, &snapshot, &self.closed)?;
+            #[cfg(not(test))]
+            let mut relational =
+                std::collections::BTreeMap::<usize, std::collections::BTreeMap<String, Evaluation>>::new();
             for index in dirty {
                 check_closed(&self.closed)?;
                 let budget = MatchBudget::work(&self.closed, CLAUSE_WORK_BUDGET);
@@ -1162,7 +1167,6 @@ impl WorkspaceApplyTask {
                         overflow_evaluation("runtime", "global evaluation time budget exceeded");
                 }
                 metrics.visited_nodes += evaluation.metrics.visited_nodes;
-                metrics.observe_native_work(&evaluation.metrics);
                 let previous = state.global_results.insert(index, evaluation);
                 complete |= !replace_global_changes(
                     previous.as_ref(),
@@ -1173,20 +1177,9 @@ impl WorkspaceApplyTask {
         }
         check_closed(&self.closed)?;
         if quiet {
-            // Quiet omits findings, but callers can stop a failed batch before requesting pages.
-            let has_failures = replaced.iter().any(|path| {
-                state
-                    .files
-                    .get(path)
-                    .is_some_and(|file| !file.failures.is_empty())
-            }) || !deferred
-                && state
-                    .global_results
-                    .values()
-                    .any(|result| !result.failures.is_empty());
             let profile = metrics.clone();
             let serialization_started = Instant::now();
-            let output = serde_json::to_string(&json!({ "revision": state.revision, "hasEvaluationFailures": has_failures,
+            let output = serde_json::to_string(&json!({ "revision": state.revision,
                 "evaluation": evaluation_json(Evaluation { metrics, ..Evaluation::default() }, None, &[], &[]) })).map_err(json_error)?;
             check_closed(&self.closed)?;
             return profile_result(

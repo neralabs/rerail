@@ -1,0 +1,39 @@
+.policy "typescript-eslint-no-non-null-asserted-nullish-coalescing" revision 2
+.description "Don't put a non-null assertion on the left side of ??; the operator already handles null and undefined."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-b-scope.rr"
+//   use, resolves, unresolved, variable, writes, initialised; through tsx/eslint-a-common: deparen
+#include "tsx/eslint-a-globals.rr"
+//   es_builtin
+
+// typescript-eslint's no-non-null-asserted-nullish-coalescing: `x! ?? y` asserts x is not null, then handles the
+// case where it is. Reported at the `x!`, except where the `!` is how TypeScript accepts a variable it thinks is
+// unassigned: x is a local variable with no write before the expression (no initialiser, no assignment), or an
+// ECMAScript built-in the file does not declare (TypeScript has no declaration for it to check).
+//   foo! ?? bar   foo.bar! ?? x   let x = f(); x! ?? 1   let x; x = f(); x! ?? 1    → reported
+//   let x: string; x! ?? ""   function f(x?: string) { x! ?? ""; }                     fine
+// No options. The rule's suggestion (remove the `!`) is not offered here.
+.violation no_non_null_asserted_nullish_coalescing(at: node) code "@typescript-eslint/no-non-null-asserted-nullish-coalescing" "Remove this non-null assertion; `??` already handles the null and undefined it rules out."
+    suppress eslint "@typescript-eslint/no-non-null-asserted-nullish-coalescing"
+no_non_null_asserted_nullish_coalescing(n) :- coalesced(n), !unassigned(n).
+
+// coalesced(n): n is a non-null assertion that is the left side of `??`.
+.decl coalesced(n: node)
+coalesced(n) :- kind(b, "binary_expression"), op(b, "??"), field(b, "left", l), deparen(l, n), kind(n, "non_null_expression").
+// unassigned(n): n is `x!` for a variable x of the file that nothing writes before n ends, or for a built-in.
+.decl unassigned(n: node)
+unassigned(n) :- coalesced(n), child(n, e, 0), deparen(e, r), kind(r, "identifier"), resolves(r, s, x),
+    node(_, n, _, _, end), !written_before(s, x, end).
+unassigned(n) :- coalesced(n), child(n, e, 0), deparen(e, r), kind(r, "identifier"), unresolved(r, x), es_builtin(x).
+.decl written_before(s: node, x: symbol, end: number)
+written_before(s, x, end) :- unassigned_ask(s, x, end), resolves(w, s, x), writes(w), node(_, w, _, _, e), e < end.
+written_before(s, x, end) :- unassigned_ask(s, x, end), variable(s, x, id, _), initialised(id), node(_, id, _, _, e),
+    e < end.
+written_before(s, x, end) :- unassigned_ask(s, x, end), variable(s, x, id, _), field(d, "name", id),
+    kind(d, "variable_declarator"), op(d, "!"), node(_, d, _, _, e), e < end.
+.decl unassigned_ask(s: node, x: symbol, end: number)
+unassigned_ask(s, x, end) :- coalesced(n), child(n, e, 0), deparen(e, r), kind(r, "identifier"), resolves(r, s, x),
+    node(_, n, _, _, end).

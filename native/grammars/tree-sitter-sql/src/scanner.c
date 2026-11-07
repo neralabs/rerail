@@ -5,35 +5,29 @@
 #include <wctype.h>
 
 enum TokenType {
-  DOLLAR_QUOTED_STRING_START_TAG,
-  DOLLAR_QUOTED_STRING_END_TAG,
   DOLLAR_QUOTED_STRING,
-  COMMENT
+  COMMENT,
+  META_COMMAND,
+  COPY_DATA,
+  ERROR_SENTINEL,
 };
 
 // Rerail patch 22: a dollar quote's tag is the code points between its two `$`, kept whole (not
-// truncated to a byte), at most what one serialization buffer holds after the open flag. A longer
-// tag is not read as one.
-#define MAX_TAG_LENGTH ((TREE_SITTER_SERIALIZATION_BUFFER_SIZE - 1) / sizeof(int32_t))
+// truncated to a byte), at most 255 of them. A longer tag is not read as one.
+#define MAX_TAG_LENGTH 255
 
 typedef struct Tag {
   uint32_t length;
   int32_t chars[MAX_TAG_LENGTH];
 } Tag;
 
-typedef struct LexerState {
-  // A function body's start tag was read and its end tag not yet.
-  bool open;
-  Tag start_tag;
-} LexerState;
-
+// Rerail patch 24: a dollar-quoted string is one token wherever it occurs, so the scanner keeps no
+// state between tokens.
 void *tree_sitter_sql_external_scanner_create() {
-  return calloc(1, sizeof(LexerState));
+  return NULL;
 }
 
-void tree_sitter_sql_external_scanner_destroy(void *payload) {
-  free(payload);
-}
+void tree_sitter_sql_external_scanner_destroy(void *payload) {}
 
 // Rerail patch 23: a tag is empty or an identifier, as PostgreSQL's scanner (scan.l, dolqdelim)
 // reads it: a first code point from `[A-Za-z_]` or any non-ASCII one (scan.l takes every byte from
@@ -131,35 +125,121 @@ static bool scan_comment(TSLexer *lexer) {
   return false;
 }
 
-bool tree_sitter_sql_external_scanner_scan(void *payload, TSLexer *lexer, const bool *valid_symbols) {
-  LexerState *state = (LexerState*)payload;
-  if (valid_symbols[COMMENT]) {
-    while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
-    if (lexer->lookahead == '-' || lexer->lookahead == '/') return scan_comment(lexer);
-  }
-  if (valid_symbols[DOLLAR_QUOTED_STRING_START_TAG] && !state->open) {
-    while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
+// Rerail patch 25: a psql meta-command (`\echo ...`, `\set ...`, `\gset`), as psql reads a script and
+// SQLFluff's postgres dialect lexes it: one `meta_command` token, so nothing inside it is SQL. A
+// command is a backslash, its name and its arguments: the rest of the line, up to a backslash that
+// starts the next command, or through a `\\` separator. `\set` and `\copy` take the whole line, and
+// `\copy (query)` may span lines inside its parentheses. A command that sends the query buffer (`\g`,
+// `\gx`, `\gset`, `\gexec`, `\gdesc`, `\crosstabview`, `\watch`) ends the statement before it, as `;`
+// does: the scanner leaves it to the grammar's internal _meta_command_send token.
+#define MAX_COMMAND_NAME 16
 
-    Tag start_tag;
-    if (!scan_dollar_string_tag(lexer, &start_tag)) {
-      return false;
+static const char *SEND_COMMANDS[] = {"g", "gx", "gset", "gexec", "gdesc", "crosstabview", "watch"};
+
+static bool is_line_end(TSLexer *lexer) {
+  return lexer->eof(lexer) || lexer->lookahead == '\n' || lexer->lookahead == '\r';
+}
+
+static void scan_to_line_end(TSLexer *lexer) {
+  while (!is_line_end(lexer)) lexer->advance(lexer, false);
+}
+
+static bool scan_meta_command(TSLexer *lexer, const bool *valid_symbols) {
+  lexer->advance(lexer, false);
+  char name[MAX_COMMAND_NAME + 1];
+  unsigned length = 0;
+  bool long_name = false;
+  while (!is_line_end(lexer) && !iswspace(lexer->lookahead) && lexer->lookahead != '\\') {
+    if (length < MAX_COMMAND_NAME && lexer->lookahead < 0x80) {
+      name[length++] = (char)lexer->lookahead;
+    } else {
+      long_name = true;
     }
-    state->start_tag = start_tag;
-    state->open = true;
-    lexer->result_symbol = DOLLAR_QUOTED_STRING_START_TAG;
+    lexer->advance(lexer, false);
+  }
+  name[length] = 0;
+  if (length == 0 && !long_name) return false;
+  bool send = false;
+  if (!long_name) {
+    for (unsigned i = 0; i < sizeof(SEND_COMMANDS) / sizeof(SEND_COMMANDS[0]); i++) {
+      if (strcmp(name, SEND_COMMANDS[i]) == 0) send = true;
+    }
+  }
+  // A command that sends the query buffer is the grammar's internal _meta_command_send token.
+  if (send || !valid_symbols[META_COMMAND]) return false;
+  lexer->result_symbol = META_COMMAND;
+  if (!long_name && (strcmp(name, "set") == 0 || strcmp(name, "copy") == 0)) {
+    if (strcmp(name, "copy") == 0) {
+      while (!is_line_end(lexer) && iswspace(lexer->lookahead)) lexer->advance(lexer, false);
+      if (lexer->lookahead == '(') {
+        unsigned depth = 0;
+        while (!lexer->eof(lexer)) {
+          if (lexer->lookahead == '(') depth++;
+          if (lexer->lookahead == ')' && --depth == 0) break;
+          lexer->advance(lexer, false);
+        }
+      }
+    }
+    scan_to_line_end(lexer);
+    lexer->mark_end(lexer);
     return true;
   }
-
-  if (valid_symbols[DOLLAR_QUOTED_STRING_END_TAG] && state->open) {
-    while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
-
-    Tag end_tag;
-    if (scan_dollar_string_tag(lexer, &end_tag) && same_tag(&end_tag, &state->start_tag)) {
-      state->open = false;
-      lexer->result_symbol = DOLLAR_QUOTED_STRING_END_TAG;
+  while (!is_line_end(lexer)) {
+    if (lexer->lookahead == '\\') {
+      lexer->mark_end(lexer);
+      lexer->advance(lexer, false);
+      if (lexer->lookahead == '\\') {
+        lexer->advance(lexer, false);
+        lexer->mark_end(lexer);
+      }
       return true;
     }
-    return false;
+    lexer->advance(lexer, false);
+  }
+  lexer->mark_end(lexer);
+  return true;
+}
+
+// Rerail patch 29: the data rows after `COPY ... FROM STDIN;`. The rest of the `;` line is blank;
+// the rows run through the first line that holds `\.` alone (trailing blanks allowed). Without
+// such a line there is no data block.
+static bool scan_copy_data(TSLexer *lexer) {
+  while (lexer->lookahead == ' ' || lexer->lookahead == '\t' || lexer->lookahead == '\r') {
+    lexer->advance(lexer, true);
+  }
+  if (lexer->lookahead != '\n') return false;
+  lexer->advance(lexer, true);
+  while (!lexer->eof(lexer)) {
+    if (lexer->lookahead == '\\') {
+      lexer->advance(lexer, false);
+      if (lexer->lookahead == '.') {
+        lexer->advance(lexer, false);
+        while (lexer->lookahead == ' ' || lexer->lookahead == '\t' || lexer->lookahead == '\r') {
+          lexer->advance(lexer, false);
+        }
+        if (lexer->eof(lexer) || lexer->lookahead == '\n') {
+          lexer->mark_end(lexer);
+          lexer->result_symbol = COPY_DATA;
+          return true;
+        }
+      }
+    }
+    while (!lexer->eof(lexer) && lexer->lookahead != '\n') lexer->advance(lexer, false);
+    if (lexer->eof(lexer)) return false;
+    lexer->advance(lexer, false);
+  }
+  return false;
+}
+
+bool tree_sitter_sql_external_scanner_scan(void *payload, TSLexer *lexer, const bool *valid_symbols) {
+  if (valid_symbols[COPY_DATA] && !valid_symbols[ERROR_SENTINEL]) {
+    return scan_copy_data(lexer);
+  }
+
+  if (valid_symbols[COMMENT] || valid_symbols[META_COMMAND]) {
+    while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
+    if (valid_symbols[COMMENT] && (lexer->lookahead == '-' || lexer->lookahead == '/')) return scan_comment(lexer);
+    if (lexer->lookahead == '\\') return scan_meta_command(lexer, valid_symbols);
   }
 
   if (valid_symbols[DOLLAR_QUOTED_STRING]) {
@@ -168,10 +248,6 @@ bool tree_sitter_sql_external_scanner_scan(void *payload, TSLexer *lexer, const 
 
     Tag start_tag;
     if (!scan_dollar_string_tag(lexer, &start_tag)) {
-      return false;
-    }
-
-    if (state->open && same_tag(&state->start_tag, &start_tag)) {
       return false;
     }
 
@@ -186,30 +262,8 @@ bool tree_sitter_sql_external_scanner_scan(void *payload, TSLexer *lexer, const 
   return false;
 }
 
-// An open start tag is a flag byte and its code points; a closed state is empty.
 unsigned tree_sitter_sql_external_scanner_serialize(void *payload, char *buffer) {
-  LexerState *state = (LexerState *)payload;
-  if (!state->open) {
-    return 0;
-  }
-  unsigned size = state->start_tag.length * sizeof(int32_t);
-  buffer[0] = 1;
-  memcpy(buffer + 1, state->start_tag.chars, size);
-  return 1 + size;
+  return 0;
 }
 
-void tree_sitter_sql_external_scanner_deserialize(void *payload, const char *buffer, unsigned length) {
-  LexerState *state = (LexerState *)payload;
-  state->open = false;
-  state->start_tag.length = 0;
-  if (length == 0) {
-    return;
-  }
-  unsigned count = (length - 1) / sizeof(int32_t);
-  if (count > MAX_TAG_LENGTH) {
-    count = MAX_TAG_LENGTH;
-  }
-  state->open = true;
-  state->start_tag.length = count;
-  memcpy(state->start_tag.chars, buffer + 1, count * sizeof(int32_t));
-}
+void tree_sitter_sql_external_scanner_deserialize(void *payload, const char *buffer, unsigned length) {}

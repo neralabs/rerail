@@ -1,0 +1,89 @@
+.policy "eslint-strict" revision 3
+.description "Use 'use strict' only where it takes effect: once globally in CommonJS, per function in scripts, and never in ES modules or classes."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/modules.rr"
+//   use_strict(s, u, i)  u is the i-th "use strict" heading program or function s (i > 0: a repeat)
+//   simple_params(f), source_type(d, "module" | "commonjs" | "script"), scope_stmt, fn_region, fn_code
+
+// mode(d, m): what the rule asks of document d. option("option", m) is ESLint's one string option:
+// "safe" (the default), "global", "function" or "never". ESLint overrides it in two cases:
+//   a module is strict already            "module": every "use strict" is unnecessary
+//   impliedStrict makes the file strict   "implied": the same
+// and "safe" picks by environment: "global" for CommonJS or globalReturn, else "function".
+.decl mode(d: number, m: symbol)
+mode(d, "module") :- source_type(d, "module").
+mode(d, "implied") :- source_type(d, t), t != "module", option("impliedStrict", "true").
+mode(d, m) :- lax(d), option("option", m), m != "safe".
+mode(d, "global") :- lax(d), safe(), source_type(d, t), (t = "commonjs" ; option("globalReturn", "true")).
+mode(d, "function") :- lax(d), safe(), source_type(d, "script"), !option("globalReturn", "true").
+.decl lax(d: number)  // not strict from outside: the option decides
+lax(d) :- source_type(d, t), t != "module", !option("impliedStrict", "true").
+.decl safe()  // the option is unset or "safe"
+safe() :- (!option("option", _) ; option("option", "safe")).
+
+// report(at, id): a finding with ESLint's message id.
+.decl report(at: node, id: symbol)
+// The program's own "use strict". "global" wants exactly one, so repeats are reported; every other mode
+// reports them all:  "use strict"; f();  in a module is "module", in a "function"-mode script "function".
+report(u, "multiple") :- program(d, p), mode(d, "global"), use_strict(p, u, i), i > 0.
+report(u, m) :- program(d, p), mode(d, m), m != "global", use_strict(p, u, _).
+// "global" and none: at the first statement (ESLint reports the Program, which starts at its first token).
+report(st, "global") :- program(d, p), mode(d, "global"), scope_stmt(p, st, 0), !use_strict(p, _, _).
+
+// A function's "use strict". With defaults or destructuring it is a SyntaxError:
+//   function f(a = 1) { "use strict"; }
+report(u, "nonSimpleParameterList") :- fn_mode(f, _), use_strict(f, u, 0), !simple_params(f).
+// Repeats: always, in "function" mode, and with non-simple parameters in every mode.
+report(u, "multiple") :- fn_mode(f, m), use_strict(f, u, i), i > 0, (m = "function" ; !simple_params(f)).
+// Outside "function" mode, every one, with the mode as the message id ("global", "never", "module", …).
+report(u, m) :- fn_mode(f, m), m != "function", simple_params(f), use_strict(f, u, _).
+// "function" mode: a directive is redundant under a strict function, or in a class (always strict).
+//   function f() { "use strict"; function g() { "use strict"; } }    g's is "unnecessary"
+report(u, "unnecessary") :- fn_mode(f, "function"), simple_params(f), use_strict(f, u, 0), strict_above(f).
+report(u, "unnecessaryInClasses") :- fn_mode(f, "function"), simple_params(f), use_strict(f, u, 0),
+    !strict_above(f), inside(f, _, "class_body").
+// "function" mode: a top-level function without one: in no function's code (fn_code: a method's computed
+// name is outside it) and no class. With non-simple parameters it must be wrapped: (function () { … })().
+report(at, id) :- fn_mode(f, "function"), !use_strict(f, _, _), !inside(f, _, fn_code),
+    !inside(f, _, "class_body"), fn_at(f, at), (simple_params(f), id = "function" ; !simple_params(f), id = "wrap").
+
+.decl fn_mode(f: node, m: symbol)  // f is a function of a document in mode m
+fn_mode(f, m) :- kind(f, k), function_kind(k), docof(f, d), mode(d, m).
+.decl strict_above(f: node)  // an enclosing function has "use strict" (ESLint's isParentStrict)
+strict_above(f) :- use_strict(g, _, 0), fn_region(g, r), within(f, r).
+// fn_at(f, at): where ESLint reports f. A method's FunctionExpression starts at `<T>`, else at `(`.
+.decl fn_at(f: node, at: node)
+fn_at(f, f) :- fn_mode(f, _), !kind(f, "method_definition").
+fn_at(f, n) :- kind(f, "method_definition"), (field(f, "type_parameters", n) ;
+    !field(f, "type_parameters", _), field(f, "parameters", n)).
+
+.violation strict(at: node, id: symbol, msg: symbol) code "strict" "{msg}"
+    suppress eslint "strict"
+    fix remove_directive "Remove this 'use strict'"
+strict(at, id, m) :- report(at, id), says(id, m).
+strict(f, "wrap", cat("Wrap function '", x, "' in a function with 'use strict' directive.")) :-
+    report(f, "wrap"), fn_name(f, x).
+strict(f, "wrap", "Wrap the function in a function with 'use strict' directive.") :-
+    report(f, "wrap"), !fn_name(f, _).
+.decl fn_name(f: node, x: symbol)  // `function x() {}`, not async: what the message can name
+fn_name(f, x) :- (kind(f, "function_declaration") ; kind(f, "function_expression")), !op(f, "async"),
+    field(f, "name", n), text(n, x).
+// The fix deletes the directive, for the ids where it is redundant (ESLint fixes the same five).
+remove_directive(u, id, _) :- fixable(id) => delete(u).
+.decl fixable(id: symbol)
+fixable("multiple"). fixable("unnecessary"). fixable("unnecessaryInClasses"). fixable("module"). fixable("implied").
+
+.decl says(id: symbol, msg: symbol)  // ESLint's messages; "wrap" names the function, above
+says("function", "Use the function form of 'use strict'.").
+says("global", "Use the global form of 'use strict'.").
+says("multiple", "Multiple 'use strict' directives.").
+says("never", "Strict mode is not permitted.").
+says("unnecessary", "Unnecessary 'use strict' directive.").
+says("module", "'use strict' is unnecessary inside of modules.").
+says("implied", "'use strict' is unnecessary when implied strict mode is enabled.").
+says("unnecessaryInClasses", "'use strict' is unnecessary inside of classes.").
+says("nonSimpleParameterList",
+    "'use strict' directive inside a function with non-simple parameter list throws a syntax error since ES2016.").

@@ -1,1 +1,0 @@
-100 + Math.pow(class{static x=2}.x, 4);

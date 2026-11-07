@@ -1,1 +1,0 @@
-var contentContainer = <div className="content"><img src="picture.png" /></div>;

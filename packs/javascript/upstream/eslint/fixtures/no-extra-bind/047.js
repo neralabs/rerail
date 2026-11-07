@@ -1,1 +1,0 @@
-var a = function() { class C { field = this.x; } }.bind(b)

@@ -1,1 +1,0 @@
-const testE = function (this: void, a) {}

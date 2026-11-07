@@ -1,1 +1,0 @@
-var { longName: a } = {};

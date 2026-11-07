@@ -1,1 +1,0 @@
-const [[[{b}], a]] = array; alert(a);

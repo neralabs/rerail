@@ -3,7 +3,7 @@
   "id": "phpcs-generic-php-forbidden-functions",
   "revision": 1,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.ForbiddenFunctions with its default list (sizeof, delete): a call PHP resolves to either function.",
+  "description": "Use count() instead of its alias sizeof(), and don't call delete(); stick to the canonical PHP functions.",
   "scope": {
     "include": [
       "**/*.php"
@@ -35,7 +35,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "Generic.PHP.ForbiddenFunctions",
-        "message": "The use of function sizeof() or delete() is forbidden",
+        "message": "Replace sizeof() with count(), or replace delete() with unset() or unlink(), whichever was meant.",
         "suppress": {
           "phpcs": {
             "sniffs": [

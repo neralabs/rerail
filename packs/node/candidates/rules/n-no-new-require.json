@@ -1,0 +1,55 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-new-require",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Don't use new directly on a require() call; require the module into a variable first, then construct it, for readability.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "new_expression",
+            "has": {
+              "field": "constructor",
+              "kind": "identifier",
+              "regex": "^require$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-new-require",
+        "message": "Require the module into a variable first, then call new on that variable.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-new-require"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-new-require"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

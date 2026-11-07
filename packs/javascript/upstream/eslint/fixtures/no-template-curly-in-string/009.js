@@ -1,1 +1,0 @@
-`Hello, ${{foo: "bar"}.foo}`

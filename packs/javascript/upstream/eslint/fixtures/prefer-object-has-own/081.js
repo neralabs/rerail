@@ -1,1 +1,0 @@
-function foo(){return/*comment*/{}.hasOwnProperty.call(object, property)}

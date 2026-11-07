@@ -1,0 +1,1048 @@
+// scripts/s3/pack-fixtures.mjs: which paths are pack test data and which of it is authored, and pull, push (from the
+// data on disk, or from a pull request's commit), pack, upload, recordings, check and the CI cache entry against a
+// temporary git checkout with a fake `aws` whose bucket is a local directory.
+
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  ARCHIVE_CACHE,
+  archiveCache,
+  archiveCachePath,
+  archiveKey,
+  authoredListing,
+  BUCKET,
+  check,
+  isPackFixture,
+  PACK_FIXTURE_PATTERNS,
+  pack,
+  packFixtureKind,
+  packFixturesWritten,
+  pull,
+  push,
+  RECORDING_CACHE,
+  recordingKey,
+  recordings,
+  readLock,
+  requireAws,
+  upload,
+} from "../../scripts/s3/pack-fixtures.mjs";
+import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, readArchive, sha256 } from "../../scripts/s3/test-data-archive.mjs";
+
+/** A tool's UPSTREAM.md listing `files` (pack-relative) as Rerail's. */
+const record = (files) => `# cases Rerail wrote\n\n| File | Origin |\n|---|---|\n${files.map((file) => `| \`${file}\` | written by Rerail |\n`).join("")}`;
+
+const scratch = [];
+afterEach(() => {
+  for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+/** Every file under `root`, relative to it, sorted. */
+const files = (root) =>
+  existsSync(root)
+    ? readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => relative(root, join(entry.parentPath, entry.name)).split("\\").join("/"))
+      .sort()
+    : [];
+
+/** Every file under packs/ of the checkout, with its content, or only the pack test data with `dataOnly`. */
+const tree = (root, dataOnly = false) =>
+  Object.fromEntries(
+    files(join(root, "packs"))
+      .map((path) => `packs/${path}`)
+      .filter((path) => !dataOnly || isPackFixture(path))
+      .map((path) => [path, readFileSync(join(root, path), "utf8")]),
+  );
+
+const git = (root, ...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+const lines = (text) => text.split("\n").filter((line) => line !== "");
+
+const LOCKS = ["packs/p/upstream/t/test-data.lock", "packs/p/upstream/w/test-data.lock", "packs/q/upstream/u/test-data.lock"];
+const T = { pack: "p", tool: "t", directory: "packs/p/upstream/t" };
+const U = { pack: "q", tool: "u", directory: "packs/q/upstream/u" };
+
+/**
+ * A git checkout whose .gitignore covers pack test data and the archive cache, as the repository's does, and a bucket
+ * directory holding each key as a file, with the fake `aws` that serves it and records its calls.
+ */
+function setUp() {
+  const base = mkdtempSync(join(tmpdir(), "pack-fixtures-test-"));
+  scratch.push(base);
+  const root = join(base, "checkout");
+  const bucket = join(base, "bucket");
+  mkdirSync(root);
+  mkdirSync(bucket);
+  git(root, "init", "-q");
+  git(root, "config", "user.email", "test@example.com");
+  git(root, "config", "user.name", "test");
+  const write = (path, content) => {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), content);
+  };
+  write(".gitignore", `${["/.rerail/", ...PACK_FIXTURE_PATTERNS.map((pattern) => `/${pattern}`)].join("\n")}\n`);
+  const object = (key) => join(bucket, key);
+  const calls = [];
+  const aws = (args) => {
+    calls.push(args);
+    const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+    if (args[0] === "sts" && args[1] === "get-caller-identity") return { status: 0, stdout: "{}" };
+    if (args[0] === "s3" && args[1] === "cp" && args[2].startsWith(`s3://${BUCKET}/`)) {
+      const source = object(args[2].slice(`s3://${BUCKET}/`.length));
+      if (!existsSync(source)) return { status: 1, stderr: `fatal error: An error occurred (404) when calling the HeadObject operation: Key "${args[2]}" does not exist\n` };
+      copyFileSync(source, args[3]);
+      return { status: 0, stdout: "" };
+    }
+    if (args[0] === "s3api" && args[1] === "head-object" && option("--bucket") === BUCKET) {
+      if (!existsSync(object(option("--key")))) return { status: 254, stderr: "\nAn error occurred (404) when calling the HeadObject operation: Not Found\n" };
+      return { status: 0, stdout: "{}" };
+    }
+    if (args[0] === "s3api" && args[1] === "put-object" && option("--bucket") === BUCKET && option("--if-none-match") === "*") {
+      const target = object(option("--key"));
+      if (existsSync(target)) {
+        return { status: 254, stderr: "\nAn error occurred (PreconditionFailed) when calling the PutObject operation: At least one of the pre-conditions you specified did not hold\n" };
+      }
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(option("--body"), target);
+      return { status: 0, stdout: "{}" };
+    }
+    throw new Error(`the fake aws does not implement: aws ${args.join(" ")}`);
+  };
+  /** The calls of one kind, e.g. "put-object" or "cp". */
+  const called = (command) => calls.filter((args) => args[1] === command);
+  return { root, bucket, object, aws, calls, called, write };
+}
+
+/** setUp with three tool-packs' test data on disk, untracked, and everything else committed. */
+function withData() {
+  const context = setUp();
+  const { root, write } = context;
+  write("packs/p/upstream/t/gates.yaml", "gates\n");
+  write("packs/p/upstream/t/UPSTREAM.md", record(["upstream/t/fixtures/rerail/a.py"]));
+  write("packs/p/upstream/t/fixtures/rerail/a.py", "authored\n");
+  write("packs/p/upstream/t/fixtures/upstream/b.py", "derived\n");
+  write("packs/p/upstream/t/x y.expected.json", "{}\n");
+  write("packs/p/upstream/w/gates.yaml", "gates\n");
+  write("packs/p/upstream/w/cases.json", "[]\n");
+  write("packs/q/upstream/u/gates.yaml", "gates\n");
+  write("packs/q/upstream/u/authored/corpus/c.py", "corpus\n");
+  git(root, "add", ".");
+  git(root, "commit", "-qm", "packs");
+  context.data = tree(root, true);
+  return context;
+}
+
+/** withData pushed and its locks committed; the fake aws's calls so far are forgotten. */
+function published() {
+  const context = withData();
+  push({ root: context.root, aws: context.aws, log: () => {} });
+  git(context.root, "add", ".");
+  git(context.root, "commit", "-qm", "locks");
+  context.calls.length = 0;
+  return context;
+}
+
+/** Removes the pack test data from disk, and the archive cache unless `keepCache`: a fresh checkout. */
+function fresh(root, keepCache = false) {
+  for (const path of Object.keys(tree(root, true))) rmSync(join(root, path));
+  if (!keepCache) rmSync(join(root, ARCHIVE_CACHE), { recursive: true, force: true });
+}
+
+describe("isPackFixture", () => {
+  it("matches a tool's cases and recorded answers, and nothing else under upstream/<tool>/", () => {
+    const data = [
+      "packs/php/upstream/phpcs/fixtures/Generic/x.inc",
+      "packs/react/upstream/eslint-plugin-react/tests/lib/rules/a.js",
+      "packs/node/upstream/eslint-plugin-n/fixtures.expected.json",
+      "packs/blade/upstream/blade-parser/corpus-bagisto.expected.json",
+      "packs/vue/upstream/eslint-plugin-vue/cases.json",
+      "packs/sql/upstream/sqlfluff/fixtures.cases.json",
+      "packs/rust/upstream/clippy/fixtures.upstream-check.json",
+      "packs/complexity/upstream/lizard/lizard-1.24.0.tsv",
+      "packs/next/upstream/eslint-plugin-next/fixtures/pages/[id].tsx",
+      "packs/node/upstream/eslint-plugin-n/authored/corpus/src/a.js",
+    ];
+    const kept = [
+      "packs/python/upstream/ruff/gates.yaml",
+      "packs/python/upstream/ruff/generate.py",
+      "packs/python/upstream/ruff/UPSTREAM.md",
+      "packs/python/upstream/ruff/goldens.tsv",
+      "packs/python/upstream/ruff/recording.lock",
+      "packs/python/upstream/ruff/test-data.lock",
+      "packs/python/upstream/ruff/recording.json",
+      "packs/php/upstream/phpcs/ruleset.xml",
+      "packs/blade/upstream/bladestan/composer-laravel.lock",
+      "packs/python/upstream/common.py",
+      "packs/python/upstream/fixtures.expected.json",
+      "packs/python/rules/a.json",
+      "fixtures/packs/valid/upstream/tool/fixtures.expected.json",
+    ];
+    expect(data.filter((path) => !isPackFixture(path))).toEqual([]);
+    expect(kept.filter((path) => isPackFixture(path))).toEqual([]);
+  });
+});
+
+describe("authored and derived", () => {
+  it("takes what the tool's own UPSTREAM.md lists, and upstream/<tool>/authored/, as authored; the rest is derived", () => {
+    const { root, write } = setUp();
+    write("packs/p/upstream/t/UPSTREAM.md", record(["upstream/t/fixtures/rerail/a.py", "upstream/other/fixtures/b.py"]));
+    const authored = authoredListing(root);
+    expect([...authored]).toEqual(["packs/p/upstream/t/fixtures/rerail/a.py"]);
+    expect(packFixtureKind("packs/p/upstream/t/fixtures/rerail/a.py", authored)).toBe("authored");
+    expect(packFixtureKind("packs/p/upstream/t/authored/corpus/x.py", authored)).toBe("authored");
+    expect(packFixtureKind("packs/p/upstream/t/fixtures/upstream/a.py", authored)).toBe("derived");
+    expect(packFixtureKind("packs/p/upstream/t/fixtures.expected.json", authored)).toBe("derived");
+    expect(packFixtureKind("packs/p/upstream/t/gates.yaml", authored)).toBeUndefined();
+  });
+
+  it("tells a contributor to add only the authored files a recorder wrote, quoting paths the shell would split", () => {
+    const { root, write } = setUp();
+    write("packs/a/upstream/t/UPSTREAM.md", record(["upstream/t/fixtures/p [x].js"]));
+    write("packs/a/upstream/t/fixtures/p [x].js", "mine\n");
+    write("packs/a/upstream/t/fixtures/upstream.js", "theirs\n");
+    write("packs/a/upstream/t/fixtures.expected.json", "{}\n");
+    const message = packFixturesWritten([join(root, "packs/a/upstream/t/fixtures"), join(root, "packs/a/upstream/t/fixtures.expected.json")], root);
+    expect(message).toContain("npm run fixtures:push");
+    expect(message).toContain("git add -f -- 'packs/a/upstream/t/fixtures/p [x].js'\n");
+    expect(packFixturesWritten([join(root, "packs/a/upstream/t/fixtures.expected.json")], root)).not.toContain("git add");
+  });
+});
+
+describe("requireAws", () => {
+  it("says to install the CLI when aws is missing, and to sign in when it is not authenticated", () => {
+    const missing = Object.assign(new Error("spawn aws ENOENT"), { code: "ENOENT" });
+    expect(() => requireAws(() => ({ status: null, error: missing }))).toThrow(/AWS CLI \(aws\) is not installed[^]*s3:\/\/nera-test-fixtures\/rerail\/archives\//u);
+    expect(() => requireAws(() => ({ status: 255, stderr: "\nUnable to locate credentials\n" }))).toThrow(
+      /aws is not signed in \(aws sts get-caller-identity: Unable to locate credentials\)/u,
+    );
+    expect(() => requireAws(() => ({ status: 0, stdout: "{}" }))).not.toThrow();
+  });
+});
+
+describe("pull", () => {
+  it("fetches each locked archive from S3 into the cache and extracts it", () => {
+    const { root, aws, called, data } = published();
+    fresh(root);
+    const result = pull({ root, aws, log: () => {} });
+    expect(result.toolPacks.map(({ directory, source }) => [directory, source])).toEqual([
+      ["packs/p/upstream/t", "S3"],
+      ["packs/p/upstream/w", "S3"],
+      ["packs/q/upstream/u", "S3"],
+    ]);
+    expect(tree(root, true)).toEqual(data);
+    expect(called("cp")).toHaveLength(3);
+    expect(files(join(root, ARCHIVE_CACHE))).toHaveLength(3);
+  });
+
+  it("gives tracked files their committed content, keeps their working-tree edits, and overwrites untracked ones", () => {
+    const { root, aws, write } = published();
+    write("packs/p/upstream/t/fixtures/rerail/a.py", "committed\n");
+    write("packs/p/upstream/t/fixtures/rerail/new.py", "new\n");
+    write("packs/p/upstream/t/x y.expected.json", "committed\n");
+    git(root, "add", "-f", "--", "packs/p/upstream/t/fixtures/rerail", "packs/p/upstream/t/x y.expected.json");
+    git(root, "commit", "-qm", "pull request data");
+    write("packs/p/upstream/t/x y.expected.json", "edited\n");
+    write("packs/p/upstream/t/fixtures/upstream/b.py", "untracked\n");
+
+    expect(pull({ root, aws, log: () => {} })).toMatchObject({ restored: 2, kept: 1 });
+
+    const read = (path) => readFileSync(join(root, "packs/p/upstream/t", path), "utf8");
+    expect(read("fixtures/rerail/a.py")).toBe("committed\n");
+    expect(read("fixtures/rerail/new.py")).toBe("new\n");
+    expect(read("x y.expected.json")).toBe("edited\n");
+    expect(read("fixtures/upstream/b.py")).toBe("derived\n");
+  });
+
+  it("deletes an untracked derived file the archive lacks and keeps an untracked authored one", () => {
+    const { root, aws, write, data } = published();
+    write("packs/p/upstream/t/fixtures/upstream/stale.py", "stale\n");
+    write("packs/q/upstream/u/authored/corpus/new.py", "new\n");
+    pull({ root, aws, log: () => {} });
+    expect(tree(root, true)).toEqual({ ...data, "packs/q/upstream/u/authored/corpus/new.py": "new\n" });
+  });
+
+  it("uses the cached archives without aws on a second pull", () => {
+    const { root, aws, calls, data } = published();
+    fresh(root);
+    pull({ root, aws, log: () => {} });
+    fresh(root, true);
+    calls.length = 0;
+    const result = pull({ root, aws, log: () => {} });
+    expect(calls).toEqual([]);
+    expect(result.toolPacks.map(({ source }) => source)).toEqual(["cache", "cache", "cache"]);
+    expect(tree(root, true)).toEqual(data);
+  });
+
+  it("selects one pack's tool-packs with --pack, and one tool-pack with --tool", () => {
+    const { root, aws, called, data } = published();
+    fresh(root);
+    const only = (prefix) => Object.fromEntries(Object.entries(data).filter(([path]) => path.startsWith(prefix)));
+    expect(pull({ root, aws, pack: "p", log: () => {} }).toolPacks.map(({ directory }) => directory)).toEqual(["packs/p/upstream/t", "packs/p/upstream/w"]);
+    expect(tree(root, true)).toEqual(only("packs/p/"));
+    expect(called("cp").every((args) => args[2].startsWith(`s3://${BUCKET}/rerail/archives/p/`))).toBe(true);
+    fresh(root);
+    pull({ root, aws, pack: "p", tool: "w", log: () => {} });
+    expect(tree(root, true)).toEqual(only("packs/p/upstream/w/"));
+  });
+
+  it("refuses a symlinked directory an entry goes in, naming it, with nothing written through it or anywhere else", () => {
+    const { root, aws } = published();
+    fresh(root);
+    const outside = join(dirname(root), "outside");
+    mkdirSync(outside);
+    rmSync(join(root, "packs/p/upstream/t/fixtures"), { recursive: true });
+    symlinkSync(outside, join(root, "packs/p/upstream/t/fixtures"));
+    expect(failure(() => pull({ root, aws, log: () => {} }))).toContain("packs/p/upstream/t/fixtures is a symlink");
+    expect(files(outside)).toEqual([]);
+    expect(tree(root, true)).toEqual({});
+  });
+
+  it("refuses a symlinked directory above the tool directory, naming it, with nothing written through it", () => {
+    const { root, aws } = published();
+    fresh(root);
+    const elsewhere = join(dirname(root), "elsewhere");
+    renameSync(join(root, "packs/q/upstream"), elsewhere);
+    symlinkSync(elsewhere, join(root, "packs/q/upstream"));
+    const before = files(elsewhere);
+    expect(failure(() => pull({ root, aws, pack: "q", log: () => {} }))).toContain("packs/q/upstream is a symlink");
+    expect(files(elsewhere)).toEqual(before);
+    expect(before.filter((path) => isPackFixture(`packs/q/upstream/${path}`))).toEqual([]);
+  });
+
+  describe("fails, naming the lock and changing nothing in the checkout, on", () => {
+    const label = "packs/q/upstream/u/test-data.lock";
+    const objectUrl = (digest) => `s3://${BUCKET}/rerail/archives/q/u/${digest}.tar.zst`;
+    const breaks = [
+      [
+        "a lock whose sha256 was edited, naming the key it expects",
+        ({ root, write }) => {
+          const lock = readLock(root, U);
+          const digest = `${lock.sha256.slice(0, -1)}${lock.sha256.endsWith("0") ? "1" : "0"}`;
+          write(label, lockText({ ...lock, sha256: digest }));
+          return [label, objectUrl(digest)];
+        },
+      ],
+      [
+        "an archive S3 does not hold, naming its key",
+        ({ root, object }) => {
+          const { sha256: digest } = readLock(root, U);
+          rmSync(object(archiveKey(U, digest)));
+          return [label, objectUrl(digest)];
+        },
+      ],
+      [
+        "a corrupted object",
+        ({ root, object }) => {
+          const path = object(archiveKey(U, readLock(root, U).sha256));
+          const bytes = readFileSync(path);
+          for (let index = 8; index < bytes.length - 4; index += 7) bytes[index] ^= 0xff;
+          writeFileSync(path, bytes);
+          return [label];
+        },
+      ],
+      [
+        "a lock whose file count was edited",
+        ({ root, write }) => {
+          const lock = readLock(root, U);
+          write(label, lockText({ ...lock, files: lock.files + 1 }));
+          return [label];
+        },
+      ],
+      [
+        "a lock whose byte count was edited",
+        ({ root, write }) => {
+          const lock = readLock(root, U);
+          write(label, lockText({ ...lock, bytes: lock.bytes - 1 }));
+          return [label];
+        },
+      ],
+      [
+        "a malformed lock",
+        ({ write }) => {
+          write(label, '{ "format": 1 }\n');
+          return [label];
+        },
+      ],
+    ];
+
+    it.each(breaks)("%s", (_, breakIt) => {
+      const context = published();
+      const { root, aws, write } = context;
+      fresh(root);
+      // The tool-pack sorted first verifies; a pull that went on would extract it and delete this stale derived file.
+      write("packs/p/upstream/t/fixtures/upstream/stale.py", "stale\n");
+      const named = breakIt(context);
+      const before = tree(root);
+      let message = "";
+      try {
+        pull({ root, aws, log: () => {} });
+      } catch (error) {
+        message = error.message;
+      }
+      for (const text of named) expect(message).toContain(text);
+      expect(tree(root)).toEqual(before);
+      expect(files(join(root, ARCHIVE_CACHE)).filter((path) => path.startsWith("q/"))).toEqual([]);
+    });
+  });
+});
+
+describe("push", () => {
+  it("archives each tool-pack, uploads the archive under its sha256 and writes the lock", () => {
+    const { root, aws, object, data } = withData();
+    const result = push({ root, aws, log: () => {} });
+    expect(result.changedLocks).toEqual(LOCKS);
+    const toolPacks = LOCKS.map((lock) => {
+      const [, pack, , tool] = lock.split("/");
+      return { pack, tool, directory: dirname(lock) };
+    });
+    expect(result.uploaded).toEqual(toolPacks.map((toolPack) => archiveKey(toolPack, readLock(root, toolPack).sha256)));
+    for (const toolPack of toolPacks) {
+      const lock = readLock(root, toolPack);
+      const tar = decompressArchive(readFileSync(object(archiveKey(toolPack, lock.sha256))));
+      expect(sha256(tar)).toBe(lock.sha256);
+      const entries = readArchive(tar);
+      expect({ files: lock.files, bytes: lock.bytes }).toEqual({ files: entries.length, bytes: entries.reduce((total, entry) => total + entry.bytes.length, 0) });
+      expect(Object.fromEntries(entries.map(({ path, bytes }) => [`${toolPack.directory}/${path}`, bytes.toString("utf8")]))).toEqual(
+        Object.fromEntries(Object.entries(data).filter(([path]) => path.startsWith(`${toolPack.directory}/`))),
+      );
+    }
+  });
+
+  it("uploads nothing and leaves the locks byte-identical when the data is unchanged", () => {
+    const { root, aws, called } = published();
+    const locks = LOCKS.map((lock) => readFileSync(join(root, lock)));
+    expect(push({ root, aws, log: () => {} })).toMatchObject({ changedLocks: [], uploaded: [] });
+    expect(called("put-object")).toEqual([]);
+    expect(LOCKS.map((lock) => readFileSync(join(root, lock)))).toEqual(locks);
+  });
+
+  it("prints the git commands that commit the locks and untrack exactly the tracked pack test data", () => {
+    const { root, aws } = withData();
+    const trackedData = [
+      "packs/p/upstream/t/fixtures/rerail/a.py",
+      "packs/p/upstream/t/fixtures/upstream/b.py",
+      "packs/p/upstream/t/x y.expected.json",
+      "packs/q/upstream/u/authored/corpus/c.py",
+    ];
+    git(root, "add", "-f", "--", ...trackedData);
+    git(root, "commit", "-qm", "pull request data");
+    const printed = [];
+    expect(push({ root, aws, log: (line) => printed.push(...line.split("\n")) }).tracked).toEqual(trackedData);
+    const command = (verb) => printed.filter((line) => line.startsWith(`  git ${verb} `)).map((line) => line.trim());
+    expect(command("add")).toEqual([`git add -- ${LOCKS.join(" ")}`]);
+    expect(command("rm")).toHaveLength(1);
+    for (const line of [...command("add"), ...command("rm")]) execFileSync("sh", ["-c", line], { cwd: root });
+    const staged = lines(git(root, "diff", "--cached", "--name-status", "--no-renames")).map((line) => line.split("\t"));
+    expect(staged.filter(([status]) => status === "D").map(([, path]) => path)).toEqual(trackedData);
+    expect(staged.filter(([status]) => status !== "D")).toEqual(LOCKS.map((lock) => ["A", lock]));
+    expect(lines(git(root, "ls-files", "packs")).filter(isPackFixture)).toEqual([]);
+    for (const path of trackedData) expect(existsSync(join(root, path))).toBe(true);
+  });
+
+  it("refuses tracked pack test data edited in the working tree", () => {
+    const { root, aws, bucket, calls, write } = withData();
+    git(root, "add", "-f", "--", "packs/p/upstream/t/fixtures/rerail/a.py");
+    git(root, "commit", "-qm", "pull request data");
+    write("packs/p/upstream/t/fixtures/rerail/a.py", "edited\n");
+    expect(() => push({ root, aws, log: () => {} })).toThrow("packs/p/upstream/t/fixtures/rerail/a.py");
+    expect(calls).toEqual([]);
+    expect(files(bucket)).toEqual([]);
+    expect(LOCKS.filter((lock) => existsSync(join(root, lock)))).toEqual([]);
+  });
+});
+
+describe("upload", () => {
+  const other = () => compressArchive(buildArchive([{ path: "cases.json", bytes: Buffer.from("other\n") }]).tar);
+
+  it("refuses a cached archive that does not match its lock", () => {
+    const { root, aws, bucket, called } = withData();
+    pack({ root, log: () => {} });
+    const cached = join(root, ARCHIVE_CACHE, "p/t", `${readLock(root, T).sha256}.tar.zst`);
+    writeFileSync(cached, other());
+    expect(() => upload({ root, aws, log: () => {} })).toThrow("packs/p/upstream/t/test-data.lock");
+    expect(called("put-object")).toEqual([]);
+    expect(files(bucket)).toEqual([]);
+  });
+
+  it("never overwrites a key S3 holds", () => {
+    const { root, aws, object, called } = withData();
+    pack({ root, log: () => {} });
+    const key = object(archiveKey(T, readLock(root, T).sha256));
+    mkdirSync(dirname(key), { recursive: true });
+    const held = other();
+    writeFileSync(key, held);
+    expect(() => upload({ root, pack: "p", tool: "t", aws, log: () => {} })).toThrow("packs/p/upstream/t/test-data.lock");
+    expect(called("put-object")).toEqual([]);
+    // S3 says the key is absent, then holds it by the time the put lands: the conditional put is refused.
+    const racing = (args) => (args[1] === "head-object" ? { status: 254, stderr: "An error occurred (404) when calling the HeadObject operation: Not Found\n" } : aws(args));
+    expect(() => upload({ root, pack: "p", tool: "t", aws: racing, log: () => {} })).toThrow("packs/p/upstream/t/test-data.lock");
+    expect(called("put-object")).toHaveLength(1);
+    expect(readFileSync(key).equals(held)).toBe(true);
+  });
+});
+
+describe("pack", () => {
+  it("makes no aws call, and writes the same lock whatever the data's on-disk mode, mtime or write order", () => {
+    const { root, data, write } = withData();
+    const base = dirname(root);
+    const bin = join(base, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "aws"), `#!/bin/sh\necho "$@" >> ${JSON.stringify(join(base, "aws-calls"))}\nexit 1\n`, { mode: 0o755 });
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}${delimiter}${path}`;
+    try {
+      expect(spawnSync("aws", ["--version"]).status).toBe(1);
+      rmSync(join(base, "aws-calls"), { force: true });
+      expect(pack({ root, log: () => {} }).changedLocks).toEqual(LOCKS);
+      const locks = LOCKS.map((lock) => readFileSync(join(root, lock), "utf8"));
+      expect(files(join(root, ARCHIVE_CACHE))).toEqual(LOCKS.map((lock, index) => `${lock.split("/")[1]}/${lock.split("/")[3]}/${JSON.parse(locks[index]).sha256}.tar.zst`));
+
+      for (const file of Object.keys(data)) rmSync(join(root, file));
+      for (const [file, text] of Object.entries(data).reverse()) {
+        write(file, text);
+        chmodSync(join(root, file), 0o755);
+        utimesSync(join(root, file), new Date("2001-02-03T04:05:06Z"), new Date("2001-02-03T04:05:06Z"));
+      }
+      expect(pack({ root, log: () => {} }).changedLocks).toEqual([]);
+      expect(LOCKS.map((lock) => readFileSync(join(root, lock), "utf8"))).toEqual(locks);
+      expect(existsSync(join(base, "aws-calls"))).toBe(false);
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+
+  it("refuses a symlink among the pack test data rather than leave it out, before writing any lock", () => {
+    const { root } = withData();
+    const outside = join(dirname(root), "outside.expected.json");
+    writeFileSync(outside, "{}\n");
+    symlinkSync(outside, join(root, "packs/q/upstream/u/linked.expected.json"));
+    expect(failure(() => pack({ root, log: () => {} }))).toContain("packs/q/upstream/u/linked.expected.json is a symlink");
+    expect(LOCKS.filter((lock) => existsSync(join(root, lock)))).toEqual([]);
+  });
+});
+
+describe("archiveCache", () => {
+  it("keys one tool-pack's entry by its lock's sha256", () => {
+    const { root } = published();
+    const { sha256: digest } = readLock(root, T);
+    expect(archiveCache({ root, pack: "p", tool: "t" })).toEqual({ key: `pack-test-data-p-t-${digest}`, paths: [`${ARCHIVE_CACHE}/p/t/${digest}.tar.zst`] });
+  });
+
+  it("changes the key for several tool-packs when any lock changes", () => {
+    const { root, write } = published();
+    const original = archiveCache({ root }).key;
+    const keys = [original];
+    for (const toolPack of [U, T]) {
+      const lock = readLock(root, toolPack);
+      write(`${toolPack.directory}/test-data.lock`, lockText({ ...lock, sha256: sha256(Buffer.from(lock.sha256)) }));
+      keys.push(archiveCache({ root }).key);
+    }
+    expect(new Set(keys).size).toBe(3);
+    expect(archiveCache({ root, pack: "p" }).key).not.toBe(archiveCache({ root }).key);
+  });
+
+  it("lists the archives' paths sorted by tool-pack", () => {
+    const { root, write } = setUp();
+    const digest = (seed) => sha256(Buffer.from(seed));
+    for (const directory of ["packs/b/upstream/a", "packs/a/upstream/b", "packs/a/upstream/Z"]) {
+      write(`${directory}/test-data.lock`, lockText({ sha256: digest(directory), files: 1, bytes: 1 }));
+    }
+    expect(archiveCache({ root }).paths).toEqual([
+      `${ARCHIVE_CACHE}/a/Z/${digest("packs/a/upstream/Z")}.tar.zst`,
+      `${ARCHIVE_CACHE}/a/b/${digest("packs/a/upstream/b")}.tar.zst`,
+      `${ARCHIVE_CACHE}/b/a/${digest("packs/b/upstream/a")}.tar.zst`,
+    ]);
+  });
+});
+
+const putFile = (path, content) => {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content);
+};
+
+/** The message `run` throws; fails the test when it does not throw. */
+function failure(run) {
+  try {
+    run();
+  } catch (error) {
+    return error.message;
+  }
+  throw new Error("it did not fail");
+}
+
+describe("an archive that is not the canonical archive of its tool directory's pack test data", () => {
+  const label = "packs/q/upstream/u/test-data.lock";
+  const corpus = { path: "authored/corpus/c.py", bytes: Buffer.from("corpus\n") };
+  /** The tar and the lock that names it truthfully: sha256, file count and bytes all match. */
+  const truthful = (tar) => {
+    const entries = readArchive(tar);
+    return { tar, lock: { sha256: sha256(tar), files: entries.length, bytes: entries.reduce((total, entry) => total + entry.bytes.length, 0) } };
+  };
+  const big = buildArchive([{ path: "authored/corpus/big.py", bytes: Buffer.alloc(1 << 20, 0x61) }]).tar;
+  const cases = [
+    ["holding a generator", () => truthful(buildArchive([corpus, { path: "generate.py", bytes: Buffer.from("import os\n") }]).tar), "not pack test data of packs/q/upstream/u, e.g. generate.py"],
+    ["holding a lock", () => truthful(buildArchive([corpus, { path: "test-data.lock", bytes: Buffer.from("{}\n") }]).tar), "not pack test data of packs/q/upstream/u, e.g. test-data.lock"],
+    [
+      "whose entries are unsorted",
+      () => truthful(Buffer.concat([buildArchive([{ path: "authored/corpus/z.py", bytes: Buffer.from("z\n") }]).tar.subarray(0, -1024), buildArchive([corpus]).tar])),
+      "is not the canonical archive of its own files",
+    ],
+    ["that decompresses past the size its lock allows", () => ({ tar: big, lock: { sha256: sha256(big), files: 1, bytes: 16 } }), "is not a zstd archive of the size the lock allows"],
+  ];
+
+  it("decompresses past archiveSizeBound in the size case", () => {
+    expect(big.length).toBeGreaterThan(archiveSizeBound({ files: 1, bytes: 16 }));
+  });
+
+  it.each(cases)("%s is refused by pull, naming the lock and key, with nothing written", (_, make, reason) => {
+    const { root, aws, object, write } = published();
+    fresh(root);
+    const { tar, lock } = make();
+    write(label, lockText(lock));
+    putFile(object(archiveKey(U, lock.sha256)), compressArchive(tar));
+    const before = tree(root);
+    const message = failure(() => pull({ root, aws, log: () => {} }));
+    for (const text of [reason, label, `s3://${BUCKET}/${archiveKey(U, lock.sha256)}`]) expect(message).toContain(text);
+    expect(tree(root)).toEqual(before);
+    expect(files(join(root, ARCHIVE_CACHE)).filter((path) => path.startsWith("q/"))).toEqual([]);
+  });
+
+  it.each(cases)("%s is refused by upload, naming the lock and key, with nothing put", (_, make, reason) => {
+    const { root, aws, bucket, called, write } = withData();
+    pack({ root, log: () => {} });
+    const { tar, lock } = make();
+    write(label, lockText(lock));
+    putFile(archiveCachePath(root, U, lock.sha256), compressArchive(tar));
+    const message = failure(() => upload({ root, aws, log: () => {} }));
+    for (const text of [reason, label, `s3://${BUCKET}/${archiveKey(U, lock.sha256)}`]) expect(message).toContain(text);
+    expect(called("put-object")).toEqual([]);
+    expect(files(bucket)).toEqual([]);
+  });
+
+  it("a corrupt cached archive where S3 cannot be read says to delete the Actions cache entry", () => {
+    const { root } = published();
+    fresh(root, true);
+    const cached = archiveCachePath(root, U, readLock(root, U).sha256);
+    writeFileSync(cached, "not zstd");
+    const signedOut = () => ({ status: 255, stderr: "\nUnable to locate credentials\n" });
+    const message = failure(() => pull({ root, aws: signedOut, log: () => {} }));
+    expect(message).toContain(relative(root, cached));
+    expect(message).toContain("gh cache delete");
+    expect(existsSync(cached)).toBe(false);
+  });
+});
+
+/** The two recordings a recording.lock names, by file name. */
+const RECORDINGS = { "corpus.json": '{"corpus":true}\n', "recording.json": '{"recording":true}\n' };
+
+/**
+ * Writes, with `write`, a recording.lock naming `texts` into `toolPack`'s directory; returns the recordings sorted by
+ * name, each as `{ name, text, sha256, key }`.
+ */
+function lockRecordings(write, toolPack = T, texts = RECORDINGS) {
+  const named = Object.keys(texts)
+    .sort()
+    .map((name) => ({ name, text: texts[name], sha256: sha256(Buffer.from(texts[name])) }));
+  const locked = Object.fromEntries(named.map(({ name, text, sha256: digest }) => [name, { sha256: digest, size: Buffer.byteLength(text), format: "rerail.port-readiness/v2" }]));
+  write(`${toolPack.directory}/recording.lock`, `${JSON.stringify({ format: "rerail.port-readiness-recording-lock/v2", tool: toolPack.tool, files: locked }, null, 2)}\n`);
+  return named.map((recording) => ({ ...recording, key: recordingKey(toolPack, recording.sha256) }));
+}
+
+/** Where the checkout at `root` keeps a recording. */
+const localRecording = (root, recording) => join(root, RECORDING_CACHE, `${recording.sha256}.json`);
+const keys = (named) => named.map((recording) => recording.key).sort();
+
+describe("recordings", () => {
+  const quiet = () => {};
+  /** published, with a recording.lock for packs/p/upstream/t. */
+  function locked() {
+    const context = published();
+    return { ...context, named: lockRecordings(context.write) };
+  }
+
+  it("fetches each locked recording from S3 into the recordings cache, verified", () => {
+    const { root, aws, object, called, named } = locked();
+    for (const recording of named) putFile(object(recording.key), recording.text);
+    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: [], downloaded: keys(named), missing: [] });
+    for (const recording of named) expect(readFileSync(localRecording(root, recording), "utf8")).toBe(recording.text);
+    expect(called("cp")).toHaveLength(2);
+    expect(files(join(root, RECORDING_CACHE))).toEqual(named.map((recording) => `${recording.sha256}.json`).sort());
+  });
+
+  it("keeps a valid local copy, calling no aws", () => {
+    const { root, aws, calls, named } = locked();
+    for (const recording of named) putFile(localRecording(root, recording), recording.text);
+    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: keys(named), downloaded: [], missing: [] });
+    expect(calls).toEqual([]);
+  });
+
+  it("replaces a corrupt local copy with S3's", () => {
+    const { root, aws, object, named } = locked();
+    const [corpus, recording] = named;
+    for (const each of named) putFile(object(each.key), each.text);
+    putFile(localRecording(root, corpus), '{"corp');
+    putFile(localRecording(root, recording), recording.text);
+    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: [recording.key], downloaded: [corpus.key], missing: [] });
+    expect(readFileSync(localRecording(root, corpus), "utf8")).toBe(corpus.text);
+  });
+
+  it("notes a recording S3 does not hold, naming its sha256 and key, and succeeds", () => {
+    const { root, aws, named } = locked();
+    const printed = [];
+    expect(recordings({ root, aws, log: (line) => printed.push(line) })).toEqual({ kept: [], downloaded: [], missing: keys(named) });
+    for (const recording of named) {
+      expect(printed.join("\n")).toContain(recording.sha256);
+      expect(printed.join("\n")).toContain(`s3://${BUCKET}/${recording.key}`);
+    }
+    expect(files(join(root, RECORDING_CACHE))).toEqual([]);
+  });
+
+  it("refuses an object whose sha256 is not the locked one, naming the lock and key, and writes nothing", () => {
+    const { root, aws, object, named } = locked();
+    const [corpus] = named;
+    putFile(object(corpus.key), "tampered\n");
+    const message = failure(() => recordings({ root, aws, log: quiet }));
+    expect(message).toContain("packs/p/upstream/t/recording.lock");
+    expect(message).toContain(`s3://${BUCKET}/${corpus.key}`);
+    expect(files(join(root, RECORDING_CACHE))).toEqual([]);
+  });
+});
+
+describe("upload with recordings", () => {
+  const quiet = () => {};
+  /** withData packed, with a recording.lock for packs/p/upstream/t. */
+  function packed() {
+    const context = withData();
+    pack({ root: context.root, log: quiet });
+    return { ...context, named: lockRecordings(context.write) };
+  }
+  const putKeys = (called) => called("put-object").map((args) => args[args.indexOf("--key") + 1]);
+
+  it("uploads each local recording under its sha256 and reads it back", () => {
+    const { root, aws, object, called, named } = packed();
+    for (const recording of named) putFile(localRecording(root, recording), recording.text);
+    const { uploaded } = upload({ root, pack: "p", tool: "t", aws, log: quiet });
+    expect(uploaded).toEqual([archiveKey(T, readLock(root, T).sha256), ...keys(named)]);
+    for (const recording of named) expect(readFileSync(object(recording.key), "utf8")).toBe(recording.text);
+    expect(called("cp").map((args) => args[2])).toEqual(expect.arrayContaining(named.map((recording) => `s3://${BUCKET}/${recording.key}`)));
+  });
+
+  it("does not upload a recording S3 holds, whether or not there is a local copy", () => {
+    const { root, aws, object, called, named } = packed();
+    const [corpus, recording] = named;
+    putFile(object(corpus.key), corpus.text);
+    putFile(object(recording.key), recording.text);
+    putFile(localRecording(root, recording), recording.text);
+    const archive = archiveKey(T, readLock(root, T).sha256);
+    expect(upload({ root, pack: "p", tool: "t", aws, log: quiet }).uploaded).toEqual([archive]);
+    expect(putKeys(called)).toEqual([archive]);
+  });
+
+  it("fails on a recording in neither place, naming its sha256, its key and both remedies, before putting anything", () => {
+    const { root, aws, bucket, called, named } = packed();
+    const [corpus, recording] = named;
+    putFile(localRecording(root, recording), recording.text);
+    const message = failure(() => upload({ root, pack: "p", tool: "t", aws, log: quiet }));
+    for (const text of [
+      "packs/p/upstream/t/recording.lock",
+      corpus.sha256,
+      `s3://${BUCKET}/${corpus.key}`,
+      "npm run port-readiness:record -- --pack p --tool t",
+      "gh run download <run-id> -n recordings-p--t -D .rerail/port-readiness/recordings",
+    ]) {
+      expect(message).toContain(text);
+    }
+    expect(called("put-object")).toEqual([]);
+    expect(files(bucket)).toEqual([]);
+  });
+
+  it("refuses a local recording that is not the locked bytes, calling no aws", () => {
+    const { root, aws, bucket, calls, named } = packed();
+    const [corpus, recording] = named;
+    putFile(localRecording(root, corpus), "tampered\n");
+    putFile(localRecording(root, recording), recording.text);
+    const message = failure(() => upload({ root, pack: "p", tool: "t", aws, log: quiet }));
+    expect(message).toContain("packs/p/upstream/t/recording.lock");
+    expect(message).toContain(corpus.sha256);
+    expect(calls).toEqual([]);
+    expect(files(bucket)).toEqual([]);
+  });
+
+  it("verifies an archive S3 holds when the archive cache lacks it, and fails naming the key when neither holds it", () => {
+    const { root, aws, object, called } = published();
+    rmSync(join(root, ARCHIVE_CACHE), { recursive: true });
+    expect(upload({ root, aws, log: quiet }).uploaded).toEqual([]);
+    expect(called("cp")).toHaveLength(3);
+    const key = archiveKey(U, readLock(root, U).sha256);
+    rmSync(object(key));
+    const message = failure(() => upload({ root, aws, log: quiet }));
+    expect(message).toContain("packs/q/upstream/u/test-data.lock");
+    expect(message).toContain(`s3://${BUCKET}/${key}`);
+    expect(called("put-object")).toEqual([]);
+  });
+});
+
+const SCRIPTS = fileURLToPath(new URL("../../scripts/s3/", import.meta.url));
+
+/** setUp's fake `aws` as an executable, serving the bucket directory FAKE_BUCKET names. */
+const FAKE_AWS = `#!/usr/bin/env node
+const { copyFileSync, existsSync, mkdirSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const args = process.argv.slice(2);
+const prefix = "s3://${BUCKET}/";
+const object = (key) => join(process.env.FAKE_BUCKET, key);
+const option = (name) => args[args.indexOf(name) + 1];
+const exit = (status, stdout, stderr = "") => {
+  process.stdout.write(stdout);
+  process.stderr.write(stderr);
+  process.exit(status);
+};
+if (args[0] === "sts") exit(0, "{}");
+if (args[0] === "s3" && args[1] === "cp" && args[2].startsWith(prefix)) {
+  const source = object(args[2].slice(prefix.length));
+  if (!existsSync(source)) exit(1, "", "fatal error: An error occurred (404) when calling the HeadObject operation: Key does not exist\\n");
+  copyFileSync(source, args[3]);
+  exit(0, "");
+}
+if (args[1] === "head-object") exit(existsSync(object(option("--key"))) ? 0 : 254, "{}", "An error occurred (404) when calling the HeadObject operation: Not Found\\n");
+if (args[1] === "put-object" && option("--if-none-match") === "*") {
+  const target = object(option("--key"));
+  if (existsSync(target)) exit(254, "", "An error occurred (PreconditionFailed) when calling the PutObject operation\\n");
+  mkdirSync(dirname(target), { recursive: true });
+  copyFileSync(option("--body"), target);
+  exit(0, "{}");
+}
+exit(2, "", "the fake aws does not implement: aws " + args.join(" ") + "\\n");
+`;
+
+/**
+ * published, with this repository's pack-fixtures scripts committed on main, and a pull request branch `feature`
+ * checked out in the worktree `pr`. The branch tracks a changed and a new file of packs/p/upstream/t and a new one of
+ * packs/q/upstream/u, and carries code that writes `marker` if anything runs it: package.json scripts, a tool's
+ * generator, and its own scripts/s3/pack-fixtures.mjs.
+ */
+function pullRequest() {
+  const context = published();
+  const { root } = context;
+  const base = dirname(root);
+  for (const name of ["pack-fixtures.mjs", "test-data-archive.mjs"]) putFile(join(root, "scripts/s3", name), readFileSync(join(SCRIPTS, name)));
+  git(root, "add", "scripts");
+  git(root, "commit", "-qm", "scripts");
+  const pr = join(base, "pr");
+  git(root, "worktree", "add", "-q", "-b", "feature", pr);
+  const marker = join(base, "marker");
+  const changes = {
+    "packs/p/upstream/t/fixtures/rerail/a.py": "changed\n",
+    "packs/p/upstream/t/fixtures/rerail/new.py": "new\n",
+    "packs/q/upstream/u/authored/corpus/d.py": "d\n",
+  };
+  for (const [path, text] of Object.entries(changes)) putFile(join(pr, path), text);
+  git(pr, "add", "-f", "--", ...Object.keys(changes));
+  putFile(join(pr, "package.json"), `${JSON.stringify({ scripts: { preinstall: `touch ${marker}`, "fixtures:push": `touch ${marker}` } }, null, 2)}\n`);
+  putFile(join(pr, "packs/p/upstream/t/generate.py"), `open(${JSON.stringify(marker)}, "w").write("ran")\n`);
+  putFile(join(pr, "scripts/s3/pack-fixtures.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "ran\\n");\n`);
+  git(pr, "add", "--", "package.json", "packs/p/upstream/t/generate.py", "scripts/s3/pack-fixtures.mjs");
+  git(pr, "commit", "-qm", "pull request");
+  return { ...context, pr, marker, changes };
+}
+
+/** What `toolPack`'s archive should hold after push --from: the published data overlaid with the pull request's. */
+const overlaid = (data, changes, toolPack) =>
+  Object.fromEntries(
+    Object.entries({ ...data, ...changes })
+      .filter(([path]) => path.startsWith(`${toolPack.directory}/`))
+      .map(([path, text]) => [path.slice(toolPack.directory.length + 1), text]),
+  );
+
+/** What S3 holds for the archive `toolPack`'s lock in the checkout at `root` names. */
+const archived = (object, root, toolPack) =>
+  Object.fromEntries(
+    readArchive(decompressArchive(readFileSync(object(archiveKey(toolPack, readLock(root, toolPack).sha256))))).map(({ path, bytes }) => [path, bytes.toString("utf8")]),
+  );
+
+/** The pull request's index after its printed commands ran: the two locks rewritten and its pack test data untracked. */
+const STAGED = [
+  ["D", "packs/p/upstream/t/fixtures/rerail/a.py"],
+  ["D", "packs/p/upstream/t/fixtures/rerail/new.py"],
+  ["M", "packs/p/upstream/t/test-data.lock"],
+  ["D", "packs/q/upstream/u/authored/corpus/d.py"],
+  ["M", "packs/q/upstream/u/test-data.lock"],
+];
+const staged = (root) => lines(git(root, "diff", "--cached", "--name-status", "--no-renames")).map((line) => line.split("\t"));
+
+describe("push --from", () => {
+  it("archives a pull request's tracked data from its commit's blobs alone, running none of its code", () => {
+    const { root, pr, bucket, object, marker, data, changes } = pullRequest();
+    const bin = join(dirname(root), "bin");
+    putFile(join(bin, "aws"), FAKE_AWS);
+    chmodSync(join(bin, "aws"), 0o755);
+    const head = git(root, "rev-parse", "HEAD");
+    const run = spawnSync(process.execPath, ["scripts/s3/pack-fixtures.mjs", "push", "--from", "feature"], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, FAKE_BUCKET: bucket },
+    });
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+
+    // The trusted checkout is as it was: still on main, nothing of the branch on disk, nothing run.
+    expect(existsSync(marker)).toBe(false);
+    expect(git(root, "rev-parse", "HEAD")).toBe(head);
+    expect(git(root, "status", "--porcelain")).toBe("");
+    expect(existsSync(join(root, "packs/p/upstream/t/generate.py"))).toBe(false);
+    expect(existsSync(join(root, "packs/p/upstream/t/fixtures/rerail/new.py"))).toBe(false);
+    expect(readFileSync(join(root, "packs/p/upstream/t/fixtures/rerail/a.py"), "utf8")).toBe("authored\n");
+
+    const script = run.stdout.split(/run in a checkout of [^\n]*:\n/u).at(-1);
+    expect(script).toMatch(/^cat > packs\/p\/upstream\/t\/test-data\.lock <<'EOF'\n\{\n {2}"format": 1,/u);
+    expect(script).not.toMatch(/\bnpm\b|\bnode\b/u);
+    execFileSync("sh", ["-c", script], { cwd: pr });
+    expect(staged(pr)).toEqual(STAGED);
+    expect(lines(git(pr, "ls-files", "packs")).filter(isPackFixture)).toEqual([]);
+    for (const path of Object.keys(changes)) expect(existsSync(join(pr, path))).toBe(true);
+    for (const toolPack of [T, U]) expect(archived(object, pr, toolPack)).toEqual(overlaid(data, changes, toolPack));
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("--into writes the new locks into a checkout of the commit, prints only git commands, and uploads its recordings", () => {
+    const { root, pr, aws, object, data, changes } = pullRequest();
+    const named = lockRecordings((path, content) => putFile(join(pr, path), content));
+    git(pr, "add", "--", "packs/p/upstream/t/recording.lock");
+    git(pr, "commit", "-qm", "recording");
+    for (const recording of named) putFile(localRecording(root, recording), recording.text);
+    const printed = [];
+    const result = push({ root, aws, from: "feature", into: pr, log: (line) => printed.push(line) });
+
+    expect(result.changedLocks).toEqual(["packs/p/upstream/t/test-data.lock", "packs/q/upstream/u/test-data.lock"]);
+    expect(result.script).toBe("git add -- packs/p/upstream/t/test-data.lock packs/q/upstream/u/test-data.lock\ngit rm -r -q --cached -- packs/p/upstream/t/fixtures packs/q/upstream/u/authored");
+    expect(printed.at(-1).endsWith(`:\n${result.script}`)).toBe(true);
+    expect(result.uploaded).toEqual([...[T, U].map((toolPack) => archiveKey(toolPack, readLock(pr, toolPack).sha256)), ...keys(named)]);
+    for (const recording of named) expect(readFileSync(object(recording.key), "utf8")).toBe(recording.text);
+    for (const toolPack of [T, U]) expect(archived(object, pr, toolPack)).toEqual(overlaid(data, changes, toolPack));
+    execFileSync("sh", ["-c", result.script], { cwd: pr });
+    expect(staged(pr)).toEqual(STAGED);
+  });
+
+  it("--into refuses a directory that is no checkout of the commit, before uploading anything", () => {
+    const { root, aws, bucket, called } = pullRequest();
+    const held = files(bucket);
+    const message = failure(() => push({ root, aws, from: "feature", into: root, log: () => {} }));
+    expect(message).toContain("is no checkout of feature");
+    expect(called("put-object")).toEqual([]);
+    expect(files(bucket)).toEqual(held);
+  });
+
+  /** A branch `name` off the checkout's HEAD, in a worktree beside it, committing `edits` (path → text) with `git add -f`. */
+  function branch(root, name, edits) {
+    const worktree = join(dirname(root), name);
+    git(root, "worktree", "add", "-q", "-b", name, worktree);
+    for (const [path, text] of Object.entries(edits)) putFile(join(worktree, path), text);
+    git(worktree, "add", "-f", "--", ...Object.keys(edits));
+    git(worktree, "commit", "-qm", name);
+    return worktree;
+  }
+
+  /** push --from `from` with `options`, its printed script run in `worktree`; the result and what it logged. */
+  function pushInto(context, worktree, from, options = {}) {
+    const printed = [];
+    const result = push({ root: context.root, aws: context.aws, from, ...options, log: (line) => printed.push(line) });
+    execFileSync("sh", ["-c", result.script], { cwd: worktree });
+    return { result, printed: printed.join("\n") };
+  }
+
+  it("drops the files a removed UPSTREAM.md row listed, naming them, and keeps the rest of the archive", () => {
+    const context = published();
+    const pr = branch(context.root, "unlist", { "packs/p/upstream/t/UPSTREAM.md": record([]) });
+    const { result, printed } = pushInto(context, pr, "unlist");
+    expect(result.changedLocks).toEqual(["packs/p/upstream/t/test-data.lock"]);
+    expect(result.dropped).toEqual(["packs/p/upstream/t/fixtures/rerail/a.py"]);
+    expect(printed).toMatch(/packs\/p\/upstream\/t: archive [0-9a-f]{12} drops 1 file\(s\) of archive [0-9a-f]{12} \(the UPSTREAM\.md at unlist no longer lists them as Rerail's\):\n {2}fixtures\/rerail\/a\.py/u);
+    expect(archived(context.object, pr, T)).toEqual({ "fixtures/upstream/b.py": "derived\n", "x y.expected.json": "{}\n" });
+  });
+
+  it("keeps the archive's files the commit does not track", () => {
+    const context = published();
+    const changes = { "packs/p/upstream/t/fixtures/rerail/a.py": "changed\n" };
+    const pr = branch(context.root, "overlay", changes);
+    const { result, printed } = pushInto(context, pr, "overlay");
+    expect(result.dropped).toEqual([]);
+    expect(printed).not.toContain("drops");
+    expect(archived(context.object, pr, T)).toEqual(overlaid(context.data, changes, T));
+  });
+
+  it("--replace archives the commit's tracked data alone, dropping and naming every file of the archive it does not track", () => {
+    const context = published();
+    const pr = branch(context.root, "replace", { "packs/p/upstream/t/fixtures/rerail/a.py": "changed\n" });
+    const { result, printed } = pushInto(context, pr, "replace", { replace: true });
+    expect(result.changedLocks).toEqual(["packs/p/upstream/t/test-data.lock"]);
+    expect(result.dropped).toEqual(["packs/p/upstream/t/fixtures/upstream/b.py", "packs/p/upstream/t/x y.expected.json"]);
+    expect(printed).toContain("(replace does not track them):\n  fixtures/upstream/b.py\n  x y.expected.json");
+    expect(archived(context.object, pr, T)).toEqual({ "fixtures/rerail/a.py": "changed\n" });
+  });
+
+  it("--replace refuses a selected tool-pack that tracks no pack test data, uploading nothing", () => {
+    const context = published();
+    branch(context.root, "untracked", { "packs/p/upstream/t/UPSTREAM.md": record([]) });
+    const message = failure(() => push({ root: context.root, aws: context.aws, from: "untracked", replace: true, log: () => {} }));
+    expect(message).toContain("--replace: packs/p/upstream/t tracks no pack test data");
+    expect(context.called("put-object")).toEqual([]);
+  });
+});
+
+describe("check", () => {
+  /** published, with a recording.lock for packs/p/upstream/t whose recordings S3 holds. */
+  function locked() {
+    const context = published();
+    const named = lockRecordings(context.write);
+    for (const recording of named) putFile(context.object(recording.key), recording.text);
+    return { ...context, named };
+  }
+  const archiveKeys = (root) => [T, { pack: "p", tool: "w", directory: "packs/p/upstream/w" }, U].map((toolPack) => archiveKey(toolPack, readLock(root, toolPack).sha256));
+
+  it("passes when S3 holds every archive and recording the locks name, asking head-object alone", () => {
+    const { root, aws, calls, named } = locked();
+    expect(check({ root, aws, log: () => {} }).checked).toEqual([...archiveKeys(root), ...keys(named)].sort());
+    expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);
+  });
+
+  it("fails listing each missing archive and recording with its lock and remedy, downloading nothing", () => {
+    const { root, aws, object, calls, named } = locked();
+    const [corpus, recording] = named;
+    const archive = archiveKey(U, readLock(root, U).sha256);
+    rmSync(object(archive));
+    rmSync(object(corpus.key));
+    const message = failure(() => check({ root, aws, log: () => {} }));
+    expect(message.split("\n")).toEqual([
+      'S3 lacks 2 of the 5 object(s) the locks name (CONTRIBUTING.md, "Pack test data"):',
+      `  packs/q/upstream/u/test-data.lock names s3://${BUCKET}/${archive}, which S3 does not hold: a maintainer archives the pull request's pack test data with \`npm run fixtures:push -- --from <ref> --pack q --tool u\``,
+      `  packs/p/upstream/t/recording.lock names corpus.json at s3://${BUCKET}/${corpus.key}, which S3 does not hold: a maintainer downloads the pull request's CI recordings with \`gh run download <run> -n recordings-p--t -D .rerail/port-readiness/recordings\`, then puts them in S3 with \`npm run fixtures:push -- --from <ref> --pack p --tool t\``,
+    ]);
+    expect(message).not.toContain(recording.key);
+    expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);
+  });
+
+  it("exits 0 when S3 holds everything and 1 when it lacks anything, as a command", () => {
+    const { root, bucket, object, named } = locked();
+    const bin = join(dirname(root), "bin");
+    putFile(join(bin, "aws"), FAKE_AWS);
+    chmodSync(join(bin, "aws"), 0o755);
+    for (const name of ["pack-fixtures.mjs", "test-data-archive.mjs"]) putFile(join(root, "scripts/s3", name), readFileSync(join(SCRIPTS, name)));
+    const run = () => spawnSync(process.execPath, ["scripts/s3/pack-fixtures.mjs", "check"], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, FAKE_BUCKET: bucket },
+    });
+    const passed = run();
+    expect(passed.stderr).toBe("");
+    expect(passed.stdout).toBe("S3 holds every object the locks name: 3 archive(s) and 2 recording(s)\n");
+    expect(passed.status).toBe(0);
+    rmSync(object(named[1].key));
+    const failed = run();
+    expect(failed.status).toBe(1);
+    expect(failed.stderr).toContain(`fixtures:check: S3 lacks 1 of the 5 object(s)`);
+    expect(failed.stderr).toContain(`s3://${BUCKET}/${named[1].key}`);
+  });
+});

@@ -5,7 +5,7 @@
     "path": "rerail/probes/ASYNC220-ASYNC221-with-item-mode.py",
     "line": 4,
     "kind": "rerail-unknown",
-    "evidence": "Ruff 0.16.9 reports ASYNC221 on `os.spawnl(m, \"x\")` where `m` is bound by `with os.P_WAIT as m:`: is_p_wait (crates/ruff_linter/src/rules/flake8_async/rules/blocking_process_invocation.rs:176) reads a name's value through find_assigned_value, and find_binding_value (crates/ruff_python_semantic/src/analyze/typing.rs:1273) takes a with-item binding's value. The ports' shared `p-wait-arg` utility has no with-item case, so ASYNC221 misses the call and the ASYNC220 candidate reports it instead. Fix both together (NER-1770), then drop this entry."
+    "evidence": "Ruff 0.16.9 reports ASYNC221 on `os.spawnl(m, \"x\")` where `m` is bound by `with os.P_WAIT as m:`: is_p_wait (crates/ruff_linter/src/rules/flake8_async/rules/blocking_process_invocation.rs:176) reads a name's value through find_assigned_value, and find_binding_value (crates/ruff_python_semantic/src/analyze/typing.rs:1273) takes a with-item binding's value. The ports' shared `p-wait-arg` utility has no with-item case, so ASYNC221 misses the call and the ASYNC220 candidate reports it instead. Fix both together, then drop this entry."
   },
   {
     "rule": "bandit-b406-import-xml-sax",
@@ -13,6 +13,6 @@
     "path": "django/utils/xmlutils.py",
     "line": 5,
     "kind": "upstream-wrong",
-    "evidence": "`from xml.sax.saxutils import XMLGenerator` imports an XML writer, not a parser. Bandit 1.9.4's import blacklist reports any imported name whose dotted path starts with `xml.sax` (bandit/core/blacklisting.py), so it steers toward defusedxml, which has no saxutils. xml.sax.saxutils defines no parse, parseString or make_parser (CPython 3.14.7: `python3 -I -c \"import xml.sax.saxutils as s; print(dir(s))\"` lists only XMLFilterBase, XMLGenerator, escape, quoteattr, unescape, prepare_input_source and its own imports), and XMLFilterBase parses only through a parent reader its caller supplies. The port does not report `from xml.sax.saxutils import ...` or `from xml.sax import saxutils` (NER-1827); B317 still reports xml.sax parse calls."
+    "evidence": "`from xml.sax.saxutils import XMLGenerator` imports an XML writer, not a parser. Bandit 1.9.4's import blacklist reports any imported name whose dotted path starts with `xml.sax` (bandit/core/blacklisting.py), so it steers toward defusedxml, which has no saxutils. xml.sax.saxutils defines no parse, parseString or make_parser (CPython 3.14.7: `python3 -I -c \"import xml.sax.saxutils as s; print(dir(s))\"` lists only XMLFilterBase, XMLGenerator, escape, quoteattr, unescape, prepare_input_source and its own imports), and XMLFilterBase parses only through a parent reader its caller supplies. The port does not report `from xml.sax.saxutils import ...` or `from xml.sax import saxutils`; B317 still reports xml.sax parse calls."
   }
 ]

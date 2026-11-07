@@ -1,1 +1,0 @@
-const foo = 0, bar = require('bar');

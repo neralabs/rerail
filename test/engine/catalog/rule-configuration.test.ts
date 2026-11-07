@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RerailDatabase } from "../../../src/engine/storage/database.js";
-import type { BundledCatalog, EffectiveRule, RuleSetting } from "../../../src/engine/catalog/repository-model.js";
+import type { RuleCatalog, EffectiveRule, RuleSetting } from "../../../src/engine/catalog/repository-model.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import {
   addAttachment,
@@ -25,7 +25,7 @@ import {
 
 const WORKTREE = "/work/app-feature";
 const OTHER_CHECKOUT = "/work/app";
-const bundle = testBundle();
+const ruleCatalog = testBundle();
 
 type SettingValue = Omit<RuleSetting, "owner" | "folder" | "targetKind" | "targetId">;
 
@@ -38,7 +38,7 @@ function checkoutSetting(checkoutPath: string, folder: string, targetKind: "rule
 }
 
 function ruleAt(db: RerailDatabase, checkoutPath: string, path: string, id: string, parents: readonly string[] = []): EffectiveRule | undefined {
-  return loadCheckoutRuleSet(db, bundle, checkout(checkoutPath), RUNNING, parents).rulesFor(path).find(rule => rule.document.rule.id === id);
+  return loadCheckoutRuleSet(db, ruleCatalog, checkout(checkoutPath), RUNNING, parents).rulesFor(path).find(rule => rule.document.rule.id === id);
 }
 
 /** The proposal §5 worked example: the lint pack in `web/`, pack Log for the repository, `no-console` off in `web/legacy/`, Steer in this worktree. */
@@ -132,7 +132,7 @@ describe("loadCheckoutRuleSet precedence", () => {
 
   it("does not let folder web contain web2", async () => {
     const db = await workedExample();
-    const rules = loadCheckoutRuleSet(db, bundle, checkout(OTHER_CHECKOUT), RUNNING, []);
+    const rules = loadCheckoutRuleSet(db, ruleCatalog, checkout(OTHER_CHECKOUT), RUNNING, []);
     expect(rules.rulesFor("web2/x.ts")).toEqual([]);
     expect(rules.rulesFor("web").map(rule => rule.document.rule.id)).toEqual(["no-console", "no-var"]);
   });
@@ -143,7 +143,7 @@ describe("loadCheckoutRuleSet precedence", () => {
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "api", sourceKind: "rerail_rule", sourceId: "nope" });
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "library_rule", sourceId: "absent" });
 
-    const rules = loadCheckoutRuleSet(db, bundle, checkout(OTHER_CHECKOUT), RUNNING, []);
+    const rules = loadCheckoutRuleSet(db, ruleCatalog, checkout(OTHER_CHECKOUT), RUNNING, []);
     expect(rules.unavailable).toEqual(expect.arrayContaining([
       { sourceKind: "pack", sourceId: "gone", folder: "", reason: "missing" },
       { sourceKind: "rerail_rule", sourceId: "nope", folder: "api", reason: "missing" },
@@ -157,7 +157,7 @@ describe("loadCheckoutRuleSet precedence", () => {
     const db = await workedExample();
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "api", sourceKind: "rerail_rule", sourceId: "talk" });
     setRuleSetting(db, repositorySetting("api", "rule", "talk", { on: null, mode: "log" }));
-    const rules = loadCheckoutRuleSet(db, bundle, checkout(OTHER_CHECKOUT), RUNNING, []);
+    const rules = loadCheckoutRuleSet(db, ruleCatalog, checkout(OTHER_CHECKOUT), RUNNING, []);
 
     expect(rules.conversationRules("")).toEqual([]);
     expect(rules.conversationRules("api/routes").map(rule => [rule.document.rule.id, rule.mode])).toEqual([["talk", "log"]]);
@@ -167,7 +167,7 @@ describe("loadCheckoutRuleSet precedence", () => {
   it("is empty unless the checkout is started and its repository set up", async () => {
     const db = await workedExample();
     for (const status of [{ ...RUNNING, started: false }, { ...RUNNING, setUp: false }]) {
-      const rules = loadCheckoutRuleSet(db, bundle, checkout(OTHER_CHECKOUT), status, []);
+      const rules = loadCheckoutRuleSet(db, ruleCatalog, checkout(OTHER_CHECKOUT), status, []);
       expect(rules.rulesFor("web/a.ts")).toEqual([]);
       expect(rules.conversationRules("web")).toEqual([]);
     }
@@ -179,10 +179,10 @@ describe("suppressions", () => {
     const db = await workedExample();
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "rerail_rule", sourceId: "loose" });
     const quiet = testBundle({ honourSuppressionComments: false });
-    const at = (catalog: BundledCatalog, id: string) =>
+    const at = (catalog: RuleCatalog, id: string) =>
       loadCheckoutRuleSet(db, catalog, checkout(OTHER_CHECKOUT), RUNNING, []).rulesFor("web/a.ts").find(rule => rule.document.rule.id === id);
 
-    expect(at(bundle, "no-console")).toMatchObject({ suppressions: "honour", decidedBy: { suppressions: { by: "pack-start", packId: "lint" } } });
+    expect(at(ruleCatalog, "no-console")).toMatchObject({ suppressions: "honour", decidedBy: { suppressions: { by: "pack-start", packId: "lint" } } });
     expect(at(quiet, "no-console")).toMatchObject({ suppressions: "ignore", decidedBy: { suppressions: { by: "pack-start", packId: "lint" } } });
     expect(at(quiet, "loose")).toMatchObject({ suppressions: "honour", decidedBy: { suppressions: { by: "rule-default" } } });
   });
@@ -236,10 +236,10 @@ const configurableSource = {
     },
   ],
 };
-const configurableBundle: BundledCatalog = {
-  ...bundle,
-  documents: new Map([...bundle.documents, ["configurable", { kind: "code", rule: codeRuleSchema.parse(configurableSource) }]]),
-  sources: new Map([...bundle.sources, ["configurable", configurableSource]]),
+const configurableBundle: RuleCatalog = {
+  ...ruleCatalog,
+  documents: new Map([...ruleCatalog.documents, ["configurable", { kind: "code", rule: codeRuleSchema.parse(configurableSource) }]]),
+  sources: new Map([...ruleCatalog.sources, ["configurable", configurableSource]]),
 };
 
 describe("config", () => {
@@ -321,7 +321,7 @@ describe("rule configuration writes", () => {
     const db = await temporaryDatabase();
     addRepository(db, REPOSITORY);
     setUpRepository(db, REPOSITORY, { packs: [] }, 42);
-    expect(listRepositoryRules(db, bundle, REPOSITORY).rules).toEqual([]);
+    expect(listRepositoryRules(db, ruleCatalog, REPOSITORY).rules).toEqual([]);
     expect(() => setUpRepository(db, OTHER_REPOSITORY, { packs: [] })).toThrow(/Unknown repository/u);
   });
 });
@@ -330,42 +330,42 @@ describe("ruleConfigurationSignature", () => {
   it("changes with a setting of this repository or checkout, not of another repository", async () => {
     const db = await workedExample();
     addRepository(db, OTHER_REPOSITORY);
-    const before = ruleConfigurationSignature(db, bundle, REPOSITORY, [WORKTREE]);
+    const before = ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE]);
 
     setRuleSetting(db, { owner: { kind: "repository", repositoryKey: OTHER_REPOSITORY }, folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null });
     setRuleSetting(db, checkoutSetting("/elsewhere", "", "pack", "lint", { on: false, mode: null }));
-    expect(ruleConfigurationSignature(db, bundle, REPOSITORY, [WORKTREE])).toBe(before);
+    expect(ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE])).toBe(before);
 
     setRuleSetting(db, checkoutSetting(WORKTREE, "web", "rule", "no-var", { on: true, mode: null }));
-    const afterCheckout = ruleConfigurationSignature(db, bundle, REPOSITORY, [WORKTREE]);
+    const afterCheckout = ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE]);
     expect(afterCheckout).not.toBe(before);
 
     setRuleSetting(db, repositorySetting("web", "rule", "no-var", { on: false, mode: null }));
-    expect(ruleConfigurationSignature(db, bundle, REPOSITORY, [WORKTREE])).not.toBe(afterCheckout);
+    expect(ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE])).not.toBe(afterCheckout);
     expect(ruleConfigurationSignature(db, testBundle({ noConsoleRevision: 2 }), REPOSITORY, [WORKTREE]))
-      .not.toBe(ruleConfigurationSignature(db, bundle, REPOSITORY, [WORKTREE]));
+      .not.toBe(ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE]));
   });
 
   it("changes when only suppressions or config change", async () => {
     const db = await workedExample();
-    const before = ruleConfigurationSignature(db, bundle, REPOSITORY, []);
+    const before = ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, []);
     setRuleSetting(db, repositorySetting("", "pack", "lint", { on: null, mode: "log", suppressions: "ignore" }));
-    const ignored = ruleConfigurationSignature(db, bundle, REPOSITORY, []);
+    const ignored = ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, []);
     expect(ignored).not.toBe(before);
     setRuleSetting(db, repositorySetting("", "rule", "no-console", { on: null, mode: null, config: { word: "alert" } }));
-    const configured = ruleConfigurationSignature(db, bundle, REPOSITORY, []);
+    const configured = ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, []);
     expect(configured).not.toBe(ignored);
     setRuleSetting(db, repositorySetting("", "rule", "no-console", { on: null, mode: null, config: { word: "debug" } }));
-    expect(ruleConfigurationSignature(db, bundle, REPOSITORY, [])).not.toBe(configured);
+    expect(ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [])).not.toBe(configured);
   });
 
   it("reports a pack rule a library rule shadows, and changes when that library rule goes", async () => {
     const db = await workedExample();
     writeLibraryRule(db, testBundle(), { kind: "code", rule: codeRule("shared") });
-    const pack = bundle.packs.get("lint")!;
-    const withShared: BundledCatalog = {
-      ...bundle,
-      documents: new Map([...bundle.documents, ["shared", { kind: "code", rule: codeRule("shared") }]]),
+    const pack = ruleCatalog.packs.get("lint")!;
+    const withShared: RuleCatalog = {
+      ...ruleCatalog,
+      documents: new Map([...ruleCatalog.documents, ["shared", { kind: "code", rule: codeRule("shared") }]]),
       packs: new Map([["lint", { ...pack, rules: [...pack.rules, { ...pack.rules[0]!, id: "shared" }] }]]),
     };
 
@@ -384,12 +384,12 @@ describe("ruleConfigurationSignature", () => {
 describe("listRepositoryRules", () => {
   it("lists each rule at its attachment folder with the source of each value", async () => {
     const db = await workedExample();
-    const repositoryView = listRepositoryRules(db, bundle, REPOSITORY);
+    const repositoryView = listRepositoryRules(db, ruleCatalog, REPOSITORY);
     expect(repositoryView.rules.map(rule => [rule.document.rule.id, rule.attachmentFolder, rule.on, rule.mode])).toEqual([
       ["no-console", "web", true, "log"],
       ["no-var", "web", false, "log"],
     ]);
-    const worktreeView = listRepositoryRules(db, bundle, REPOSITORY, { checkoutPath: WORKTREE });
+    const worktreeView = listRepositoryRules(db, ruleCatalog, REPOSITORY, { checkoutPath: WORKTREE });
     expect(worktreeView.rules.find(rule => rule.document.rule.id === "no-console")?.decidedBy.mode).toMatchObject({ by: "checkout" });
   });
 });

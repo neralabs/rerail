@@ -3,7 +3,7 @@
   "id": "bandit-b608-hardcoded-sql-expressions",
   "revision": 1,
   "mode": "steer",
-  "description": "SQL text built with %-formatting, `.format()`, an f-string or `+`.",
+  "description": "Don't build SQL queries with string formatting, f-strings or concatenation; pass values as query parameters to prevent SQL injection.",
   "scope": {
     "include": [
       "**/*.py",

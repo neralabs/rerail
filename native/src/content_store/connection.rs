@@ -307,9 +307,18 @@ impl ThreadConnection {
     }
 }
 
+/// A connection's page cache at rest, in KiB.
+pub(super) const CACHE_KIB: i64 = 1_024;
+
 pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
     connection.set_prepared_statement_cache_capacity(128);
     connection.busy_handler(Some(wait_for_writer))?;
+    // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
+    // creating transaction, it was ignored, so no store returned freed pages (decision 0053 §4).
+    let pages: i64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+    if pages == 0 {
+        connection.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
+    }
     connection.pragma_update(None, "foreign_keys", "ON")?;
     // Readers never block the writer, nor it them: every worker thread reads while one apply
     // publishes.
@@ -317,13 +326,71 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     // A store may be opened by each of Rerail's worker threads. Keep their aggregate page-cache
     // residency bounded; active reads still use the decompressed cache above.
-    connection.pragma_update(None, "cache_size", -1_024_i64)?;
+    connection.pragma_update(None, "cache_size", -CACHE_KIB)?;
     connection.pragma_update(None, "mmap_size", 0_i64)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
+    // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay
+    // in memory, not in temp files read back through the 1 MB cache (decision 0024 §6).
+    connection.pragma_update(None, "temp_store", "MEMORY")?;
+    super::postings::install(connection)?;
+    super::vocabulary::install(connection)?;
+    crate::code_rule_dsl::text::install(connection)?;
+    crate::code_rule_dsl::prefilter::tapes::install(connection)?;
+    // `atoms` over this process's arena, and the commit hook that keeps pending atoms out of
+    // committed rows (decision 0049).
+    super::atoms::Atoms::install(connection)?;
     Ok(())
 }
 
+/// SQLite's memory from jemalloc, the process's allocator, once and before SQLite initializes (it
+/// refuses afterwards, and then keeps the system allocator). Freed SQLite pages are then returned
+/// with the heap's (`purge_allocator_pages`) instead of staying fragmented in the system's zones:
+/// a slice's prefilter and ingest held ~140 MB there for ~30 MB live (O30).
+#[cfg(not(any(windows, target_family = "wasm")))]
+pub(crate) fn sqlite_on_jemalloc() {
+    use std::ffi::{c_int, c_void};
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    unsafe extern "C" fn allocate(bytes: c_int) -> *mut c_void {
+        unsafe { tikv_jemalloc_sys::malloc(bytes.max(1) as usize) }
+    }
+    unsafe extern "C" fn release(pointer: *mut c_void) {
+        unsafe { tikv_jemalloc_sys::free(pointer) }
+    }
+    unsafe extern "C" fn resize(pointer: *mut c_void, bytes: c_int) -> *mut c_void {
+        unsafe { tikv_jemalloc_sys::realloc(pointer, bytes.max(1) as usize) }
+    }
+    unsafe extern "C" fn size(pointer: *mut c_void) -> c_int {
+        unsafe { tikv_jemalloc_sys::malloc_usable_size(pointer) as c_int }
+    }
+    unsafe extern "C" fn round(bytes: c_int) -> c_int {
+        unsafe { tikv_jemalloc_sys::nallocx(bytes.max(1) as usize, 0) as c_int }
+    }
+    unsafe extern "C" fn init(_: *mut c_void) -> c_int {
+        rusqlite::ffi::SQLITE_OK
+    }
+    unsafe extern "C" fn shutdown(_: *mut c_void) {}
+    ONCE.call_once(|| {
+        let methods = rusqlite::ffi::sqlite3_mem_methods {
+            xMalloc: Some(allocate),
+            xFree: Some(release),
+            xRealloc: Some(resize),
+            xSize: Some(size),
+            xRoundup: Some(round),
+            xInit: Some(init),
+            xShutdown: Some(shutdown),
+            pAppData: std::ptr::null_mut(),
+        };
+        // SQLite copies the methods.
+        let code = unsafe { rusqlite::ffi::sqlite3_config(rusqlite::ffi::SQLITE_CONFIG_MALLOC, &raw const methods) };
+        if std::env::var_os("RERAIL_PROF").is_some() {
+            eprintln!("SQLite allocator: {}", if code == rusqlite::ffi::SQLITE_OK { "jemalloc" } else { "the system's (already initialized)" });
+        }
+    });
+}
+
 fn open_runtime_connection(path: &Path) -> StoreResult<Connection> {
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    sqlite_on_jemalloc();
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
@@ -349,6 +416,17 @@ impl Drop for NoBusyWait {
 }
 
 impl ContentStore {
+    /// A new connection to this store's file, configured as the store's own: for an owner that
+    /// keeps its own temp schema and modules (the waves' SQL owner).
+    pub(crate) fn open_connection(&self) -> StoreResult<Connection> {
+        open_runtime_connection(&self.database_path)
+    }
+
+    /// The store's file.
+    pub(crate) fn database_path(&self) -> &Path {
+        &self.database_path
+    }
+
     /// Runs `operation` in one immediate (write-locking) transaction, retried under `retry_busy`.
     pub(super) fn immediate_transaction<T>(
         &self,
@@ -371,7 +449,7 @@ impl ContentStore {
             .expect("content store connection unavailable");
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(value)
     }
 
@@ -388,7 +466,7 @@ impl ContentStore {
         let _no_wait = NoBusyWait::enter();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(value)
     }
 }

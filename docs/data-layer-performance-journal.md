@@ -7997,3 +7997,17 @@ Regex occurrence producers remain cross-file operators. Repository-scale CPU and
 The inventory is 65 drafts and 35 absent translations. Full migration acceptance remains false.
 Evidence is in rr-no-api-root-imports-native-direct-contracts.json.gz, rr-no-api-root-imports-native-supplemental-contracts.json.gz, and rr-regex-occurrence-native-tdd.json.gz.
 No repository cold run or Linear issue was added.
+
+
+## 2026-11-07 — Retire the migration engine fork
+
+User direction: use Final rerail shape as the active engine and stop extending the nested integration checkout.
+
+- Preserved all current work at `bed5123f9fe9998c7307febb4d94817302168f8b` and backup branch `archive/data-layer-before-modern-engine-bed5123f9`.
+- Adopted the complete committed Final shape tree at `879486272cd1b44b3567320c85847ba0fd19a918`, including its conflict resolutions. No old engine files were overlaid.
+- Moved the migration policies and assertion evidence into the existing `gate/data-layer/` layout. Retained the lossless Python test transport and source pin.
+- Rebound imported library hashes to the authoritative modern library bytes. Historical receipts remain historical.
+- Added a regression test proving that identical library bytes from a retired checkout were accepted by the old provenance check. The repaired check rejects that checkout. All 44 Python tooling tests pass.
+- Preserved the unfinished 66th translation as a draft; 34 of the 100 translations remain absent. No full migration acceptance is claimed.
+
+The five-argument regex occurrence producer was developed after the engine merge already included by Final shape. It requires a focused forward port onto this baseline, not restoration of old engine files. Root builds and acceptance results will be recorded below.

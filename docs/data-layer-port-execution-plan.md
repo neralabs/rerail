@@ -1,5 +1,4 @@
-Restart point (2026-11-03): [the continuation plan](data-layer-port-restart.md) recovers the 60 candidates and specifies batch seven and the remaining 82 checks.
-Historical continuation: [batch six](data-layer-batch-six.md) adds ten source-detection candidates, bringing the total to 60.
+Current continuation: [batch six](data-layer-batch-six.md) adds ten source-detection candidates, bringing the total to 60.
 The 1,259 source comparisons and 40 edit transitions pass; retained integration contracts remain separate.
 The first thirty candidates are committed at `905212f6`.
 

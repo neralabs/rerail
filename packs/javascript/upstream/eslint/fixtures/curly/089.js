@@ -1,1 +1,0 @@
-if (a) { with (obj) if (b) foo(); } else bar();

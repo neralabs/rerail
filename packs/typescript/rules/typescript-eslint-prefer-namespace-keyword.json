@@ -3,7 +3,7 @@
   "id": "typescript-eslint-prefer-namespace-keyword",
   "revision": 4,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `prefer-namespace-keyword` rule (https://typescript-eslint.io/rules/prefer-namespace-keyword). Flags `module Name {}` declarations with an identifier name; reports the whole declaration (from `declare` when present) and fixes the keyword.",
+  "description": "Use the namespace keyword instead of module to declare custom TypeScript namespaces; module is reserved for external module declarations.",
   "scope": {
     "include": [
       "**/*.ts",

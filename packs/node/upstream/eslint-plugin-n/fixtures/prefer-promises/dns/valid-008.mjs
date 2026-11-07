@@ -1,1 +1,0 @@
-import dns from 'node:dns'; dns.promises.lookup()

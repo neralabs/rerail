@@ -52,21 +52,22 @@ impl EslintDirectives {
         Self::from_comments(
             root(node)
                 .dfs()
-                .filter(|node| matches!(node.kind().as_ref(), "comment" | "html_comment")),
+                .filter(|node| matches!(node.kind().as_ref(), "comment" | "html_comment"))
+                .map(|comment| comment.range()),
             source,
             lines,
         )
     }
 
-    /// Reads `comments`: the comment nodes ESLint's source code holds.
-    pub(crate) fn from_comments<'r, D: Doc + 'r>(
-        comments: impl Iterator<Item = Node<'r, D>>,
+    /// Reads the comments at `comments`, ranges of `source`: the comments ESLint's source code
+    /// holds.
+    pub(crate) fn from_comments(
+        comments: impl Iterator<Item = std::ops::Range<usize>>,
         source: &str,
         lines: &LineTable,
     ) -> Self {
         let mut directives = Self::default();
-        for comment in comments {
-            let range = comment.range();
+        for range in comments {
             let text = &source[range.clone()];
             let Some(directive) = Directive::parse(text).filter(Directive::disables) else {
                 continue;

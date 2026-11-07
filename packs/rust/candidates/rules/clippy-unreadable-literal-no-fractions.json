@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "clippy-unreadable-literal-no-fractions",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's unreadable_literal under unreadable-literal-lint-fractions = false (its ui-toml test): reports an integer or float literal whose digits, as Clippy's NumericLiteral splits them (radix prefix, suffix and the `_` before it, integer, fraction and exponent), hold an ungrouped part longer than five digits (a decimal integer part, a fraction (never, under unreadable-literal-lint-fractions = false), or a binary, octal or hexadecimal literal whose first group is). Literals Clippy reads as a mistyped suffix (an unsuffixed literal ending in `_8`, `_16`, `_32` or `_64`, the exponent's `_32` or `_64`) and hexadecimal UUIDs (8-4-4-4-12) are not reported, nor (as Clippy skips code from expansion) literals in a macro_rules! body; a macro invocation's arguments keep their own spans and are read.",
+  "description": "Add underscore separators to Rust number literals with runs of more than five digits, fractions excepted; long digit runs are hard to read.",
   "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {
@@ -15,14 +15,14 @@
           {"not": {"regex": "^[0-9][0-9_]*_(?:8|16|32|64)$"}},
           {"not": {"regex": "^0[xbo][0-9A-Fa-f_]*_(?:8|16|32|64)$"}},
           {"not": {"regex": "^[0-9_.]*[eE][+-]?[0-9_]*_(?:32|64)$"}},
-          {"not": {"regex": "^0x[0-9A-Fa-f]{8}_[0-9A-Fa-f]{4}_[0-9A-Fa-f]{4}_[0-9A-Fa-f]{4}_[0-9A-Fa-f]{12}(?:_?(?:[iu](?:8|16|32|64|128|size)))?$"}},
+          {"not": {"regex": "^0x[0-9A-Fa-f]{8}_[0-9A-Fa-f]{4}_[0-9A-Fa-f]{4}_[0-9A-Fa-f]{4}_[0-9A-Fa-f]{12}(?:_?(?:(?:i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize)))?$"}},
           { "any": [
-            {"all": [{"regex": "^(?:[1-9].*|0|0[^xbo].*)$"}, {"regex": "^[0-9]{6,}(?:\\..*|_?[eE].*|_?(?:[iu](?:8|16|32|64|128|size)|f(?:32|64))|)$"}]},
-            {"regex": "^0[xbo](?:[0-9A-Fa-f]{6,}|[0-9A-Fa-f]{6,6}(?:_[0-9A-Fa-f]{6})+|[0-9A-Fa-f]{6,7}(?:_[0-9A-Fa-f]{7})+|[0-9A-Fa-f]{6,8}(?:_[0-9A-Fa-f]{8})+|[0-9A-Fa-f]{6,9}(?:_[0-9A-Fa-f]{9})+|[0-9A-Fa-f]{6,10}(?:_[0-9A-Fa-f]{10})+|[0-9A-Fa-f]{6,11}(?:_[0-9A-Fa-f]{11})+|[0-9A-Fa-f]{6,12}(?:_[0-9A-Fa-f]{12})+|[0-9A-Fa-f]{6,13}(?:_[0-9A-Fa-f]{13})+|[0-9A-Fa-f]{6,14}(?:_[0-9A-Fa-f]{14})+|[0-9A-Fa-f]{6,15}(?:_[0-9A-Fa-f]{15})+|[0-9A-Fa-f]{6,16}(?:_[0-9A-Fa-f]{16})+|[0-9A-Fa-f]{6,17}(?:_[0-9A-Fa-f]{17})+|[0-9A-Fa-f]{6,18}(?:_[0-9A-Fa-f]{18})+|[0-9A-Fa-f]{6,19}(?:_[0-9A-Fa-f]{19})+|[0-9A-Fa-f]{6,20}(?:_[0-9A-Fa-f]{20})+|[0-9A-Fa-f]{6,21}(?:_[0-9A-Fa-f]{21})+|[0-9A-Fa-f]{6,22}(?:_[0-9A-Fa-f]{22})+|[0-9A-Fa-f]{6,23}(?:_[0-9A-Fa-f]{23})+|[0-9A-Fa-f]{6,24}(?:_[0-9A-Fa-f]{24})+|[0-9A-Fa-f]{6,25}(?:_[0-9A-Fa-f]{25})+|[0-9A-Fa-f]{6,26}(?:_[0-9A-Fa-f]{26})+|[0-9A-Fa-f]{6,27}(?:_[0-9A-Fa-f]{27})+|[0-9A-Fa-f]{6,28}(?:_[0-9A-Fa-f]{28})+|[0-9A-Fa-f]{6,29}(?:_[0-9A-Fa-f]{29})+|[0-9A-Fa-f]{6,30}(?:_[0-9A-Fa-f]{30})+|[0-9A-Fa-f]{6,31}(?:_[0-9A-Fa-f]{31})+|[0-9A-Fa-f]{6,32}(?:_[0-9A-Fa-f]{32})+|[0-9A-Fa-f]{6,33}(?:_[0-9A-Fa-f]{33})+|[0-9A-Fa-f]{6,34}(?:_[0-9A-Fa-f]{34})+|[0-9A-Fa-f]{6,35}(?:_[0-9A-Fa-f]{35})+|[0-9A-Fa-f]{6,36}(?:_[0-9A-Fa-f]{36})+|[0-9A-Fa-f]{6,37}(?:_[0-9A-Fa-f]{37})+|[0-9A-Fa-f]{6,38}(?:_[0-9A-Fa-f]{38})+|[0-9A-Fa-f]{6,39}(?:_[0-9A-Fa-f]{39})+|[0-9A-Fa-f]{6,40}(?:_[0-9A-Fa-f]{40})+)(?:_?(?:[iu](?:8|16|32|64|128|size)))?$"}
+            {"all": [{"regex": "^(?:[1-9].*|0|0[^xbo].*)$"}, {"regex": "^[0-9]{6,}(?:\\..*|_?[eE].*|_?(?:(?:i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize)|(?:f32|f64))|)$"}]},
+            {"regex": "^0[xbo](?:[0-9A-Fa-f]{6,}|[0-9A-Fa-f]{6,6}(?:_[0-9A-Fa-f]{6})+|[0-9A-Fa-f]{6,7}(?:_[0-9A-Fa-f]{7})+|[0-9A-Fa-f]{6,8}(?:_[0-9A-Fa-f]{8})+|[0-9A-Fa-f]{6,9}(?:_[0-9A-Fa-f]{9})+|[0-9A-Fa-f]{6,10}(?:_[0-9A-Fa-f]{10})+|[0-9A-Fa-f]{6,11}(?:_[0-9A-Fa-f]{11})+|[0-9A-Fa-f]{6,12}(?:_[0-9A-Fa-f]{12})+|[0-9A-Fa-f]{6,13}(?:_[0-9A-Fa-f]{13})+|[0-9A-Fa-f]{6,14}(?:_[0-9A-Fa-f]{14})+|[0-9A-Fa-f]{6,15}(?:_[0-9A-Fa-f]{15})+|[0-9A-Fa-f]{6,16}(?:_[0-9A-Fa-f]{16})+|[0-9A-Fa-f]{6,17}(?:_[0-9A-Fa-f]{17})+|[0-9A-Fa-f]{6,18}(?:_[0-9A-Fa-f]{18})+|[0-9A-Fa-f]{6,19}(?:_[0-9A-Fa-f]{19})+|[0-9A-Fa-f]{6,20}(?:_[0-9A-Fa-f]{20})+|[0-9A-Fa-f]{6,21}(?:_[0-9A-Fa-f]{21})+|[0-9A-Fa-f]{6,22}(?:_[0-9A-Fa-f]{22})+|[0-9A-Fa-f]{6,23}(?:_[0-9A-Fa-f]{23})+|[0-9A-Fa-f]{6,24}(?:_[0-9A-Fa-f]{24})+|[0-9A-Fa-f]{6,25}(?:_[0-9A-Fa-f]{25})+|[0-9A-Fa-f]{6,26}(?:_[0-9A-Fa-f]{26})+|[0-9A-Fa-f]{6,27}(?:_[0-9A-Fa-f]{27})+|[0-9A-Fa-f]{6,28}(?:_[0-9A-Fa-f]{28})+|[0-9A-Fa-f]{6,29}(?:_[0-9A-Fa-f]{29})+|[0-9A-Fa-f]{6,30}(?:_[0-9A-Fa-f]{30})+|[0-9A-Fa-f]{6,31}(?:_[0-9A-Fa-f]{31})+|[0-9A-Fa-f]{6,32}(?:_[0-9A-Fa-f]{32})+|[0-9A-Fa-f]{6,33}(?:_[0-9A-Fa-f]{33})+|[0-9A-Fa-f]{6,34}(?:_[0-9A-Fa-f]{34})+|[0-9A-Fa-f]{6,35}(?:_[0-9A-Fa-f]{35})+|[0-9A-Fa-f]{6,36}(?:_[0-9A-Fa-f]{36})+|[0-9A-Fa-f]{6,37}(?:_[0-9A-Fa-f]{37})+|[0-9A-Fa-f]{6,38}(?:_[0-9A-Fa-f]{38})+|[0-9A-Fa-f]{6,39}(?:_[0-9A-Fa-f]{39})+|[0-9A-Fa-f]{6,40}(?:_[0-9A-Fa-f]{40})+)(?:_?(?:(?:i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize)))?$"}
           ] }
         ] }
       ] } } },
-      "violation": {"suppress": {"clippy": {"lints": ["clippy::unreadable_literal", "clippy::pedantic", "warnings"]}}, "anchor": "witness.span", "code": "unreadable_literal", "message": "Clippy unreadable_literal: long literal lacking separators"}
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::unreadable_literal", "clippy::pedantic", "warnings"]}}, "anchor": "witness.span", "code": "unreadable_literal", "message": "Add underscore separators to this number literal, e.g. 1_000_000 instead of 1000000."}
     }
   ]
 }

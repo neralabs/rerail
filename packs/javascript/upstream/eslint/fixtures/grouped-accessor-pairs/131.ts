@@ -1,1 +1,0 @@
-interface I { before: true, get prop(): any, set prop(value: any): void, after: true }

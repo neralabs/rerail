@@ -1,0 +1,123 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-no-source-inspection",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer no_source_inspection at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "tests/**/*.py",
+      "conform/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/.pytest_cache/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "inspection-0",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\binspect\\.getsource\\s*\\(",
+          "lines": {
+            "exclude": [
+              "^\\s*#"
+            ],
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "NSI001",
+        "anchor": "witness.span",
+        "message": "inspect.getsource() is forbidden in tests"
+      }
+    },
+    {
+      "id": "inspection-1",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\binspect\\.getsourcelines\\s*\\(",
+          "lines": {
+            "exclude": [
+              "^\\s*#"
+            ],
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "NSI001",
+        "anchor": "witness.span",
+        "message": "inspect.getsourcelines() is forbidden in tests"
+      }
+    },
+    {
+      "id": "inspection-2",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\binspect\\.getsourcefile\\s*\\(",
+          "lines": {
+            "exclude": [
+              "^\\s*#"
+            ],
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "NSI001",
+        "anchor": "witness.span",
+        "message": "inspect.getsourcefile() is forbidden in tests"
+      }
+    },
+    {
+      "id": "inspection-3",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "from\\s+inspect\\s+import\\s+.*\\bgetsource\\b",
+          "lines": {
+            "exclude": [
+              "^\\s*#"
+            ],
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "NSI001",
+        "anchor": "witness.span",
+        "message": "import of getsource is forbidden in tests"
+      }
+    },
+    {
+      "id": "inspection-4",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "from\\s+inspect\\s+import\\s+.*\\bgetsourcelines\\b",
+          "lines": {
+            "exclude": [
+              "^\\s*#"
+            ],
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "NSI001",
+        "anchor": "witness.span",
+        "message": "import of getsourcelines is forbidden in tests"
+      }
+    }
+  ]
+}

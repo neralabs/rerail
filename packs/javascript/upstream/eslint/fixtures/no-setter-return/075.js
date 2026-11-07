@@ -1,1 +1,0 @@
-Object.defineProperty(foo, 'bar', { baz(val) { return 1; } })

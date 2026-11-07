@@ -24,7 +24,7 @@ import type { CodeRuleDslOptionDeclaration, CodeRuleDslValue } from "../code-rul
 import { stableJsonText } from "../stable-json.js";
 import { folderOfGlob, readEslintFlatConfig, type FlatConfigRead } from "./eslint-flat-config.js";
 import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "./lint-config-formats.js";
-import type { BundledCatalog, RuleConfig } from "./repository-model.js";
+import type { RuleCatalog, RuleConfig } from "./repository-model.js";
 import { configureBundledCodeRule } from "./rule-config.js";
 
 /** A config file larger than this is not one a person wrote; it is reported as not read. As `package.json` in `rule-pack-matcher.ts`. */
@@ -792,8 +792,8 @@ function eslintOptionsConfig(declared: Declared, options: readonly unknown[]): M
 }
 
 /** The upstream rules a code rule's violations honour suppression comments for, and its declared options. */
-function portOf(bundle: BundledCatalog, ruleId: string): { eslint: string[]; oxlint: OxlintRule[]; noqa: string[]; declared: Declared } | undefined {
-  const document = bundle.documents.get(ruleId);
+function portOf(ruleCatalog: RuleCatalog, ruleId: string): { eslint: string[]; oxlint: OxlintRule[]; noqa: string[]; declared: Declared } | undefined {
+  const document = ruleCatalog.documents.get(ruleId);
   if (document?.kind !== "code") return undefined;
   const port = { eslint: [] as string[], oxlint: [] as OxlintRule[], noqa: [] as string[], declared: {} as Record<string, CodeRuleDslOptionDeclaration> };
   for (const clause of document.rule.clauses) {
@@ -827,13 +827,13 @@ function entryText(file: string, key: string, value: unknown): string {
 }
 
 /**
- * Settings for the rules of packs `packIds` (in `bundle`) from what the repository's lint config files say, with
+ * Settings for the rules of packs `packIds` (in `ruleCatalog`) from what the repository's lint config files say, with
  * notes on what could not be used. Notes about a linter none of these rules ports are left out.
  */
-export function proposeLintConfigSettings(files: LintConfigFiles, bundle: BundledCatalog, packIds: readonly string[]): RepositoryLintConfig {
-  const ruleIds = [...new Set(packIds.flatMap(id => (bundle.packs.get(id)?.rules ?? []).map(rule => rule.id)))];
+export function proposeLintConfigSettings(files: LintConfigFiles, ruleCatalog: RuleCatalog, packIds: readonly string[]): RepositoryLintConfig {
+  const ruleIds = [...new Set(packIds.flatMap(id => (ruleCatalog.packs.get(id)?.rules ?? []).map(rule => rule.id)))];
   const ports = new Map(ruleIds.flatMap(id => {
-    const port = portOf(bundle, id);
+    const port = portOf(ruleCatalog, id);
     return port === undefined ? [] : [[id, port] as const];
   }));
   const findings = new Map<string, Finding[]>();
@@ -852,7 +852,7 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
   const mappedOptions = (ruleId: string, declared: Declared, options: readonly unknown[]): MappedOptions => {
     const config = eslintOptionsConfig(declared, options);
     if (!config.ok) return config;
-    const configured = configureBundledCodeRule(bundle, ruleId, config.config);
+    const configured = configureBundledCodeRule(ruleCatalog, ruleId, config.config);
     return configured.ok ? config : { ok: false, reason: configured.reason };
   };
   const eslint = files.eslint;
@@ -1023,6 +1023,6 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
 }
 
 /** {@link proposeLintConfigSettings} for the lint config files at `root`. */
-export function readRepositoryLintConfig(root: string, bundle: BundledCatalog, packIds: readonly string[]): RepositoryLintConfig {
-  return proposeLintConfigSettings(readLintConfigFiles(root), bundle, packIds);
+export function readRepositoryLintConfig(root: string, ruleCatalog: RuleCatalog, packIds: readonly string[]): RepositoryLintConfig {
+  return proposeLintConfigSettings(readLintConfigFiles(root), ruleCatalog, packIds);
 }

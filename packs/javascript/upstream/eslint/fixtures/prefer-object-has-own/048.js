@@ -1,1 +1,0 @@
-({}.hasOwnProperty.foo(obj, prop))

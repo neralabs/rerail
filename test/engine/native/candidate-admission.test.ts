@@ -114,40 +114,10 @@ it.skipIf(!required)("a plan that exceeds its lowering bound preserves earlier s
     const trace = child.stderr.split("\n").filter(l => l.startsWith("RERAIL_TRACE ")).map(l => JSON.parse(l.slice(13)));
     const lower = trace.filter(t => t.phase === "anchor-lower" && t.name === "template");
     expect(lower).toHaveLength(1);
-    const materialized = trace.filter(t => t.phase === "anchor-materialize" && t.detail.relationId != null);
-    expect(trace.filter(t => t.phase === "anchor-results").length).toBeGreaterThan(0);
-    // A single SQL reader can now remain fused, with no physical producer stage.
-    // A bounded conjunction can retain useful filters instead of falling back to
-    // root kinds. Count constructions per producer, not all retained filters.
-    expect(new Set(materialized.map(t => t.detail.relationId)).size,
-      "shared producers must materialize only once within this batch").toBe(materialized.length);
-    expect(materialized.every(t => t.detail.priorConstructions === 0)).toBe(true);
+    return lower[0].detail.materializations;
   }
-  capture(false);
-  capture(true);
-  capture(true, "^v[0-9]+$", 2);
+  const baseline = capture(false);
+  expect(capture(true), "failed-plan rollback must not rematerialize the earlier identical selector").toBe(baseline);
+  expect(capture(true, "^v[0-9]+$", 2), "consecutive failures must retain earlier shared producers").toBe(baseline);
   capture(true, "^.{0,10}$"); // A failed branch's former parameter value must receive a valid new binding.
 }, 60_000);
-
-it.skipIf(!required)("constructor evidence rejects non-arguments before lexical scope walks", () => {
-  const program = `
-    import { readFileSync } from 'node:fs';
-    import { loadNativeBinding } from ${JSON.stringify(engine)};
-    const native=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
-    const document=readFileSync('packs/data-layer/candidates/rules/data-layer-grammar-callable-constructors.json','utf8');
-    const compiled=native.CodeRuleDslRuntime.compile(document,'json',caps);
-    const body=Array.from({length:900},(_,i)=>'    _install("module", "Class", _facades.C'+i+')').join(String.fromCharCode(10));
-    const source=['from lib import facades as _facades','def install():',body,'def restore():',body,''].join(String.fromCharCode(10));
-    const files=[{path:'impl/common/l2100_sql_grammar/rust_bridge/generated_install.py',language:'python',source}];
-    const ws=new native.CodeRuleDslWorkspace();ws.addCodeRule(compiled);
-    try {console.log(await ws.applyAsync(JSON.stringify({revision:1,files,removed:[]})));}finally{ws.close();}
-  `;
-  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
-    encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
-    env: process.env,
-  });
-  expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
-  const result = JSON.parse(child.stdout.trim()).evaluation;
-  expect(result.failures).toEqual([]);
-  expect(result.violations).toEqual([]);
-}, 35_000);

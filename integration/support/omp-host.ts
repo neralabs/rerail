@@ -81,8 +81,8 @@ export class OmpHost {
       return host;
     } catch (error) { await host.close(); throw error; }
   }
-  private async waitFor(predicate: (frame: Frame) => boolean, from = 0): Promise<Frame> {
-    const deadline = Date.now() + 60_000;
+  private async waitFor(predicate: (frame: Frame) => boolean, from = 0, timeoutMs = 60_000): Promise<Frame> {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const found = this.frames.slice(from).find(predicate);
       if (found) return found;
@@ -99,10 +99,11 @@ export class OmpHost {
     if (!response.success) throw new Error(`OMP ${String(command.type)} failed: ${response.error}`);
     return response;
   }
-  async prompt(message: string): Promise<void> {
+  /** `timeoutMs` bounds the agent's run, for a prompt whose tools keep the daemon busy for longer than the default minute. */
+  async prompt(message: string, { timeoutMs }: { timeoutMs?: number } = {}): Promise<void> {
     const from = this.frames.length;
     const response = await this.command({ type: "prompt", message });
-    await this.waitFor(frame => frame.type === "agent_end" || (frame.type === "prompt_result" && frame.id === response.id), from);
+    await this.waitFor(frame => frame.type === "agent_end" || (frame.type === "prompt_result" && frame.id === response.id), from, timeoutMs);
     // agent_end observers and queued steers may still be settling; the command's idle barrier handles both.
     await this.snapshot();
   }

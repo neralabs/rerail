@@ -1,0 +1,39 @@
+.policy "ruff-fast003-fast-api-unused-path-parameter" revision 2
+.description "Declare each path parameter of a FastAPI route as a function parameter, so the route can read the value its path captures."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FAST003 (FastAPI): a `{name}` (or `{name:converter}`) in the path of a function's first route decorator,
+// a string literal given first, that no parameter of the function takes. A parameter takes it by its name
+// (not positional-only), by `Annotated[T, Path(alias="name")]`, or through a `Depends` dependency's own
+// parameters. When a dependency cannot be read (fast_dep_unknown), the route is left alone. Reported at the
+// `{…}` in the path string, as Ruff does. Ruff's fix adds the parameter (unsafe); not offered here.
+//   @app.get("/things/{thing_id}")
+//   async def read_thing(query: str): …          ← FAST003 at {thing_id}
+//   async def read_thing(thing_id: int, query: str): …   not reported
+#include "python/misc2-fastapi.rr"
+//   fast_route(f, dc), fast_param(f, p, x, ann, dflt), fast_annotated(ann, a, i), fast_dep_param(f, x),
+//   fast_dep_unknown(f); ruff_arg, call_kwarg, plain_str (python/ruff)
+
+.violation FAST003(at: span, K: symbol, FN: symbol) code "FAST003"
+    "Declare `{K}` as a non-positional-only parameter of `{FN}` so FastAPI passes the `{{K}}` path value. Leave it if the handler reads `request.path_params`; else drop `{{K}}` from the path."
+    suppress ruff "FAST003"
+FAST003(b, k, fn) :- route_path(f, s), path_param(s, b, k), !fast_dep_unknown(f), !takes(f, k),
+    field(f, "name", n), text(n, fn).
+// path_param(s, b, k): `{k}` or `{k:conv}` is in path string s, at span b.
+.decl path_param(s: node, b: span, k: symbol)
+path_param(s, b, k) :- route_path(_, s),
+    match_all("(?<b>\\{(?<K>[a-zA-Z_][a-zA-Z0-9_]*)(?::[a-zA-Z_][a-zA-Z0-9_]*)?\\})", s), text(K, k).
+// route_path(f, s): the first argument of f's first route decorator, a plain string.
+.decl route_path(f: node, s: node)
+route_path(f, s) :- fast_route(f, dc), count : { fast_route(f, d2), d2 < dc } = 0, ruff_arg(dc, 0, s0),
+    unparen(s0, s), plain_str(s, _).
+.decl takes(f: node, x: symbol)
+takes(f, x) :- fast_param(f, p, x, _, _), !path_alias(p, _).
+takes(f, x) :- path_alias(_, x), fast_param(f, p, _, _, _), path_alias(p, x).
+takes(f, x) :- fast_dep_param(f, x).
+// path_alias(p, x): p is annotated `Annotated[T, Path(alias="x")]`, the Path call right after T.
+.decl path_alias(p: node, x: symbol)
+path_alias(p, x) :- fast_param(_, p, _, ann, _), fast_annotated(ann, c, 1), kind(c, "call"),
+    fast_dependency(c, "Path"), call_kwarg(c, "alias", v), plain_str(v, x).

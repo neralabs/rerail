@@ -1,1 +1,0 @@
-class C { #x; foo(a) { y = a.#x; } }

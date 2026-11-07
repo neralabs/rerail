@@ -1,1 +1,0 @@
-foo + 'does not unescape an escaped double quote in a single-quoted string: \"'

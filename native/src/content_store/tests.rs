@@ -25,13 +25,13 @@ fn temporary_database(label: &str) -> std::path::PathBuf {
     ))
 }
 
-fn store(label: &str) -> (std::path::PathBuf, ContentStore) {
+pub(super) fn store(label: &str) -> (std::path::PathBuf, ContentStore) {
     let path = temporary_database(label);
     let store = ContentStore::open(&path).unwrap();
     (path, store)
 }
 
-fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
+pub(super) fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
     CandidateCatalogIdentity::new(
         HashKey::sha256(label.as_bytes()),
         HashKey::sha256(b"grammar-set"),
@@ -42,7 +42,7 @@ fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
 }
 
 /// Publishes `id` as a complete empty Git tree, so a snapshot may use it as its root.
-fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
+pub(super) fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
     store
         .put_git_trees_bulk(&[GitTree {
             id,
@@ -250,29 +250,33 @@ fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
     drop(connection);
     let mut duplicated = requests.clone();
     duplicated.push(requests[0]);
-    let sources = store.get_sources_bulk(&duplicated, 100_000).unwrap();
+    let sources = store
+        .get_sources_by_hash_bulk(&duplicated, 100_000)
+        .unwrap();
     assert_eq!(sources.len(), 257);
     assert_eq!(executed.load(Ordering::Relaxed), 3);
     for (id, hash) in &requests {
         assert_eq!(HashKey::sha256(&sources[id]), *hash);
     }
-    let warm = store.get_sources_bulk(&duplicated, 100_000).unwrap();
+    let warm = store
+        .get_sources_by_hash_bulk(&duplicated, 100_000)
+        .unwrap();
     assert_eq!(warm, sources);
     assert_eq!(
         executed.load(Ordering::Relaxed),
         3,
         "warm immutable source frames need no SQL"
     );
-    assert!(store.get_sources_bulk(&requests, 1).is_err());
+    assert!(store.get_sources_by_hash_bulk(&requests, 1).is_err());
     assert!(
         store
-            .get_sources_bulk(
+            .get_sources_by_hash_bulk(
                 &[requests[0], (requests[0].0, HashKey::sha256(b"wrong"))],
                 100_000
             )
             .is_err()
     );
-    assert!(store.get_sources_bulk(&[], 0).unwrap().is_empty());
+    assert!(store.get_sources_by_hash_bulk(&[], 0).unwrap().is_empty());
     let connection = store.connection.lock().unwrap();
     // SAFETY: remove the callback before the counter goes out of scope.
     unsafe {
@@ -560,6 +564,7 @@ fn snapshot_publication_is_atomic() {
                     grammar_version: 45,
                     tape_format_version: 1,
                     bytes: b"persisted tape",
+                    documents: &[],
                 }),
                 catalog: candidate_catalog("atomic"),
                 candidates: std::slice::from_ref(&candidate),
@@ -642,6 +647,7 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
                 grammar_version: 1,
                 tape_format_version: 1,
                 bytes: tape_bytes,
+                documents: &[],
             }),
             catalog: candidate_catalog("overlay-atomic"),
             candidates: std::slice::from_ref(&candidate),
@@ -2593,4 +2599,156 @@ fn publication_completes_a_tree_with_duplicate_entry_names() {
         0,
         "a stored tree with duplicate entry names never counts as complete"
     );
+}
+
+/// A derived document's tape and text (`file_documents`) are published with the primary tape
+/// that derives them, live while that tape is, and collected once it is gone.
+#[test]
+fn derived_documents_live_and_die_with_their_primary_tape() {
+    let (_path, store) = store("derived-documents");
+    let snapshot = store
+        .put_snapshot(
+            published_tree(&store, HashKey::git_sha1([61; 20])),
+            1,
+            HashKey::sha256(b"grammar"),
+            1,
+        )
+        .unwrap();
+    let workspace = store
+        .open_workspace("/derived-documents", "repo", "owner", snapshot, 1, 100)
+        .unwrap();
+    let document = DocumentPayload {
+        parent_ordinal: 0,
+        role_id: 2,
+        via_id: 7,
+        source: b"<?php echo e($title); ?>",
+        grammar_id: 0x1_0101,
+        tape: b"derived tape",
+        source_map: b"map",
+        host_errors: b"",
+    };
+    let stored = store
+        .publish_overlay_file(
+            workspace,
+            OverlayFilePublication {
+                path: "views/page.blade.php",
+                state_id: 1,
+                source: b"{{ e($title) }}",
+                aliases: &[],
+                tape: Some(TapePayload {
+                    grammar_id: 8,
+                    grammar_version: 1,
+                    tape_format_version: 1,
+                    bytes: b"primary tape",
+                    documents: std::slice::from_ref(&document),
+                }),
+                catalog: candidate_catalog("derived-documents"),
+                candidates: &[],
+                local_results: &[],
+                candidates_current: false,
+            },
+        )
+        .unwrap();
+    let primary = stored.tape.unwrap();
+    let rows = store.file_documents_bulk(&[primary]).unwrap();
+    let [row] = &rows[&primary][..] else {
+        panic!("one derived document: {rows:?}");
+    };
+    assert_eq!(
+        (row.ordinal, row.parent_ordinal, row.role_id, row.via_id),
+        (1, 0, 2, 7)
+    );
+    assert_eq!(row.grammar_id, Some(0x1_0101));
+    assert_eq!(row.source_map, b"map");
+    let (derived_tape, derived_source) = (row.tape, row.source.unwrap());
+    let stored_objects = || {
+        (
+            store
+                .get_tapes_bulk(&[primary, derived_tape])
+                .unwrap()
+                .into_iter()
+                .map(|(tape, (bytes, _))| (tape, bytes.to_vec()))
+                .collect::<HashMap<_, _>>(),
+            store.get_sources_bulk(&[derived_source]).unwrap().len(),
+        )
+    };
+    let (tapes, sources) = stored_objects();
+    assert_eq!(tapes[&primary], b"primary tape");
+    assert_eq!(tapes[&derived_tape], b"derived tape");
+    assert_eq!(sources, 1);
+
+    // The overlay keeps the primary tape, and its row the derived tape and text, however often
+    // the collector runs.
+    for _ in 0..4 {
+        store.collect(0, 100).unwrap();
+    }
+    let (tapes, sources) = stored_objects();
+    assert_eq!(
+        tapes.len(),
+        2,
+        "both tapes stay while the primary is referenced"
+    );
+    assert_eq!(sources, 1, "the derived text stays with its tape");
+
+    // Retired, the primary goes, its rows with it, and then the derived tape and text.
+    store.retire_workspace(workspace).unwrap();
+    for _ in 0..8 {
+        store.collect(101, 100).unwrap();
+    }
+    let (tapes, sources) = stored_objects();
+    assert!(tapes.is_empty(), "no tape outlives its primary: {tapes:?}");
+    assert_eq!(sources, 0, "the derived text goes with its tape");
+    assert!(store.file_documents_bulk(&[primary]).unwrap().is_empty());
+}
+
+/// A tape that derives no document has no `file_documents` row.
+#[test]
+fn a_single_language_tape_writes_no_document_rows() {
+    let (_path, store) = store("single-language-documents");
+    let snapshot = store
+        .put_snapshot(
+            published_tree(&store, HashKey::git_sha1([62; 20])),
+            1,
+            HashKey::sha256(b"grammar"),
+            1,
+        )
+        .unwrap();
+    let workspace = store
+        .open_workspace("/single-language", "repo", "owner", snapshot, 1, 100)
+        .unwrap();
+    let stored = store
+        .publish_overlay_file(
+            workspace,
+            OverlayFilePublication {
+                path: "src/a.py",
+                state_id: 1,
+                source: b"x = 1\n",
+                aliases: &[],
+                tape: Some(TapePayload {
+                    grammar_id: 1,
+                    grammar_version: 1,
+                    tape_format_version: 1,
+                    bytes: b"python tape",
+                    documents: &[],
+                }),
+                catalog: candidate_catalog("single-language"),
+                candidates: &[],
+                local_results: &[],
+                candidates_current: false,
+            },
+        )
+        .unwrap();
+    assert!(
+        store
+            .file_documents_bulk(&[stored.tape.unwrap()])
+            .unwrap()
+            .is_empty()
+    );
+    let rows: i64 = store
+        .connection
+        .lock()
+        .unwrap()
+        .query_row("SELECT count(*) FROM file_documents", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 0);
 }

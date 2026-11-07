@@ -1,1 +1,0 @@
-foo.reduce((a, b, i) => a.concat(<Foo key={i} />), [])

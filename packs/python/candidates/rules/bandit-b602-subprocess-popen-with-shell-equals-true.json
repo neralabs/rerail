@@ -3,7 +3,7 @@
   "id": "bandit-b602-subprocess-popen-with-shell-equals-true",
   "revision": 1,
   "mode": "steer",
-  "description": "A `subprocess` call that runs its command through the shell (`shell=True`).",
+  "description": "Avoid shell=True in subprocess calls; pass the command as a list of arguments to prevent shell injection.",
   "scope": {
     "include": [
       "**/*.py",

@@ -3,7 +3,7 @@
   "id": "ruff-f525-string-dot-format-mixing-automatic",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F525 (string-dot-format-mixing-automatic): a `.format` call on a valid format string with both an automatically numbered field (`{}`) and a manually numbered one (`{0}`), nested fields in specs included. The format string is a str literal (no f/t/b prefix; implicit concatenations joined, escapes decoded, parentheses transparent) receiving `.format`, read with the `braceFormat` grammar (a port of ruff_python_literal's format parser as pyflakes' FormatSummary reads it).",
+  "description": "Don't mix automatic and manually numbered fields in one str.format() string; Python raises ValueError at runtime.",
   "scope": {
     "include": [
       "**/*"

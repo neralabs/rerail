@@ -273,29 +273,32 @@ describe("Rerail code rule runtime", () => {
     }
   }, 60_000);
 
-  it("records a scope failure rather than treating an unavailable preimage as new AI output", async () => {
+  it("reports the whole file of an edit whose earlier text is unknown, and only the generated lines once it is known", async () => {
     const root = await rootDirectory();
     const { deliveries, enforcer } = await fixture(root, { scope: "ai-output" });
     const reader = new SqliteAuditReader(defaultRerailDatabasePath());
     try {
       await enforcer.openWorkspace("missing-preimage");
+      // Its generated lines are unknown: a line it never wrote may be one of them, so the file is reported whole.
+      const unknown = "print('possibly old')\nvalue = 1\n";
       await enforcer.auditGeneratedEdits("missing-preimage", {
         revision: 1,
         checkpoints: ["edit"],
-        edits: [{
-          path: "api/existing.py", language: "python",
-          previousReadError: "Pre-edit source was unreadable", generatedText: "print('possibly old')\n",
-        }],
+        edits: [{ path: "api/existing.py", language: "python", previousReadError: "Pre-edit source was unreadable", generatedText: unknown }],
       });
-      const result = await settled(enforcer);
-      expect(deliveries).toEqual([]);
-      expect(result.failures).toEqual([expect.objectContaining({ stage: "scope", code: "source-incomplete" })]);
-      expect(reader.list({ scope: "ai-output", sessionId: "missing-preimage" }).audits).toEqual([
-        expect.objectContaining({
-          status: "failed", violations: [],
-          failures: [expect.objectContaining({ stage: "scope", code: "source-incomplete", path: "api/existing.py" })],
-        }),
-      ]);
+      const first = await settled(enforcer);
+      expect(first.failures).toEqual([]);
+      expect(deliveries).toEqual([expect.stringContaining("api/existing.py:1:")]);
+      // The next edit knows what it changed: the old print is not its own.
+      await enforcer.auditGeneratedEdits("missing-preimage", {
+        revision: 2,
+        checkpoints: ["edit"],
+        edits: [{ path: "api/existing.py", language: "python", previousText: unknown, generatedText: "print('possibly old')\nvalue = 2\n" }],
+      });
+      await settled(enforcer);
+      expect(deliveries).toHaveLength(1);
+      expect(reader.list({ scope: "ai-output", sessionId: "missing-preimage" }).audits.map(audit => [audit.status, audit.violations.length, audit.failures]))
+        .toEqual([["completed", 0, []], ["completed", 1, []]]);
     } finally {
       await enforcer.close();
       reader.close();

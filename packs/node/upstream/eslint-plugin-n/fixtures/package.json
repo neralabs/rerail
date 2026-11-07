@@ -1,8 +1,0 @@
-{
-  "private": true,
-  "description": "Rerail (not upstream): the eslint-plugin-n fixtures are CommonJS, as upstream's RuleTester default, and inherit the upstream package's engines.",
-  "type": "commonjs",
-  "engines": {
-    "node": "^20.19.0 || ^22.13.0 || >=24"
-  }
-}

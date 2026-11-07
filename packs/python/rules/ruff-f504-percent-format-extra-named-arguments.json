@@ -3,7 +3,7 @@
   "id": "ruff-f504-percent-format-extra-named-arguments",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F504 (percent-format-extra-named-arguments): a valid `%`-format string without positional placeholders applied to a dict display without `**` with a string-literal key no `%(key)` placeholder names. `formatArgs` reads the format string left of `%` (a str literal with no f/t/b prefix, implicit concatenations joined, escapes decoded, parentheses transparent) with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser), and the right operand as Ruff's strings.rs does.",
+  "description": "Remove dict keys that no %(key) placeholder in the %-format string uses; an unused key usually means a typo or a stale argument.",
   "scope": {
     "include": [
       "**/*"

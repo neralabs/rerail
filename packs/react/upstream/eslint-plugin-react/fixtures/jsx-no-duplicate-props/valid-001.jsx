@@ -1,1 +1,0 @@
-<App {...this.props} />;

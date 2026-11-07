@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
@@ -13,8 +13,8 @@ import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/cod
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { setCheckoutStarted, RerailRuntime } from "../../../src/runtime/index.js";
 import { setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
-import { readBundledCatalog } from "../../../src/engine/catalog/bundled-rules.js";
-import type { BundledCatalog } from "../../../src/engine/catalog/repository-model.js";
+import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
+import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { repositoryAudits } from "../../../src/engine/storage/schema.js";
@@ -23,6 +23,7 @@ import { stopTestRepository } from "../../support/started-repository.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
@@ -95,9 +96,9 @@ function violations(audits: readonly RecordedRun[]) {
   })));
 }
 
-function router(sessionRoot: string, databasePath: string, recorder: AuditRecorder, bundle?: BundledCatalog): CheckoutCodeRuleRouter {
+function router(sessionRoot: string, databasePath: string, recorder: AuditRecorder, ruleCatalog?: RuleCatalog): CheckoutCodeRuleRouter {
   const owners = new CheckoutOwners();
-  const catalogs = new CheckoutCatalogs(databasePath, bundle === undefined ? {} : { bundle });
+  const catalogs = new CheckoutCatalogs(databasePath, ruleCatalog === undefined ? {} : { ruleCatalog });
   const auditor = new CheckoutCodeRuleRouter({
     sessionRoot,
     startingCheckout: startingCheckout(owners, sessionRoot).checkoutRoot,
@@ -363,7 +364,7 @@ describe("CheckoutCodeRuleRouter", () => {
 describe("repository settings that reach evaluation", () => {
   const RULE = "typescript-eslint-consistent-type-definitions";
   const CODE = "@typescript-eslint/consistent-type-definitions";
-  const typescriptPack = readBundledCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
+  const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
 
   async function editTypeScript(auditor: CheckoutCodeRuleRouter, sessionId: string, revision: number, files: Record<string, string>): Promise<void> {
     await auditor.auditGeneratedEdits(sessionId, {
@@ -425,7 +426,7 @@ describe("repository settings that reach evaluation", () => {
   it("runs a ported rule nowhere, quarantined, when the repository's stored config no longer applies to it", async () => {
     const { session, databasePath, repositoryKey } = await sessionWithRule();
     setRepositorySetting(databasePath, repositoryKey, { config: { nope: "x" } });
-    const catalogs = new CheckoutCatalogs(databasePath, { bundle: typescriptPack });
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: typescriptPack });
     try {
       const catalog = catalogs.catalog(session);
       expect(catalog.snapshot().codeRules).toEqual([]);
@@ -440,6 +441,7 @@ describe("repository settings that reach evaluation", () => {
 
 describe("repository audit through the runtime", () => {
   it("records one repository audit per checkout that owns its files; a nested repository nobody set up, or a stray .git, is audited with the checkout around it", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
     const { parent, sub } = await withSubmodule(root);

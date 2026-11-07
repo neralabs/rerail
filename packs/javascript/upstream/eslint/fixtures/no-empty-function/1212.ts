@@ -1,1 +1,0 @@
-class A { protected foo() {} } // allow: overrideMethods

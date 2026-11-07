@@ -1,9 +1,8 @@
 /**
  * Set-up's offer of the dashboard's review, kept per repository in the database, which the CLI and the daemon both
- * write. Set-up records it when it offers the review link in a repository that is not set up. The set-up the person
- * then makes in the dashboard keeps it, so set-up carries on at its confirm question. Any other set-up (`rerail rules
- * add`, a coding agent, `rules import`), a start and a stop delete it, so a repository set up some other way is never
- * taken for one the review set up.
+ * write. Earlier versions' set-up recorded it when it offered the review link in a repository that is not set up; set-up
+ * no longer offers the review. While such a repository is still not set up, set-up goes straight to its confirm question
+ * there. Any set-up (the dashboard's included), a start and a stop delete it: a repository set up is just set up.
  */
 import { eq, sql } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
@@ -13,7 +12,7 @@ import { repositories, setupReviews } from "../storage/schema.js";
 type Reader = Pick<RerailDatabase, "select" | "get">;
 type Deleter = Pick<RerailDatabase, "delete">;
 
-/** Set-up offered the review in `repositoryKey`; nothing is recorded once the repository is set up. */
+/** Set-up offered the review in `repositoryKey` (earlier versions); nothing is recorded once the repository is set up. */
 export function offerSetupReview(database: RerailDatabase, repositoryKey: RepositoryKey, now = Date.now()): void {
   database.transaction(tx => {
     const repository = tx.select({ configuredAt: repositories.configuredAt }).from(repositories)

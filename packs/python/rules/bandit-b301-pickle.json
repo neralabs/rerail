@@ -3,7 +3,7 @@
   "id": "bandit-b301-pickle",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect calls to pickle and related unsafe deserialization APIs.",
+  "description": "Avoid deserializing with pickle, dill, shelve, jsonpickle, or pandas.read_pickle; loading untrusted data this way can execute arbitrary code.",
   "scope": {
     "include": [
       "**/*.py"
@@ -44,7 +44,7 @@
       "violation": {
         "code": "B301",
         "anchor": "witness.span",
-        "message": "Pickle or a related deserialization API can be unsafe when used with untrusted data.",
+        "message": "Load this data with json or another data-only format instead; unpickling untrusted input can run arbitrary code.",
         "suppress": {
           "nosec": {
             "codes": [

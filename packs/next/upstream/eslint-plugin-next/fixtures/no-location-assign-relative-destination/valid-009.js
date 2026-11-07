@@ -1,1 +1,0 @@
-location.href = 'ftp://files.example.com'

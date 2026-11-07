@@ -1,0 +1,24 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-octal-escapes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid a null escape followed by digits in Rust string literals; Rust has no octal escapes, so it yields a NUL then digits, not the intended character.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [{
+    "id": "octal-escape",
+    "forbid": { "ast": { "language": "rust", "rule": {
+      "kind": "string_literal",
+      "regex": "(?s)(?:^|[^\\\\]|\\\\\\\\)(?P<O>\\\\0[0-7]{1,2})"
+    } } },
+    "violation": { "suppress": { "clippy": { "lints": ["clippy::octal_escapes", "clippy::all", "clippy::suspicious", "warnings"] } }, "anchor": "capture.O", "code": "octal_escapes", "message": "Replace this \\0 escape with the intended character, e.g. \\x1b for \\033, or \\x00 then the digits if NUL was meant." }
+  }, {
+    "id": "octal-escape-after-first",
+      "forbid": { "ast": { "language": "rust", "rule": {
+        "kind": "string_literal",
+        "regex": "(?s).*?(?:^|[^\\\\]|\\\\\\\\)\\\\0[0-7]{1,2}.*?(?P<O>\\\\0[0-7]{1,2})"
+      } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::octal_escapes", "clippy::all", "clippy::suspicious", "warnings"] } }, "anchor": "capture.O", "code": "octal_escapes", "message": "Replace this \\0 escape with the intended character, e.g. \\x1b for \\033, or \\x00 then the digits if NUL was meant." }
+  }
+  ]
+}

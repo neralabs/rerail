@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { and, asc, eq, getTableName, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import type { CheckoutContext, RepositoryKey, RepositoryStartState, RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
@@ -12,15 +12,12 @@ import {
   parentCheckouts,
   recordCheckout,
 } from "../engine/catalog/repository-registry.js";
-import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
-import { recommendRulePacks, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
+import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { checkouts, events, repositories, sessions } from "../engine/storage/schema.js";
-import { clearSetupReview, setupReviewOffered } from "../engine/catalog/setup-review.js";
+import { clearSetupReview } from "../engine/catalog/setup-review.js";
 import type { RerailHost } from "../engine/adapter-contract.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
-
-type Reader = Pick<RerailDatabase, "select" | "get">;
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
 
@@ -172,6 +169,17 @@ export interface RepositorySetupIo {
   say(text: string): void;
   /** The terminal lane's answer to a question; undefined when input ended. Absent in the other lanes. */
   ask?(prompt: string): Promise<string | undefined>;
+  /**
+   * The terminal lane at a real terminal: the answer the person moves the cursor to, as its index; undefined when
+   * input ended or they cancelled. Absent where answers are typed as lines, which `ask` reads.
+   */
+  choose?(menu: ChoiceMenu): Promise<number | undefined>;
+}
+
+/** A question's answers as a menu: `frame` draws them with the cursor on one, then the line to answer on. */
+export interface ChoiceMenu {
+  readonly count: number;
+  frame(highlight: number): string;
 }
 
 export interface RepositoryStopOptions {
@@ -187,40 +195,8 @@ export interface RepositoryStopOptions {
 /** The rules that are on in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
 export function onRuleCount(database: RerailDatabase, checkout: CheckoutContext): number {
   const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
-  return listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
+  return listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
     .rules.filter(rule => rule.on).length;
-}
-
-/**
- * Whether `repositoryKey` is what the dashboard's review leaves while set-up waits for the person to start Rerail with
- * the packs they kept on: set-up offered the review, the person set the repository up in the dashboard, and nobody has
- * started or stopped it anywhere since. A repository set up any other way is just set up.
- */
-export function awaitingStartAfterReview(db: Reader, repositoryKey: RepositoryKey): boolean {
-  const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
-    .from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
-  if (repository?.configuredAt == null || repository.started !== null || !setupReviewOffered(db, repositoryKey)) return false;
-  return db.select({ path: checkouts.checkoutPath }).from(checkouts)
-    .where(and(eq(checkouts.repositoryKey, repositoryKey), isNotNull(checkouts.started))).get() === undefined;
-}
-
-/** Set `checkout`'s repository up with `recommendations`, each pack at its recommended folder. */
-function setUpWith(database: RerailDatabase, checkout: CheckoutContext, recommendations: readonly RulePackRecommendation[], now: number) {
-  const packs = recommendations.map(({ pack, folder }) => ({ packId: pack.id, folder }));
-  setUpRepository(database, checkout.repositoryKey, { packs }, now);
-  return packs;
-}
-
-/**
- * Set `checkout`'s repository up with the rule packs recommended for the checkout, each at its folder, without
- * asking (the dashboard's "Set up with recommended packs"). A repository nobody
- * started or stopped is started; an explicit start or stop is kept. Returns the packs added.
- */
-export function setUpWithRecommendedPacks(database: RerailDatabase, checkout: CheckoutContext, now = Date.now()): readonly { packId: string; folder: string }[] {
-  const packs = setUpWith(database, checkout, recommendRulePacks(checkout.checkoutPath), now);
-  database.update(repositories).set({ started: true, updatedAt: now })
-    .where(and(eq(repositories.repositoryKey, checkout.repositoryKey), isNull(repositories.started))).run();
-  return packs;
 }
 
 /** Start or stop a repository as a whole: its own value, with every checkout's own setting cleared. */

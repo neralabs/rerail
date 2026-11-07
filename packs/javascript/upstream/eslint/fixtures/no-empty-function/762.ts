@@ -1,3 +1,0 @@
-const A = class {static get foo(): string {
-    // empty
-}};

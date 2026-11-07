@@ -1,1 +1,0 @@
-({ set a(foo){}, b: 1, set a(foo){} })

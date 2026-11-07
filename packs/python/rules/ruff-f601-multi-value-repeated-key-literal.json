@@ -3,7 +3,7 @@
   "id": "ruff-f601-multi-value-repeated-key-literal",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F601 (multi-value-repeated-key-literal) with default settings: a literal dictionary key (string, bytes, number, boolean, None, Ellipsis, tuple, f-string, signed number, real +/- imaginary; Ruff's is_literal_key) equal to an earlier key of the same dict display, reported on each repeat (parentheses are transparent). Equality is Ruff's HashableExpr (`compare` `text: \"structure-hash\"`): numbers fold by value (`1 == 1.0 == True`, `1 + 0j == 1`), strings by decoded value, tuples of constants element by element, anything else structurally as ComparableExpr (names without NFKC normalization). Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F601.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Avoid repeating a literal key (or an equal one, like 1 and 1.0) in a Python dict literal; the later value silently overwrites the earlier one.",
   "scope": {
     "include": [
       "**/*"

@@ -1,0 +1,96 @@
+{
+ "format": "rerail.data-layer-recording/v1",
+ "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+ "missing_test_modules": [],
+ "checks": [
+  "serverplan_bypass",
+  "serverplan_steps",
+  "serverplan_state_tripwires",
+  "serverplan_dispatch_architecture",
+  "serverplan_quality",
+  "serverplan_target_architecture",
+  "execution_authority_bypass",
+  "impl_direct_execution",
+  "raw_execute_regression",
+  "legacy_execution_surfaces"
+ ],
+ "python": "3.13.12 (main, Mar 10 2026, 18:26:32) [Clang 21.1.4 ]",
+ "pytest": "9.0.2",
+ "root_conftest_present": true,
+ "loaded_source_files_checked": 1521,
+ "source_mismatches": [],
+ "pytest_exit_code": 0,
+ "collected_tests": 933,
+ "eligible_calls": 1234,
+ "positive_calls": 405,
+ "clean_calls": 829,
+ "note": "The two sixth-batch observations the SQL execution budget replays, cut from batch-06-recording.json (not in git).",
+ "events": [
+  {
+   "test": "scripts/tests/test_lint_serverplan_state_tripwires.py::test_collector_uses_generated_return_kinds_without_recomputing_project_map",
+   "check": "serverplan_state_tripwires",
+   "entry": "scan_source",
+   "call": 1,
+   "scope": {
+    "include": [
+     "**/*.py"
+    ],
+    "exclude": []
+   },
+   "production_scope": false,
+   "oracle_config": {
+    "options": {
+     "entryPoint": "scan_source",
+     "sourceProvided": true,
+     "returnKindsHex": "7b226b6e6f776e5f68656c706572223a5b22617574686f72697479225d7d"
+    }
+   },
+   "files": [
+    {
+     "path": "impl/common/example.py",
+     "source": "def compile():\n    return None\n"
+    }
+   ],
+   "oracle_ms": 0.08808299025986344,
+   "findings": [],
+   "upstream_passed": true
+  },
+  {
+   "test": "scripts/tests/test_lint_serverplan_state_tripwires.py::test_rejects_lazy_result_private_step_ref_access",
+   "check": "serverplan_state_tripwires",
+   "entry": "scan_source",
+   "call": 1,
+   "scope": {
+    "include": [
+     "**/*.py"
+    ],
+    "exclude": []
+   },
+   "production_scope": false,
+   "oracle_config": {
+    "options": {
+     "entryPoint": "scan_source",
+     "sourceProvided": true,
+     "returnKindsHex": "7b7d"
+    }
+   },
+   "files": [
+    {
+     "path": "l9900_auto_api/graph_read_core.py",
+     "source": "\ndef bad(lazy):\n    return getattr(lazy, \"_step_ref_id\")\n"
+    }
+   ],
+   "oracle_ms": 0.037165998946875334,
+   "findings": [
+    {
+     "path": "l9900_auto_api/graph_read_core.py",
+     "line": 3,
+     "column": null,
+     "code": "SPT-033",
+     "message": "lazy-result private ref tripwire: graph read lowering must use ServerRef planning inspection, not LazyResult._step_ref_id or _lazy_result_step_ref_id()."
+    }
+   ],
+   "upstream_passed": true
+  }
+ ]
+}

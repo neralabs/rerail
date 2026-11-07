@@ -1,2 +1,0 @@
-ALTER TABLE foo ADD CONSTRAINT fk_bar
-    FOREIGN KEY (bar_id) REFERENCES bar (id);

@@ -1,0 +1,146 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-triple-slash-reference",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use import declarations instead of triple-slash path references, and drop triple-slash type references to modules the file already imports.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "leading-comment": {
+            "pattern": "$COMMENT",
+            "inside": {
+              "kind": "program",
+              "stopBy": "neighbor",
+              "has": {
+                "stopBy": "neighbor",
+                "pattern": "$FIRST",
+                "any": [
+                  {
+                    "regex": "^([^/#]|/[^/*]|#[^!])"
+                  },
+                  {
+                    "compare": {
+                      "left": "FIRST",
+                      "op": "eq",
+                      "right": "COMMENT",
+                      "text": "node"
+                    }
+                  }
+                ]
+              }
+            },
+            "compare": {
+              "left": "FIRST",
+              "op": "eq",
+              "right": "COMMENT",
+              "text": "node"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "path-reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "comment",
+            "regex": "^///[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*<reference[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*path[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*=[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*[\"|'](?<MODULE>.*)[\"|']",
+            "matches": "leading-comment"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/triple-slash-reference",
+        "message": "Replace this triple-slash reference to $MODULE with an import declaration.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/triple-slash-reference"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "types-reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "comment",
+            "pattern": "$C",
+            "regex": "^///[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*<reference[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*types[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*=[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*[\"|'].*[\"|']",
+            "matches": "leading-comment",
+            "inside": {
+              "kind": "program",
+              "stopBy": "neighbor",
+              "has": {
+                "stopBy": "end",
+                "kind": "string",
+                "pattern": "$SOURCE",
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "import_require_clause"
+                    }
+                  ],
+                  "field": "source",
+                  "stopBy": "neighbor"
+                },
+                "compare": {
+                  "left": "MODULE",
+                  "op": "eq",
+                  "right": "SPECIFIER"
+                }
+              }
+            }
+          },
+          "transform": {
+            "MODULE": {
+              "replace": {
+                "source": "$C",
+                "replace": "^///[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*<reference[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*types[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*=[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*[\"|'](.*)[\"|'][\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "SPECIFIER": {
+              "substring": {
+                "source": "$SOURCE",
+                "value": true
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/triple-slash-reference",
+        "message": "Remove this triple-slash types reference to $MODULE; the file already imports it.",
+        "each": "SOURCE",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/triple-slash-reference"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

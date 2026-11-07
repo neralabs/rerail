@@ -1,0 +1,15 @@
+.policy "ruff-f525-string-dot-format-mixing-automatic" revision 2
+.description "Don't mix automatic and manually numbered fields in one str.format() string; Python raises ValueError at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F525 (pyflakes): a format string with both automatic `{}` and numbered `{0}` fields. Python raises
+// ValueError: it cannot switch between the two.
+//   "{} {1}".format(1, 2)         ← F525
+#include "python/pyflakes-format.rr"
+//   format_call(c, v), brace_auto(v, n), brace_index(v, i)
+
+.violation F525(at: node) code "F525" "`.format` string mixes automatic and manual numbering"
+    suppress ruff "F525"
+F525(c) :- format_call(c, v), brace_auto(v, n), n > 0, brace_index(v, _).

@@ -3,7 +3,7 @@
  "id": "ruff-async230-blocking-open-call-in-async-function",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC230 (blocking-open-call-in-async-function): a call to the builtin `open` (`builtins.open`, `io.open`, `io.open_code`), or `.open()` on a `pathlib.Path(...)` call or on a name whose binding holds one (Ruff's find_binding_value through `resolves.binding`: a plain name assignment, annotated assignment or walrus value, an unpacked name's element of a tuple or list display, or a `with` item's context expression; and, as Ruff's match_value, an unpacked name paired with a display element by index where the engine gives no value: a set display, unequal arities, a position after a starred value), inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Don't open files with open(), io.open or Path.open() inside async functions; use an async file API so file I/O doesn't block the event loop.",
  "scope": {
   "include": [
    "**/*"
@@ -325,7 +325,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC230",
-    "message": "Async functions should not open files with blocking methods like `open`",
+    "message": "Open this file with an async file API, such as `anyio.open_file()`, `trio.open_file()` or `aiofiles.open()`.",
     "suppress": {
       "noqa": {
         "codes": [

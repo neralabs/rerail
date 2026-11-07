@@ -1,1 +1,0 @@
-class A { *foo() { return 0; } }

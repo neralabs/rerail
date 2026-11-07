@@ -1,1 +1,0 @@
-const hasProperty = (( Object.prototype.hasOwnProperty.call ))(object, property);

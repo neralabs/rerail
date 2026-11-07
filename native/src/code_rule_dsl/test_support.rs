@@ -7,8 +7,24 @@ use napi::Result;
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
+
+/// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
+/// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
+pub(super) fn pack_test_data(relative: &str) -> PathBuf {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(relative);
+    assert!(
+        path.exists(),
+        "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each \
+         tool-pack's archive, which its test-data.lock pins, from S3) (CONTRIBUTING.md, \"Pack test \
+         data\")"
+    );
+    path
+}
 
 pub(super) const JSX_SOURCE: &str =
     "export const View = () => <button type=\"button\">Go</button>;\n";
@@ -204,7 +220,7 @@ pub(super) enum Walk {
     OrderMentions,
     BindingSitePatterns,
     AnchorInlining,
-    /// A structural anchor index built for one file and a batch of plans.
+    /// P's: an anchor index build (P's SQL anchor engine).
     AnchorBuild,
     /// A shared utility plan's conditions evaluated by one anchor selection.
     AnchorSelection,

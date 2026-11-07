@@ -1,2 +1,0 @@
-do
-{foo();} while (bar)
