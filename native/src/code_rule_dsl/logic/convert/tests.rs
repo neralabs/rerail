@@ -206,6 +206,19 @@ fn hand_written(check: &str) -> Option<String> {
     if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() {
         return None;
     }
+    // Read and printed once per check: the replay asks for each of the check's events.
+    thread_local! {
+        static PRINTED: std::cell::RefCell<std::collections::HashMap<String, Option<String>>> = Default::default();
+    }
+    if let Some(text) = PRINTED.with(|p| p.borrow().get(check).cloned()) {
+        return text;
+    }
+    let text = hand_written_once(check);
+    PRINTED.with(|p| p.borrow_mut().insert(check.to_owned(), text.clone()));
+    text
+}
+
+fn hand_written_once(check: &str) -> Option<String> {
     let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
     if !path.exists() {
         return None;

@@ -741,6 +741,8 @@ pub(crate) fn run_with_options(
         }
     };
     let db = Connection::open(&path)?;
+    // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk.
+    db.execute_batch("PRAGMA synchronous=OFF")?;
     let statements = Statements::on(&db);
     statements.enter("stats");
     // Only the rules an output reads, directly or through other rules: a rule that includes a library runs the part
@@ -867,6 +869,8 @@ pub(crate) fn run_with_options(
     let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
     let mut measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
+    // Only this connection opens `cross.sqlite`: its journal can stay in memory.
+    db.execute_batch("PRAGMA x.journal_mode=MEMORY; PRAGMA x.synchronous=OFF")?;
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
     // read back, 0.75 s on Python.)
@@ -920,11 +924,15 @@ pub(crate) fn run_with_options(
     if !stored.is_empty() && tapes.is_some() && t.is_none() {
         crate::code_rule_dsl::logic::profile::decision("per-file memo held back", || format!("the cross-file part reads base relations {:?}: files are evaluated", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
     }
+    // One transaction for every export's table, not a commit each.
+    let mut tables = String::from("BEGIN;");
     for rel in &split.exports {
         let width = lowered.program.decls[rel].len();
         let cols: Vec<String> = (0..width).map(|i| format!("c{i}")).collect();
-        db.execute_batch(&format!("CREATE TABLE x.{rel}({}, PRIMARY KEY ({})) WITHOUT ROWID", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")))?;
+        tables.push_str(&format!("CREATE TABLE x.{rel}({}, PRIMARY KEY ({})) WITHOUT ROWID;", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")));
     }
+    tables.push_str("COMMIT;");
+    db.execute_batch(&tables)?;
     phase("stats", statements.count());
     statements.enter("parse");
     let modules = Modules::default();
