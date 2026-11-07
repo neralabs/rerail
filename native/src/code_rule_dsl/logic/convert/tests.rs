@@ -164,7 +164,7 @@ fn rule_files() -> Vec<PathBuf> {
 /// The codes a hand-written rule reports in log mode (`.mode log A, B`): the suite plugin, the production entry,
 /// drops them, as it drops a linter's `audit` severity. A violation's code is its `code "X"`, else its name.
 fn log_codes(check: &str) -> Vec<String> {
-    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
     let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
     let code_of = |name: &str| {
         text.lines()
@@ -180,11 +180,18 @@ fn log_codes(check: &str) -> Vec<String> {
         .collect()
 }
 
+/// Where the hand-written data-layer rules are: `docs/rule-syntax/data-layer` (More-ergonomic's drafts), or
+/// `RERAIL_HAND_DIR`. The data-layer pack's ports (`gate/data-layer/packs/data-layer/candidates/rr`) read
+/// `core.rr` relations the data-layer integration engine adds (`split_line`, `lf_line`), so they wait on that merge.
+fn hand_dir() -> PathBuf {
+    std::env::var_os("RERAIL_HAND_DIR").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::logic::rr::library().join("../data-layer"))
+}
+
 fn hand_written(check: &str) -> Option<String> {
     if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() {
         return None;
     }
-    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
     if !path.exists() {
         return None;
     }
@@ -623,7 +630,7 @@ fn measure_all(corpus: &Path, rules: &str) {
     let mut texts = texts;
     // The hand-written rules of checks the pack has no rule for.
     if hand && mode != "skip" && rules == "*" {
-        let dir = crate::code_rule_dsl::logic::rr::library().join("../data-layer");
+        let dir = hand_dir();
         let mut extra: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| {
             let p = e.unwrap().path();
             (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
