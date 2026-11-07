@@ -8312,3 +8312,41 @@ Evidence: [direct original contracts](../gate/data-layer/fixtures/host/data-laye
 and [supplemental contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-conn-or-txn-union-native-supplemental-contracts.json.gz).
 Production integration, persistent-workspace contracts, and the other ports still require work. No Linear ticket was created.
 The next missing translation is `async_patterns`.
+
+## 2026-11-07 — Adopt Final shape process caches before further ports
+
+The user required alignment with Final rerail shape before further rule development.
+Checkpoint `c4f17a5a0` preserves the unfinished async translation and its failing path-scope cases.
+It does not certify that port.
+
+Merge `2bf167c90` adopts Final shape through `a2c9ee1231fd2be9d8ecc505a3170c67ca5134a3`.
+The merge required no conflict resolution. It includes decision 0060's process caches and collection changes.
+The corpus planner, rule reader, lowering bridge, and file-local typing file match the upstream commit exactly.
+No sibling work in progress was copied.
+
+All builds and checks use this repository root. The nested engines remain retired.
+The remaining native differences provide Boolean demand normalization, Python diagnostics and traversal order, and canonical expression text.
+Those capabilities use the current engine's relation interfaces. There is no separate planner or execution path for these ports.
+No native implementation changed during this alignment.
+
+The frozen CLI has SHA-256 `ed6ce0db6fa7c9fa268a7b7dc1c63089d4e4ae9b9cdcde28a9c7c8b2db25d50e`.
+Its source commit is `2bf167c90`; the receipt records the full commit, command, library hashes, and remaining file differences.
+The CLI build took 47 seconds. The native unit build took 89 seconds.
+
+Focused validation on the merged engine:
+
+- All 71 draft policies pass the reader.
+- All 61 focused reader/runtime tests pass. Two upstream file-writing utilities remain ignored; the whole-library checker was excluded.
+- All 107 recorded native expression-printing comparisons pass in their unit test.
+- All 56 migration tooling tests pass, including rejection of libraries from retired checkouts.
+- All 11 unchanged async source tests pass, including positives, with 12 complete native API comparisons.
+
+The three configured async path-scope defects remain open. They concern exclusions and API/implementation context inherited from the absolute repository root.
+The current rule uses document-relative paths for that context. The source linter uses absolute paths.
+The next repair must use the modern repository-fact interface and retain these regression cases.
+
+The inventory is 71 drafts and 29 absent translations. Full migration acceptance remains false.
+This alignment does not recertify prior ports on every API or claim that the async port is complete.
+No full repository cold run was performed. No Linear ticket was created.
+
+Evidence: [Final shape alignment and focused validation](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-a2c9-alignment.json.gz).
