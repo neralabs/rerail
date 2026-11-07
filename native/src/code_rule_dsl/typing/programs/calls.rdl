@@ -278,7 +278,10 @@ pass($n, $c) :- kind($n, "named_expression"), field($n, "value", $c).
 pv($n, $k, $v) :- pass($n, $c), pv($c, $k, $v).
 // Calls: a class makes an instance; a function returns what its returns hold, or the argument it returns.
 pv($c, "inst", $k) :- callee($c, $e), pv($e, "cls", $k).
-pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), !isgen($f), retval($f, $r), pv($r, $k, $v).
+pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), !isgen($f), fret($f, $k, $v).
+// fret(f, k, v): function f may return a k v.
+.decl fret(f: node, k: sym, v: node)
+fret($f, $k, $v) :- retval($f, $r), pv($r, $k, $v).
 pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !method($f, _), retparam($f, $i, _), posarg($c, $i, $a), pv($a, $k, $v).
 pv($c, "super", $k) :- callee($c, $e), builtin_ref($e, "super"), nearest($c, $f, fdef), method($f, $k).
 
