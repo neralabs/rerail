@@ -44,6 +44,7 @@ ENTRIES = {
     'backend_coupling': ['BackendCouplingChecker.check_file', 'BackendCouplingChecker.should_check_file'],
     'connection_caches': ['find_violations', 'scan_file_content', '_is_allowed'],
     'no_api_root_imports': ['check_file', 'check_file_content'],
+    'error_handling': ['scan_file_content'],
     'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
@@ -139,6 +140,9 @@ class Suite:
         elif check == 'connection_caches':
             from connection_caches_port import snapshot
             files, scope, root = snapshot(module, entry, args, kwargs)
+        elif check == 'error_handling':
+            from error_handling_port import snapshot
+            files, scope, root = snapshot(module, entry, args, kwargs)
         elif check == 'backend_coupling':
             from coupling_port import snapshot
             files, scope, root = snapshot(args[2], args[3])
@@ -166,6 +170,9 @@ class Suite:
         from data_layer_batch_two import normalize as normalize_two
         if check == 'connection_caches':
             from connection_caches_port import normalize
+            actual = normalize(result, root)
+        elif check == 'error_handling':
+            from error_handling_port import normalize
             actual = normalize(result, root)
         elif check == 'backend_coupling':
             from data_layer_batch_five import normalize as normalize_five
@@ -204,6 +211,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'error_handling':
+            from error_handling_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'no_api_root_imports':
             from api_imports_port import scan
             return scan(self, entry, module, arguments)
