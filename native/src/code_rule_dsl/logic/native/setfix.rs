@@ -1126,8 +1126,42 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
 /// reads are loaded by one statement the first time any input of the run needs them (a table scan, `NOT INDEXED`,
 /// so every column is in the table's row order), and every filtered or projected input over it is then a view
 /// (`View`). A column's index is built on its first lookup. A table holding a non-integer value is not one.
-struct Stored { columns: Vec<String>, n: std::sync::OnceLock<usize>, values: Vec<std::sync::OnceLock<Vec<i64>>>, index: Vec<std::sync::OnceLock<Vec<u32>>> }
+struct Stored {
+    columns: Vec<String>,
+    n: std::sync::OnceLock<usize>,
+    values: Vec<std::sync::OnceLock<Vec<i64>>>,
+    index: Vec<std::sync::OnceLock<Vec<u32>>>,
+    /// Each column's count of distinct values, from its index (for SQL's estimates).
+    distinct: Vec<std::sync::OnceLock<usize>>,
+    /// Lexicographic orders over several columns, built on a first `lookup_all` over them (4 bytes a row each;
+    /// the table never changes, so an order costs no insert). One serves every search whose columns are its prefix.
+    orders: Mutex<Vec<(Vec<usize>, Arc<Vec<u32>>)>>,
+}
 impl Stored {
+    fn new(columns: Vec<String>, values: Vec<std::sync::OnceLock<Vec<i64>>>) -> Self {
+        let k = columns.len();
+        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default() }
+    }
+    fn distinct(&self, c: usize) -> usize {
+        *self.distinct[c].get_or_init(|| {
+            let (ids, col) = (self.index(c), self.col(c));
+            1 + ids.windows(2).filter(|w| col[w[0] as usize] != col[w[1] as usize]).count()
+        })
+    }
+    /// An order whose leading columns are exactly `cols` (as a set), built most selective column first.
+    fn order(&self, cols: &[usize]) -> (Vec<usize>, Arc<Vec<u32>>) {
+        let mut orders = self.orders.lock().unwrap();
+        let fits = |o: &[usize]| o.len() >= cols.len() && { let mut p = o[..cols.len()].to_vec(); p.sort_unstable(); p == cols };
+        if let Some((o, ids)) = orders.iter().find(|(o, _)| fits(o)) { return (o.clone(), Arc::clone(ids)); }
+        let mut by = cols.to_vec();
+        by.sort_by_key(|&c| std::cmp::Reverse(self.distinct(c)));
+        let cols_v: Vec<&[i64]> = by.iter().map(|&c| self.col(c)).collect();
+        let mut ids: Vec<u32> = (0..self.n.get().copied().unwrap_or(0) as u32).collect();
+        ids.sort_by(|&a, &b| cols_v.iter().map(|v| v[a as usize].cmp(&v[b as usize])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+        let ids = Arc::new(ids);
+        orders.push((by.clone(), Arc::clone(&ids)));
+        (by, ids)
+    }
     fn col(&self, c: usize) -> &[i64] { self.values[c].get().map_or(&[], Vec::as_slice) }
     /// Column `c`'s rows ordered by value (4 bytes a row, no allocation per key); a value's rows are one run.
     fn index(&self, c: usize) -> &[u32] {
@@ -1171,7 +1205,22 @@ impl Stored {
 impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     fn columns(&self) -> Vec<String> { self.columns.clone() }
     fn len(&self) -> usize { self.n.get().copied().unwrap_or(0) }
-    fn estimated_matches(&self, _: usize, _: bool) -> usize { 1 }
+    fn estimated_matches(&self, c: usize, batch: bool) -> usize {
+        let one = self.len().div_ceil(self.distinct(c).max(1));
+        if batch { one * 8 } else { one }
+    }
+    fn composite(&self) -> bool { true }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        let cols: Vec<usize> = equal.iter().map(|e| e.0).collect();
+        let (on, order) = self.order(&cols);
+        let by: Vec<(&[i64], i64)> = on[..cols.len()].iter().map(|&c| (self.col(c), equal.iter().find(|e| e.0 == c).map_or(0, |e| e.1))).collect();
+        let cmp = |r: u32| by.iter().map(|&(v, x)| v[r as usize].cmp(&x)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal);
+        let lo = order.partition_point(|&r| cmp(r).is_lt());
+        let hi = order.partition_point(|&r| cmp(r).is_le());
+        let mut out: Vec<usize> = order[lo..hi.max(lo)].iter().map(|&r| r as usize).collect();
+        out.sort_unstable();
+        Some(out)
+    }
     /// For SQL over its vtab and a view's constant filters (`lookup`); a join probes the sorted index in place
     /// (`sorted_rows`), or builds its own over a filtered view.
     fn indexed(&self, _: usize) -> bool { true }
@@ -1188,8 +1237,7 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
 /// probe on a column is a slice of its sorted index, built on first use.
 pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
     let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
-    let k = columns.len();
-    let t = Stored { columns, n: std::sync::OnceLock::new(), values: values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect(), index: (0..k).map(|_| std::sync::OnceLock::new()).collect() };
+    let t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
     let _ = t.n.set(n);
     Arc::new(t)
 }
@@ -1212,7 +1260,7 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
             // The columns' names, from the statement (prepared, not run).
             let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{name}")).ok()?.column_names().into_iter().map(str::to_owned).collect();
             let k = columns.len();
-            let t = Arc::new(Stored { columns, n: std::sync::OnceLock::new(), values: (0..k).map(|_| std::sync::OnceLock::new()).collect(), index: (0..k).map(|_| std::sync::OnceLock::new()).collect() });
+            let t = Arc::new(Stored::new(columns, (0..k).map(|_| std::sync::OnceLock::new()).collect()));
             STORED.lock().unwrap().insert(key.clone(), Some(t.clone()));
             t
         }
