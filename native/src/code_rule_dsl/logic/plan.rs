@@ -3252,7 +3252,13 @@ impl Run<'_> {
         let tables: HashMap<String, (String, String)> = rels.iter().map(|r| ((*r).clone(), (format!("sfx_f_{r}"), format!("sfx_d_{r}")))).collect();
         let types = |r: &str| prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
         let mut lines = vec![format!("name {name}")];
-        lines.extend(rels.iter().map(|r| format!("rel {r} {}", types(r))));
+        // A relation with a copy rule from its library rows (`r(..) :- r__library(..)`, decision 0058): those rows are
+        // the library stage's fixpoint, closed under these rules, so no wave reads them as its delta.
+        let closed = |r: &str| {
+            let lib = format!("{r}{}", crate::code_rule_dsl::logic::plan::corpus::LIBRARY_SUFFIX);
+            rules.iter().any(|x| x.head.rel == r && matches!(x.body.as_slice(), [Literal::Atom(a)] if !a.neg && a.rel == lib)).then_some(lib)
+        };
+        lines.extend(rels.iter().map(|r| format!("rel {r} {}{}", types(r), closed(r).map_or(String::new(), |t| format!(" closed {t}")))));
         let mut edges: Vec<(Atom, Vec<Step>)> = Vec::new();
         let mut probes: Vec<(&Rule, Vec<Step>, usize, usize)> = Vec::new();
         for (j, r) in rules.iter().enumerate() {

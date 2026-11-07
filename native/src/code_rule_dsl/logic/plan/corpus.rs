@@ -30,6 +30,8 @@ mod bridge;
 mod inputs;
 mod world;
 mod library;
+/// The suffix of a relation's replayed library rows (decision 0058).
+pub(crate) const LIBRARY_SUFFIX: &str = library::SUFFIX;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -1347,8 +1349,9 @@ pub(crate) fn run_with_options(
     let mut wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
     // A library stage holds every relation its cross-file part derives, its output (decision 0058).
     let mut library_rows = library::Rows::default();
+    let library_kept = if library_stage { library::kept(&cross.program) } else { BTreeSet::new() };
     if library_stage {
-        wanted.extend(cross.program.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !prog.outputs.contains(r)));
+        wanted.extend(library_kept.iter().filter(|r| !prog.outputs.contains(*r)).cloned());
         library_rows.keys = docs.iter().map(|(d, p)| (p.clone(), *d)).collect();
     }
     let mut collect = |db: &Connection, got: &Outcome, part: &front::Program| -> Result<()> {
@@ -1356,7 +1359,7 @@ pub(crate) fn run_with_options(
             return Ok(());
         }
         let derived: BTreeSet<&str> = part.rules.iter().map(|r| r.head.rel.as_str()).collect();
-        for rel in derived.into_iter().filter(|r| !r.ends_with(cross_rounds::PREV) && !r.ends_with(cross_rounds::DONE)) {
+        for rel in derived.into_iter().filter(|r| library_kept.contains(*r)) {
             let width = part.decls[rel].len();
             let rows = held_rows(db, got, rel, width)?;
             library_rows.rels.insert(rel.to_owned(), (width, rows.into_iter().flatten().collect()));
@@ -1389,8 +1392,50 @@ pub(crate) fn run_with_options(
             // Held: what the rest reads, unless an output (written to its table, read from there).
             let mut held = wanted.clone();
             held.extend(cone.reads.iter().filter(|r| !outputs_of(r)).cloned());
-            let cone_rules = if library_stage { cone.cone.clone() } else { front::Program::default() };
-            let got = run_rounds(&db, &modules, part(cone.cone), &bounded.hops, &held, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
+            // What the rounds read and no round changes runs once, before them (`cross_rounds::pre_split`): its rows the
+            // rounds read are inputs `<rel>__pre`, and the rest reads its rows from here.
+            let mut round_stats = cross_stats.clone();
+            let mut pre_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+            let round_prog = match cross_rounds::pre_split(&cone.cone) {
+                Some(ps) => {
+                    let pre_span = crate::code_rule_dsl::logic::profile::span(|| "before the rounds".into());
+                    let pre_derived: BTreeSet<String> = ps.pre.rules.iter().map(|r| r.head.rel.clone()).collect();
+                    let copied: BTreeSet<String> = ps.reads.iter().chain(cone.reads.iter().filter(|r| pre_derived.contains(*r))).cloned().collect();
+                    let mut pre_held: BTreeSet<String> = held.iter().filter(|r| pre_derived.contains(*r)).cloned().collect();
+                    pre_held.extend(copied.iter().cloned());
+                    let pre_rules = if library_stage { ps.pre.clone() } else { front::Program::default() };
+                    let decls = ps.pre.decls.clone();
+                    let got = super::run_atoms_native_over(&part(ps.pre), &db, "main", cross_stats.clone(), pre_held, modes)?;
+                    collect(&db, &got, &pre_rules)?;
+                    if wanted.contains("returns") && pre_derived.contains("returns") {
+                        returns = held_rows(&db, &got, "returns", 2)?;
+                    }
+                    for rel in &copied {
+                        pre_rows.insert(rel.clone(), held_rows(&db, &got, rel, decls[rel].len())?);
+                    }
+                    native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
+                    let mut pre = Totals::default();
+                    for rel in &ps.reads {
+                        let types: Vec<&str> = decls[rel].iter().map(|(_, t)| t.as_str()).collect();
+                        let rows = &pre_rows[rel];
+                        let columns = (0..types.len()).map(|i| format!("c{i}")).collect();
+                        let values = (0..types.len()).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+                        let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+                        let name = format!("{rel}{}", cross_rounds::PRE);
+                        pre.add_rows(&name, source.len(), source.as_ref(), &types);
+                        modules.bind(&db, &name, source)?;
+                    }
+                    pre.apply(&mut round_stats);
+                    crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
+                        format!("{} relations derived once before the rounds, {} of them read by the rounds", pre_derived.len(), ps.reads.len())
+                    });
+                    drop(pre_span);
+                    ps.rounds
+                }
+                None => cone.cone,
+            };
+            let cone_rules = if library_stage { round_prog.clone() } else { front::Program::default() };
+            let got = run_rounds(&db, &modules, part(round_prog), &bounded.hops, &held, &round_stats, modes, k.expect("declared"), &mut rounds)?;
             collect(&db, &got, &cone_rules)?;
             if wanted.contains("returns") && got.kept.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
@@ -1402,7 +1447,10 @@ pub(crate) fn run_with_options(
             let mut done = Totals::default();
             for rel in &cone.reads {
                 let types: Vec<&str> = rest.decls[&format!("{rel}{}", cross_rounds::DONE)].iter().map(|(_, t)| t.as_str()).collect();
-                let rows = held_rows(&db, &got, rel, types.len())?;
+                let rows = match pre_rows.remove(rel) {
+                    Some(rows) => rows,
+                    None => held_rows(&db, &got, rel, types.len())?,
+                };
                 let columns = (0..types.len()).map(|i| format!("c{i}")).collect();
                 let values = (0..types.len()).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
                 let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
@@ -1554,9 +1602,15 @@ fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Opti
     let mut summary = format!("{}; {:.2} s CPU on the main thread", world.summary(rounds), now.0 - start.0 + now.1 - start.1);
     // The library's cross-file rows (decision 0058): the store's, or a library stage's, recorded for the next run.
     let loaded: Vec<String> = world::library_files(&final_options).into_iter().map(|(p, _)| p).collect();
-    let off = prog.facts.get("env").into_iter().flatten().any(|r| matches!(r.as_slice(), [front::Value::Str(k), front::Value::Str(v)] if k == library::SETTING && v == "off"));
+    // Off unless `library.rows=on`: measured, replay costs more than the workspace's own demand-driven derivation of the
+    // library's rows (decision 0058, Measured).
+    let off = !prog.facts.get("env").into_iter().flatten().any(|r| matches!(r.as_slice(), [front::Value::Str(k), front::Value::Str(v)] if k == library::SETTING && v == "on"));
     if !loaded.is_empty() && !off && tape_cache().map_err(|e| Error::Plan(e.to_string()))?.is_some() {
-        let key = library::key(programs, &loaded)?;
+        let env: Vec<(String, String)> = prog.facts.get("env").into_iter().flatten().filter_map(|r| match r.as_slice() {
+            [front::Value::Str(k), front::Value::Str(v)] => Some((k.clone(), v.clone())),
+            _ => None,
+        }).collect();
+        let key = library::key(programs, &loaded, &env)?;
         let dir = out.join("library");
         std::fs::create_dir_all(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))?;
         let file = dir.join(library::FILE);

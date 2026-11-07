@@ -17,7 +17,8 @@
 //!
 //! The spec has one item per line, tokens separated by spaces. Symbols and SQL are hex, so they can hold anything:
 //!   name <component name>
-//!   rel <table> <types>                        types: one char per column, `i` (int or node) or `s` (symbol)
+//!   rel <table> <types> [empty] [closed <t>]   types: one char per column, `i` (int or node) or `s` (symbol);
+//!                                              `closed`: t's rows are closed under the rules, never a delta
 //!   rule <head rel> <src rel> <edge table|-> <edge types|-> key <slot..> ; ecols <slot..> ; pat <tok..> ; head <tok..>
 //!   probe <head rel> <delta rel> <hex SQL>     the SQL's columns are the head's
 //!   seed <head rel> <hex join>                 a native join run once, in the first wave
@@ -194,13 +195,14 @@ impl Index {
 /// added in wave `wave`. `set` deduplicates by row id. `idx`: a hash index per column (the first `k`), then composite
 /// indexes, one per key-column set a join probe reads the relation with, so a probe bound on several columns reads
 /// exactly its matches rather than the shortest single-column list.
+/// `closed`: the rows `0..closed` are closed under the component's rules, never a delta.
 struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i64>, set: HashTable<u32>, stored: usize, lo: usize, hi: usize,
-             wave: u32, idx: Vec<Index> }
+             wave: u32, idx: Vec<Index>, closed: usize }
 impl Rel {
     fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         let idx = (0..k).map(|c| Index { cols: vec![c], table: HashTable::new(), next: Vec::new() }).collect();
-        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx }
+        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, closed: 0 }
     }
     fn row(&self, id: usize) -> &[i64] { &self.data[id * self.k..][..self.k] }
     fn contains(&self, row: &[i64]) -> bool {
@@ -347,8 +349,26 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             "name" => name = toks[1].to_string(),
             "rel" => {
                 let mut rel = Rel::new(toks[1], toks[2].as_bytes());
-                // `rel <table> <types> empty`: the table was made this run and nothing wrote it (no statement).
-                if toks.get(3) != Some(&"empty") {
+                // `rel <table> <types> closed <table2>`: table2's rows (in the table too) are closed under the
+                // component's rules (a library's replayed rows, decision 0058): read first, at the lowest ids and of an
+                // earlier wave, so no wave reads them as its delta.
+                let mut empty = false;
+                let mut t = 3;
+                while t < toks.len() {
+                    match toks[t] {
+                        "empty" => { empty = true; t += 1; }
+                        "closed" => {
+                            let table = toks.get(t + 1).ok_or_else(|| err("closed: no table"))?;
+                            for row in read_rows(conn, table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                            rel.closed = rel.n;
+                            rel.wave = 1;
+                            t += 2;
+                        }
+                        other => return Err(err(format!("rel: unknown token {other}"))),
+                    }
+                }
+                // `empty`: the table was made this run and nothing wrote it (no statement).
+                if !empty {
                     for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
                 }
                 rel.stored = rel.n;
@@ -404,7 +424,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             other => return Err(err(format!("unknown spec item {other}"))),
         }
     }
-    for r in &mut rels { let n = r.n; r.set_delta(0, n); }   // the first wave reads the seeds as its delta
+    for r in &mut rels { let (c, n) = (r.closed, r.n); r.set_delta(c, n); }   // the first wave reads the seeds as its delta
     for p in &probes {
         if let Body::Join(j) = &p.body { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }
         if let Some(j) = &p.whole { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }

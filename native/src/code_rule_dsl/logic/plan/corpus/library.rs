@@ -102,7 +102,8 @@ impl Rows {
 
 /// The stage's key: the engine build and grammar, the program's text (its settings included), and each loaded
 /// document's path and content digest, in order.
-pub(super) fn key(programs: &[&str], loaded: &[String]) -> Result<[u8; 32]> {
+/// `env`: the run's settings (`env` facts) but `library.rows`, which a program's rules read (`python.version`).
+pub(super) fn key(programs: &[&str], loaded: &[String], env: &[(String, String)]) -> Result<[u8; 32]> {
     let mut hash = Sha256::new();
     hash.update(b"rerail.library-rows/v1\0");
     hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
@@ -110,6 +111,16 @@ pub(super) fn key(programs: &[&str], loaded: &[String]) -> Result<[u8; 32]> {
     for p in programs {
         hash.update((p.len() as u64).to_le_bytes());
         hash.update(p.as_bytes());
+    }
+    let mut env: Vec<&(String, String)> = env.iter().filter(|(k, _)| k != SETTING).collect();
+    env.sort();
+    env.dedup();
+    hash.update((env.len() as u64).to_le_bytes());
+    for (k, v) in env {
+        for s in [k, v] {
+            hash.update((s.len() as u64).to_le_bytes());
+            hash.update(s.as_bytes());
+        }
     }
     let mut loaded = loaded.to_vec();
     loaded.sort();
@@ -167,6 +178,22 @@ pub(super) fn open_relations(prog: &front::Program) -> std::collections::BTreeSe
         .collect()
 }
 
+/// The relations whose library rows a stage keeps and a run replays: those in a recursive component of `cross`, the
+/// cross-file part, or reading one. A relation upstream of every recursion (`kind`, a walk over the tree) is one pass
+/// over its inputs, which costs what reading its rows back costs; the run derives it, about every document, as before.
+pub(super) fn kept(cross: &front::Program) -> std::collections::BTreeSet<String> {
+    let mut kept = std::collections::BTreeSet::new();
+    let Ok((strata, edges)) = front::strata(cross) else { return kept };
+    for scc in &strata {
+        let recursive = scc.len() > 1 || scc.iter().any(|r| edges.get(r).is_some_and(|d| d.iter().any(|(x, _)| x == r)));
+        let reads_kept = scc.iter().any(|r| edges.get(r).is_some_and(|d| d.iter().any(|(x, _)| kept.contains(x))));
+        if recursive || reads_kept {
+            kept.extend(scc.iter().cloned());
+        }
+    }
+    kept
+}
+
 /// Adds the library's rows to `cross`, the workspace run's cross-file part: for each relation it derives that has
 /// rows, an input `<rel>__library` and the rule `rel(…) :- rel__library(…)`. Each other rule of such a relation, but
 /// those of `open`, derives no row whose first and last node columns both lie in library documents: guarded by
@@ -176,13 +203,14 @@ pub(super) fn open_relations(prog: &front::Program) -> std::collections::BTreeSe
 pub(super) fn replay(cross: &mut front::Program, rows: &Rows, open: &std::collections::BTreeSet<String>) -> Vec<(String, usize, Vec<i64>)> {
     use front::{Atom, Literal, Rule, Term};
     let derived: std::collections::BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let kept = kept(cross);
     let mut bind = vec![(DOCS.to_owned(), 1, rows.keys.values().copied().collect())];
     cross.decls.insert(DOCS.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
     cross.inputs.push(DOCS.to_owned());
     let mut replayed = std::collections::BTreeSet::new();
     for (rel, (width, values)) in &rows.rels {
         let Some(cols) = cross.decls.get(rel).cloned() else { continue };
-        if !derived.contains(rel) || cols.len() != *width || values.is_empty() {
+        if !derived.contains(rel) || !kept.contains(rel) || cols.len() != *width || values.is_empty() {
             continue;
         }
         let input = format!("{rel}{SUFFIX}");
