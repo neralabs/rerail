@@ -39,13 +39,13 @@ box(k=keyword(), *(positional(),))
 .policy "contract:python-visit-order" revision 1
 .language python
 #include "python/ast.rr"
-.violation Order(at: node, callee: symbol, ordinal: number) "{callee}"
-Order(c, name, i) :- call_name(c, name), visit_index(c, i).
+.violation Visitation(at: node, callee: symbol, ordinal: number) "{callee}"
+Visitation(c, name, i) :- call_name(c, name), visit_index(c, i).
 .violation Before(at: node) code "BEFORE" "body before decorator"
 Before(a) :- call_name(a, "body"), call_name(b, "decor"), earlier(a, b).
 "#);
     assert_eq!(rows.iter().filter(|r| r["code"] == "BEFORE").count(), 1);
-    rows.retain(|r| r["clause"] == "Order");
+    rows.retain(|r| r["clause"] == "Visitation");
     rows.sort_by_key(|r| r["parameters"]["ordinal"].as_i64().unwrap());
     let names: Vec<_> = rows.iter().map(|r| r["parameters"]["callee"].as_str().unwrap()).collect();
     assert_eq!(names, ["ann", "varann", "kwann", "kwdefault", "kwargsann", "default", "body", "decor", "result",
