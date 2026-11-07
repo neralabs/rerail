@@ -1491,9 +1491,9 @@ mod tests {
         assert!(named.matches("text(").count() == 1, "{named}");
         // Atoms with different keys stay apart: `$n` and `$m` are two nodes with one start (each its two atoms merged).
         assert_eq!(rule("two").matches("node(").count(), 2, "{}", rule("two"));
-        // `dead`, a test of one node that nothing reads, is inlined into its (no) readers; `deader`, read only by it,
-        // is then read by nothing.
-        assert_eq!(report.unread, vec!["deader".to_owned()]);
+        // `dead`, a test of one node that nothing reads, is inlined into its (no) readers; `deader`, a filter (a node
+        // lookup and a test), is inlined into `dead` first.
+        assert!(report.unread.is_empty() && report.inlined.contains(&"deader".to_owned()), "{report:?}");
         assert!(prog.rules.iter().all(|r| r.head.rel != "dead" && r.head.rel != "deader"));
     }
 
@@ -1586,11 +1586,12 @@ mod tests {
         // `not_k`, then `named` (now `node(...), !k($n)` over `$n` alone); `read_negated` is read negated, and `k`
         // has no node test.
         // `not_both` is first one rule, `!not_both_all($n)` with `not_both_all($n) :- k($n), j($n)` (De Morgan).
-        assert_eq!(report.inlined, vec!["named".to_owned(), "not_both".to_owned(), "not_k".to_owned()]);
+        // Then `j`, a filter read once positively, is inlined into `not_both_all`.
+        assert_eq!(report.inlined, vec!["named".to_owned(), "not_both".to_owned(), "not_k".to_owned(), "j".to_owned()]);
         let rules: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         let out = rules.iter().find(|r| r.starts_with("out(")).unwrap();
         assert!(out.contains("!k($a)") && out.contains("!not_both_all($a)") && !out.contains("named") && !out.contains("not_k"), "{out}");
-        assert!(rules.iter().any(|r| r == "not_both_all($n) :- k($n), j($n)"), "{rules:?}");
+        assert!(rules.iter().any(|r| r == r#"not_both_all($n) :- k($n), text($n, "z")"#), "{rules:?}");
         assert!(!prog.decls.contains_key("not_k") && !prog.decls.contains_key("named") && prog.decls.contains_key("read_negated"));
     }
 }

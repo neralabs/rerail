@@ -92,8 +92,8 @@ fn relations_hold_t_exporters_rows() {
                         Ty::Node if v == -1 => "-1".to_owned(),
                         Ty::Node => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
                         Ty::Kind => {
-                            assert_eq!(v / i64::from(KIND_STRIDE), i64::from(tag));
-                            catalog.kind_name((v % i64::from(KIND_STRIDE)) as u16).unwrap().to_owned()
+                            assert_eq!(crate::code_rule_dsl::facts::core::kind_tag(v as u32), tag);
+                            catalog.kind_name(crate::code_rule_dsl::facts::core::kind_code(v as u32)).unwrap().to_owned()
                         }
                         Ty::Field => {
                             assert_eq!(v >> 16, i64::from(tag));
@@ -253,7 +253,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
     let kinds: HashMap<i64, String> = read("node")
         .into_iter()
         .map(|r| {
-            let (tag, code) = ((r[2] / i64::from(KIND_STRIDE)) as u8, (r[2] % i64::from(KIND_STRIDE)) as u16);
+            let (tag, code) = (crate::code_rule_dsl::facts::core::kind_tag(r[2] as u32), crate::code_rule_dsl::facts::core::kind_code(r[2] as u32));
             (r[1], from_tape_tag(tag).unwrap().kinds().kind_name(code).unwrap_or("ERROR").to_owned())
         })
         .collect();
@@ -462,7 +462,7 @@ fn within_holds_exactly_the_contained_pairs() {
 /// node's strict ancestors gives, looked up by either column and scanned, and their statistics count the rows.
 #[test]
 fn the_kind_set_axes_hold_exactly_their_pairs() {
-    use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_atom};
+    use crate::code_rule_dsl::facts::core::kind_atom;
     let store = ContentStore::open(&temp("axes")).unwrap();
     let docs: Vec<Document> = documents().into_iter().take(4).collect();
     let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
@@ -475,8 +475,8 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
-        let code = (p.facts.kind[p.core[local] as usize] % KIND_STRIDE) as usize;
-        i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16)))
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local] as usize]);
+        i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
     // Nested kinds: the root's, and two from inside the documents.
     let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();

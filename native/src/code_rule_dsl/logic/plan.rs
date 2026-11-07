@@ -3850,9 +3850,12 @@ fn decoded_outputs(
         let of_tag = |tag: i64| u8::try_from(tag).ok().and_then(crate::code_rule_dsl::language::from_tape_tag).map(|d| d.kinds());
         let decode = |i: usize, v: i64| -> Option<String> {
             let run = kinds?;
-            let stride = i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE);
             match domains.get(i)? {
-                lower::Domain::Kind => Some(of_tag(v / stride).unwrap_or(run).kind_name((v % stride) as u16)?.to_owned()),
+                lower::Domain::Kind => {
+                    let atom = u32::try_from(v).ok()?;
+                    let (tag, code) = (crate::code_rule_dsl::facts::core::kind_tag(atom), crate::code_rule_dsl::facts::core::kind_code(atom));
+                    Some(of_tag(i64::from(tag)).unwrap_or(run).kind_name(code)?.to_owned())
+                }
                 lower::Domain::Field => Some(of_tag(v >> 16).unwrap_or(run).field_name((v & 0xffff) as u16)?.to_owned()),
                 _ => None,
             }
