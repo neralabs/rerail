@@ -43,7 +43,7 @@ pub(super) const SPLICE: &str = "rr_splice_req";
 /// The demands rules make.
 pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
-pub(super) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
+pub(in crate::code_rule_dsl) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
 /// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's).
 pub(super) const SHARED: [&str; 4] = [DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
 

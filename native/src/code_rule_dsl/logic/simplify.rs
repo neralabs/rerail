@@ -72,6 +72,10 @@ pub(in crate::code_rule_dsl) struct Report {
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     let mut report = Report::default();
     report.inlined = inline_node_tests(prog);
+    // `RERAIL_INLINE_FILTERS=off`: filters are built, for comparison.
+    if std::env::var("RERAIL_INLINE_FILTERS").map_or(true, |v| v != "off") {
+        report.inlined.extend(inline_filters(prog));
+    }
     for rule in &mut prog.rules {
         report.constants += fold_constants(rule);
         report.within += span_containment(rule);
@@ -447,6 +451,159 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
         prog.decls.remove(rel);
     }
     bodies.into_keys().collect()
+}
+
+/// At most this many rules in a filter inlined by `inline_filters`: each reader becomes one copy per rule.
+const FILTER_RULES: usize = 2;
+
+/// Inlines each filter: a relation whose every rule, once its head's variables are bound, reads only functional
+/// lookups of them and tests (`gis_before(i, n) :- kind(n, "call"), earlier(i, n)`, lowered to `docof` and
+/// `visit_index` of both and a comparison). Built whole it holds every pair the test admits (9.8M on 50 files: every
+/// node before every call of its file); inlined, each reader tests its own pairs. A lookup is functional when its
+/// key is bound: `docof`, `visit_index`, `kind`, `text`, `name`, `line`, `op` and `node` by the node; `field` and
+/// `child` by the child (one parent). Read only positively, with variables or constants, by other relations; at
+/// most `FILTER_RULES` rules, each reader becoming one copy per rule. Returns the relations inlined.
+fn inline_filters(prog: &mut Program) -> Vec<String> {
+    let functional = |a: &Atom, bound: &BTreeSet<String>| -> bool {
+        let on = |c: usize| match a.args.get(c) {
+            Some(Term::Var(v)) => bound.contains(v),
+            Some(Term::Wild) | None => false,
+            Some(_) => true,
+        };
+        match a.rel.as_str() {
+            "docof" | "visit_index" | "kind" | "text" | "name" | "line" | "op" => on(0),
+            "node" => on(1),
+            "field" => on(2),
+            "child" => on(1),
+            _ => false,
+        }
+    };
+    // A rule is a filter when every literal is a functional lookup or a test of what its head (and earlier
+    // lookups) bind.
+    let filter = |rule: &Rule| -> Option<Vec<Literal>> {
+        let mut bound = BTreeSet::new();
+        rule.head.args.iter().for_each(|t| t.vars(&mut bound));
+        let mut todo: Vec<&Literal> = rule.body.iter().collect();
+        loop {
+            let before = todo.len();
+            todo.retain(|l| {
+                let ok = match l {
+                    Literal::Atom(a) if !a.neg => functional(a, &bound),
+                    Literal::Atom(a) => base_lookup(&a.rel) && l.vars().is_subset(&bound),
+                    Literal::Cmp { .. } => l.vars().is_subset(&bound),
+                    _ => false,
+                };
+                if ok {
+                    bound.extend(l.vars());
+                }
+                !ok
+            });
+            if todo.is_empty() {
+                return Some(rule.body.clone());
+            }
+            if todo.len() == before {
+                return None;
+            }
+        }
+    };
+    let mut rules_of: BTreeMap<String, Vec<&Rule>> = BTreeMap::new();
+    for rule in &prog.rules {
+        rules_of.entry(rule.head.rel.clone()).or_default().push(rule);
+    }
+    let mut candidates: BTreeSet<String> = rules_of
+        .iter()
+        .filter(|(rel, rules)| {
+            // A request the engine reads (a guest's `embed`, the demand a `parsed` read makes) stays a relation.
+            !kept(prog, rel)
+                && !super::plan::corpus::guests::REQUESTS.contains(&rel.as_str())
+                // `core.rr`'s relations (`kind`, `precedes`) are the engine's, read by name (kind views, kind sets).
+                && !super::rr::core_names().contains(*rel)
+                && rules.len() <= FILTER_RULES
+                && rules.iter().all(|r| r.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) && filter(r).is_some())
+        })
+        .map(|(rel, _)| rel.clone())
+        .collect();
+    for rule in &prog.rules {
+        for l in &rule.body {
+            match l {
+                Literal::Atom(a) if !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) && a.rel != rule.head.rel => {}
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                    candidates.remove(&a.rel);
+                }
+                _ => {}
+            }
+        }
+    }
+    // A filter's body reads no other candidate (one level; deeper chains stay built).
+    let bodies: BTreeMap<String, Vec<Rule>> = candidates
+        .iter()
+        .filter(|rel| rules_of[*rel].iter().all(|r| r.body.iter().all(|l| !matches!(l, Literal::Atom(a) if candidates.contains(&a.rel)))))
+        .map(|rel| (rel.clone(), rules_of[rel].iter().map(|r| (*r).clone()).collect()))
+        .collect();
+    if bodies.is_empty() {
+        return Vec::new();
+    }
+    let mut fresh = 0usize;
+    let mut out = Vec::with_capacity(prog.rules.len());
+    let mut work: Vec<Rule> = prog.rules.iter().filter(|r| !bodies.contains_key(&r.head.rel)).cloned().collect();
+    work.reverse();
+    while let Some(rule) = work.pop() {
+        let Some(at) = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && bodies.contains_key(&a.rel))) else {
+            out.push(rule);
+            continue;
+        };
+        let Literal::Atom(read) = rule.body[at].clone() else { unreachable!("a read") };
+        for def in &bodies[&read.rel] {
+            fresh += 1;
+            // The definition's variables renamed apart; a head variable read as a variable becomes it, anything else
+            // an equality.
+            let mut local = BTreeSet::new();
+            def.body.iter().for_each(|l| local.extend(l.vars()));
+            def.head.args.iter().for_each(|t| t.vars(&mut local));
+            let mut to: BTreeMap<String, String> = local.iter().map(|v| (v.clone(), format!("{v}_f{fresh}"))).collect();
+            let mut body: Vec<Literal> = Vec::new();
+            for (h, r) in def.head.args.iter().zip(&read.args) {
+                match (h, r) {
+                    (Term::Var(v), Term::Var(x)) if to.get(v) == Some(&format!("{v}_f{fresh}")) => {
+                        to.insert(v.clone(), x.clone());
+                    }
+                    (Term::Var(v), r) => body.push(Literal::Cmp { l: r.clone(), op: "=", r: Term::Var(to[v].clone()) }),
+                    (h, r) => body.push(Literal::Cmp { l: r.clone(), op: "=", r: h.clone() }),
+                }
+            }
+            let rename = |l: &Literal| rename_all(l, &to);
+            body.extend(def.body.iter().map(rename));
+            let mut c = rule.clone();
+            c.body.splice(at..=at, body);
+            work.push(c);
+        }
+    }
+    prog.rules = out;
+    for rel in bodies.keys() {
+        prog.decls.remove(rel);
+    }
+    bodies.into_keys().collect()
+}
+
+/// `l` with each variable `to` names renamed at once (`i → n, n → c` gives `n, c`, not `c, c`).
+fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
+    fn term(t: &Term, to: &BTreeMap<String, String>) -> Term {
+        match t {
+            Term::Var(v) => Term::Var(to.get(v).cloned().unwrap_or_else(|| v.clone())),
+            Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| term(a, to)).collect()),
+            t => t.clone(),
+        }
+    }
+    match l {
+        Literal::Atom(a) => Literal::Atom(Atom { args: a.args.iter().map(|t| term(t, to)).collect(), ..a.clone() }),
+        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, to), op: *op, r: term(r, to) },
+        other => other.clone(),
+    }
+}
+
+/// A base relation a negation may test inside a filter: the functional lookups' relations.
+fn base_lookup(rel: &str) -> bool {
+    matches!(rel, "docof" | "visit_index" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
 }
 
 /// A relation of several rules each `node(_, $n, _, _, _), !x_i($n)` (the converter's `not` of an `all`: every node

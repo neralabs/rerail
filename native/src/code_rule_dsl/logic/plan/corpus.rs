@@ -24,7 +24,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
-mod guests;
+pub(in crate::code_rule_dsl) mod guests;
 mod hiding;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
@@ -1241,6 +1241,29 @@ pub(crate) fn run_with_options(
         format!("{} base relations, {:.1} MB of values in memory: {}", held.len(), total as f64 * 8.0 / 1e6, top.join("; "))
     });
     for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
+        // A base relation the cross-file part reads that T's statistics do not cover (a simplified rule moved its read
+        // there, `parsed` after a filter was inlined): measured from the rows held. A column not held is read by no
+        // rule; it is taken as a key.
+        if !cross_stats.knows(&rel) {
+            let n = values.iter().flatten().map(Vec::len).next().unwrap_or(0) as i64;
+            let measured: Vec<(String, [i64; 4])> = columns
+                .iter()
+                .zip(&values)
+                .map(|(c, v)| {
+                    let m = match v {
+                        Some(v) => {
+                            let mut per: HashMap<i64, i64> = HashMap::new();
+                            v.iter().for_each(|x| *per.entry(*x).or_default() += 1);
+                            let sq: i64 = per.values().map(|k| k * k).sum();
+                            [n, per.len() as i64, sq, sq]
+                        }
+                        None => [n, n, n, n],
+                    };
+                    (c.clone(), m)
+                })
+                .collect();
+            cross_stats.measured(&rel, measured, []);
+        }
         modules.bind(&db, &rel, crate::code_rule_dsl::logic::native::component::columns_source(columns, values))?;
     }
     for rel in &split.exports {
