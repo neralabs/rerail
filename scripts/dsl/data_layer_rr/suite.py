@@ -810,7 +810,7 @@ def main():
         hostTransfers=getattr(backend, 'host_transfers', []),
         originalRecordingSha256=backend.baseline_sha, detectorObservations=backend.observations,
         pythonHashSeed=os.environ.get('PYTHONHASHSEED'),
-        executionIsolation='One owned persistent cache per assertion shard; shared-cache concurrency is a separate failing engine contract',
+        executionIsolation='One owned persistent cache per assertion shard; shared-cache concurrency is tested separately',
         semanticFallbacks=backend.semantic_fallbacks,
         casesWithoutNativeCalls=[case for case in backend.cases if not any(c['test'] == case for c in backend.calls)]))
     raise SystemExit(code)
