@@ -492,6 +492,11 @@ fn json_program() -> Program {
     batch_programs().remove(0)
 }
 
+/// JSON's block program (tier 2's analysis reads it: `block_plan_tests`).
+pub(super) fn json_block_program() -> block::BlockProgram {
+    json_program().block_programs()[0].clone()
+}
+
 /// JSON's rows as doc 16 §3 has them: the pair found from the token after its string, with
 /// the rule from the left kept as its `also`. The one-byte kinds are the punctuation token's
 /// keywords, which tier 2 reads from the token's byte: they are not tier 1's outputs, so tier 1

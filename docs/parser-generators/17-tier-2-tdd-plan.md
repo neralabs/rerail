@@ -66,18 +66,29 @@ Dyck tests.
 **Moved to phase 3:** S1's summaries against tier 1's carries need the block program's carried
 slice, which the analysis finds.
 
-## 3. The analysis
+## 3. The analysis (done)
 
-**Builds:** `block_plan::analyse(program) -> Dataflow`: every value with its class, monoid
-and depth; the scans by depth; candidates; fixes; dead values dropped.
+**Built:** `block_plan::analyse(program, target)`: every value with its class, monoid and depth,
+the scans by depth, the candidates, the fixes and the passes over the bytes. Metal takes the
+rule with fewer passes, and the CPU the one that runs forward. `Dataflow::text` prints it.
 
-**Tests:**
+**Found by the analysis, against doc 16 §4.1:**
 
-- `json_values_are_classed_as_designed`: the table of doc 16 §4.1, as printed text.
-- `json_scans_are_s1_s2_s3`: S1 `fn` 16; S2 four forward and one backward; S3 `add`.
-- `json_candidates_are_s1s_state`: four, from 2 bits; halos as fixes.
-- `json_rule_from_the_left_needs_a_third_pass`: the pair without `before`: three byte passes.
-- `json_token_count_is_dead`.
+- **The stack is in S3, not S2.** The pair bit's event is the key, and the key reads the
+  backward carry at the block's right edge. So the stack is one deeper than the key: S3, with
+  the node counts. The chain is still three scans, and the scan phase still one exchange.
+- **The key is two `last 1` backward values:** the token after the string's end is `:`, and
+  that bit carried back to the string's start. Doc 16 used one, over tokens outside strings;
+  the analysis has no notion of "outside strings", only rows.
+- **Four nodes may start at one byte, so three planes.** `document`, `pair`, `string` and `"`
+  can all start at the first token by the rows alone. Such a file fails the `also` check, but
+  the planes must hold the count.
+- **The counts are 14 bits.**
+
+**Tests:** `json_values_are_classed_as_designed` (the whole text),
+`json_rule_from_the_left_needs_a_third_pass` (S1, S2, S3 the stack, S4 the counts after a third
+pass), `json_cpu_dataflow_is_forward`. S1's summaries against tier 1's carries move to phase 6,
+where the generated code makes them.
 
 ## 4. The plan
 

@@ -205,3 +205,70 @@ fn last_and_first_equal_a_walk() {
         assert_eq!(a.then(b).then(c), a.then(b.then(c)));
     }
 }
+
+// --- Phase 3: the analysis ----------------------------------------------------------------
+
+use super::block_plan::{Rule, Target, analyse, analyse_rule};
+
+/// JSON's block program, as compiled from `json.bitlex`.
+fn json_block() -> super::block::BlockProgram {
+    super::bitlex_compile_tests::json_block_program()
+}
+
+/// JSON's dataflow on Metal (doc 16 §4.1, doc 17 §3): every value's class, monoid and depth; the
+/// scans by depth; the candidates; the passes over the bytes. Derived from the program, never
+/// written by hand: this text pins the analysis.
+#[test]
+fn json_values_are_classed_as_designed() {
+    let flow = analyse(&json_block(), Target::Gpu).expect("analyses");
+    let want = "\
+dataflow gpu, rule when
+  tier 1: 41 ops: 11 local, 26 given S1, 2 carried, 2 halos
+  value                 class     monoid               depth  scan
+  %1 escaped            forward   fn                   1      S1
+  %4 toggle             forward   xor                  1      S1
+  %20 prev %12          halo      1 bit                1      S1
+  %27 prev %19          halo      1 bit                1      S1
+  tokens                local                          1      rows 5 6 7 8 9
+  kinds                 local                          1      byte '{' '}' '[' ']' ',' ':'; text 12
+  r1 before ':'         backward  last 1               2      S2
+  r1 key                backward  last 1               2      S2
+  after ':'             forward   last 1               2      S2
+  first token           forward   or                   2      S2
+  last token start      forward   last 12              2      S2
+  stack                 forward   dyck 2 max 13 pair   3      S3
+  nodes per byte        local                          2      4 at most: 3 planes
+  ord                   forward   add 14               3      S3
+  open ords             forward   last 32 x 27         4      pass B
+  scans
+  S1  depth 1  forward fn 2->4 (16 bits)
+  S2  depth 2  backward last 1, last 1; forward last 1, or, last 12  cand S1
+  S3  depth 3  forward dyck 41, add 14  cand S1, fix r1 key, first token, halos
+  candidates 4, from S1's 2 state bits
+  byte passes 2
+";
+    assert_eq!(flow.text(), want, "\n{}", flow.text());
+}
+
+/// The pair by the rule from the left reads the stack's top inside a block: wide, so no
+/// candidates cover it, and the node counts wait for a third pass over the bytes (doc 16 §4.2).
+#[test]
+fn json_rule_from_the_left_needs_a_third_pass() {
+    let flow = analyse_rule(&json_block(), Rule::Also).expect("analyses");
+    assert_eq!(flow.byte_passes, 3, "\n{}", flow.text());
+    if std::env::var_os("RERAIL_SHOW").is_some() {
+        eprintln!("{}", flow.text());
+    }
+    assert!(flow.text().contains("r1 parent"), "\n{}", flow.text());
+    // Metal takes the cheaper rule; the CPU the one it can run forward.
+    assert_eq!(analyse(&json_block(), Target::Gpu).expect("gpu").rule, Rule::When);
+    assert_eq!(analyse(&json_block(), Target::Cpu).expect("cpu").rule, Rule::Also);
+}
+
+/// The CPU runs one pass: every scan a running carry, nothing backward.
+#[test]
+fn json_cpu_dataflow_is_forward() {
+    let flow = analyse(&json_block(), Target::Cpu).expect("analyses");
+    assert_eq!(flow.byte_passes, 1, "\n{}", flow.text());
+    assert!(flow.values.iter().all(|v| v.class != super::block_plan::Class::Backward), "\n{}", flow.text());
+}
