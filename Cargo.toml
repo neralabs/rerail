@@ -1,5 +1,7 @@
 [workspace]
 members = ["native"]
+# The Bitlex evaluator keeps its own workspace (its tree-sitter oracle); the engine uses its library.
+exclude = ["tools/bitlex"]
 resolver = "2"
 
 [patch.crates-io]

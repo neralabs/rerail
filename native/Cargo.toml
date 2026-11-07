@@ -61,6 +61,10 @@ sha2 = "0.10"
 tree-sitter-language = "=0.1.9"
 tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
 tree-sitter = "=0.27.1"
+# Bitlex's parser (and, in tests, its reference evaluator), for the Bitlex compiler
+# (`transducer/packed/bitlex_compile`). Its library has no dependencies; the tree-sitter oracle is
+# its binary's feature.
+bitlex = { path = "../tools/bitlex", default-features = false }
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.26"
 zstd = "=0.14.3"

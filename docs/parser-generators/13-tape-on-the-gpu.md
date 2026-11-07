@@ -1,7 +1,8 @@
 # Parser generators: the tape from a Bitlex file
 
 Status: proposal (2026-11-06). Step 1 of §7 is built: the reference evaluator runs the tree
-section (§4).
+section (§4). Step 2 is under way: the compiler (`transducer/packed/bitlex_compile`) handles
+classes and the masks that read only earlier bytes, equal to the evaluator on every executor.
 
 ## Intro
 

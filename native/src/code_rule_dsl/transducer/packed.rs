@@ -265,6 +265,10 @@ mod value;
 pub(in crate::code_rule_dsl) mod block;
 #[cfg(test)]
 mod block_tests;
+// The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
+mod bitlex_compile;
+#[cfg(test)]
+mod bitlex_compile_tests;
 mod value_packing;
 mod value_prefix;
 

@@ -132,6 +132,21 @@ impl BlockOp {
         }
     }
 
+    /// The operation with each operand `v` replaced by `f(v)`.
+    pub(super) fn renumbered(&self, f: impl Fn(u16) -> u16) -> Self {
+        match *self {
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) => *self,
+            BlockOp::Not(a) => BlockOp::Not(f(a)),
+            BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
+            BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
+            BlockOp::AfterOddRun(a) => BlockOp::AfterOddRun(f(a)),
+            BlockOp::And(a, b) => BlockOp::And(f(a), f(b)),
+            BlockOp::Or(a, b) => BlockOp::Or(f(a), f(b)),
+            BlockOp::Xor(a, b) => BlockOp::Xor(f(a), f(b)),
+            BlockOp::AndNot(a, b) => BlockOp::AndNot(f(a), f(b)),
+        }
+    }
+
     /// Parse `text`'s output: a mnemonic and its operands, as words.
     pub(super) fn parse(words: &[String]) -> Result<Self, String> {
         let byte = |word: &str| -> Result<u8, String> {

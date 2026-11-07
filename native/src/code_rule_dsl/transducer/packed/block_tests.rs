@@ -15,7 +15,7 @@ fn program(rows: &str) -> Program {
 
 /// Inputs that put every byte value at every position of a block, and lengths around every
 /// block edge.
-fn inputs() -> Vec<Vec<u8>> {
+pub(super) fn inputs() -> Vec<Vec<u8>> {
     let every: Vec<u8> = (0..=255u8).chain((0..=255u8).rev()).chain(0..=255u8).collect();
     let mut out = vec![vec![], b"\"".to_vec(), every.clone()];
     for len in [1usize, 2, 63, 64, 65, 127, 128, 129, 200] {
@@ -70,7 +70,7 @@ fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
 }
 
 /// Every executor's outputs for the program's first block program, with the executor's name.
-fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
+pub(super) fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
     let block = &p.block_programs()[0];
     let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
     let mut out = vec![
