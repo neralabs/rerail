@@ -1,0 +1,17 @@
+.policy "clippy-inconsistent-digit-grouping-no-fractions" revision 3
+.description "Group the integer digits of Rust decimal literals with underscores in equal-size groups; this variant leaves fractions unchecked."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   grouping_lint(n, w, fractions)   Clippy's LiteralDigitGrouping verdict on number literal n
+
+// Clippy's inconsistent_digit_grouping (style) under `unreadable-literal-lint-fractions = false`. The
+// groups are checked as in clippy-inconsistent-digit-grouping; only a long ungrouped fraction changes:
+//   1_234.567890   reported here: the fraction (6 digits, one group) is longer than the integer's groups
+//                  (by default it is unreadable_literal instead, and that wins)
+.violation inconsistent_digit_grouping(at: node) code "inconsistent_digit_grouping"
+    "Regroup this literal's digits with underscores into equal-size groups, e.g. 1_000_000 instead of 1_0000_00."
+    suppress clippy "clippy::inconsistent_digit_grouping", "clippy::all", "clippy::style", "warnings"
+inconsistent_digit_grouping(n) :- grouping_lint(n, "inconsistent_digit_grouping", "false").

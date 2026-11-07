@@ -1,0 +1,21 @@
+.policy "ruff-pyi050-no-return-argument-annotation-in-stub" revision 2
+.description "Use Never instead of NoReturn for parameter annotations in stub files; NoReturn describes a function that never returns, which makes little sense for a parameter."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI050 (flake8-pyi), in stubs, and in every file when the code targets Python 3.11 or later (the
+// `pythonVersion` option; Ruff's default is 3.10): a parameter annotated `NoReturn` (from typing or typing_extensions),
+// `*args` and `**kwargs` included, or the string "NoReturn". `Never` is the name for an uninhabited argument.
+// Only a whole annotation counts: `list[NoReturn]` and return annotations are not checked.
+//   def f(x: NoReturn): ...        ← PYI050
+#include "python/typing.rr"
+#include "python/version.rr"   // targets
+
+.violation PYI050(at: node) code "PYI050" "Annotate this parameter as `Never` instead of `NoReturn`, importing it from `typing_extensions` (or `typing` on Python 3.11+); the two are equivalent for type checkers."
+    suppress ruff "PYI050"
+PYI050(t) :- kind(f, "function_definition"), applies(f), sig_param(f, _, _, _, _, a, _), !unset(a), type_bare(a, t),
+    (typing_sym(t, "NoReturn") ; parsed(t, "annotation", r), type_bare(r, n), typing_sym(n, "NoReturn")).
+.decl applies(f: node)
+applies(f) :- in_stub(f).
+applies(f) :- kind(f, "function_definition"), targets(11).

@@ -18,7 +18,7 @@
 .decl text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl pkg(d: number, p: symbol)
-.input doc, node, child, field, text, op, pkg
+.input doc, node, child, field, text, op, pkg, kind, docof
 
 .decl scope(kind: symbol)
 scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
@@ -29,9 +29,7 @@ fscope("module"). fscope("function_definition"). fscope("lambda").
 fdef("function_definition").
 
 .decl kind(n: node, k: symbol)
-kind(n, k) :- node(_, n, k, _, _).
 .decl docof(n: node, d: number)
-docof(n, d) :- node(d, n, _, _, _).
 .decl modnode(d: number, m: node)
 modnode(d, m) :- node(d, m, "module", _, _).
 .decl modname(m: node, q: symbol)

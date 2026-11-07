@@ -1,0 +1,19 @@
+.policy "ruff-td003-missing-todo-link" revision 2
+.description "Link every TODO comment to an issue or ticket, on the same line or in the comment lines right after it, so the work can be tracked."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TD003 (flake8-todos): a TODO, FIXME or XXX with no issue link. A link is a URL or `#123` anywhere after
+// the tag on its line, or a comment line below it in the same comment block (nothing but whitespace between)
+// that is a URL, a number, or an id like `PROJ-123`, before the next directive comment.
+//   # TODO(charlie): fix this              ← TD003
+//   # TODO(charlie): fix this #1234        not reported
+//   # TODO(charlie): fix this              not reported: the next comment line is a link
+//   # https://github.com/astral-sh/ruff/issues/3870
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
+
+.violation TD003(at: span, tag: symbol) code "TD003"
+    "Add an issue link or ticket id for this `{tag}`: a URL or `#123` on the same line, or a URL or id like `PROJ-123` on the next comment line; leave it if no issue exists yet."
+    suppress ruff "TD003"
+TD003(t, D) :- todo_item(c, D, _), !todo_linked(c), todo_at(c, t).

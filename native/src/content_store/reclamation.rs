@@ -52,7 +52,7 @@ impl ContentStore {
              ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
             params![object_kind, object_id, owner_id, lease_until],
         )?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
@@ -196,6 +196,8 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.tape_id=t.tape_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=t.tape_id) \
              AND NOT EXISTS (SELECT 1 FROM file_documents d WHERE d.document_tape_id=t.tape_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=t.source_id \
+                             AND l.grammar_version=t.grammar_version AND l.tape_format=t.tape_format_version) \
              ORDER BY t.tape_id LIMIT ?3)",
             params![current_generation, OBJECT_TAPE, limit],
         )?;
@@ -207,6 +209,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -218,6 +221,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -229,6 +233,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -240,6 +245,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -367,9 +373,9 @@ impl ContentStore {
             "UPDATE store_state SET generation=generation+1 WHERE singleton=1",
             [],
         )?;
-        transaction.commit()?;
-        connection
-            .execute_batch("PRAGMA wal_checkpoint(PASSIVE); PRAGMA incremental_vacuum(128);")?;
+        self.commit(transaction)?;
+        connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
+        incremental_vacuum(&connection, 4096)?;
         drop(connection);
         self.decompressed_cache
             .lock()
@@ -405,6 +411,15 @@ fn execute_collect(
     transaction
         .execute(collect_sql(sql), params)
         .map_err(StoreError::from)
+}
+
+/// Returns up to `pages` free pages to the file system (16 MB at 4096: a grammar change frees about 63 MB on the full
+/// corpus, decision 0053). The pragma frees a page per step, so it is stepped to the end: run as a batch, it freed none.
+pub(super) fn incremental_vacuum(connection: &rusqlite::Connection, pages: u32) -> StoreResult<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
+    let mut rows = statement.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
 }
 
 pub(super) fn capacity_state(bytes: u64) -> CapacityState {

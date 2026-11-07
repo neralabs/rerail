@@ -1,0 +1,21 @@
+.policy "ruff-ann201-missing-return-type-undocumented-public-function" revision 2
+.description "Add a return type annotation to public functions and methods so callers and type checkers know what they return."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ANN201 (flake8-annotations): a public function or method with no return annotation. Public is Ruff's
+// visibility: the name has no leading underscore, nor has any class or module around it; a def inside a def is
+// never public; with `__all__`, a top-level def must be listed in it. Class, static and dunder methods have
+// their own codes (ANN206, ANN205, ANN204); the implementation after an @overload is not checked. Ruff's
+// option suppress-none-returning is not supported (its default, false, is what this rule does).
+//   def foo(a: int): ...             ← ANN201
+//   class C:
+//       def pub(self): ...          ← ANN201
+//   def _helper(): ...              not reported here: private (ANN202)
+#include "python/annotations.rr"
+
+.violation ANN201(at: node, name: symbol) code "ANN201"
+    "Add a return type annotation to `{name}` (for example `-> None` if it returns nothing)."
+    suppress ruff "ANN201"
+ANN201(nm, x) :- ann_missing_return(f, "ANN201"), field(f, "name", nm), text(nm, x).

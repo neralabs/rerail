@@ -612,6 +612,10 @@
             "indexes": [
               [
                 "symbol"
+              ],
+              [
+                "__path",
+                "id"
               ]
             ]
           },
@@ -681,7 +685,7 @@
           },
           {
             "name": "rollups",
-            "query": "SELECT \"__path\",\"root\",\"category\",\"location\" FROM (SELECT f.__path,f.id root,c.kind category,r.location FROM graph_rollups r CROSS JOIN graph_categories c JOIN function_flags f ON r.__path=c.kind||':'||f.__path AND r.root=c.kind||':'||f.symbol)",
+            "query": "SELECT \"__path\",\"root\",\"category\",\"location\" FROM (SELECT f.__path,f.id root,c.kind category,r.location FROM graph_rollups r JOIN graph_categories c ON c.kind=substr(r.__path,1,instr(r.__path,':')-1) AND c.kind=substr(r.root,1,instr(r.root,':')-1) JOIN function_flags f ON f.__path=substr(r.__path,instr(r.__path,':')+1) AND f.symbol=substr(r.root,instr(r.root,':')+1))",
             "indexes": [
               [
                 "__path",

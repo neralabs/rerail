@@ -1,0 +1,54 @@
+// lib/data-layer/boot-lazy-sql.rr: bootstrap code that leaves SQL- and proof-owned set processing, as
+// scripts/lint_bootstrap_lazy_sql.py reports it. Two policies report these same findings under two names
+// (data-layer/bootstrap-lazy-sql.rr and bootstrap-eager-resolve.rr), so the logic lives here once.
+//
+// Interface
+//   blb(at, code, what)   a finding: code BLB-001 … BLB-004 at node at, with what for the message
+//   blb_iter(e, x)        the linter's _iter_name: e names x, directly or through list/tuple/set/sorted(x, …)
+//
+// The four findings. Names are matched by spelling (Name id or Attribute attr); nothing is resolved.
+//   q.query_lazy(…).execute_lazy()          BLB-001  a full lazy query, executed
+//   for r in rows: …   for r in sorted(rows, key=k): …
+//                                           BLB-002  a Python loop over a row collection (async for too)
+//   m.model_dump(), m.model_copy()          BLB-003  a Python model materializer
+//   physical_table_exists_many(…)           BLB-004  an eager schema probe (bare or as a method)
+// A call is reported once, by the first that applies of BLB-001, BLB-004, BLB-003 (the linter's elif chain).
+
+#include "python/ast.rr"
+#include "python/calls.rr"
+#include "data-layer/boot-python.rr"     // callee_name
+
+// blb_probe(x): the eager schema probes (the linter's EAGER_SCHEMA_PROBE_NAMES).
+.decl blb_probe(x: symbol)
+blb_probe(x) :- callee_name(_, x), glob("{physical_table_exists_many,table_exists_many{,_for_schema_batch}}{,_async}", x).
+// blb_rows(x): the row-collection names a loop must not walk (ROW_COLLECTION_NAMES).
+.decl blb_rows(x: symbol)
+blb_rows("rows"). blb_rows("existing_rows"). blb_rows("generation_rows"). blb_rows("manifest_rows").
+blb_rows("schema_state_rows"). blb_rows("system_session_rows").
+
+// blb_attr_call(c, a): call c is `….a(…)`.
+.decl blb_attr_call(c: node, a: symbol)
+blb_attr_call(c, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, a).
+// blb_lazy_exec(c): `….query_lazy(…).execute_lazy()`: the receiver of execute_lazy is itself a query_lazy call.
+.decl blb_lazy_exec(c: node)
+blb_lazy_exec(c) :- blb_attr_call(c, "execute_lazy"), field(c, "function", f), field(f, "object", r),
+    blb_attr_call(r, "query_lazy").
+// blb_named_probe(c, x): c calls probe x by a bare name or a method name.
+.decl blb_named_probe(c: node, x: symbol)
+blb_named_probe(c, x) :- callee_name(c, x), blb_probe(x).
+
+// blb_iter(e, x): `rows` gives rows; `list(rows)`, `sorted(rows, key=k)` and nestings give rows. The wrapper is a
+// bare name; the first positional argument is what it wraps.
+.decl blb_iter(e: node, x: symbol)
+blb_iter(e, x) :- kind(e, "identifier"), text(e, x).
+blb_iter(e, x) :- kind(e, "call"), field(e, "function", f), kind(f, "identifier"), text(f, w),
+    (w = "list" ; w = "tuple" ; w = "set" ; w = "sorted"), posarg(e, i, a), !blb_earlier_arg(e, i), blb_iter(a, x).
+.decl blb_earlier_arg(e: node, i: number)  // a positional argument comes before index i
+blb_earlier_arg(e, i) :- posarg(e, i, _), posarg(e, j, _), j < i.
+
+.decl blb(at: node, code: symbol, what: symbol)
+blb(c, "BLB-001", "query_lazy(...).execute_lazy()") :- blb_lazy_exec(c).
+blb(c, "BLB-004", x) :- blb_named_probe(c, x), !blb_lazy_exec(c).
+blb(c, "BLB-003", a) :- blb_attr_call(c, a), (a = "model_dump" ; a = "model_copy"), !blb_lazy_exec(c),
+    !blb_named_probe(c, _).
+blb(s, "BLB-002", x) :- kind(s, "for_statement"), field(s, "right", e), blb_iter(e, x), blb_rows(x).

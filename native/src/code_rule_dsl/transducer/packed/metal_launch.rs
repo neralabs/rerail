@@ -314,9 +314,10 @@ mod tests {
     #[test]
     fn command_boundaries_and_nested_scopes_do_not_reset_the_limit() {
         let _evaluation = LaunchScope::enter();
-        for _ in 0..11 {
+        // Commands of up to 9 launches each, the last one partial, use the whole limit.
+        for command in 0..KERNEL_LAUNCH_LIMIT.div_ceil(9) {
             let _command = LaunchScope::enter();
-            for _ in 0..9 {
+            for _ in 0..(KERNEL_LAUNCH_LIMIT - command * 9).min(9) {
                 assert!(reserve());
             }
             assert_eq!(check_submission(), Ok(()));
@@ -396,7 +397,12 @@ mod tests {
         for entry in std::fs::read_dir(directory).unwrap() {
             let path = entry.unwrap().path();
             let name = path.file_name().unwrap().to_str().unwrap();
-            if !name.starts_with("metal") || !name.ends_with(".rs") || name == "metal_launch.rs" {
+            // `*_tests.rs` files are test modules (mounted under `#[cfg(test)]`), not encoders.
+            if !name.starts_with("metal")
+                || !name.ends_with(".rs")
+                || name.ends_with("_tests.rs")
+                || name == "metal_launch.rs"
+            {
                 continue;
             }
             let source = std::fs::read_to_string(&path).unwrap();
@@ -445,14 +451,14 @@ mod tests {
         let indirect = MappedBuffer::from_slice(&device, &[1_u32, 1, 1]).unwrap();
         let queue = device.new_command_queue();
         // Separate command buffers and nested scopes must share the same budget.
-        for command_index in 0..11 {
+        for command_index in 0..KERNEL_LAUNCH_LIMIT.div_ceil(9) {
             let _nested = LaunchScope::enter();
             let command = queue.new_command_buffer();
             let encoder = command.new_compute_command_encoder();
             encoder.set_label("launch_guard_probe");
             encoder.set_compute_pipeline_state(&pipeline);
             encoder.set_buffer(0, Some(&count.buffer), 0);
-            for launch in 0..9 {
+            for launch in 0..(KERNEL_LAUNCH_LIMIT - command_index * 9).min(9) {
                 match (command_index * 9 + launch) % 3 {
                     0 => encoder.checked_dispatch_threads(
                         command,

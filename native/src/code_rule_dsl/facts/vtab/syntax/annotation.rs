@@ -19,7 +19,7 @@
 //! `string_annotation(s)` and no `parsed` row (CPython's `ast.parse(value, mode="eval")` refuses it too). Rows hold
 //! string indexes, as `Batch::build`'s do.
 
-use super::{Dialect, Document, Projected, Relation};
+use super::{Dialect, Document, Projected, Relation, Shape};
 use crate::code_rule_dsl::facts::core;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::SubTree;
@@ -127,7 +127,7 @@ impl Annotations {
         let mut inner: Vec<HashMap<(u32, u32), u32>> = Vec::with_capacity(found.len());
         for (k, a) in found.iter().enumerate() {
             let tree = (!a.tree.is_error())
-                .then(|| Projected::new(PARSED | p.key << INDEX_BITS | k as u32, Arc::new(core::from_subtree(f.tag, &a.tree)), Some(dialect)))
+                .then(|| Projected::new(PARSED | p.key << INDEX_BITS | k as u32, Arc::new(core::from_subtree(f.tag, &a.tree)), Some(dialect), Shape::T))
                 .filter(|t| t.len() > 0 && t.local[0] == 0);
             let (projection, by_range) = match a.outer {
                 None => (Some(p), &top),

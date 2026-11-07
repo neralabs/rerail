@@ -299,6 +299,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
 /// O12 (option a): `nearest` made by the transducer's file-local FIX (`typing::file_local`) and read as the input
 /// `nearest_<set>(n, a)`, on the CPU and on the device work queue: T's programs derive T's outputs.
 #[test]
+#[cfg_attr(debug_assertions, ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)")]
 fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
@@ -321,8 +322,8 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
             let sets = lowered.transduce_nearest();
             assert!(!sets.is_empty(), "{name} reads nearest");
             assert!(!lowered.program.rules.iter().flat_map(|r| &r.body).any(|l| matches!(l, Literal::Nearest { .. })));
-            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), &Default::default(), binding).unwrap() {
-                if rel.starts_with("nearest_") {
+            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
+                if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                     for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
                         db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd]).unwrap();
@@ -364,8 +365,8 @@ fn t_programs_run_natively_over_atoms_like_t() {
         let p = program(name);
         let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let sets = lowered.transduce_nearest();
-        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), &Default::default(), Binding::Cpu).unwrap() {
-            if rel.starts_with("nearest_") {
+        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
+            if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                 for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
                     db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd]).unwrap();
@@ -501,12 +502,12 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let cache = dir.join("cache");
 
     let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
-    let r = run_typed(&src, &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
+    let r = run_typed(&[&src], &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
     assert_eq!(r.typing.summaries, 2, "{:?}", r.typing);
     assert_eq!(r.typing.conflicts, vec![("vendor.core.make".to_owned(), "int".to_owned(), "str".to_owned())]);
 
     let app = Typing { declarations: vec![dir.join("decl/other.pyi")], site: Some((dir.join("site"), cache.clone())), ..Default::default() };
-    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
+    let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
     println!("{:?}", r.typing);
     assert!(r.typing.pending.is_empty(), "{:?}", r.typing);
     assert_eq!(r.typing.declared, 4, "version: str, make: int, thing: bytes | None");
@@ -522,7 +523,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     assert_eq!(unions, vec![2, 2]);
 
     let cold = Typing { site: Some((dir.join("site"), dir.join("empty-cache"))), ..Default::default() };
-    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
+    let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
     assert_eq!(r.typing.pending, vec!["vendor".to_owned(), "vendor.core".to_owned()]);
     assert_eq!(std::fs::read_to_string(dir.join("out-cold/type_of.csv")).unwrap(), "");
     let _ = std::fs::remove_dir_all(&dir);
@@ -565,7 +566,8 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
 }
 
 /// The tree axes (decision 0036): `inside(n, a, set)` holds every ancestor of `n` whose kind is in the set, not
-/// only the nearest; `has(a, n, set)` every `n` below `a` whose kind is in the set (the set tested on `n`); both negate.
+/// only the nearest; `has(a, n, set)` every descendant of `a` whose kind is in the set (`core.rr`: the set tests the
+/// descendant); both negate.
 #[test]
 fn rules_read_inside_and_has_as_tape_relations() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("axes");
@@ -578,8 +580,8 @@ fn rules_read_inside_and_has_as_tape_relations() {
 .input node, field, text
 .decl fn(kind: symbol)
 fn("function_definition").
-.decl call(kind: symbol)
-call("call").
+.decl call_k(kind: symbol)
+call_k("call").
 .decl callee(c: node, s: symbol)
 callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
 .decl fname(f: node, s: symbol)
@@ -589,25 +591,25 @@ fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), tex
 call_in(c, f) :- callee(n, c), inside(n, a, fn), fname(a, f).
 // Functions that have a call to g somewhere below them.
 .decl calls_g(f: symbol)
-calls_g(f) :- fname(a, f), has(a, n, call), callee(n, "g").
-// Functions with a function below them, and those with none.
+calls_g(f) :- fname(a, f), has(a, n, call_k), callee(n, "g").
+// Functions with a function inside them, and without.
 .decl nests(f: symbol)
 nests(f) :- fname(a, f), has(a, _, fn).
-.decl leaf(f: symbol)
-leaf(f) :- fname(a, f), !has(a, _, fn).
+.decl flat(f: symbol)
+flat(f) :- fname(a, f), !has(a, _, fn).
 // Calls inside no function.
 .decl top(c: symbol)
 top(c) :- callee(n, c), !inside(n, _, fn).
-.output call_in, calls_g, nests, leaf, top
+.output call_in, calls_g, top, nests, flat
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(read("call_in"), "f\touter\ng\tinner\ng\touter\n");
     assert_eq!(read("calls_g"), "inner\nouter\n");
-    assert_eq!(read("nests"), "outer\n");
-    assert_eq!(read("leaf"), "inner\n");
     assert_eq!(read("top"), "h\n");
+    assert_eq!(read("nests"), "outer\n");
+    assert_eq!(read("flat"), "inner\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

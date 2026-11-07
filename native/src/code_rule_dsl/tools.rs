@@ -28,13 +28,20 @@ pub fn assemble(text: &str) -> Result<String, String> {
     Ok(programs.iter().map(|(program, grammar)| rir::disassemble(program, grammar.as_ref())).collect())
 }
 
-/// `program` (`.rr` text) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
-/// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS.
-pub fn logic(program: &str, root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
+/// `programs` (`.rr` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
+/// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
+/// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
+/// findings. T's facts reproduce one program's run only.
+pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
-    let report = super::logic::plan::corpus::run(program, root, t_facts, out, modes, binding, chunk_nodes).map_err(|error| error.to_string())?;
-    let mut text = format!("{} files, {} nodes in {} chunks, {} components native ({modes}, nearest on {binding:?})\n", report.files, report.nodes, report.chunks, report.native);
+    let report = match programs {
+        [one] => super::logic::plan::corpus::run(one, root, t_facts, out, modes, binding, chunk_nodes),
+        _ if t_facts.is_some() => return Err("T facts reproduce one program's run, not several".into()),
+        _ => super::logic::plan::corpus::run_all(&programs.iter().map(String::as_str).collect::<Vec<_>>(), root, out, modes, binding, chunk_nodes),
+    }
+    .map_err(|error| error.to_string())?;
+    let mut text = format!("{} programs; {} files, {} nodes in {} chunks, {} components native ({modes}, nearest on {binding:?})\n", programs.len(), report.files, report.nodes, report.chunks, report.native);
     for (phase, user, sys, rss, statements) in &report.phases {
         text += &format!("  {phase:<6} {user:.2} s user + {sys:.2} s sys; peak RSS {rss:.0} MB; {statements} SQLite statements\n");
     }

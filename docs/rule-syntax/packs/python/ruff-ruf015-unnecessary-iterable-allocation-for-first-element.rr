@@ -1,0 +1,36 @@
+.policy "ruff-ruf015-unnecessary-iterable-allocation-for-first-element" revision 3
+.description "Take the first item with next and iter instead of building a whole list or tuple only to index it; the full collection is allocated for one element."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF015: a whole list or tuple built only to take its first item, with `[0]` or `.pop(0)`. The
+// collection is `list(x)` or `tuple(x)` (the builtins, one positional argument), `[*x]`, or a list comprehension;
+// `next(iter(x))` or `next(… for …)` takes the item without building it.
+//   list(x)[0]                    ← RUF015  `next(iter(x))`
+//   [i + 1 for i in x][0]         ← RUF015  `next(i + 1 for i in x)`
+//   list(x).pop(0)                ← RUF015
+//   list(x)[0x0]                  ← RUF015: the index is the int 0 in any spelling
+//   list(x)[1]                    not reported
+#include "python/ruff.rr"
+
+.violation RUF015(at: node, msg: symbol) code "RUF015" "{msg}"
+    suppress ruff "RUF015"
+RUF015(s, m) :- kind(s, "subscript"), field(s, "value", v), field(s, "subscript", i), count : { field(s, "subscript", _) } = 1,
+    ruff_int(i, "0"), built(v, how), says(how, m).
+RUF015(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, v, "pop"), call_only(c, i), ruff_int(i, "0"), built(v, how),
+    says(how, m).
+
+// built(v, how): v builds a whole collection: "copy" of an iterable, or "comprehension".
+.decl built(v: node, how: symbol)
+// Ruff counts the positional arguments only, a `*x` among them: `list(*x)` and `tuple(x, k=1)` count.
+built(v, "copy") :- unparen(v, c), (call_q(c, "builtins.list") ; call_q(c, "builtins.tuple")), call_nargs(c, 1).
+// `[*x]`: tree-sitter reads `[*f(y)]` and `[*x.y]` as a call or attribute of `*f`, so the test is the
+// list's one element starting with `*`.
+built(v, "copy") :- unparen(v, l), kind(l, "list"), child(l, s, 0), first_token(s, t), text(t, "*"),
+    count : { child(l, x, _), !kind(x, "comment") } = 1.
+built(v, "comprehension") :- unparen(v, l), kind(l, "list_comprehension").
+
+.decl says(how: symbol, m: symbol)
+says("comprehension", "Take the first item lazily with `next(...)` over a generator expression (or `next(iter(x))` for a plain copy of `x`) instead of building the list; an empty source then raises StopIteration.").
+says("copy", "Use `next(iter(x))` (just `next(x)` when x is already an iterator) instead of copying x into a list or tuple for one item; an empty x then raises StopIteration, not IndexError.").

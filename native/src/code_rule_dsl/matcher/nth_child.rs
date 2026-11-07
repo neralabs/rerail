@@ -300,12 +300,10 @@ impl Positions {
         &self.counted[self.offsets[parent as usize] as usize..self.offsets[parent as usize + 1] as usize]
     }
 
-    /// Two passes in preorder (a node's siblings before it are below it): which nodes count, then
-    /// each into its parent's run.
+    /// One pass over each parent's children, appending the counted ones; a parent with a child of
+    /// unknown verdict takes its run back.
     fn of(nth: &NthChild, tape: &crate::code_rule_dsl::tape::TapeDoc) -> Self {
         let len = tape.transducer_len();
-        let mut counted = vec![false; len];
-        let mut unknown = vec![false; len];
         // W's matcher reads the file through its own handle and scope slot, made where a probe is.
         let file = std::cell::OnceCell::new();
         let file = || {
@@ -316,60 +314,49 @@ impl Positions {
         };
         // Per kind: 0 not yet asked, 1 no, 2 yes, 3 W's matcher decides.
         let mut by_kind = Vec::<u8>::new();
-        for node in 0..len as u32 {
-            if tape.transducer_parent(node).is_none() || !tape.transducer_is_named(node) {
-                continue;
+        let mut counts = |node: u32| -> Option<bool> {
+            if !tape.transducer_is_named(node) {
+                return Some(false);
             }
-            counted[node as usize] = match &nth.of_rule {
-                None => true,
-                Some(rule) => {
-                    let kind = usize::from(tape.transducer_kind(node));
-                    if by_kind.len() <= kind {
-                        by_kind.resize(kind + 1, 0);
-                    }
-                    if by_kind[kind] == 0 {
-                        by_kind[kind] = match on_kinds(rule, kind as u16) {
-                            Some(false) => 1,
-                            Some(true) => 2,
-                            None => 3,
-                        };
-                    }
-                    match by_kind[kind] {
-                        1 => false,
-                        2 => true,
-                        _ => nth.probe(&file().0, rule, node).unwrap_or_else(|| {
-                            unknown[tape.transducer_parent(node).expect("a child") as usize] = true;
-                            false
-                        }),
+            let Some(rule) = &nth.of_rule else { return Some(true) };
+            let kind = usize::from(tape.transducer_kind(node));
+            if by_kind.len() <= kind {
+                by_kind.resize(kind + 1, 0);
+            }
+            if by_kind[kind] == 0 {
+                by_kind[kind] = match on_kinds(rule, kind as u16) {
+                    Some(false) => 1,
+                    Some(true) => 2,
+                    None => 3,
+                };
+            }
+            match by_kind[kind] {
+                1 => Some(false),
+                2 => Some(true),
+                _ => nth.probe(&file().0, rule, node),
+            }
+        };
+        let mut parents = Vec::new();
+        let mut offsets = vec![0_u32; len + 1];
+        let mut counted = Vec::with_capacity(len);
+        for parent in 0..len as u32 {
+            let from = counted.len();
+            for child in tape.transducer_children(parent) {
+                match counts(child) {
+                    Some(true) => counted.push(child),
+                    Some(false) => {}
+                    None => {
+                        counted.truncate(from);
+                        break;
                     }
                 }
-            };
-        }
-        let mut offsets = vec![0_u32; len + 1];
-        for node in 0..len as u32 {
-            if let Some(parent) = tape.transducer_parent(node)
-                && counted[node as usize]
-                && !unknown[parent as usize]
-            {
-                offsets[parent as usize + 1] += 1;
             }
-        }
-        let parents = (0..len as u32).filter(|&parent| offsets[parent as usize + 1] != 0).collect();
-        for at in 0..len {
-            offsets[at + 1] += offsets[at];
-        }
-        let mut next = offsets[..len].to_vec();
-        let mut runs = vec![0_u32; offsets[len] as usize];
-        for node in 0..len as u32 {
-            if let Some(parent) = tape.transducer_parent(node)
-                && counted[node as usize]
-                && !unknown[parent as usize]
-            {
-                runs[next[parent as usize] as usize] = node;
-                next[parent as usize] += 1;
+            if counted.len() > from {
+                parents.push(parent);
             }
+            offsets[parent as usize + 1] = counted.len() as u32;
         }
-        Self { parents, offsets, counted: runs }
+        Self { parents, offsets, counted }
     }
 }
 

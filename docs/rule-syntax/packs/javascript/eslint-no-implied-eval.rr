@@ -1,0 +1,49 @@
+.policy "eslint-no-implied-eval" revision 2
+.description "Pass a function, not a string, to setTimeout, setInterval or execScript in JavaScript; string code is evaluated like eval()."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-a-globals.rr"
+//   callee(c, f), global_ref_to(r, x), global_object_ref(o, x), static_prop(m, o, x), call_arg(c, a, i), deparen(e, l)
+
+// ESLint's no-implied-eval: setTimeout, setInterval and execScript given a string, which they evaluate as code.
+//   setTimeout("alert(1)", 10);        window.setInterval(`tick()`);     execScript("x");   → reported
+//   setTimeout(() => tick(), 10);      not reported: a function
+// The callee must be the global function: a global variable (the browser or Node environment declares these;
+// `/* global setTimeout */` does too), called bare or through the global object (window, global, globalThis).
+// A string is a string literal, any template, a `+` with a string on either side, or a constant string.
+.decl evaluator(x: symbol)
+evaluator("setTimeout"). evaluator("setInterval"). evaluator("execScript").
+
+.violation implied_eval(at: node) code "no-implied-eval" "Implied eval. Consider passing a function instead of a string."
+    suppress eslint "no-implied-eval"
+    suppress oxlint "no-implied-eval"
+    suppress biome "lint/nursery/noImpliedEval"
+.violation exec_script(at: node) code "no-implied-eval" "Implied eval. Do not use execScript()."
+    suppress eslint "no-implied-eval"
+    suppress oxlint "no-implied-eval"
+    suppress biome "lint/nursery/noImpliedEval"
+implied_eval(c) :- string_call(c, x), x != "execScript".
+exec_script(c) :- string_call(c, "execScript").
+
+// string_call(c, x): call c of the global evaluator x whose first argument is code in a string.
+.decl string_call(c: node, x: symbol)
+string_call(c, x) :- callee(c, f), evaluator(x), global_ref_to(f, x), global_var_only(f), call_arg(c, w, 0),
+    deparen(w, a), code_string(a).
+string_call(c, x) :- callee(c, m), evaluator(x), static_prop(m, o, x), global_object_ref(o, g), plain_global(o, g),
+    call_arg(c, w, 0), deparen(w, a), code_string(a).
+// ESLint asks of these globals that no code declares them (a variable with no definitions): a script's
+// `var setTimeout` makes them ordinary variables.
+.decl global_var_only(f: node)
+global_var_only(f) :- free_ref(f, _).
+.decl plain_global(o: node, g: symbol)
+plain_global(o, g) :- global_object_ref(o, g), free_ref(o, g).
+plain_global(m, g) :- global_object_ref(m, g), static_prop(m, o, g), plain_global(o, g).
+
+// code_string(a): "x", `x ${y}`, "a" + b, a + "b", or a constant whose value is a string.
+.decl code_string(a: node)
+code_string(a) :- kind(a, "string").
+code_string(a) :- kind(a, "template_string").
+code_string(a) :- kind(a, "binary_expression"), op(a, "+"), (field(a, "left", s) ; field(a, "right", s)),
+    deparen(s, l), code_string(l).
+code_string(a) :- static_value(a, v), value_type(v, "string").

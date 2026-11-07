@@ -1,0 +1,19 @@
+.policy "clippy-redundant-at-rest-pattern" revision 2
+.description "Bind a whole Rust slice directly instead of through a slice pattern holding only a rest binding."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-patterns.rr"
+//   bare_pat(p, q)   pattern p without its ref / mut wrappers
+
+// Clippy's redundant_at_rest_pattern (complexity): a slice pattern holding only `name @ ..`, which binds
+// the whole slice; `name` alone says the same.
+//   [a @ ..]   [ref a @ ..]   [mut a @ ..]   [ref mut a @ ..]      reported
+//   [..]   [a]   [first, rest @ ..]                                 not reported
+.violation redundant_at_rest_pattern(at: node) code "redundant_at_rest_pattern"
+    "Bind the whole slice directly, e.g. rest instead of [rest @ ..]."
+    suppress clippy "clippy::redundant_at_rest_pattern", "clippy::all", "clippy::complexity", "warnings"
+redundant_at_rest_pattern(s) :- kind(s, "slice_pattern"), child(s, e, 0), !child(s, _, 1), bare_pat(e, c),
+    kind(c, "captured_pattern"), child(c, x, 0), kind(x, "identifier"),
+    child(c, r, 1), kind(r, "remaining_field_pattern").

@@ -1,0 +1,22 @@
+.policy "ruff-log014-exc-info-outside-except-handler" revision 2
+.description "Remove exc_info from logging calls made outside an except handler; with no active exception it only logs a meaningless None traceback."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff LOG014 (flake8-logging): a logging call passing a truthy literal as `exc_info` outside every `except`
+// clause. With no active exception it logs `NoneType: None`. Level methods on a logger, or `logging.<level>` and
+// `logging.log` by a bare name; the value must be a literal Ruff can judge true (True, 1, "x"). A def inside an
+// except clause counts as inside it. Reported at the keyword. (Ruff's fix removes it, unsafely; none here.)
+//   logger.info("", exc_info=True)                ← LOG014
+//   logger.info("", exc_info=ValueError())        not reported: not a literal
+//   except ...: logger.info("", exc_info=True)    not reported
+#include "python/logging.rr"
+#include "python/ruff-classes.rr"
+
+.violation LOG014(at: node) code "LOG014"
+    "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
+    suppress ruff "LOG014"
+LOG014(k) :- log_call(c, m, _, how), (log_level(m) ; how = "name"), !log_in_handler(c),
+    log_kw(c, "exc_info", k, v), unparen(v, l), py_literal(l), truth_of(v, "true").
+// Ruff's gate is_literal_expr: a str, bytes, number, bool, None or `...` literal (not `ValueError()` or a tuple).

@@ -506,7 +506,12 @@ def _split_top(toks, sep):
 
 
 def _is_var(t):
-    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t)) and t != "_" and t not in ("must", "may")
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t)) and t != "_" and t not in ("must", "may") \
+        and t not in BITWISE
+
+
+# Soufflé's word operators: `x band 1` is an expression, not two variables.
+BITWISE = {"band", "bor", "bxor", "bnot", "bshl", "bshr", "bshru", "land", "lor", "lxor", "lnot"}
 
 
 def _vars(toks):
@@ -554,6 +559,11 @@ def check_rule(stmt, bound_heads=(), bound_vars=()):
     if name in bound_heads:
         bound |= _vars(head[1:])
     bound |= set(bound_vars)
+    branches = _split_top(rest, ";")
+    if len(branches) > 1:   # a top-level `;` binds looser than `,`: each branch is a rule of its own
+        tail = ["=>"] + edits if edits else []
+        return sorted(set().union(*(check_rule(" ".join(head + [":-"] + b + tail), bound_heads, bound_vars)
+                                    for b in branches)))
     lits = [l for l in _split_top(rest, ",") if l]
     need = set()
     # fixpoint over literals
@@ -571,9 +581,31 @@ def check_rule(stmt, bound_heads=(), bound_vars=()):
     for l in pending:   # could not be satisfied: everything it needs counts as unbound
         b, n, _ = _literal(l, bound, force=True)
         need |= n
-    need |= _vars(head[1:])
+    need |= _vars(_drop_aggregates(head[1:]))
     need |= _vars(edits)
     return sorted(v for v in need if v not in bound)
+
+
+def _drop_aggregates(toks):
+    """Head tokens without aggregates: `count : { … }` (and min/max/sum/join/mean x : { … }) is a value whose body
+    binds its own variables, so only the tokens outside it can need a binding."""
+    out, i = [], 0
+    while i < len(toks):
+        if toks[i] in ("count", "min", "max", "sum", "join", "mean") and "{" in toks[i:]:
+            j = toks.index("{", i)
+            if ":" in toks[i:j]:
+                depth = 0
+                while j < len(toks):
+                    depth += toks[j] == "{"
+                    depth -= toks[j] == "}"
+                    j += 1
+                    if depth == 0:
+                        break
+                i = j
+                continue
+        out.append(toks[i])
+        i += 1
+    return out
 
 
 def _literal(l, bound, force=False):

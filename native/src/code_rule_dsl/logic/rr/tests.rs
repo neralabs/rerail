@@ -154,7 +154,7 @@ best(n, @dot("a", x)) :- name(n, x).
     assert_eq!(rules.len(), 6);
     let owner: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "owner").collect();
     assert_eq!(owner[0].body, [Literal::Nearest { n: "n".to_owned(), a: "a".to_owned(), kindset: "scope".to_owned() }]);
-    assert!(matches!(&owner[1].body[0], Literal::Atom(a) if a.rel == "inside_rr_kind_module"));
+    assert!(matches!(&owner[1].body[0], Literal::Atom(a) if a.rel == "rr_inside_rr_kind_module"));
     // A count over two literals reads a helper of every variable, grouped by the ones shared (`_` for the body's
     // own); a min over two, the ones shared and its own.
     let helper = |head: &str| -> Vec<String> {
@@ -171,19 +171,26 @@ best(n, @dot("a", x)) :- name(n, x).
     assert_eq!(p.rules.iter().find(|r| r.head.rel == "cv").unwrap().head.args[1], Term::Top);
 }
 
-/// What is not lowered yet says so by name.
+/// What is not lowered yet says so by name. A `must` head needs its relation declared `must, may`; a `.violation`
+/// at a span or loc whose values can be spans the engine does not make lowers (such a row has no `docof`, and so no
+/// finding).
 #[test]
 fn unlowered_constructs_are_named() {
     for (src, what) in [
         (".decl a(n: node)\na(n) :- n ~ `exec($X)`.", "pattern"),
-        (".decl a(x: number)\nmust a(1) :- a(2).", "must"),
         (".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.", "mean"),
         (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
-        (".decl t(s: symbol)\n.input t\n.violation v(at: span) \"m\"\nv(m) :- t(s), match(\"(?<m>x+)\", s).", "at a span that can be a span the engine does not make (a regex capture)"),
-        (".decl first_token(n: node, t: span)\n.input first_token\n.violation v(at: loc) \"m\"\nv(t) :- first_token(_, t).", "at a loc that can be a span the engine does not make (first_token, a span)"),
     ] {
         let e = parse(src).unwrap_err().to_string();
         assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
+    }
+    let e = parse(".decl a(x: number)\nmust a(1) :- a(2).").unwrap_err().to_string();
+    assert!(e.contains("`must` head a") && e.contains("not declared `must, may`"), "{e}");
+    for src in [
+        ".decl t(s: symbol)\n.input t\n.violation v(at: span) \"m\"\nv(m) :- t(s), match(\"(?<m>x+)\", s).",
+        ".decl first_token(n: node, t: span)\n.input first_token\n.violation v(at: loc) \"m\"\nv(t) :- first_token(_, t).",
+    ] {
+        parse(src).unwrap_or_else(|e| panic!("{src}: {e}"));
     }
 }
 
@@ -205,11 +212,133 @@ fn directives_and_functions_lower() {
     let rule = |rel: &str| p.rules.iter().find(|r| r.head.rel == rel).map(ToString::to_string).unwrap_or_default();
     assert_eq!(rule("violation"), "violation(\"data-layer:p\", \"BAD\", $rr_v1, $rr_p, $rr_l) :- BAD($rr_v0, $rr_v1), node($rr_d, $rr_v0, _, _, _), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)");
     let bad = rule("BAD");
-    for part in ["$j = @add($i, 1)", "@concat($t, @to_string(@strlen($t)))", "!inside_fdef($c, _)"] {
+    for part in ["$j = @add($i, 1)", "@concat($t, @to_string(@strlen($t)))", "!rr_inside_fdef($c, _)"] {
         assert!(bad.contains(part), "{part} in {bad}");
     }
     assert!(!p.rules.iter().any(|r| r.head.rel == "drop"), "a fix is not run");
     assert!(rule("r").contains("= @cat($s, \"x\"), e($rr_t"), "{}", rule("r"));
+}
+
+/// The `.violation` lines the packs use: a constant code, `suppress` lines (settings of the findings layer), a span
+/// or place `at`; and an aggregate over an expression parses.
+#[test]
+fn violation_codes_suppressions_and_places_lower() {
+    let p = parse(concat!(
+        ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl doc(d: number, p: symbol, m: symbol)\n",
+        ".decl text(n: node, s: symbol)\n.input node, doc, text\n",
+        ".violation font(at: node, why: symbol) code \"@next/next/no-page-custom-font\"\n",
+        "    \"{why} is discouraged.\"\n",
+        "    suppress eslint \"@next/next/no-page-custom-font\"\n",
+        "    suppress phpcs \"A.B\", \"A.B.C\",\n        \"A.D\"\n",
+        "font(n, w) :- text(n, w).\n",
+        ".violation SEC(at: span, c: symbol) code {c} in \"SEC\\d+\" \"{c}\"\n",
+        "SEC(n, c) :- text(n, c).\n",
+        ".violation missing(at: loc, why: symbol) \"{why}\"\n",
+        "missing(@place(p, 1), \"none\") :- doc(_, p, _).\n",
+        "missing(n, \"text\") :- text(n, _).\n",
+    ))
+    .unwrap();
+    let rules: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "violation").map(ToString::to_string).collect();
+    assert!(rules.iter().any(|r| r.contains("\"@next/next/no-page-custom-font\"") && r.contains("font($rr_v0, _)")), "{rules:?}");
+    assert!(rules.iter().any(|r| r.contains("SEC($rr_v0, $rr_v1)") && r.contains("docof($rr_v0, $rr_d)")), "{rules:?}");
+    assert!(rules.iter().any(|r| r.contains("rr_place_missing($rr_p, $rr_l, _)")), "{rules:?}");
+    assert!(p.rules.iter().any(|r| r.head.rel == "rr_place_missing" && r.head.args[1] == Term::Int(1)));
+    let settings: Vec<String> = p.settings.iter().map(|(k, t)| format!("{k} {t}")).collect();
+    assert!(settings.contains(&"suppress font eslint \"@next/next/no-page-custom-font\"".to_owned()), "{settings:?}");
+    assert!(settings.contains(&"suppress font phpcs \"A.B\", \"A.B.C\", \"A.D\"".to_owned()), "{settings:?}");
+    assert!(settings.contains(&"code_in SEC \"SEC\\\\d+\"".to_owned()), "{settings:?}");
+    // The printed program reads back as itself.
+    let printed = print(&p).unwrap();
+    assert_eq!(parse(&printed).unwrap().settings, p.settings, "{printed}");
+    let sum = "len(n, k) :- node(_, n, _, _, _), k = sum strlen(x) - strlen(y) : { text(n, x), text(n, y) }.";
+    let statements = syntax::Parser::new(sum).unwrap().statements().unwrap();
+    assert!(format!("{statements:?}").contains("Agg { op: \"sum\", over: Some(Bin { op: \"-\""), "{statements:?}");
+}
+
+/// Soufflé's built-ins run: `cat` of any arity, `max` and `min` of two, `to_number`, `%`, floats (`to_float`,
+/// decimals, their arithmetic and order), and an aggregate inside a term.
+#[test]
+fn souffle_builtins_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("builtins");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\ny = 2\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.input node, doc
+.decl s(t: symbol)
+s("12"). s("7"). s("x").
+.decl f(t: symbol)
+f("1.5"). f("-2.25"). f("1e3").
+.decl joined(t: symbol)
+joined(cat(a, "-", b, "-", a)) :- s(a), s(b), a != b, a != "x", b != "x".
+.decl num(t: symbol, n: number, r: number, big: number, small: number)
+num(t, n, n % 5, max(n, 10), min(n, 10)) :- s(t), n = to_number(t).
+.decl fl(t: symbol, back: symbol)
+fl(t, to_string(to_float(t) * 2.0)) :- f(t), to_float(t) > 0.0.
+.decl neg(t: symbol)
+neg(t) :- f(t), to_float(t) < 0.
+.decl assigns(d: number, k: number)
+assigns(d, 1 + count : { node(d, _, "assignment", _, _) }) :- doc(d, _, _).
+.decl kv(k: number, v: symbol)
+kv(2, "b"). kv(1, "a"). kv(3, "c"). kv(4, "a").
+.decl agg(s: symbol, t: number, l: number, e: symbol)
+agg(s, t, l, e) :- kv(4, _), s = join v by k sep "," : { kv(k, v) }, t = sum k : { kv(k, _) },
+    l = sum strlen(v) * 2 : { kv(_, v) }, e = join v by k sep "," : { kv(k, v), k > 9 }.
+.output joined, num, fl, neg, assigns, agg
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("joined"), "12-7-12\n7-12-7\n");
+    assert_eq!(read("num"), "12\t12\t2\t12\t10\n7\t7\t2\t10\t7\n");
+    assert_eq!(read("fl"), "1.5\t3\n1e3\t2000\n");
+    assert_eq!(read("neg"), "-2.25\n");
+    assert!(read("assigns").ends_with("\t3\n"), "{}", read("assigns"));
+    assert_eq!(read("agg"), "a,b,c,a\t10\t6\t\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The axes over a relation of nodes (climbs up the tree), and a negated conjunction (a helper relation).
+#[test]
+fn node_sets_and_negated_conjunctions_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("nodesets");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def outer():\n    for x in y:\n        def inner():\n            g()\n        f()\nh()\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input node, field, text
+.decl callee(c: node, s: symbol)
+callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
+.decl fname(f: node, s: symbol)
+fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+// The bodies of for loops, and functions: a relation of nodes.
+.decl stop(n: node)
+stop(b) :- node(_, l, "for_statement", _, _), field(l, "body", b).
+stop(f) :- node(_, f, "function_definition", _, _).
+.decl near(c: symbol, k: symbol)
+near(c, k) :- callee(n, c), nearest(n, s, stop), node(_, s, k, _, _).
+.decl out_of_loop(c: symbol)
+out_of_loop(c) :- callee(n, c), !inside(n, _, stop).
+.decl fn_with_call(f: symbol)
+fn_with_call(f) :- fname(a, f), has(a, n, stop), node(_, n, "block", _, _).
+.decl own(c: symbol, f: symbol)
+own(c, f) :- callee(n, c), fname(a, f), within_stop(n, a, stop).
+.decl lonely(c: symbol)
+lonely(c) :- callee(_, c), !(callee(m, c), fname(f, c)), !(c = "h", callee(_, "f")).
+.output near, out_of_loop, fn_with_call, own, lonely
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("near"), "f\tblock\ng\tfunction_definition\n");
+    assert_eq!(read("out_of_loop"), "h\n");
+    assert_eq!(read("fn_with_call"), "outer\n");
+    assert_eq!(read("own"), "g\tinner\n");
+    assert_eq!(read("lonely"), "f\ng\n");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A program and what it was read from, compared field by field: the first difference.
@@ -268,6 +397,21 @@ fn normalized(mut p: front::Program) -> front::Program {
             }
         }
         rule.body = lower::merge_negated_tests(std::mem::take(&mut rule.body));
+    }
+    // The lowering's projections (`lower::projections`, decision 0047): `kind` and `docof` over nodes, read as
+    // inputs, are rules over `node`, first.
+    let v = |s: &str| front::Term::Var(s.to_owned());
+    let mut at = 0;
+    for (rel, head, args) in [
+        ("kind", [v("n"), v("k")], [front::Term::Wild, v("n"), v("k"), front::Term::Wild, front::Term::Wild]),
+        ("docof", [v("n"), v("d")], [v("d"), v("n"), front::Term::Wild, front::Term::Wild, front::Term::Wild]),
+    ] {
+        if p.inputs.iter().any(|i| i == rel) && p.decls.contains_key("node") {
+            p.inputs.retain(|i| i != rel);
+            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.to_owned(), args, neg: false, gated: false };
+            p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: vec![Literal::Atom(atom("node", args.to_vec()))] });
+            at += 1;
+        }
     }
     p
 }
@@ -423,7 +567,7 @@ fn sum_and_join_lower() {
     assert_eq!(types, ["node", "int", "int", "sym"], "{atom}");
     let (op, over, atom) = agg("g");
     let over = over.unwrap();
-    assert!(op == front::AggOp::Sum && over.starts_with("rr_over"), "{over}");
+    assert!(op == front::AggOp::Sum && over.starts_with("rr_val"), "{over}");
     let cols = &p.decls[&atom.rel];
     assert_eq!(cols.len(), 3, "c, t and the value: {cols:?}");
     assert!(cols.contains(&(over.clone(), "int".to_owned())), "{cols:?}");
@@ -470,8 +614,8 @@ fn aggregates_print_as_themselves() {
 // ---- functions ----
 
 /// Soufflé's `cat` of any arity is `concat` folded from the left; `max`, `min`, `to_number` and `%` (`mod`) are the
-/// engine's functions of those names; each prints and reads back as itself. Floats stay refused by name: the engine
-/// has no float values.
+/// engine's functions of those names; each prints and reads back as itself. Floats are floats' keys (`float_key`):
+/// `to_float` and a decimal number lower; `cat` of one stays refused by name.
 #[test]
 fn souffle_functions_lower() {
     let p = parse(concat!(
@@ -491,21 +635,21 @@ fn souffle_functions_lower() {
     );
     let back = parse(&print(&p).unwrap()).unwrap();
     assert_eq!(difference(&p, &back), None);
-    for (src, what) in [
-        (".decl a(x: number)\na(x) :- a(y), x = to_float(\"1\").", "to_float/1"),
-        (".decl a(x: number)\na(x) :- a(y), x = y + 1.5.", "decimal number 1.5"),
-        (".decl a(x: symbol)\na(x) :- a(y), x = cat(y).", "cat/1"),
-    ] {
+    for (src, what) in [(".decl a(x: symbol)\na(x) :- a(y), x = cat(y).", "cat/1")] {
         let e = parse(src).unwrap_err().to_string();
         assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
+    }
+    for src in [".decl a(x: number)\na(x) :- a(y), x = to_float(\"1\").", ".decl a(x: number)\na(x) :- a(y), x = y + 1.5."] {
+        parse(src).unwrap_or_else(|e| panic!("{src}: {e}"));
     }
 }
 
 // ---- violations ----
 
 /// A `.violation`'s constant code is the finding's code; its `suppress` and `fix` lines are settings of the
-/// findings layer; a `loc` column holding nodes and `@place`s gives each its finding, a node at its document and
-/// line, a place at its path and line; and the program prints as itself.
+/// findings layer; a `loc` column gives each row its finding: a node or span at its `docof` document and line, a
+/// `@place` value at its path and line, and a head `V(@place(p, l), …)` through V's place relation; and the program
+/// prints as itself.
 #[test]
 fn violations_at_places_and_their_lines_lower() {
     let p = parse(concat!(
@@ -528,12 +672,19 @@ fn violations_at_places_and_their_lines_lower() {
     assert_eq!(
         rules("V"),
         [
-            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- V($rr_v0, _), node($rr_d, $rr_v0, _, _, _), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
+            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- V($rr_v0, _), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
             "violation(\"p\", \"V\", \"@scope/a-b\", @place_path($rr_v0), @place_line($rr_v0)) :- V($rr_v0, _), $rr_v0 < -1",
+            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- rr_place_V($rr_p, $rr_l, _)",
         ]
     );
-    // A span column that only places reach has no node finding.
-    assert_eq!(rules("W"), ["violation(\"p\", \"W\", \"W\", @place_path($rr_v0), @place_line($rr_v0)) :- W($rr_v0), $rr_v0 < -1"]);
+    // A span column: its rows' documents, and the `@place` values a rule made.
+    assert_eq!(
+        rules("W"),
+        [
+            "violation(\"p\", \"W\", \"W\", $rr_p, $rr_l) :- W($rr_v0), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
+            "violation(\"p\", \"W\", \"W\", @place_path($rr_v0), @place_line($rr_v0)) :- W($rr_v0), $rr_v0 < -1",
+        ]
+    );
     let printed = print(&p).unwrap();
     let again = parse(&printed).unwrap();
     assert_eq!(difference(&p, &again), None, "{printed}");
@@ -542,8 +693,8 @@ fn violations_at_places_and_their_lines_lower() {
 
 // ---- tree axes and node sets ----
 
-/// `has(a, n, set)` is the descendant axis, the set tested on n; a set of nodes is read as rules over `child`,
-/// not a kind set; the forms print as themselves.
+/// `has(a, n, set)` is the descendant axis, the set tested on n; a set of nodes is read as climbs up the tree
+/// (`node_axis`), not a kind set; the forms print as themselves.
 #[test]
 fn axes_lower_and_print_as_themselves() {
     let p = parse(
@@ -568,32 +719,30 @@ s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
     .unwrap();
     let rules: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "r").collect();
     let v = |s: &str| Term::Var(s.to_owned());
-    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "inside_rr_has_fn".to_owned(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
+    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".to_owned(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
     assert!(!p.kindsets.contains_key("blk") && p.kindsets.contains_key("fn"));
-    // The nearest block: down from each member of blk to the next, reading blk negated.
-    let near: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "rr_near_blk").map(ToString::to_string).collect();
-    assert_eq!(near, ["rr_near_blk($n, $a) :- child($a, $n, _), blk($a)", "rr_near_blk($n, $a) :- child($p, $n, _), !blk($p), rr_near_blk($p, $a)"]);
-    assert!(rules[1].body.iter().any(|l| l.to_string() == "rr_near_blk($n, $a)"), "{}", rules[1]);
+    // The nearest block: a climb from n that stops at the first member of blk, which is a.
+    assert!(rules[1].body.iter().any(|l| matches!(l, Literal::Atom(x) if x.rel.starts_with("rr_up") && x.args == [v("n"), v("a")])), "{}", rules[1]);
+    assert!(rules[1].body.iter().any(|l| l.to_string() == "blk($a)"), "{}", rules[1]);
     // `next_sibling` is core.rr's, written out over `child` in the rule (`rr::lower::core`): no relation of the program.
     assert!(!p.rules.iter().any(|r| r.head.rel == "next_sibling") && !p.inputs.contains(&"next_sibling".to_owned()));
     let again = parse(&print(&p).unwrap()).unwrap();
     assert_eq!(difference(&p, &again), None);
 }
 
-/// What the axes still refuse says so by name; core.rr's `within` and `earlier` negate with a node unnamed, through
-/// their relations (`rr::lower::core`): n has no ancestor, n has nothing after it.
+/// What the axes still refuse says so by name; core.rr's `within`, `earlier` and `precedes_stop` negate with a node
+/// unnamed, through their relations: n has no ancestor, n has nothing after it, n has no later sibling before a stop.
 #[test]
 fn axes_refuse_by_name() {
     let decls = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl tape(n: number, par: number, size: number, depth: number)\n.input node, tape\n.decl a(n: node, m: node)\n.decl q(s: symbol)\n.decl fn(kind: symbol)\nfn(\"f\").\n";
     for (body, what) in [
         ("a(n, n) :- a(n, _), !within_stop(n, _, fn).", "`!within_stop` with its ancestor unnamed"),
         ("q(s) :- q(s), !split_dot(s, _, \"x\").", "`!split_dot` with a column unnamed"),
-        ("a(n, n) :- a(n, _), !precedes_stop(n, _, fn).", "`!precedes_stop` with a node unnamed"),
     ] {
         let e = parse(&format!("{decls}{body}")).unwrap_err().to_string();
         assert!(e.contains("not lowered yet") && e.contains(what), "{body}: {e}");
     }
-    for body in ["a(n, n) :- a(n, _), !within(n, _).", "a(n, n) :- a(n, _), !earlier(n, _)."] {
+    for body in ["a(n, n) :- a(n, _), !within(n, _).", "a(n, n) :- a(n, _), !earlier(n, _).", "a(n, n) :- a(n, _), !precedes_stop(n, _, fn)."] {
         parse(&format!("{decls}{body}")).unwrap_or_else(|e| panic!("{body}: {e}"));
     }
 }
@@ -663,4 +812,145 @@ fn programs_are_kept_by_the_hashes_of_what_they_read() {
     assert_ne!(format!("{first:?}"), format!("{edited:?}"), "an edited include is read again");
     assert_ne!(files, edited_files);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `must, may` (core.rr 3): two sides, negation reading the other one, and what reads them three-valued too.
+#[test]
+fn must_may_relations_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("mustmay");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.input node, doc
+.decl base(x: symbol)
+base("a"). base("b"). base("c").
+.decl known(x: symbol)
+known("a").
+.decl p(x: symbol) must, may
+must p(x) :- known(x).
+may p(x) :- base(x), !known(x), x != "c".
+.decl q(x: symbol)
+q(x) :- base(x), !p(x).
+// Read positively, p is three-valued in what reads it too (a relation the runner writes: p itself is negated).
+.decl seen(x: symbol)
+seen(x) :- p(x).
+.output seen, q, rr_must_seen, rr_must_q
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("seen"), "a\nb\n");
+    assert_eq!(read("rr_must_seen"), "a\n");
+    assert_eq!(read("q"), "b\nc\n");
+    assert_eq!(read("rr_must_q"), "c\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `precedes_stop(a, b, S)`: siblings in order with no child of S between them.
+#[test]
+fn precedes_stop_runs() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("precstop");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f():\n    a()\n    b()\n    return\n    c()\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl kind(n: node, k: symbol)
+.input node, child, kind
+.decl stops(k: symbol)
+stops("return_statement").
+.decl pairs(x: number, y: number)
+pairs(x, y) :- node(_, a, "expression_statement", x, _), node(_, b, "expression_statement", y, _), precedes_stop(a, b, "return_statement").
+.decl by_set(x: number, y: number)
+by_set(x, y) :- node(_, a, "expression_statement", x, _), node(_, b, _, y, _), precedes_stop(a, b, stops).
+.output pairs, by_set
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("pairs"), "13\t21\n");
+    assert_eq!(read("by_set"), "13\t21\n13\t29\n21\t29\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `!nearest(n, s, set)` with s named, two aggregates compared, and `unset` (its text is "").
+#[test]
+fn negated_nearest_and_compared_aggregates_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("negnearest");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def outer():\n    def inner():\n        g()\n    f()\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl kind(n: node, k: symbol)
+.input node, kind
+.decl fscope(k: symbol)
+fscope("function_definition").
+.decl other(c: number, s: number)
+other(x, y) :- node(_, c, "call", x, _), node(_, s, "function_definition", y, _), !nearest(c, s, fscope).
+.decl same(x: number)
+same(x) :- node(d, _, "module", x, _), count : { node(d, _, "call", _, _) } = count : { node(d, _, "function_definition", _, _) }.
+.decl text(n: node, s: symbol)
+.decl unset(x: node)
+.input text
+.decl empty(x: number, t: symbol)
+empty(x, t) :- node(_, _, "module", x, _), unset(v), text(v, t).
+.decl given(x: number)
+given(x) :- node(_, n, "call", x, _), !unset(n).
+.output other, same, empty, given
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("other"), "38\t0\n46\t17\n");
+    assert_eq!(read("same"), "0\n");
+    assert_eq!(read("empty"), "0\t\n");
+    assert_eq!(read("given"), "38\n46\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `@ed25519_ok` through a rule: an existing signature verifies, a tampered message does not.
+#[test]
+fn signatures_verify_through_rules() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("signatures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl candidate(name: symbol, message: symbol)
+candidate("original", "{\"allowlist\":[],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+candidate("tampered", "{\"allowlist\":[\"added.py\"],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+.decl verified(name: symbol)
+verified(name) :- candidate(name, message),
+    @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", message,
+    "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==") = 1.
+.output verified
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("verified.csv")).unwrap(), "original\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `@tree_digest(n)` compares trees as Python's `ast.dump` does: no positions, comments or punctuation, a
+/// parenthesized expression as what it holds, literals by value. Equal right-hand sides pair up; others do not.
+#[test]
+fn tree_digests_compare_subtrees_without_positions() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("digest");
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "a = (1, 2)\nb = (1, 2,)\nc = 'x'\nd = \"x\"\ne = 16\nf = 0x10\ng = (h)\nh = h  # note\ni = [1, 2]\n";
+    std::fs::write(dir.join("a.py"), source).unwrap();
+    let rule = dir.join("digest.rr");
+    std::fs::write(&rule, r#"
+.decl rhs(l: symbol, r: node)
+rhs(l, r) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "assignment").
+.decl same(l: symbol, m: symbol)
+same(l, m) :- rhs(l, r), rhs(m, s), l < m, @tree_digest(r) = @tree_digest(s).
+.output same
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("same.csv")).unwrap(), "a\tb\nc\td\ne\tf\ng\th\n");
+    let _ = std::fs::remove_dir_all(&dir);
 }

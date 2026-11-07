@@ -1,0 +1,31 @@
+.policy "n-no-callback-literal" revision 3
+.description "Pass an Error or null, not a string, number, array or object literal, as the first argument of error-first callbacks named callback or cb."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-callback-literal: a call of `callback` or `cb` (an identifier, by name) whose first
+// argument can never be an error, by its syntax (the plugin's couldBeError):
+//   cb("done")  callback(1, x)  cb([])  cb(`x`)  cb(a ? 1 : "b")     reported
+//   cb(null)  cb(undefined)  cb(err)  cb(new Error())  cb(f())  cb(-1)  cb(...xs)  cb()   not
+// Literals other than null, templates, arrays and objects cannot be errors; an assignment is its right side, a
+// sequence its last expression, `a || b` and `c ? a : b` either branch. Anything else might be one.
+
+#include "tsx/node.rr"   // called, deparen, call_arg
+
+.violation callback_literal(at: node) code "n/no-callback-literal"
+    "Pass an Error or null as this callback's first argument, unless its API expects a different signature."
+    suppress eslint "n/no-callback-literal"
+callback_literal(c) :- called(c, f), kind(f, "identifier"), text(f, x), (x = "callback" ; x = "cb"),
+    call_arg(c, a, 0), never(a).
+
+// never(e): couldBeError(e) is false.
+.decl never(e: node)
+never(e) :- kind(e, k), (k = "string" ; k = "number" ; k = "true" ; k = "false" ; k = "regex" ;
+    k = "template_string" ; k = "array" ; k = "object").
+never(e) :- kind(e, "parenthesized_expression"), deparen(e, x), never(x).
+never(e) :- (kind(e, "assignment_expression") ; kind(e, "augmented_assignment_expression")), field(e, "right", r),
+    never(r).
+never(e) :- kind(e, "sequence_expression"), child(e, x, i), never(x), !child(e, _, i + 1).
+never(e) :- kind(e, "binary_expression"), (op(e, "&&") ; op(e, "||") ; op(e, "??")), field(e, "left", l), never(l),
+    field(e, "right", r), never(r).
+never(e) :- kind(e, "ternary_expression"), field(e, "consequence", a), never(a), field(e, "alternative", b), never(b).

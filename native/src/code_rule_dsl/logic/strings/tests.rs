@@ -143,3 +143,25 @@ fn globs_nest_alternatives() {
     }
     assert!(super::test("glob", "a,b", "{{a\\,b,c},d}"));
 }
+
+/// An existing signature verifies without changing the signed bytes; tampering, a bad key or a cut signature do
+/// not. Ported from Data-layer-rule-expressivity (rr-migration engine, 109e4883a), checked against `@ed25519_ok`'s
+/// one implementation (`logic::crypto`, W's `verify_ed25519`): its base64 transport is the strict, padded one, so
+/// ASCII noise, padding past the end, leading padding and non-zero trailing bits are a failed check, not ignored.
+#[test]
+fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
+    let key = "7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6";
+    let message = r#"{"allowlist":[],"linter":"lint_admin_async_purity","version":1}"#;
+    let signature = "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==";
+    let verify = |k: &str, m: &str, s: &str| i64::from(crate::code_rule_dsl::logic::crypto::ed25519_ok(k, m, s));
+    assert_eq!(verify(key, message, signature), 1);
+    assert_eq!(verify(key, &message.replace("[]", "[\"added.py\"]"), signature), 0);
+    assert_eq!(verify(key, message, "not base64"), 0);
+    assert_eq!(verify("wrong key", message, signature), 0);
+    assert_eq!(verify(key, message, &signature[..60]), 0);
+    assert_eq!(verify(key, message, &format!("{} \n!?{}", &signature[..20], &signature[20..])), 0);
+    assert_eq!(verify(key, message, &format!("{signature}===")), 0);
+    assert_eq!(verify(key, message, &format!("=={signature}")), 0);
+    assert_eq!(verify(key, message, &format!("{}h==", &signature[..85])), 0);
+    assert_eq!(verify(key, message, &format!("{signature}\u{2603}")), 0);
+}

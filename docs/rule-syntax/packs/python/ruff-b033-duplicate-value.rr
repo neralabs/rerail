@@ -1,0 +1,19 @@
+.policy "ruff-b033-duplicate-value" revision 2
+.description "Remove duplicate literal values from Python set literals; the repeat is dropped silently and usually hides a typo, and values like True, 1 and 1.0 count as the same."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B033 (flake8-bugbear): a set display with the same literal twice. The set keeps one, silently, which
+// usually hides a typo. Literals compare as Python hashes them: `True`, `1` and `1.0` are one value, `5` and
+// `"5"` are not. Each repeat is reported, at the repeat.
+//   {"value1", 23, 5, "value1"}   ← B033 at the second "value1"
+//   {False, 1, 0}                 ← B033 at `0`: False == 0
+//   {5, "5"}                      not reported
+#include "python/bugbear.rr"
+
+.violation B033(at: node, v: node) code "B033" "Sets should not contain duplicate item `{v}`"
+    suppress ruff "B033"
+B033(e, e) :- set_item(s, e, k), set_item(s, o, k), o < e.
+.decl set_item(s: node, e: node, k: symbol)
+set_item(s, e, k) :- kind(s, "set"), child(s, e, _), ruff_literal(e), literal_key(e, k).

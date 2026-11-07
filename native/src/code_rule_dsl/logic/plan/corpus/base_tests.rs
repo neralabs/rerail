@@ -873,7 +873,9 @@ before_return(p, l, c) :- kind(a, "expression_statement"), precedes(a, b), kind(
 .output kinds, within_def, within_any, follows_stmt, first_stmt, before_return
 "#;
     let parsed = crate::code_rule_dsl::logic::rr::parse(program).unwrap();
-    assert!(parsed.kindsets.contains_key("rr_kind_function_definition") && parsed.kindsets.contains_key("rr_kind_any"), "{:?}", parsed.kindsets);
+    // `within(n, a)` is the engine's tree relation (decision 0050), read as it is, not a kind set's axis.
+    let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+    assert!(parsed.rules.iter().flat_map(|r| &r.body).any(|l| l.atom().is_some_and(|a| a.rel == within)), "{:?}", parsed.rules);
     let got = run(&dir, program, &["kinds", "within_def", "within_any", "follows_stmt", "first_stmt", "before_return"]);
     let inside = json!({ "kind": "identifier", "inside": { "kind": "function_definition", "stopBy": "end" } });
     let want = [

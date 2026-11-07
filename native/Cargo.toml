@@ -90,6 +90,11 @@ tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
+# SHA-256 on the CPU's SHA instructions (`sha2`'s aarch64 backend is behind `asm`; without it every digest runs
+# `soft::compress`, 8% of a corpus run's samples). Not on Windows: `asm` builds `sha2-asm`, which MSVC does not.
+[target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]
+sha2 = { version = "0.10", features = ["asm"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1.6"
 metal = "0.33.0"

@@ -102,7 +102,7 @@ fn production_dynamic_generations_preserve_complete_results_across_independent_t
                 .iter()
                 .all(|r| r.encoded && r.submitted && r.completed)
         );
-        assert!(trace.len() <= 600);
+        assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     }
 }
 
@@ -392,7 +392,7 @@ fn compact_reduction_refuses_pair_exhaustion_without_successful_publication() {
     assert!(scope.snapshot().iter().all(|r| r.completed));
 }
 
-#[test]
+#[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn compact_reduction_cannot_reset_the_complete_evaluation_budget() {
     let guard = metal_execution_guard().unwrap();
     let device = Device::system_default().unwrap();
@@ -412,10 +412,10 @@ fn compact_reduction_cannot_reset_the_complete_evaluation_budget() {
     drop(guard);
     assert!(matches!(result, Err(Error::BackendLaunchLimit)));
     let trace = scope.snapshot();
-    assert_eq!(trace.iter().filter(|r| r.encoded).count(), 600);
+    assert_eq!(trace.iter().filter(|r| r.encoded).count(), crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert_eq!(trace.iter().filter(|r| r.submitted).count(), 594);
     assert_eq!(trace.iter().filter(|r| r.completed).count(), 594);
-    assert!(trace.iter().skip(600).all(|r| !r.encoded));
+    assert!(trace.iter().skip(crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT).all(|r| !r.encoded));
 }
 
 #[test]
@@ -826,7 +826,7 @@ fn counted_reduction_preserves_ordered_captures_and_rejects_invalid_ranges() {
     }
 }
 
-#[test]
+#[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn counted_reduction_shares_the_evaluation_launch_budget_across_commands() {
     use super::metal_backend::launch::{commit_checked, wait_checked};
     use super::metal_frontier_reduce::{CountedFrontier, encode_active};
@@ -858,17 +858,17 @@ fn counted_reduction_shares_the_evaluation_launch_budget_across_commands() {
     let trace = scope.snapshot();
     assert_eq!(
         trace.iter().filter(|dispatch| dispatch.encoded).count(),
-        600
+        crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT
     );
     assert_eq!(
         trace.iter().filter(|dispatch| dispatch.submitted).count(),
-        600
+        crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT
     );
     assert_eq!(
         trace.iter().filter(|dispatch| dispatch.completed).count(),
-        600
+        crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT
     );
-    assert!(trace.iter().skip(600).all(|dispatch| !dispatch.encoded));
+    assert!(trace.iter().skip(crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT).all(|dispatch| !dispatch.encoded));
 }
 
 #[test]

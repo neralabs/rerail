@@ -55,7 +55,7 @@ const RELATIONS: &[(&str, &[Ty])] = &[
     ("field", &[Ty::Node, Ty::Field, Ty::Node]),
     ("text", &[Ty::Node, Ty::Sym]),
     ("intval", &[Ty::Node, Ty::Int]),
-    ("op", &[Ty::Node, Ty::Sym]),
+    ("op_t", &[Ty::Node, Ty::Sym]),
     ("tape", &[Ty::Node, Ty::Node, Ty::Int, Ty::Int]),
 ];
 
@@ -105,7 +105,9 @@ fn relations_hold_t_exporters_rows() {
                 .collect();
             got.insert(row.join("\t"));
         }
-        let mut stmt = t.prepare(&format!("SELECT * FROM {rel}")).unwrap();
+        // T's `op` is `op_t` here (O79): `op` is `core.rr`'s, every anonymous token.
+        let t_rel = if rel == "op_t" { "op" } else { rel };
+        let mut stmt = t.prepare(&format!("SELECT * FROM {t_rel}")).unwrap();
         let expected: BTreeSet<String> = stmt
             .query_map([], |r| {
                 Ok((0..types.len())
@@ -227,4 +229,269 @@ fn modules_and_packages_follow_t() {
     assert_eq!((module("shlex.py"), package("shlex.py")), ("shlex".to_owned(), String::new()));
     assert_eq!(module("x/src/a/mod.rs"), "crate.a");
     assert_eq!(module("src/lib.rs"), "crate");
+}
+
+/// One document of `source` in `label`'s dialect, keyed `key`, with its tape (W's values read it).
+fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
+    let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
+    let Some((facts, tape)) = core::build_with_tape(&file, None).unwrap() else { panic!("{path} did not parse") };
+    let facts = Arc::new(facts);
+    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, file)) }
+}
+
+/// `core.rr`'s relations of `docs` for a program that includes `core.rr` and reads them (`Projection::of`'s shape
+/// and reads), each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself. The relations made
+/// for what a program reads are the batch's (`Extra`'s W's values, source lines and places, `tree`'s `op_at` and
+/// `visit_index`), the others `core_rr`'s.
+fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
+    let store = ContentStore::open(&temp("core")).unwrap();
+    let reads = [
+        "node", "text", "comment", "op", "op_at", "str", "strprefix", "value", "value_type", "name", "spread", "next_sibling", "syntax_error",
+        "src_line", "line_count", "str_part", "first_token", "last_token", "token_before", "token_after", "child", "line", "end_line", "col",
+        "visit_index", "ast_depth",
+    ];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()) };
+    let sources = shaped(&store, docs, &projection).unwrap();
+    let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let read = |name: &str| -> Vec<Vec<i64>> {
+        let s = source(name);
+        (0..s.len()).map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect()
+    };
+    let sym = |v: i64| store.atom_value(v as u32).unwrap().unwrap();
+    let texts: HashMap<i64, String> = read("text").into_iter().map(|r| (r[0], sym(r[1]))).collect();
+    let kinds: HashMap<i64, String> = read("node")
+        .into_iter()
+        .map(|r| {
+            let (tag, code) = ((r[2] / i64::from(KIND_STRIDE)) as u8, (r[2] % i64::from(KIND_STRIDE)) as u16);
+            (r[1], from_tape_tag(tag).unwrap().kinds().kind_name(code).unwrap_or("ERROR").to_owned())
+        })
+        .collect();
+    let loc = |v: i64| match (kinds.get(&v), texts.get(&v)) {
+        (Some(k), Some(t)) if !t.contains('\n') => format!("{k}'{t}'"),
+        (Some(k), _) => k.clone(),
+        (None, Some(t)) => format!("'{t}'"),
+        (None, None) => format!("#{v}"),
+    };
+    // Per relation, which columns are locations (`l`), symbols (`s`) and numbers (`i`).
+    let shapes = [
+        ("comment", "ls"),
+        ("op", "ls"),
+        ("op_at", "lis"),
+        ("str", "ls"),
+        ("strprefix", "ls"),
+        ("value", "ls"),
+        ("value_type", "ss"),
+        ("name", "ls"),
+        ("spread", "l"),
+        ("next_sibling", "ll"),
+        ("syntax_error", "iis"),
+        ("src_line", "iil"),
+        ("line_count", "ii"),
+        ("str_part", "lisli"),
+        ("first_token", "ll"),
+        ("last_token", "ll"),
+        ("token_before", "ll"),
+        ("token_after", "ll"),
+        ("child", "lli"),
+        ("line", "li"),
+        ("end_line", "li"),
+        ("col", "li"),
+        ("visit_index", "li"),
+        ("ast_depth", "li"),
+    ];
+    shapes
+        .iter()
+        .map(|(name, shape)| {
+            let rows = read(name)
+                .into_iter()
+                .map(|r| {
+                    r.iter()
+                        .zip(shape.chars())
+                        .map(|(&v, c)| match c {
+                            'l' => loc(v),
+                            's' => sym(v),
+                            _ => v.to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect();
+            ((*name).to_owned(), rows)
+        })
+        .collect()
+}
+
+/// `core.rr`'s base relations over a Python file (decision 0046): comments are nodes and children, `text` is every
+/// node's, `op` every anonymous token's, literals decode, and the source-text, token and place relations agree.
+#[test]
+fn core_rr_relations_hold_what_core_rr_says() {
+    let src = "# top\nimport os.path as p\ndef f(a, b):  # tail\n    \"\"\"d\\x41\"\"\"\n    x = a not in b\n    g(*a, f\"v{a}w\", 0xff)\n    return x\n";
+    let rows = core_rows(vec![document(1, "m.py", "python", src), document(2, "bad.py", "python", "x = (\n")]);
+    let has = |rel: &str, row: &str| assert!(rows[rel].contains(row), "{rel} has no {row:?}: {:?}", rows[rel]);
+    let lacks = |rel: &str, row: &str| assert!(!rows[rel].contains(row), "{rel} has {row:?}");
+    has("comment", "comment'# top' top");
+    has("comment", "comment'# tail' tail");
+    has("child", "module comment'# top' 0");
+    has("next_sibling", "comment'# top' import_statement'import os.path as p'");
+    has("op", "comparison_operator'a not in b' not in");
+    has("op_at", "comparison_operator'a not in b' 0 not in");
+    has("op", "function_definition def");
+    has("op", "argument_list'(*a, f\"v{a}w\", 0xff)' ,");
+    lacks("op_at", "argument_list'(*a, f\"v{a}w\", 0xff)' 0 ,");
+    has("str", "string'\"\"\"d\\x41\"\"\"' dA");
+    has("value", "string'\"\"\"d\\x41\"\"\"' dA");
+    has("strprefix", "string'f\"v{a}w\"' f");
+    assert!(!rows["str"].iter().any(|r| r.starts_with("string'f")), "an interpolated literal has no str");
+    has("value", "integer'0xff' 255");
+    has("value_type", "255 int");
+    has("name", "dotted_name'os.path' os.path");
+    has("spread", "list_splat'*a'");
+    has("str_part", "string'f\"v{a}w\"' 0 v string'f\"v{a}w\"' 0");
+    has("str_part", "string'f\"v{a}w\"' 1 w string'f\"v{a}w\"' 0");
+    assert!(rows["syntax_error"].iter().any(|r| r.starts_with("2 1 ")), "{:?}", rows["syntax_error"]);
+    assert!(!rows["syntax_error"].iter().any(|r| r.starts_with("1 ")));
+    has("line_count", "1 7");
+    has("src_line", "1 3 'def f(a, b):  # tail'");
+    has("line", "comparison_operator'a not in b' 5");
+    has("col", "comparison_operator'a not in b' 8");
+    has("end_line", "block 7");
+    has("visit_index", "module 0");
+    has("ast_depth", "module 0");
+    has("first_token", "function_definition 'def'");
+    has("last_token", "return_statement'return x' identifier'x'");
+    has("token_after", "identifier'f' '('");
+    has("token_before", "identifier'f' 'def'");
+}
+
+/// The shape follows the program: one that includes `core.rr` reads `core.rr`'s, one that declares its base
+/// relations itself (T's, the converter's) T's.
+#[test]
+fn programs_that_include_core_rr_read_its_shape() {
+    let core = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let with = crate::code_rule_dsl::logic::rr::parse(&format!("{core}\n.decl q(n: node)\nq(n) :- comment(n, _).\n.output q\n")).unwrap();
+    assert_eq!(Projection::of(&with, BTreeSet::new()).shape, Shape::Core);
+    let without = crate::code_rule_dsl::logic::rr::parse(".decl text(n: number, s: symbol)\n.input text\n.decl q(n: number)\nq(n) :- text(n, _).\n.output q\n").unwrap();
+    assert_eq!(Projection::of(&without, BTreeSet::new()).shape, Shape::T);
+}
+
+/// End to end through the corpus runner, a program that includes `core.rr`: its options, `@dot` with an empty head,
+/// `@lower` in Unicode, and comments as `core.rr`'s nodes.
+#[test]
+fn core_rr_programs_read_options_and_functors() {
+    use crate::code_rule_dsl::logic::plan::corpus;
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("core-rr");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "# hello\nx = 1\n").unwrap();
+    let core = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let program = format!(
+        r#"{core}
+.decl part(a: symbol, b: symbol)
+part("", "b"). part("a", "b").
+.decl dotted(s: symbol)
+dotted(s) :- part(a, b), s = @dot(a, b).
+.decl low(s: symbol)
+low(s) :- option("name", v), s = @lower(v).
+.decl item(i: number, v: symbol)
+item(i, v) :- option_item("list", i, v).
+.decl said(s: symbol)
+said(s) :- comment(_, s).
+.output dotted, low, item, said
+"#
+    );
+    let out = dir.join("out");
+    let options = serde_json::json!({"name": "ÀB", "list": ["x", "y"]});
+    corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("dotted"), "a.b\nb\n");
+    assert_eq!(read("low"), "àb\n");
+    assert_eq!(read("item"), "0\tx\n1\ty\n");
+    assert_eq!(read("said"), "hello\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `within` and `span_within` (decision 0050) hold exactly the pairs that comparing every pair of one document's
+/// nodes gives (preorder intervals for the tree, spans for the other): looked up by either column, and scanned.
+/// The documents with errors and empty bodies bring nodes of zero width.
+#[test]
+fn within_holds_exactly_the_contained_pairs() {
+    let store = ContentStore::open(&temp("within")).unwrap();
+    let mut docs: Vec<Document> = documents().into_iter().take(3).collect();
+    for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
+        let path = format!("broken{at}.py");
+        let facts = facts(&path, source);
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None });
+    }
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[]).unwrap();
+    let nodes = *batch.nodes.last().unwrap();
+    let id = |r: usize| batch.id(r);
+    // (document, local, size, depth, start, end) of node row r.
+    let at = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let core = p.core[local] as usize;
+        (p.key, local, p.size[local] as usize, p.depth[local] as usize, p.facts.start[core], p.facts.end[core])
+    };
+    let zero = (0..nodes).filter(|&r| at(r).4 == at(r).5).count();
+    assert!(zero > 0, "the broken documents have nodes of zero width");
+    for mode in [within::Mode::Tree, within::Mode::Span] {
+        let within = within::Within::new(Arc::clone(&batch), mode);
+        let mut expected = BTreeSet::new();
+        for a in 0..nodes {
+            for b in 0..nodes {
+                let ((da, la, _, _, sa, ea), (db, lb, zb, _, sb, eb)) = (at(a), at(b));
+                let holds = da == db
+                    && match mode {
+                        within::Mode::Tree => lb < la && la <= lb + zb,
+                        within::Mode::Span => sb <= sa && ea <= eb,
+                    };
+                if holds {
+                    expected.insert((id(a), id(b)));
+                }
+            }
+        }
+        let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
+        let ids: Vec<i64> = (0..nodes).map(id).collect();
+        // By outer first (half the nodes), then by inner, then the scan: rows made by one lookup serve the others.
+        let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
+        assert_eq!(rows(within.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, b)| half.contains(b)).copied().collect());
+        assert_eq!(rows(within.lookup(0, &ids).unwrap()), expected);
+        assert_eq!(rows(within.lookup(1, &ids).unwrap()), expected);
+        assert_eq!(rows((0..within.len()).collect()), expected);
+        // Each node's containers are made once: the inner side's rows are exactly the pairs.
+        assert_eq!(within.lookup(0, &ids).unwrap().len(), expected.len());
+        let own = usize::from(mode == within::Mode::Span);
+        assert_eq!(within.estimated_len(), (0..nodes).map(|r| at(r).3 + own).sum::<usize>());
+        if mode == within::Mode::Tree {
+            assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
+        }
+    }
+}
+
+/// A lookup by kind (or tape node) where the document is bound too stays in that document: over 128 copies of a
+/// file, `node WHERE d = ? AND kind = ?` reads one copy's calls, not every copy's (rechecked against `d`).
+#[test]
+fn lookups_with_a_bound_document_read_that_document_only() {
+    let store = ContentStore::open(&temp("doc-lookups")).unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let modules = Modules::default();
+    let source = "f(1)\ng(2)\nh(f(3))\n";
+    let docs: Vec<Document> = (1..=128).map(|k| document(k, &format!("m{k}.py"), "python", source)).collect();
+    for (name, source) in sources(&store, docs).unwrap() {
+        modules.bind(&db, name, source).unwrap();
+    }
+    let python: GrammarDialect = dialect_by_label("python").unwrap();
+    let call = core::kind_atom(tape_tag(python).unwrap(), python.kinds().kind_id("call"));
+    let count = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    let node = modules.get("node").unwrap();
+    let before = node.counters().candidates.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(count(&format!("SELECT count(*) FROM node WHERE d = 7 AND kind = {call}")), 4);
+    let read = node.counters().candidates.load(std::sync::atomic::Ordering::Relaxed) - before;
+    assert_eq!(read, 4, "one document's calls, not 128 documents'");
+    // The same answer with the document only rechecked.
+    assert_eq!(count(&format!("SELECT count(*) FROM node WHERE +d = 7 AND kind = {call}")), 4);
+    assert_eq!(count(&format!("SELECT count(*) FROM node WHERE d = 999 AND kind = {call}")), 0);
+    let core = modules.get("core_node").unwrap();
+    let t: i64 = count("SELECT t FROM core_node WHERE d = 3 LIMIT 1 OFFSET 2");
+    let before = core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(count(&format!("SELECT count(*) FROM core_node WHERE d = 3 AND t = {t}")), 1);
+    assert_eq!(core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed) - before, 1);
 }

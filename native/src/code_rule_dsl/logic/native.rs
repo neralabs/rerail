@@ -23,7 +23,7 @@ mod setfix;
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, hold_symbols, register_symbols};
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, register_symbols};
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
     pub(in crate::code_rule_dsl) use super::setfix::{close, columns_source, derived, live, materialize, open, reprobe, run, step_counts, table_source};
@@ -357,8 +357,9 @@ unsafe impl VTabCursor for ResultCursor {
     fn rowid(&self) -> Result<i64> { Ok(self.pos as i64) }
 }
 
-/// Registers the functions and virtual tables on `db`.
+/// Registers the functions and virtual tables on `db`, `atoms` and the store's commit hook among them (decision 0049).
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
+    crate::content_store::atoms::Atoms::install(db)?;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     db.create_scalar_function(c"flat_bin", 3, det, |ctx| {
         let o: String = ctx.get(0)?;

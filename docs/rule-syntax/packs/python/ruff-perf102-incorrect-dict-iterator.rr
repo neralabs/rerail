@@ -1,0 +1,41 @@
+.policy "ruff-perf102-incorrect-dict-iterator" revision 2
+.description "Iterate over a dict's keys or values instead of its items when a for loop uses only the key or only the value of each pair."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PERF102 (perflint): `for k, v in d.items():` where one of the pair is never read: iterate `.keys()` or
+// `.values()`. A part is unused when no name in it is read from the loop on (a nested tuple only when every
+// name in it is unused); when both or neither are, nothing is reported. Reported at `d.items`. Ruff checks
+// comprehensions only in preview; this follows the stable rule.
+//   for _, value in d.items(): print(value)      ← PERF102: use d.values()
+//   for name, (_, _) in d.items(): print(name)   ← PERF102: use d.keys()
+//   for k, v in d.items(): print(k, v)           not reported
+#include "python/misc2-perf.rr"
+//   perf_for(f, t, it), perf_unused(t)
+
+.violation PERF102(at: node, msg: symbol) code "PERF102" "{msg}"
+    suppress ruff "PERF102"
+PERF102(f, "The loop never uses the value: iterate `.keys()` and bind only the key. Leave it if this object is not a dict.") :-
+    items_loop(f, k, v), !unused(k), unused(v).
+PERF102(f, "The loop never uses the key: iterate `.values()` and bind only the value. Leave it if this object is not a dict.") :-
+    items_loop(f, k, v), unused(k), !unused(v).
+
+// items_loop(at, k, v): a for loop `for k, v in o.items():` (no arguments); at is `o.items`.
+.decl items_loop(at: node, k: node, v: node)
+items_loop(at, k, v) :- perf_for(_, t, it), pair(t, k, v), kind(it, "call"), field(it, "function", at),
+    attr_of(at, _, "items"), call_nargs(it, 0), !call_splat(it).
+.decl pair(t: node, k: node, v: node)  // a two-element target, without parentheses
+pair(t, k, v) :- tuple_target(t), count : { child(t, c, _), !kind(c, "comment") } = 2,
+    child(t, k0, i), !kind(k0, "comment"), child(t, v0, j), !kind(v0, "comment"), i < j, unparen(k0, k),
+    unparen(v0, v).
+.decl tuple_target(t: node)
+tuple_target(t) :- (kind(t, "pattern_list") ; kind(t, "tuple_pattern") ; kind(t, "tuple")).
+.decl unused(e: node)  // Ruff's is_unused: a name never read again, or a tuple of such
+unused(e) :- items_loop(_, e, _), unused_part(e).
+unused(e) :- items_loop(_, _, e), unused_part(e).
+.decl unused_part(e: node)
+unused_part(e) :- kind(e, "identifier"), perf_unused(e).
+// A nested tuple: every name in it is unused, and it has no `*rest`, attribute or subscript (never unused).
+unused_part(e) :- tuple_target(e), count : { has(e, n, "identifier"), !perf_unused(n) } = 0,
+    !has(e, _, "list_splat_pattern"), !has(e, _, "attribute"), !has(e, _, "subscript").

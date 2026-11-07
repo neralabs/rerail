@@ -776,7 +776,7 @@ fn closure_preparation_shares_the_evaluation_budget_across_commands() {
     let scope = LaunchScope::enter();
     let mut completed = 0;
     let mut refusal = None;
-    for _ in 0..=600 {
+    for _ in 0..=crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT {
         let _nested = LaunchScope::enter();
         let command = queue.new_command_buffer();
         let pending = metal_closure_prepare::encode(
@@ -810,8 +810,8 @@ fn closure_preparation_shares_the_evaluation_budget_across_commands() {
         refusal,
         Some((Error::BackendLaunchLimit, Err(Error::BackendLaunchLimit)))
     );
-    assert!(completed > 0 && completed <= 600);
-    assert_eq!(trace.iter().filter(|d| d.encoded).count(), 600);
+    assert!(completed > 0 && completed <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
+    assert_eq!(trace.iter().filter(|d| d.encoded).count(), crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert_eq!(trace.iter().filter(|d| d.submitted).count(), completed);
     assert_eq!(trace.iter().filter(|d| d.completed).count(), completed);
     assert!(
@@ -824,7 +824,7 @@ fn closure_preparation_shares_the_evaluation_budget_across_commands() {
             .iter()
             .all(|d| !d.submitted && !d.completed)
     );
-    assert!(trace.iter().skip(600).all(|d| !d.encoded));
+    assert!(trace.iter().skip(crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT).all(|d| !d.encoded));
 }
 
 #[test]

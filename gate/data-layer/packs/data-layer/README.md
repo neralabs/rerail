@@ -46,3 +46,26 @@ Use `--python` to select the application's interpreter and dependencies.
 Use `--rules` to select comma-separated rule IDs.
 `runtime/observations.py` collects fresh typed observations. SQL evaluates the composition predicates.
 Probe failures remain failures. The runner rejects snapshot source that differs from application source.
+
+Matching accepts repeated `--application-root <directory>` arguments within the repository.
+The runner discovers Python files below these roots and classifies them as application code.
+Snapshot buffers take precedence over files on disk. Paths containing a `tests` component remain excluded.
+Use `--phase 1`, `2`, `3`, or `4` to select the original matching phase codes.
+The API exposes these settings as `applicationRoots` and `matchingPhase`.
+
+Schema introspection reads the literal approval catalog from the original linter file on each audit.
+Use `--schema-approvals <json>` or the API's `schemaApprovals` to supply `{ "entries": [...], "signature": "..." }`.
+The pack verifies signatures with the original public key before SQL suppresses exact approved callsites.
+Invalid configuration produces `SIDP000` and fails the command even without `--check`.
+Normal audits do not sign or update the catalog.
+
+To sign an explicitly approved catalog, invoke the original signing workflow through this command:
+
+```sh
+rerail data-layer --repo /path/to/data-layer --sign-allowlist --python /path/to/python
+```
+
+This command delegates to the repository's original signer, which reads the user's configured signing key.
+The pack contains only the public verification key.
+Use `--summary-only` for per-code counts or `--summary` for a total count.
+The shared native command uses its own output format and preserves the configured reporter's rule semantics.

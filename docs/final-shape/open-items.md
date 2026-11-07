@@ -8,7 +8,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
 | O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | closed for the observers (2026-11-01): the slice's napi `CodeRuleSlice` pushes a directory snapshot with editor buffers over it, or a Git `HEAD` (W's `git_workspace` discovery); the anchor lab's corpus capture moves to Phase 3's check |
-| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open |
+| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | closed (2026-11-06): decision 0049, atoms are arena segments written with the rows that name them; 3 appends per full-corpus run instead of 104 commits |
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
@@ -46,7 +46,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
 | O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
-| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open |
+| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open, narrowed (2026-11-06): `.rr`'s `within(n, a)` is the engine's tree relation, read off the tape per looked-up node (decision 0050 §4); the `@within`/`@depth` programs and the two kind-filtered walks remain |
 | O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
 | O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
 
@@ -170,6 +170,33 @@ A new name is interned into `atoms` with one SQLite transaction per batch, under
 Warm edits rebind existing names; a cold scan pays one write per batch. Closure: measure on a cold
 scan of the gate corpus; if it is visible in CPU time, intern ahead in the overlay with a reserved
 range and write the atoms with the first layer that uses them.
+
+**Measured (2026-11-06, notes T10 §1b):** it is visible. On the 9,010-file corpus, 104 chunks
+intern 640k new names, one transaction each. The batch worker spent 77% of its samples there
+(about 6–7 s CPU), mostly in SQLite's page cache and WAL. SQLite's own counters per run:
+
+| Setting | Misses | Spills | Pages written |
+|---|---|---|---|
+| 1 MB cache | 158,806 | 168,121 | 261,856 |
+| 32 MB for the transaction | 107,432 | 0 | 202,009 |
+
+**Done:**
+- A bulk append (more than 1,024 new names) gets a 32 MB cache and a 16k-page checkpoint
+  interval for its transaction only. Both return to the store's settings after it.
+- Per run, interning went from 77% to 44% of the batch phase, and sys from about 6 s to 3.5 s.
+
+**Still open:** about 200k pages, roughly 800 MB, are written per run. Each commit rewrites
+about 1,900 leaf pages of `atoms_by_value`, so the volume scales with the number of commits, not
+the number of names. The fix is fewer commits: allocate ids in memory and write the rows later.
+That needs:
+
+- one in-process mirror per database, shared by the store and the planner's symbols
+  (`logic::native::setfix::Interner`). Today each catches up from the table.
+- every store write transaction appending the pending atoms first, so no durable row refers to an
+  unwritten atom.
+- an in-process reader of `atoms` by value (vocabulary SQL) flushing first.
+
+**Closed (2026-11-06):** decision 0049. On the full corpus: 3 appends of 29.6 MB instead of 104 commits and about 800 MB. Atoms are stored as segments of the arena with no value index, SQL reads them through a virtual table, a lease covers other processes, and the decision sets out recovery after a crash.
 
 ## O4. Spill files after a crash
 
@@ -1168,6 +1195,15 @@ with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a di
 - **Also:** each round reruns the whole cross-file part. The digest cutoff should be per document
   (rerun only the dependents of documents whose interface rows changed), as `typing::rounds` does.
 - **Test:** `own_ingestion_derives_what_t_facts_do` prints both and asserts them.
+- **A false negative on the runtime oracle (2026-11-06).** `typing::oracle_tests` scores calls.rr against
+  `fixtures/python/calls`. `pkg.exported_helper(2)` in `main.py` reaches `pkg/util.py`'s `helper` through
+  `pkg/__init__.py`'s `from .util import helper as exported_helper`: three files. At k = 2 the rounds stop
+  unconverged (488 → 576 → 595 hop rows) and the call gets **no edge**, where CPython ran `helper`. That is not
+  unknown, so a rule reads it as "calls nothing". With k = 6 the rounds converge after round 4 (596 rows) and
+  the call agrees (84 agree, 9 depart, as the spike scored).
+  - **Why the program cannot mark it itself.** Its opens are three-valued through negation. For example,
+    `vopen(c) :- callee(c, e), !pv(e, _, _), …` and `attr_open(c, a) :- …, !found(c, a, _)` read the absence of
+    a hop relation's row as "no value". Under a bounded round, that absence is not final.
 
 ## O42. Terms, declarations and dependency summaries are not yet wired in
 
@@ -1247,6 +1283,11 @@ new literal would change `logic/plan`'s exhaustive matches. Two walks through ch
 steps `payload_values`) remain Datalog recursion over tree edges, against §7. **Closure:** `within` and a
 kind-filtered climb/descent (the matcher's `inside`/`has` with `stopBy`) as tree built-ins.
 
+2026-11-06: the `.rr` built-in `within(n, a)` is no longer lowered to an id range or a recursive `below` relation
+over `child`. The engine serves it from a relation read off the tree (decision 0050 §4): n's ancestors for a bound
+n, a's subtree for a bound a. The converter writes it. The `.rdl` programs' `@within`/`@depth` and the two walks
+are unchanged.
+
 ## O64. The data-layer's regex forbid clauses
 
 109 forbid clauses regex the file's text (108 with line options, 8 with a line state machine) and 4 its path, in
@@ -1320,43 +1361,36 @@ oracles and messages; the census counts 100.
 
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
-Lowered now: `.violation` at a node, `match` captures, arithmetic, the string functions, `.input` with
-parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Added on
-`final-rerail-shape-lowering` (2026-11-06):
-- `.violation … code "X"` (a constant code), its `suppress TOOL "rule", … [over {c}]` and `fix [safe] F "title"`
-  lines, kept as findings-layer settings and not applied yet; `.violation` at a `loc` or `span` whose values are
-  nodes or `@place(path, line)`s (file-length, test-budget). A place is the loc value `-2 - (path << 32 | line)`;
-  its finding is at that path and line.
-- `sum` (0 of nothing), `join x by k sep "s"` (the distinct rows of its value and keys, the keys variables of its
-  body; ordered by text for symbols, by value for numbers, ties by the value; no `sep` joins as they are; `""` of
-  nothing), an aggregate inside a term, and an aggregate over an expression.
-- Soufflé's `cat` of any arity, `max/2`, `min/2`, `to_number` (Soufflé's `symbol2numeric`; no value where Soufflé
-  errors) and `%` (C's remainder; none for `% 0`); `@lower` as Unicode lowercase; `@dot("", b) = b`, in SQL,
-  native and the splits of a bound whole. A function with no value gives no row.
-- `has(a, n, set)` tests the set on n, as `core.rr` says (it was tested on a); sets of nodes, or of kinds rules
-  derive, in every axis; `precedes_stop`; `!nearest` with the ancestor named, `!within_stop`, `!split_dot`;
-  `split_dot` at the last dot only. `within`, `next_sibling`, `precedes`, `earlier` and `unset` are core.rr's
-  tree arithmetic (`rr::lower::core`), negated through a relation of their rows.
-- Negated conjunctions and disjunctions: each alternative of `!( … )` is a helper relation over the variables it
-  shares with the rule, negated.
-- Recursion that makes values, where the data bounds it (`front/cycles.rs`): parts of values, values made from
-  lower strata, counters below a fixed bound, and keys that move one way along document order or shorten a
-  string, optionally with a count beside the key.
-
-Still refused by name: `.violation` at a span or loc that can hold a span the engine does not make (regex-capture
-spans: noqa-sec-ratchet, ruff TD00x; tokens; `match_all`), `~` patterns, `must`/`may`, `ordered by`,
-`dfs_first`, `mean`, `to_float` and decimals (the engine has no decimal values), `!within_stop`, `!precedes_stop`
-or `!split_dot` with a node unnamed, and value recursion the check cannot bound: `negate`/`number` in
-`lib/python/pyflakes.rr` (the first error of 321 pack files), token-order walks (`slot_walk`, `elem_start`),
-`hex_place`, `unescape`, `norm`/`sci`. `=> edits` are left out (no applier). `hand_written_rules_lowering_report` (with
-`RERAIL_RR_REPORT_EXTRA`): this branch's 118 files, 75 lower (21 before); More-ergonomic-rule-syntax's 949 packs,
-393 (19 before). **Closure:** list step 30.
+Lowered now (decision 0046, reader section): `.violation` at a node, a span or a `@place`; `code "X"`,
+`code {c} in "re"`, `tag` and `suppress` lines (`suppress TOOL "rule", … [over {c}]`, and `fix [safe] F "title"`,
+kept as findings-layer settings and not applied yet); `match` captures, `match_all` and `match_group`,
+arithmetic, the string functions, Soufflé's `cat` (any arity)/`max`/`min`/`to_number`/`to_float`/`%`, floats;
+`@lower` as Unicode lowercase; `@dot("", b) = b`; `sum` (0 of nothing) and `join x by k sep "s"` (the distinct
+rows of its value and keys; no `sep` joins as they are; `""` of nothing), aggregates over terms, inside terms,
+and compared with each other; `.input` with parameters; `within`, `within_stop`, `nearest` (a named ancestor
+negated too), `inside` and `has` over kind sets and over node-valued sets (`has` tests the set on the
+descendant); `precedes_stop`; `!within_stop`, `!split_dot`, `split_dot` at the last dot only; negated
+conjunctions and disjunctions (a helper relation per alternative); `must, may`; `unset`; recursion that makes
+values bounded by the tree, a count, a shrinking text or a function between rows (`front::cycles`). A place is
+the loc value `-2 - (path << 32 | line)`; its finding is at that path and line. A function with no value gives
+no row. Still refused by name (census of 2026-11-06, clauses alone): `ordered by` (37 clauses: eslint-one-var,
+the owner-code sketch), `@place` as a value outside a `.violation`'s head (3 clauses, 12 files),
+`dfs_first`/`dfs_first_memo` (2), `~` patterns (1), `mean`, `=> edits`, a `.violation` at a span the engine does
+not make (regex-capture spans: noqa-sec-ratchet, ruff TD00x; tokens), and `!within_stop`, `!precedes_stop` or
+`!split_dot` with a node unnamed. `UnboundedValueCycle` still stops 15 library clauses (73 files) whose bound is
+not one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`;
+pyflakes' `negate`/`number`). `hand_written_rules_lowering_report` (with `RERAIL_RR_REPORT_EXTRA`) on
+`final-rerail-shape-lowering` before this merge: 118 files, 75 lower; More-ergonomic-rule-syntax's 949 packs, 393.
+**Closure:** list step 30.
 
 ## O74. Translated programs declare the base relations themselves
 
 Each translated program declares the engine's base relations (`node`, `text`, `child` …) instead of
-`#include "core.rr"`. **Closure:** the engine's base relations and `core.rr` agree, and the programs
-include it.
+`#include "core.rr"`. Decision 0046 made `core.rr`'s base relations for a program that includes it; the
+translated programs are T's, and their recorded outputs are T's projection (comments not counted among
+children, `text` of identifiers, T's `op`), so including `core.rr` would change what they compute. They stay
+as they are until T's parity tests read T's view by its own names (as `op_t`). **Closure:** the programs
+include `core.rr` and their tests read T's view by name.
 
 ## O75. The `.rdl` copies and T's tools
 
@@ -1367,24 +1401,29 @@ reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/gene
 ## O76. Base relations and inputs the engine does not make yet
 
 Hand-written rules read relations the engine did not make: `parsed` and `string_annotation` (strings parsed as
-code) were read as empty, each named in the profile; they are now made natively (`facts::vtab::syntax::annotation`)
-and `NOT_MADE` is empty. Inputs read from a file in the repository (`.input r(IO=json, filename="…")`) are empty
-when the file is absent; when it exists the run stops, since reading it is not written. **Closure:** the files are
-read.
+code) were read as empty, each named in the profile; they are now made natively (`facts::vtab::syntax::annotation`),
+and `option`, `option_item`, `file` and `package*` are made too (decision 0046). Inputs read from a file in the
+repository (`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
+since reading it is not written. **Closure:** the files are read.
 
 ## O77. Lowering shortcuts in `.rr`
 
 - A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
-  text test.
-- `unset(x)` is the id -1; `text(x, "")` does not hold of it, as `core.rr` says it should.
+  text test; captures on a node or a span are symbols, not spans. `match_all` and `match_group` are relations
+  of each regex's matches in the batch's spans (`logic::strings::as_relations`, `facts::vtab::syntax`).
+- `unset(x)` is the id -1. Its text is "" (`text(x, t)` of it lowers to `t = ""`), and `!unset(x)` is
+  `x != -1` (decision 0046). Inside an aggregate, `nearest` or `ast` it is still refused.
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
   `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
   path has no range read yet.
-- The cycle check (`front/cycles.rs`) accepts value-making recursion the data bounds (parts of values, values
-  from lower strata, guarded counters, keys moving one way along document order or shortening a string); this
-  extends O11's bound. It cannot see an involution such as pyflakes' `negate`, whose values stay two per input.
-- An axis over a set of nodes or of derived kinds, and `precedes_stop`, are recursions over `child`
-  (`rr_near_`/`rr_inside_`/`rr_has_`/`rr_above_`/`rr_next_stop_<set>`), not the transducer's tape pass.
+- `earlier` compares `visit_index`, CPython's `ast.NodeVisitor` order (`facts::vtab::syntax::tree`), made for
+  Python documents only (O80).
+- The value-cycle check (`front::cycles`) accepts the bounds decision 0046 lists (parts of values, values from
+  lower strata, guarded counters, keys moving one way along document order or shortening a string); a bound it
+  does not know is refused, never run. It cannot see an involution such as pyflakes' `negate`, whose values stay
+  two per input.
+- An axis over a set of nodes or of derived kinds, and `precedes_stop`, are recursions over `child`, not the
+  transducer's tape pass.
 - `join` reads its symbol columns through the symbol table's text (`sym_text`), so a kind or field atom as a
   join value or key would read the wrong text; no library join uses one.
 - `@place` needs symbols stored as atoms: text-mode SQL refuses it by name.
@@ -1410,15 +1449,104 @@ brought over as it lands. Hand-written rules on the recorded events: 97 of 98 ex
 
 Left: public-api's chainable-builder reads `text` of a return annotation. `core.rr` (and the rule-syntax pass's
 ALIGN-FINAL-SHAPE.md) give every node a `text`; the engine's is T's, identifiers only (1 event).
-**Closure:** `text` of every node in the engine, as a value and not only as a test (0042 covers tests).
+**Closure:** `text` of every node in the engine, as a value and not only as a test (0042 covers tests). Done for
+programs that include `core.rr` (decision 0046), up to 256 bytes or token-like (O80).
 
 `logic::profile::tests::explain_shows_engines_plans_devices_and_decisions` failed once in the parallel `logic::` run
 at load 40-55 and passes alone: shared state between tests, not looked into.
 
 ## O79. `op` of a comparison: closed
 
+**Revised (decision 0046, the coordinator's choice):** `op` follows `core.rr`, every anonymous token of a node in
+every language, for programs that include `core.rr`. T's view below is `op_t` in both shapes, and `op` in T's
+shape; the parity test reads `op_t`. `op_at` is every non-punctuation token in order, so Rust's `&&` of a `let`
+chain has one.
+
+Before:
 `op` stays T's: one row per node, binary, boolean and unary operators, augmented assignments and `async`, so T's
 parity tests hold. A comparison has several operators in order (`a < b <= c`), so it has its own relation, the one
 `core.rr` already declares: `op_at(n, i, s)`, n's operator tokens (the `operator` and `operators` fields) from 0.
 The library's `cmp` reads `op_at(c, 0, o)`. Not yet: Rust's `&&` in a `let` chain (`complexity/rust.rr`), whose
 tokens have no field.
+
+## O80. `core.rr` base relations not made yet, or made with a bound (decision 0046)
+
+- `parsed` and `string_annotation` (O76) are made natively (`facts::vtab::syntax::annotation`): each Python
+  string annotation's tree (`parsed(s, "annotation", root)`) is a document of its own past the batch's real
+  documents.
+- `match_all`, `match_group`, and `match` with captures on a node or span, are made (O77). (`docof` of a span is
+  made: the lowering reads `core.rr`'s `docof` as an input.)
+- `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
+- `syntax_error(d, l, msg)` for Python is CPython's verdict through Ruff's parser (`cpython_syntax_error`,
+  `rr::lower::core`), where a program declares no `syntax_error` of its own; the tape's `syntax_error(d)` is
+  tree-sitter's ERROR/MISSING.
+- `static_value` is `value`: file-local constants are not followed.
+- `tsconfig*`, `package_export`, `git_*`, `signed_list`, `input_error` and `list_len` are not read.
+- `earlier` compares `visit_index`, CPython's `ast.NodeVisitor` order, made for Python documents only
+  (`facts::vtab::syntax::tree`); other languages have no `visit_index` row, so no `earlier` row.
+**Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
+
+
+## O81. A program that derives a relation `core.rr` makes an input: closed (decision 0047)
+
+- Decision 0046 made `docof` a `core.rr` input, and `sql::select::input_columns` names its columns `n, d`.
+  T's programs (`typing/programs/workload*.rr`, `calls`) still derive their own `docof(n, d) :- node(d, n, …)`.
+  `plan::sql_col` names columns by `input_columns` for any relation of that name, so the SQL reads `t4.d` from
+  a derived table whose columns are `c0, c1`: "names no column in scope".
+- Nine `logic::plan::tests` are ignored with this item (they fail the same way on final-rerail-shape-rr-align).
+**Closed by 0047:** both. The planner names a column by `input_columns` only for an input
+(`plan::Model::col`); the reader refuses a file that declares or derives a `core.rr` relation; T's programs
+read `kind` and `docof` as inputs. The nine tests run again.
+Typing-support first closed it by renaming (`plan::private_derived_inputs`: a derived relation under a base
+relation's name planned as `<rel>_rr_derived`); the merge into final-rerail-shape keeps 0047's mechanism, not both.
+
+## O82. Metal runs abort in a debug test build
+
+Two tests that dispatch to the device abort the test process inside `metal-0.33.0` (`lib.rs:82`): Rust's
+debug-build check of `slice::from_raw_parts`' precondition (pointer aligned and non-null) fails, and it is a
+non-unwinding panic. They are `logic::plan::tests::t_programs_with_the_transducers_nearest_derive_t_outputs`,
+ignored with this item, and `typing::file_local::tests::the_device_finds_the_cpus_nearest`. Because the panic
+cannot unwind, it ends every test that shares the process, so a filtered run over `typing::` must skip the
+device tests. It was not checked whether this predates O81's change; nothing in that change touches device
+buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
+zero-length contents pointer), and both tests pass in a debug build.
+
+## O83. Metal `transducer::packed` suites fail when run together; `explain` fails now and then: closed (2026-11-06)
+
+Found (2026-11-06). Of the 750 `transducer::packed` tests with `--features metal-tests`, about 440 failed in
+one run. There were five causes:
+
+1. **Poisoned locks.** `METAL_EXECUTION_LOCK` and `METAL_ALLOCATION_LOCK` guard no data, but one panicking
+   test poisoned them, and every later test failed with `BackendFailure` (443 failures down to 43).
+   Fixed: both locks recover from poisoning (`PoisonError::into_inner`).
+2. **Tests written for the old 600-launch limit.** The launch budget is per thread and per evaluation
+   (`thread_local! EVALUATION`), so it is not carried from test to test, as this item first guessed.
+   Copied tests wrote the limit as the literal 600 (or 599), and three launch-guard tests as 11 x 9 = 99.
+   Fixed: they use `KERNEL_LAUNCH_LIMIT`. The source scan for bypassing encoders skips `*_tests.rs`
+   test modules. 7 tests pass again.
+3. **G's grid executor over the bounds since list step 13.** 35 tests of the grid executor (superseded,
+   decision 0028, O33) need more than 200 launches per evaluation, or more than the 256 MiB device pool
+   (was 2 GB). 22 of them pass when the limit is set back to 600. They are ignored with this item, and they
+   go with the executor at list step 31.
+4. **A real bug: the label sweep did not compile.** `metal_label_sweep.metal`'s `SWEEP_NODE(local)` declared
+   `uint local=(local)` inside `for(uint local...)`, a redefinition and a read of itself (since b995b972e,
+   11-04). The sweep runs only under `RERAIL_HOST_SWEEPS`, but `MetalBackground`, which napi's `"metal"` uses,
+   compiles it before the JIT. So the background compile always failed, and `"metal"` ran the interpreter
+   and never swapped to the compiled kernel. Fixed by renaming the variable. The replay gives the same
+   findings.
+5. **A process-wide device pool.** `METAL_BUFFER_BYTES` (256 MiB) is shared by every thread, which is right
+   for production, but parallel tests then fill it for each other. About 16 tests fail only in a batch
+   (`BackendCapacity`, or a peak-bytes assertion). With `--test-threads=1` all of them pass.
+   Fixed (user decision: a resource lock on memory, so that small tests still run together):
+   `metal_test_pool.rs`. In a test build each thread has its own pool ledger and peak, and the driver's
+   process-wide figure is left out, so a test sees the pool as it would alone. A weighted lock over bytes
+   bounds what all tests hold at once at 1 GiB (the RAM budget). A reservation that would pass it waits for
+   others to release, for at most 30 s, then goes ahead: the bound is on memory, never on results.
+   Production is unchanged.
+- The admission spike's oracle snapshot (`execute_roots_from` as at f5de8998d) is ignored. The interpreter
+  has since gained set mode, lazy cursors and `Reach` pruning.
+- `explain` (`logic::profile::tests`): a concurrent corpus run's `profile::reset()` raced it. Profiled runs
+  and the profile tests now hold `profile::one_run()`. `logic::` passed twice at load 50 or more.
+
+**Closed:** `transducer::packed` passes in one parallel run: 689 passed, 0 failed, 63 ignored (the grid
+executor's, and the admission spike), 104 s at load 40-73.

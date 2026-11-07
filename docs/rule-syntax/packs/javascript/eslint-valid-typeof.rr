@@ -1,0 +1,38 @@
+.policy "eslint-valid-typeof" revision 5
+.description "Compare typeof results only with the strings typeof can return, such as 'string', 'number' or 'undefined'."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-b-literals.rr"
+//   binop, equality, static_string; global_undefined, typeof_expr
+
+// ESLint's valid-typeof: `typeof x` compared (==, ===, !=, !==) with a literal that typeof never returns.
+//   typeof x === "strnig"   typeof x == 1   typeof x !== `fucntion`        → reported, at the literal
+//   typeof x === undefined   (the global: typeof gives the string "undefined")  → reported; suggestion "undefined"
+//   typeof x === "bigint"   typeof x === typeof y   typeof x === t          fine
+// requireStringLiterals "true" also reports a comparison with anything but a literal or another typeof:
+//   typeof x === t  → "Typeof comparisons should be to string literals."
+.violation valid_typeof(at: node, msg: symbol) code "valid-typeof" "{msg}"
+    suppress eslint "valid-typeof"
+    suppress oxlint "valid-typeof"
+    suppress biome "lint/correctness/useValidTypeof"
+    fix quote "Use `\"undefined\"` instead of `undefined`."
+valid_typeof(s, "Invalid typeof comparison value.") :- typeof_vs(s), typeof_literal(s), static_string(s, v), !type_name(v).
+valid_typeof(s, m) :- typeof_vs(s), global_undefined(s),
+    (option("requireStringLiterals", "true"), m = "Typeof comparisons should be to string literals." ;
+    !option("requireStringLiterals", "true"),
+    m = "Compare with the string 'undefined' instead of the undefined value; typeof always returns a string.").
+valid_typeof(s, "Typeof comparisons should be to string literals.") :- option("requireStringLiterals", "true"),
+    typeof_vs(s), !typeof_literal(s), !global_undefined(s), !typeof_expr(s).
+quote(s, _) :- kind(s, "undefined") => replace(s, `"undefined"`).
+
+// typeof_vs(s): s is the other operand of an equality with a `typeof`, parentheses aside.
+.decl typeof_vs(s: node)
+typeof_vs(s) :- binop(_, o, l, r), equality(o, _), (typeof_expr(l), s = r ; typeof_expr(r), s = l).
+// typeof_literal(s): an ESTree Literal, or a template without substitutions (isStaticTemplateLiteral).
+.decl typeof_literal(s: node)
+typeof_literal(s) :- static_string(s, _).
+.decl type_name(v: symbol)  // what typeof returns
+type_name("symbol"). type_name("undefined"). type_name("object"). type_name("boolean"). type_name("number").
+type_name("string"). type_name("function"). type_name("bigint").

@@ -1,0 +1,18 @@
+.policy "ruff-pth103-os-makedirs" revision 2
+.description "Use Path.mkdir(parents=True) instead of os.makedirs(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH103 (flake8-use-pathlib): every call of `os.makedirs`, however it is imported. Reported at the
+// callee.
+//   os.makedirs("a/b", exist_ok=True)    ← PTH103: `Path("a/b").mkdir(parents=True, exist_ok=True)`
+//   from os import makedirs as md
+//   md("a/b")                            ← PTH103
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
+
+.violation PTH103(at: node) code "PTH103"
+    "Use `Path(name).mkdir(parents=True)` instead of `os.makedirs(name)`, passing `mode`, `exist_ok` and any `parent_mode` on to `mkdir`; leave it where the path is bytes."
+    suppress ruff "PTH103"
+PTH103(f) :- pth_call(_, "os.makedirs", f).

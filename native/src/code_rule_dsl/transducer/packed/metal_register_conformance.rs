@@ -506,14 +506,14 @@ fn phase_two_completed_memory_partitions_cannot_reset_the_launch_budget() {
     assert_eq!(result, Err(Error::BackendLaunchLimit));
     assert_eq!(publications, 0);
     let trace = scope.snapshot();
-    assert_eq!(trace.iter().filter(|record| record.encoded).count(), 600);
-    assert!(trace.len() > 600);
+    assert_eq!(trace.iter().filter(|record| record.encoded).count(), crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
+    assert!(trace.len() > crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     let submitted = trace.iter().filter(|record| record.submitted).count();
     assert_eq!(
         submitted,
         trace.iter().filter(|record| record.completed).count()
     );
-    assert!(submitted > 0 && submitted <= 600);
+    assert!(submitted > 0 && submitted <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert!(
         trace
             .iter()
@@ -962,7 +962,7 @@ fn phase_two_over_budget_partition_plan_never_publishes_success() {
         encoder.set_compute_pipeline_state(&pipeline);
         encoder.set_buffer(0, Some(&buffer.buffer), 0);
         use super::metal_backend::launch::CheckedComputeEncoder;
-        for _ in 0..599 {
+        for _ in 0..(crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT - 1) {
             encoder.checked_dispatch_thread_groups(
                 command,
                 metal::MTLSize::new(1, 1, 1),
@@ -987,7 +987,7 @@ fn phase_two_over_budget_partition_plan_never_publishes_success() {
     assert_eq!(result, Err(Error::BackendLaunchLimit));
     assert_eq!(publications, 0);
     let trace = scope.snapshot();
-    assert_eq!(trace.iter().filter(|record| record.encoded).count(), 600);
+    assert_eq!(trace.iter().filter(|record| record.encoded).count(), crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert!(trace.iter().any(|record| !record.encoded));
     assert!(
         trace
@@ -997,7 +997,7 @@ fn phase_two_over_budget_partition_plan_never_publishes_success() {
     );
     assert_eq!(
         unsafe { buffer.buffer.contents().cast::<u32>().read() },
-        599
+        (crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT - 1) as u32
     );
 }
 

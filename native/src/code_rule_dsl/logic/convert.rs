@@ -11,10 +11,8 @@
 //! The relations, per node `n`:
 //! - `inside` (to the end): `inside($n, $a, set)`, the set being the kinds the ancestor's rule allows;
 //! - `inside` with a stop rule: the same, less ancestors past the first stop node (`blocked`);
-//! - `has` (to the end): `inside($m, $n, set)` read the other way, `$m` the descendant; the set filters the
-//!   ancestor `$n`, so it is the kinds `$n`'s own rule allows (the enclosing `all`'s, `here`), or every kind where
-//!   that rule names none; with a stop rule, less descendants past the first stop node; with a field, the
-//!   descendant is within that field's child (byte spans, both nodes bound);
+//! - `has` likewise, read from the ancestor; from a node of unknown kinds, `within(m, n)` (the tree); with a
+//!   field, the descendant is within that field's child (byte spans, both nodes bound);
 //! - neighbours: `child(p, c, i)` or `field(p, f, c)`.
 //!
 //! # The authored overlay
@@ -105,9 +103,8 @@ pub(in crate::code_rule_dsl) struct Emitter {
     pub(in crate::code_rule_dsl) captures: BTreeMap<String, String>,
     /// Whether the empty relation `never` is used.
     never: bool,
-    /// The kinds the node being converted can have, where the rules around it name them: what `has` filters
-    /// its ancestor by.
-    here: Option<BTreeSet<u16>>,
+    /// The node an enclosing `all` tests and the kinds it can have (`has` bounds its ancestor by them).
+    node_kinds: Option<(String, BTreeSet<u16>)>,
 }
 
 /// A conjunction over one node variable: the literals, as text.
@@ -126,7 +123,7 @@ impl Emitter {
             utils: BTreeMap::new(),
             captures: BTreeMap::new(),
             never: false,
-            here: None,
+            node_kinds: None,
         }
     }
 
@@ -219,31 +216,31 @@ impl Emitter {
                 let mut body = self.body(&c.rule, n)?;
                 for (name, rule) in &c.constraints {
                     let Some(v) = self.captures.get(name).cloned() else { return gap(format!("constraint on ${name}, not captured")) };
-                    body.extend(self.at(rule, &v)?);
+                    body.extend(self.body(rule, &v)?);
                 }
                 body
             }
             AstMatcher::Regex(r) => self.regex(r.as_str(), n, None)?,
             AstMatcher::All(ms) => {
                 let kinds = kinds(m, 0);
-                // Every sub-rule is at this node: what they say of its kinds holds for each.
-                let here = match (self.here.clone(), kinds.clone()) {
-                    (Some(a), Some(b)) => Some(a.intersection(&b).copied().collect()),
-                    (a, b) => a.or(b),
-                };
-                let saved = std::mem::replace(&mut self.here, here);
-                let body = (|| {
-                    let mut body = Vec::new();
+                let saved = self.node_kinds.clone();
+                if let Some(ks) = kinds.as_ref().filter(|ks| !ks.is_empty()) {
+                    self.node_kinds = Some((n.to_owned(), ks.clone()));
+                }
+                let mut body = Vec::new();
+                let mut emit = || -> Res<()> {
                     for t in ms {
                         match t {
                             AstMatcher::Regex(r) => body.extend(self.regex(r.as_str(), n, kinds.as_ref())?),
                             _ => body.extend(self.body(t, n)?),
                         }
                     }
-                    Ok(body)
-                })();
-                self.here = saved;
-                body?
+                    Ok(())
+                };
+                let done = emit();
+                self.node_kinds = saved;
+                done?;
+                body
             }
             AstMatcher::Any(ms) => {
                 let mark = self.next;
@@ -285,10 +282,13 @@ impl Emitter {
                         let name = self.fresh("u");
                         self.utils.insert(key, name.clone());
                         self.decls.insert(name.clone(), "n: node".to_owned());
-                        // The relation is every caller's: it knows of the node only what its own rule says, and
-                        // reads no metavariable a caller bound.
+                        // A utility's relation serves every caller: no caller's node kinds hold in it, and it reads no
+                        // metavariable a caller bound.
+                        let saved = self.node_kinds.take();
                         let mark = self.next;
-                        let body = u.with_target(|rule| self.scoped(|e| e.at(rule, "$n"))).ok_or_else(|| Gap("utility unavailable".into()))??;
+                        let body = u.with_target(|rule| self.scoped(|e| e.body(rule, "$n"))).ok_or_else(|| Gap("utility unavailable".into()));
+                        self.node_kinds = saved;
+                        let body = body??;
                         if !outer_vars(std::slice::from_ref(&body), mark).is_empty() {
                             return gap("a utility reading a metavariable bound outside it");
                         }
@@ -335,21 +335,6 @@ impl Emitter {
         out
     }
 
-    /// The literals under which `m` holds at `n`, a node other than the one being converted: what is known of its
-    /// kinds is what `m` says.
-    fn at(&mut self, m: &AstMatcher, n: &str) -> Res<Body> {
-        let saved = std::mem::replace(&mut self.here, kinds(m, 0));
-        let body = self.body(m, n);
-        self.here = saved;
-        body
-    }
-
-    /// Every kind a node with children can have: the named kinds, comments left out (they are not in `node`).
-    fn every_kind(&self) -> BTreeSet<u16> {
-        let count = u16::try_from(self.kinds.kind_count()).unwrap_or(u16::MAX);
-        (0..count).filter(|&k| self.kinds.kind_is_named(k) && self.kinds.kind_name(k).is_some_and(|name| name != "comment")).collect()
-    }
-
     /// A text condition (`regex`, `notRegex`) over the text in `s`.
     pub(in crate::code_rule_dsl) fn condition(&mut self, c: &crate::code_rule_dsl::language::TextCondition, s: &str) -> Res<Body> {
         let mut body = Vec::new();
@@ -386,22 +371,37 @@ impl Emitter {
                 None => body.push(format!("child({n}, {m}, _)")),
             },
             (Axis::Inside | Axis::Has, StopBy::End | StopBy::Rule(_)) => {
-                // `inside` filters the ancestor by its rule's kinds; `has` filters the ancestor too, the node here,
-                // by what the rules around it say of its kinds, or by none.
-                let ks = match axis {
-                    Axis::Inside => match kinds(rule, 0) {
-                        Some(ks) => ks,
-                        None => return gap("Inside to a rule of any kind"),
-                    },
-                    _ => self.here.clone().unwrap_or_else(|| self.every_kind()),
-                };
+                let Some(ks) = kinds(rule, 0) else { return gap(format!("{axis:?} to a rule of any kind")) };
                 let set = self.kindset(&ks)?;
                 let (low, high) = if axis == Axis::Inside { (n.to_owned(), m.clone()) } else { (m.clone(), n.to_owned()) };
-                // `inside` stopping at the first node of the same kinds is the nearest one (decision 0038): a
-                // built-in over the tape, not `inside` less a `blocked` relation of all pairs with one between.
-                let nearest = axis == Axis::Inside
-                    && matches!(stop, StopBy::Rule(r) if kind_only(r, 0) && kinds(r, 0).as_ref() == Some(&ks));
-                body.push(format!("{}({low}, {high}, {set})", if nearest { "nearest" } else { "inside" }));
+                // The stop rule's kinds, where it tests only kinds: a stop is then a node of those kinds.
+                let stop_kinds = match stop {
+                    StopBy::Rule(r) if kind_only(r, 0) => kinds(r, 0),
+                    _ => None,
+                };
+                // `inside` stopping at the first node of kinds that include the target's is the nearest stop
+                // (decision 0038): a target further up has that stop between, so only the nearest can be one, and the
+                // rule's own test (below) says whether it is. A built-in over the tape, not `inside` less a `blocked`
+                // relation of all pairs with one between.
+                let nearest = axis == Axis::Inside && stop_kinds.as_ref().is_some_and(|stops| ks.is_subset(stops));
+                // `has` from a node of known kinds (its enclosing `all`'s): the ancestor is one of those kinds over
+                // the descendant, from the tape. Not every node within it, nor a set on the ancestor of the
+                // descendant's kinds, which the rule's own test (below) checks.
+                let ancestors = match &self.node_kinds {
+                    Some((node, kinds)) if axis == Axis::Has && node == n => self.kindset(&kinds.clone()).ok(),
+                    _ => None,
+                };
+                if nearest {
+                    let stops = self.kindset(stop_kinds.as_ref().expect("kind-only stops"))?;
+                    body.push(format!("nearest({low}, {high}, {stops})"));
+                } else if axis == Axis::Inside {
+                    body.push(format!("inside({low}, {high}, {set})"));
+                } else if let Some(ancestors) = &ancestors {
+                    body.push(format!("inside({low}, {high}, {ancestors})"));
+                } else {
+                    // `has` from a node of unknown kinds: the descendant is any node within it.
+                    body.push(within_strict(&low, &high));
+                }
                 if let Some(f) = &field {
                     // The path enters `high` through `f`: `low` lies within that field's child.
                     let c = self.var();
@@ -413,24 +413,31 @@ impl Emitter {
                 {
                     let Some(stops) = kinds(stop, 0) else { return gap("a stop rule of any kind") };
                     let stops = self.kindset(&stops)?;
-                    let mark = self.next;
-                    let is_stop = self.scoped(|e| e.at(stop, "$s"))?;
-                    if !outer_vars(std::slice::from_ref(&is_stop), mark).is_empty() {
-                        return gap("a stop rule reading a metavariable bound outside it");
-                    }
+
                     let blocked = self.fresh("blocked");
                     self.decls.insert(blocked.clone(), "low: node, high: node".to_owned());
                     // A stop node strictly between: over `low`, under `high`.
                     let mut b = Vec::new();
-                    if axis == Axis::Has {
-                        b.push(format!("inside($low, $high, {set})"));
-                    }
-                    b.push(format!("inside($low, $s, {stops})"));
-                    b.extend(is_stop);
-                    if axis == Axis::Inside {
-                        b.push(format!("inside($s, $high, {set})"));
+                    if kind_only(stop, 0) {
+                        // A stop is a node of the stop kinds: one lies between where the nearest one over `low`
+                        // lies under `high` (any other is further up). One row a `low` from the tape's nearest
+                        // ancestors (decision 0038), not every pair of a stop and an ancestor.
+                        b.push(format!("nearest($low, $s, {stops})"));
                     } else {
-                        b.extend(within_strict("$s", "$high", self));
+                        b.push(format!("inside($low, $s, {stops})"));
+                        let mark = self.next;
+                        let is_stop = self.scoped(|e| e.body(stop, "$s"))?;
+                        if !outer_vars(std::slice::from_ref(&is_stop), mark).is_empty() {
+                            return gap("a stop rule reading a metavariable bound outside it");
+                        }
+                        b.extend(is_stop);
+                    }
+                    // Under `high`: for `inside` an ancestor of the target's kinds over the stop; for `has` an ancestor
+                    // of the node's kinds where known (bounded by the tape), else any node the stop lies within.
+                    match (axis, &ancestors) {
+                        (Axis::Inside, _) => b.push(format!("inside($s, $high, {set})")),
+                        (_, Some(ancestors)) => b.push(format!("inside($s, $high, {ancestors})")),
+                        _ => b.push(within_strict("$s", "$high")),
                     }
                     self.rules.push(format!("{blocked}($low, $high) :- {}.", b.join(", ")));
                     body.push(format!("!{blocked}({low}, {high})"));
@@ -453,7 +460,7 @@ impl Emitter {
         if matches!(axis, Axis::Has | Axis::Inside) && matches!(stop, StopBy::Neighbor) {
             self.approx.insert("neighbours among named children".into());
         }
-        body.extend(self.at(rule, &m)?);
+        body.extend(self.body(rule, &m)?);
         Ok(body)
     }
 
@@ -1192,17 +1199,18 @@ fn replace_var(literal: &str, from: &str, to: &str) -> String {
     out
 }
 
-/// `a`'s span within `b`'s (or equal): both bound.
-fn within(a: &str, b: &str, e: &mut Emitter) -> Body {
-    let (s, t, u, w) = (e.var(), e.var(), e.var(), e.var());
-    vec![format!("node(_, {a}, _, {s}, {t})"), format!("node(_, {b}, _, {u}, {w})"), format!("{u} <= {s}"), format!("{t} <= {w}")]
+/// `a` strictly below `b` in the tree: the language's `within` (`core.rr`), which the engine reads off the tree
+/// (decision 0050).
+fn within_strict(a: &str, b: &str) -> String {
+    format!("within({a}, {b})")
 }
 
-/// `a` strictly within `b`: contained and not `b`.
-fn within_strict(a: &str, b: &str, e: &mut Emitter) -> Body {
-    let mut body = within(a, b, e);
-    body.push(format!("{a} != {b}"));
-    body
+/// `a`'s span within `b`'s (or equal). Used where `a` is already below `b`'s parent and `b` is one of its children,
+/// whose spans don't overlap: then it says "`a` is `b` or below it", which the front syntax has no alternative
+/// for. The engine makes it `span_within` (decision 0050).
+fn within(a: &str, b: &str, e: &mut Emitter) -> Body {
+    let (d, s, t, u, w) = (e.var(), e.var(), e.var(), e.var(), e.var());
+    vec![format!("node({d}, {a}, _, {s}, {t})"), format!("node({d}, {b}, _, {u}, {w})"), format!("{u} <= {s}"), format!("{t} <= {w}")]
 }
 
 enum Shape {

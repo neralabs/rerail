@@ -37,15 +37,22 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("sha256", &[Text], Text),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
-    // JavaScript's `toLowerCase` (Unicode default case mapping), not SQLite's ASCII `lower`.
+    // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
-    // Soufflé's `to_number(s)`, `max(a, b)`, `min(a, b)` and `a % b` (`mod`).
+    // Soufflé's `to_number(s)`, `max(a, b)`, `min(a, b)` and `a % b` (`mod`, with no value for a zero divisor).
     ("to_number", &[Text], Number),
     ("max", &[Number, Number], Number),
     ("min", &[Number, Number], Number),
     ("mod", &[Number, Number], Number),
+    // Soufflé's floats, as keys that order as the floats do (`float_key`): `to_float`, arithmetic, `to_string`.
+    ("to_float", &[Text], Number),
+    ("float_add", &[Number, Number], Number),
+    ("float_sub", &[Number, Number], Number),
+    ("float_mul", &[Number, Number], Number),
+    ("float_div", &[Number, Number], Number),
+    ("float_str", &[Number], Text),
 ];
 
 /// The SQL name of function `name`: its own, or `rr_<name>` where SQLite has a function of that name, which
@@ -102,6 +109,18 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
         "convert" => Some(convert(t(0), t(1), t(2))),
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
+        "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
+        "float_add" | "float_sub" | "float_mul" | "float_div" => {
+            let (a, b) = (float_of(numbers[0]), float_of(numbers[1]));
+            let f = match name {
+                "float_add" => a + b,
+                "float_sub" => a - b,
+                "float_mul" => a * b,
+                _ => a / b,
+            };
+            return if f.is_nan() { Value::Null } else { Value::Integer(float_key(f)) };
+        }
+        "float_str" => Some(float_of(numbers[0]).to_string()),
         "count_matches" => return with_regex(t(0), |re| Value::Integer(re.find_iter(t(1)).count() as i64)).unwrap_or(Value::Null),
         "to_number" => return to_number(t(0)).map_or(Value::Null, Value::Integer),
         "max" => return Value::Integer(numbers[0].max(numbers[1])),
@@ -155,6 +174,18 @@ fn strtoll(s: &str, base: u32) -> Option<i64> {
     }
     let magnitude = i128::from_str_radix(&s[..digits], base).ok()?;
     i64::try_from(if neg { -magnitude } else { magnitude }).ok()
+}
+
+/// A float as an integer key that orders as the floats do: its bits, with every bit but the sign flipped for a
+/// negative float; -0.0 is 0.0. The engine's values are integers (decision 0008), so a float column holds these.
+pub(in crate::code_rule_dsl) fn float_key(f: f64) -> i64 {
+    let bits = (if f == 0.0 { 0.0 } else { f }).to_bits() as i64;
+    if bits < 0 { bits ^ i64::MAX } else { bits }
+}
+
+/// The float of a key (`float_key`).
+pub(in crate::code_rule_dsl) fn float_of(key: i64) -> f64 {
+    f64::from_bits((if key < 0 { key ^ i64::MAX } else { key }) as u64)
 }
 
 /// `f(re)` with `re` compiled once per thread; `None` if it does not compile.

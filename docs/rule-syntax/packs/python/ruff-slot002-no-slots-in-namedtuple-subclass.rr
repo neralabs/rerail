@@ -1,0 +1,24 @@
+.policy "ruff-slot002-no-slots-in-namedtuple-subclass" revision 2
+.description "Define __slots__ in classes that subclass a namedtuple or a call-style NamedTuple; without it every instance carries its own attribute dict and uses more memory."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SLOT002 (flake8-slots): a class whose bases are `collections.namedtuple(…)` or `typing.NamedTuple(…)`
+// calls, and perhaps `object`, with no `__slots__` in its body. Any other base (an Enum, a name) clears it,
+// and so does a call Ruff cannot resolve. `class P(NamedTuple):` is a class, not a call: not reported.
+//   class Bad(namedtuple("foo", ["str", "int"])):            ← SLOT002
+//       pass
+//   class Good(namedtuple("foo", ["str", "int"]), Enum):     not reported
+//       pass
+#include "python/misc2-slots.rr"
+
+.violation SLOT002(at: node) code "SLOT002"
+    "Add `__slots__ = ()` to this named-tuple subclass so instances skip the per-instance `__dict__`; leave it if the class assigns instance attributes, which an empty `__slots__` forbids."
+    suppress ruff "SLOT002"
+SLOT002(nm) :- slots_missing(c, nm), slots_base(c, b), slot002_call(b), count : { slots_base(c, o), !slot002_ok(o) } = 0.
+.decl slot002_call(b: node)
+slot002_call(b) :- kind(b, "call"), field(b, "function", f), (sym_of(f, "collections.namedtuple") ; sym_of(f, "typing.NamedTuple")).
+.decl slot002_ok(b: node)
+slot002_ok(b) :- slot002_call(b).
+slot002_ok(b) :- slots_base(_, b), sym_of(b, "builtins.object").

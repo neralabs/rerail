@@ -1,0 +1,51 @@
+.policy "ruff-up008-super-call-with-parameters" revision 2
+.description "Call super() without arguments inside methods; passing the class and instance explicitly is redundant on Python 3."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP008 (pyupgrade): `super(C, self)` in a method, where `super()` means the same: the call is the
+// builtin super with exactly two positional arguments (keywords may follow), it runs directly in a function or
+// lambda F (not a comprehension), the second argument is F's first parameter, and the first names F's class:
+// the nearest class around F, by its full dotted path from the outermost class (`Outer.Inner`), or `__class__`.
+// `builtins.super(…)` works without arguments only where F has the implicit `__class__` cell, which CPython
+// creates when F (or a function nested in it) loads `super` or `__class__` and F does not bind `__class__`.
+//   class B(A):
+//       def f(self): super(B, self).f()            ← UP008 at `(B, self)`
+//       def g(self, o): super(B, o).f()            not reported: o is not the first parameter
+//       def h(self): [super(B, self) for _ in x]   not reported: runs in the comprehension
+//       def k(self): builtins.super(B, self)       not reported: no `__class__` cell
+#include "python/upgrade.rr"
+//   sym_at(e, q), run_scope(n, s, k), sig_param(f, p, nm, i, kind, ann, dflt), class_path(n, s)
+
+.violation UP008(at: node) code "UP008"
+    "Drop the arguments and call `super()`; inside a method it already uses the enclosing class and the method's first parameter."
+    suppress ruff "UP008"
+UP008(al) :- kind(c, "call"), field(c, "function", fn), sym_at(fn, "builtins.super"), field(c, "arguments", al),
+    pos_arg(al, 0, a), pos_arg(al, 1, b), !pos_arg(al, 2, _), run_scope(c, f, k), (k = "function" ; k = "lambda"),
+    sig_param(f, _, nm, 0, pk, _, _), (pk = "pos" ; pk = "posonly"), text(nm, x), kind(b, "identifier"), text(b, x),
+    names_class(a, f), (kind(fn, "identifier") ; class_cell(f)).
+// pos_arg(al, i, a): a is the i-th positional argument (keywords and `**` are not counted).
+.decl pos_arg(al: node, i: number, a: node)
+pos_arg(al, i, a) :- kind(al, "argument_list"), child(al, a, j), !kind(a, "keyword_argument"),
+    !kind(a, "dictionary_splat"), !kind(a, "comment"),
+    i = count : { child(al, o, j2), j2 < j, !kind(o, "keyword_argument"), !kind(o, "dictionary_splat"),
+        !kind(o, "comment") }.
+// names_class(a, f): a names the class around f: `__class__` when f does not rebind it, or the class path
+// (`Outer.Inner`) whose head is that outermost class, not a local of the same name (`C = B; super(C, self)`).
+.decl names_class(a: node, f: node)
+names_class(a, f) :- text(a, "__class__"), kind(a, "identifier"), run_scope(a, f, _), !local_class(f).
+names_class(a, f) :- class_path(f, p), text(a, p), (kind(a, "identifier") ; kind(a, "attribute")),
+    head_ref(a, h, x), look(h, x, s), binding(s, x, _, "class").
+// class_cell(f): CPython gives f a `__class__` cell.
+.decl class_cell(f: node)
+class_cell(f) :- cell_user(g, f), !local_class(f), !local_class(g).
+.decl cell_user(g: node, f: node)  // g is f, or a function nested in it, and loads `super` or `__class__`
+cell_user(g, g) :- ast_name(n, x), (x = "super" ; x = "__class__"), expr_ctx(n, "load"), run_scope(n, g, k),
+    (k = "function" ; k = "lambda").
+cell_user(g, f) :- cell_user(g, h), run_scope(h, f, k), k != "class", k != "module".
+// local_class(f): f binds `__class__` itself, by any binding or a bare annotation (`__class__: "Any"`).
+.decl local_class(f: node)
+local_class(f) :- bound_in(f, "__class__").
+local_class(f) :- kind(a, "assignment"), field(a, "left", l), text(l, "__class__"), field(a, "type", _),
+    run_scope(a, f, _).

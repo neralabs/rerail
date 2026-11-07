@@ -38,7 +38,7 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
     match f {
         "cat" | "concat" => (vec![Some(Name); arity], Some(Name)),
         "flat_bin" => (vec![Some(Name), None, None], None),
-        "add" | "sub" | "mul" | "div" => (vec![Some(Int); arity], Some(Int)),
+        "add" | "sub" | "mul" | "div" | "max" | "min" => (vec![Some(Int); arity], Some(Int)),
         "strlen" => (vec![Some(Name)], Some(Int)),
         "to_string" => (vec![Some(Int)], Some(Name)),
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
@@ -415,7 +415,7 @@ impl Lowered {
     /// `nearest($n, $a, set)` read from the transducer's file-local FIX (O12, option a): each literal becomes
     /// the input atom `nearest_<set>($n, $a)`, which the run binds beside the base relations
     /// (`facts::vtab::syntax::with_nearest`). The relations the run must make (`nearest_<set>`, and the tree
-    /// axes' `inside_<set>` and `inside_rr_has_<set>`), each with its set's kind atoms.
+    /// axes' `rr_inside_<set>` and `rr_has_<set>`), each with its set's kind atoms.
     pub(in crate::code_rule_dsl) fn transduce_nearest(&mut self) -> Vec<(String, Vec<i64>)> {
         let prog = &mut self.program;
         let mut used = std::collections::BTreeSet::new();
@@ -424,7 +424,7 @@ impl Lowered {
                 if let Literal::Nearest { n, a, kindset } = literal {
                     used.insert(kindset.clone());
                     *literal = Literal::Atom(Atom {
-                        rel: format!("nearest_{kindset}"),
+                        rel: format!("{}{kindset}", crate::code_rule_dsl::logic::front::NEAREST),
                         args: vec![Term::Var(n.clone()), Term::Var(a.clone())],
                         neg: false,
                         gated: false,
@@ -433,15 +433,16 @@ impl Lowered {
             }
         }
         let mut sets = Vec::new();
-        // The tree axes (`inside_<set>`, `inside_rr_has_<set>`, decision 0036), made from the same sets.
-        for rel in prog.inputs.iter().filter(|r| r.starts_with(crate::code_rule_dsl::logic::front::AXIS)) {
-            let Some((set, _)) = crate::code_rule_dsl::logic::front::axis(rel) else { continue };
+        // The tree axes (`rr_inside_<set>` and `rr_has_<set>`, decision 0036), made from the same sets' nearest ancestors.
+        use crate::code_rule_dsl::logic::front::{AXIS, DESCENDANTS};
+        for rel in prog.inputs.iter().filter(|r| crate::code_rule_dsl::logic::front::is_axis(r)) {
+            let set = rel.strip_prefix(AXIS).or_else(|| rel.strip_prefix(DESCENDANTS)).expect("an axis");
             self.domains.insert(rel.clone(), vec![Domain::Node, Domain::Node]);
             let kinds = prog.kindsets.get(set).into_iter().flatten().filter_map(|k| k.parse::<i64>().ok()).collect();
             sets.push((rel.clone(), kinds));
         }
         for set in used {
-            let rel = format!("nearest_{set}");
+            let rel = format!("{}{set}", crate::code_rule_dsl::logic::front::NEAREST);
             prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
             if !prog.inputs.contains(&rel) {
                 prog.inputs.push(rel.clone());

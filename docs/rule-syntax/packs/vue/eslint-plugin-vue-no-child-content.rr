@@ -1,0 +1,27 @@
+.policy "eslint-plugin-vue-no-child-content" revision 2
+.description "Don't put child content inside a Vue element that has v-html or v-text; the directive overwrites it."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/template.rr"
+//   vdir(e, a, d, arg), vel_closed(e)
+
+// eslint-plugin-vue's no-child-content: an element with v-html or v-text (option additionalDirectives adds more,
+// by name without `v-`) and an end tag, whose children are more than blank text. Comments count as content. Blank
+// text is what String.prototype.trim removes once character references are decoded: `&nbsp;` and `&#32;` are
+// blank, `&#8203;` (zero-width space) and `&amp;` are not. ESLint reports the children's range, which starts right
+// after the start tag; so does the finding (x: the first character after the start tag's `>`, quoted
+// attribute values skipped).
+//   <div v-html="html">fallback</div>            reported
+//   <div v-text="msg">  </div>   <div v-html="x" />        not reported
+.violation child_content(at: span, d: symbol) code "vue/no-child-content"
+    "Child content is disallowed because it will be overwritten by the v-{d} directive."
+    suppress eslint "vue/no-child-content"
+child_content(x, d) :- vdir(e, _, d, _), overwrites(d), vel_closed(e), child(e, c, _), content(c),
+    match("<(?:[^\"'>]|\"[^\"]*\"|'[^']*')*>(?<x>[\\s\\S])[\\s\\S]*", e).
+.decl overwrites(d: symbol)
+overwrites("html"). overwrites("text").
+overwrites(d) :- option_item("additionalDirectives", _, d).
+.decl content(c: node)
+content(c) :- kind(c, k), k != "start_tag", k != "end_tag", k != "text".
+content(c) :- kind(c, "text"), text(c, s), !match("(?:\\s|&(?:nbsp|Tab|NewLine|ensp|emsp|emsp13|emsp14|numsp|puncsp|thinsp|ThinSpace|hairsp|VeryThinSpace|MediumSpace|ThickSpace|NonBreakingSpace|ZeroWidthNoBreakSpace);|&nbsp|&#0*(?:9|1[0-3]|32|160|5760|819[2-9]|820[0-2]|823[23]|8239|8287|12288|65279);?|&#[xX]0*(?:[9a-dA-D]|20|[aA]0|1680|200[0-9aA]|202[89fF]|205[fF]|3000|[fF][eE][fF][fF]);?)*", s).

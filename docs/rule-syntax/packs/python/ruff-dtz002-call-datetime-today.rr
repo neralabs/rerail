@@ -1,0 +1,17 @@
+.policy "ruff-dtz002-call-datetime-today" revision 2
+.description "Use datetime.now with a timezone instead of datetime.today; today returns a naive local time with no zone information."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff DTZ002 (flake8-datetimez): `datetime.datetime.today()`, which returns the naive local time. A call
+// followed by `.astimezone()` (through any `.replace(…)`) is aware and not reported. Reported at the call. Only
+// in a file that imports datetime.
+//   datetime.datetime.today()                    ← DTZ002
+//   datetime.datetime.today().astimezone()       not reported
+#include "python/datetime.rr"
+
+.violation DTZ002(at: node) code "DTZ002"
+    "Replace `today()` with `now(tz=...)`, passing the zone you mean (`datetime.timezone.utc` for UTC) so the result is aware. Keep `today()` only where a naive local time is required."
+    suppress ruff "DTZ002"
+DTZ002(c) :- dt_call(c, "datetime.datetime.today"), !then_astimezone(c).

@@ -11,3 +11,5 @@ pub(crate) mod declare;
 pub(crate) mod deps;
 pub(crate) mod rounds;
 pub(crate) mod terms;
+#[cfg(test)]
+mod oracle_tests;

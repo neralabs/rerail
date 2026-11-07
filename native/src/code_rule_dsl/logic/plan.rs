@@ -67,6 +67,7 @@ impl From<super::front::Error> for Error {
 type Result<T> = std::result::Result<T, Error>;
 
 pub(in crate::code_rule_dsl) mod corpus;
+mod demand;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -447,9 +448,19 @@ pub(in crate::code_rule_dsl) struct Model {
     /// View over one input atom → (input, the input column behind each view column).
     view_src: HashMap<String, (String, Vec<Option<String>>)>,
     inputs: Inputs,
+    /// The relations the program's rules derive. Their columns are `c0`, `c1`, … even where an input of the
+    /// same name has named columns: `rr::lower`'s projections (`kind`, `docof` over nodes) are rules.
+    derived: HashSet<String>,
 }
 
-/// T's input column names; a derived relation's columns are `c0`, `c1`, ….
+impl Model {
+    /// Column `col` of `rel` in SQL: an input's name, or `c{col}` for a relation the program derives.
+    fn col(&self, rel: &str, col: usize) -> String {
+        if self.derived.contains(rel) { format!("c{col}") } else { sql_col(rel, col) }
+    }
+}
+
+/// An input's column names (`sql::select::input_columns`); any other relation's columns are `c0`, `c1`, ….
 pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
@@ -464,14 +475,16 @@ fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
     match l {
         Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
         Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some(),
-        Literal::Agg { var, op, over, atom } => {
+        Literal::Agg { var, over, atom, op } => {
             let mut need = atom.vars();
             need.remove(var);
             if let Some(o) = over {
                 need.remove(o);
             }
             if let AggOp::Join { by, .. } = op {
-                by.iter().for_each(|k| _ = need.remove(k));
+                by.iter().for_each(|b| {
+                    need.remove(b);
+                });
             }
             need.is_subset(bound)
         }
@@ -552,7 +565,15 @@ pub(in crate::code_rule_dsl) type Plan = (Vec<Step>, f64, f64);
 impl Model {
     fn card(&self, rel: &str) -> f64 {
         // `node` is the corpus's nodes, except where a batch binds it: then its estimate is the batch's.
-        if rel == "node" && !self.inputs.batch.contains_key(rel) { self.stats.nodes } else { self.stats.card.get(rel).copied().unwrap_or(1000.0) }
+        if rel == "node" && !self.inputs.batch.contains_key(rel) {
+            self.stats.nodes
+        } else if rel.starts_with(super::strings::RELATION) {
+            // A text test empty in the chunk that plans is not empty in the chunks that reuse its plans (decision
+            // 0038): at least one string.
+            self.stats.card.get(rel).copied().unwrap_or(1000.0).max(1.0)
+        } else {
+            self.stats.card.get(rel).copied().unwrap_or(1000.0)
+        }
     }
 
     fn ndv_or_1(&self, rel: &str, c: usize) -> f64 {
@@ -680,7 +701,7 @@ impl Model {
                 let k = constant(&a.args[c]);
                 if let Some(k) = &k
                     && prog.inputs.contains(&a.rel)
-                    && let Some(f) = stats.const_freq(&a.rel, &sql_col(&a.rel, c), k)
+                    && let Some(f) = stats.const_freq(&a.rel, &self.col(&a.rel, c), k)
                 {
                     return f as f64;
                 }
@@ -706,6 +727,25 @@ impl Model {
             // Every column bound: a membership test, at most one row of a set.
             if cols.len() == a.args.len() && !prog.lattice.contains_key(&a.rel) {
                 rows = rows.min(1.0);
+                // A text test (decision 0037) probed by a string an input binds keeps the share of that column's
+                // distinct strings it holds: both are measured per chunk. Priced at 1, a test of every identifier's
+                // text looked free after the scan, and the planner never started from the test (notes T10, P6).
+                if a.rel.starts_with(super::strings::RELATION)
+                    && let [Term::Var(v)] = a.args.as_slice()
+                {
+                    let domain = body
+                        .iter()
+                        .filter_map(|l| match l {
+                            Literal::Atom(b) if !b.neg && b.rel != a.rel && prog.inputs.contains(&b.rel) => {
+                                b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).map(|c| self.ndv_or_1(&b.rel, c))
+                            }
+                            _ => None,
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    if domain.is_finite() {
+                        rows = rows.min(self.card(&a.rel) / domain);
+                    }
+                }
             }
             rows.max(0.01)
         };
@@ -750,7 +790,7 @@ impl Model {
                 if rcols.len() != 1 || bcols.len() != 1 {
                     continue;
                 }
-                let (rname, bname) = (sql_col(&a.rel, rcols[0]), sql_col(&a.rel, bcols[0]));
+                let (rname, bname) = (self.col(&a.rel, rcols[0]), self.col(&a.rel, bcols[0]));
                 if !stats.indexes.get(&a.rel).into_iter().flatten().any(|ix| ix.len() >= 2 && ix[0] == bname && ix[1] == rname) {
                     continue;
                 }
@@ -1114,7 +1154,7 @@ impl Model {
                 let cols = |a: &Atom, bound: &BTreeSet<String>| -> Vec<String> {
                     (0..a.args.len())
                         .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
-                        .map(|c| sql_col(&a.rel, c))
+                        .map(|c| self.col(&a.rel, c))
                         .collect()
                 };
                 let source = |rel: &str| -> String {
@@ -1180,7 +1220,7 @@ impl Model {
         let mut rows = base;
         for (c, t) in a.args.iter().enumerate() {
             if let Some(k) = constant(t) {
-                rows *= self.stats.const_freq(&a.rel, &sql_col(&a.rel, c), &k).unwrap_or(0) as f64 / base.max(1.0);
+                rows *= self.stats.const_freq(&a.rel, &self.col(&a.rel, c), &k).unwrap_or(0) as f64 / base.max(1.0);
             }
         }
         let card = rows.round_ties_even().max(1.0);
@@ -1210,6 +1250,7 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
 
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
 fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
+    let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut stats = Stats::new(db, prog, &inputs)?;
     let mut ndv = HashMap::new();
     for (rel, (_, rows)) in &inputs.batch {
@@ -1255,7 +1296,7 @@ fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
         for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
             stats.indexes.insert(rel.clone(), vtab_indexes(rel));
         }
-        return Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs });
+        return Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived });
     }
     for rel in &prog.inputs {
         let mut st = db.prepare(&format!("PRAGMA f.table_info({rel})"))?;
@@ -1276,7 +1317,7 @@ fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
         }
         stats.indexes.insert(rel.clone(), indexes);
     }
-    Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs })
+    Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived })
 }
 
 /// T's facts file's indexes, which the base-relation vtabs' lookups mirror.
@@ -1286,6 +1327,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" => &[&["n"], &["s", "n"]],
+        // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" => &[&["n"], &["v", "n"]],
         "value_type_of" => &[&["n"], &["t", "n"]],
         "value_type" => &[&["v"], &["t", "v"]],
@@ -1298,18 +1340,24 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "cpython_unparse" | "cpython_ast_dump" => &[&["n"], &["s", "n"]],
         "dump_sha256" => &[&["n"], &["h", "n"]],
         "body_sha256" | "signature_sha256" => &[&["f"], &["h", "f"]],
-        "intval" | "op" | "tape" | "line" | "end_line" | "col" | "reference_open" => &[&["n"]],
+        "tree_digest" => &[&["n"], &["s", "n"]],
+        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "reference_open" => &[&["n"]],
+        "first_token" | "last_token" => &[&["n"]],
+        "token_before" | "token_after" => &[&["x"]],
+        "next_sibling" => &[&["a"], &["b"]],
+        "str_part" => &[&["lit"]],
         "reference_edge" => &[&["src"], &["dst"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
+        // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
+        "within" => &[&["n"], &["a"]],
+        "span_within" => &[&["inner"], &["outer"]],
         "doc" | "pkg" | "syntax_error" | "source" | "line_count" => &[&["d"]],
         "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
-        "rr_docof" => &[&["n"], &["d"]],
         "op_at" | "prev_token" => &[&["n"], &["s", "n"]],
         "token" => &[&["p", "i"], &["start"]],
-        "visit_index" => &[&["n"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
-        rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
+        rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &[&["n"], &["a"]],
         // A text test's symbols (decision 0037, `logic::strings::as_relations`).
         rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
         // A `match_all` regex's matches, by span and by match (`facts::vtab::syntax::Extra`).
@@ -1419,6 +1467,9 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 ("sub", [x, y]) => bin(Op::Subtract, x.clone(), y.clone()),
                 ("mul", [x, y]) => bin(Op::Multiply, x.clone(), y.clone()),
                 ("div", [x, y]) => bin(Op::Divide, x.clone(), y.clone()),
+                // Soufflé's `max(a, b)` and `min(a, b)`: SQL's scalar `max` and `min`.
+                ("max", [x, y]) => call("max", vec![x.clone(), y.clone()]),
+                ("min", [x, y]) => call("min", vec![x.clone(), y.clone()]),
                 // `.rr`'s string functions (Soufflé's): `substr` counts from 0.
                 ("strlen", [x]) => length(&text_of(atoms, x)),
                 ("concat", [x, y]) => symbol_of(atoms, bin(Op::Concatenate, text_of(atoms, x), text_of(atoms, y))),
@@ -1428,8 +1479,9 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
                 // `@dot` (`core.rr`): `a.b`, and `"" . b` is `b`.
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
+                // `@dot("", y)` is `y` (`core.rr`).
                 ("cat", [x, y]) => Expr::Case {
-                    branches: vec![(eq(x.clone(), string("")), y.clone())],
+                    branches: vec![(bin(Op::Equal, x.clone(), string("")), y.clone())],
                     fallback: Box::new(bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone())),
                 },
                 // core.rr's functors whose meaning is W's (`register_functors`), ahead of `strings::functions`' below.
@@ -1577,7 +1629,7 @@ impl Model {
                 .iter()
                 .enumerate()
                 .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if skip.contains(&v.as_str())))
-                .map(|(c, t)| Ok(eq(col(al, &sql_col(&a.rel, c)), sql_term(t, env, atoms)?)))
+                .map(|(c, t)| Ok(eq(col(al, &self.col(&a.rel, c)), sql_term(t, env, atoms)?)))
                 .collect()
         };
         let subquery = |what: Expr, relation: Relation, al: String, predicates: Vec<Expr>| Select {
@@ -1614,13 +1666,13 @@ impl Model {
                         frm.push((range, vec![eq(col(&ra, "d"), sql_term(&dv, &env, atoms)?)]));
                         let rc = l.args.iter().position(|t| matches!(t, Term::Var(x) if *x == v)).expect("the range column");
                         conds.push(Expr::Between {
-                            input: Box::new(col(&al, &sql_col(&l.rel, rc))),
+                            input: Box::new(col(&al, &self.col(&l.rel, rc))),
                             low: Box::new(col(&ra, "lo")),
                             high: Box::new(col(&ra, "hi")),
                         });
                     }
                     for (c, t) in l.args.iter().enumerate() {
-                        let column = col(&al, &sql_col(&l.rel, c));
+                        let column = col(&al, &self.col(&l.rel, c));
                         match t {
                             Term::Var(v) => match env.get(v) {
                                 Some(e) => conds.push(eq(column, e.clone())),
@@ -1709,27 +1761,35 @@ impl Model {
                 }
                 Literal::Agg { var, op, over, atom } => {
                     let al = a_name();
-                    // The aggregate's own variables are read from its rows, not tested: the aggregated one, and
-                    // join's order where the rule has not bound it.
-                    let mut own: Vec<&str> = over.as_deref().into_iter().collect();
+                    // The aggregated variable and a `join`'s ordering ones are the body's own (where the rule does not
+                    // bind them): not correlated.
+                    let mut local: Vec<&str> = over.iter().map(String::as_str).collect();
                     if let AggOp::Join { by, .. } = op {
-                        own.extend(by.iter().map(String::as_str).filter(|k| !env.contains_key(*k)));
+                        local.extend(by.iter().map(String::as_str).filter(|b| !env.contains_key(*b)));
                     }
-                    let conds = neg_conds(atom, &al, &env, &own)?;
-                    // A variable's column in the aggregate's rows, as text where it is a symbol (`sym_text` of its
-                    // atom), so that join orders and writes symbols by their text.
-                    let column = |v: &str, text: bool| {
+                    let conds = neg_conds(atom, &al, &env, &local)?;
+                    let column = |v: &str| {
                         let c = atom.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("the aggregated column");
-                        let e = col(&al, &sql_col(&atom.rel, c));
-                        if text && prog.decls.get(&atom.rel).is_some_and(|d| d[c].1 == "sym") { text_of(atoms, &e) } else { e }
+                        let symbol = prog.decls.get(&atom.rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
+                        (col(&al, &self.col(&atom.rel, c)), symbol)
                     };
                     let what = match (op, over) {
                         (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
-                        (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o, false)]),
-                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(o, false)]), integer(0)]),
+                        (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o).0]),
+                        // Soufflé's sum is 0 over no rows.
+                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(o).0]), integer(0)]),
+                        // `rr_join(sep, value, key, …)` (`register_functors`) orders and joins the distinct rows' text;
+                        // symbols in as text.
                         (AggOp::Join { by, sep }, Some(o)) => {
-                            let args = [string(sep), column(o, true)].into_iter().chain(by.iter().map(|k| column(k, true))).collect();
-                            symbol_of(atoms, call("rr_join", args))
+                            let text = |(e, symbol): (Expr, bool)| if symbol { self.inputs.text_of(&e) } else { e };
+                            let mut args = vec![string(sep), text(column(o))];
+                            for b in by {
+                                args.push(match env.get(b) {
+                                    Some(e) => e.clone(),
+                                    None => text(column(b)),
+                                });
+                            }
+                            self.inputs.symbol_of(call("coalesce", vec![call("rr_join", args), string("")]))
                         }
                     };
                     let query = Expr::Scalar(Box::new(subquery(what, self.relation(prog, &atom.rel, false), al, conds)));
@@ -2367,7 +2427,7 @@ impl Run<'_> {
                     a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && vars.iter().collect::<HashSet<_>>().len() == vars.len()
                 }))
             });
-            let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => sql_col(rel, c) };
+            let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => self.model.col(rel, c) };
             let cols = keep.iter().map(|&c| sql_col(&l.rel, c)).collect::<Vec<_>>().join(", ");
             let cols = if cols.is_empty() { "1".to_owned() } else { cols };
             let mut wheres = Vec::new();
@@ -2470,7 +2530,12 @@ impl Run<'_> {
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
         self.model.stats.solving = if reads { scc.clone() } else { BTreeSet::new() };
-        let out = self.native_stratum_(scc, rules);
+        // The relations run natively so far, lent to the stratum (it reads them, and adds its own only at the end):
+        // cloning them per stratum was quadratic in strata (3% of a combined run's main thread).
+        let native_rels = std::mem::take(&mut self.native_rels);
+        let out = self.native_stratum_(scc, rules, &native_rels);
+        let added = std::mem::replace(&mut self.native_rels, native_rels);
+        self.native_rels.extend(added);
         self.model.stats.solving.clear();
         out
     }
@@ -2480,7 +2545,7 @@ impl Run<'_> {
     /// replanned from live counts between chunks of waves (T's `native_stratum_`). Lower strata it reads natively
     /// come from the native store (`r:`), others from their tables or the facts. Nothing is written back: the
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
-    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
+    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule], native_rels: &BTreeSet<String>) -> Result<bool> {
         let prog = self.prog;
         self.why_not = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
@@ -2499,7 +2564,6 @@ impl Run<'_> {
         // A stratum's relations were made empty by `run` unless the program states facts of them.
         lines.extend(rels.iter().map(|r| format!("rel {r} {}{}", types(r), if prog.facts.get(*r).is_none_or(|f| f.is_empty()) { " empty" } else { "" })));
         lines.push("nowrite".to_owned());
-        let native_rels = self.native_rels.clone();
         let mut est: HashMap<&str, f64> = HashMap::new();
         let mut orders = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
@@ -3074,8 +3138,8 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
 /// with the planner's statistics in the attached schema `stats`. `db` is a connection to the content store: the
-/// symbols the run makes are appended to its `atoms`, and derived relations are `temp` tables, dropped by the next
-/// run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
+/// symbols the run makes are the store's atoms (pending until a flush, decision 0049), and derived relations are
+/// `temp` tables, dropped by the next run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register_symbols(db)?;
@@ -3130,12 +3194,10 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     super::native::register(db)?;
     super::native::register_symbols(db)?;
     super::native::forget_inputs(db);
-    super::native::hold_symbols(db, true)?;
     let out = run(&lowered.program, db, inputs, Some(lowered));
-    // Flushed while still held: the run's symbols are the table's next rows.
-    let flushed = super::native::flush_symbols(db);
-    super::native::hold_symbols(db, false)?;
-    flushed?;
+    // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
+    // write transaction (decision 0049).
+    super::native::flush_symbols(db)?;
     out
 }
 
@@ -3184,7 +3246,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         views.push((rel.to_owned(), query));
         model.view_stats(rel, h, a);
         let src = first_columns(a);
-        let cols = h.args.iter().map(|t| if let Term::Var(v) = t { src.get(v.as_str()).map(|&c| sql_col(&a.rel, c)) } else { None }).collect();
+        let cols = h.args.iter().map(|t| if let Term::Var(v) = t { src.get(v.as_str()).map(|&c| model.col(&a.rel, c)) } else { None }).collect();
         model.view_src.insert(rel.to_owned(), (a.rel.clone(), cols));
         if let ([Term::Var(h0), Term::Var(h1)], [Term::Var(d), Term::Var(n), rest @ ..]) = (h.args.as_slice(), a.args.as_slice())
             && a.rel == "node"
@@ -3328,6 +3390,20 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(setup);
     let planning = super::profile::span(|| "statistics and plan".into());
     let model = make_plan(prog, db, inputs)?;
+    // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
+    // 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
+    let split;
+    let corpus = PLANS.with(|p| p.borrow().is_some());
+    let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
+        Some((p, demanded)) => {
+            super::profile::decision("demand (decision 0048)", || {
+                format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
+            });
+            split = p;
+            &split
+        }
+        None => prog,
+    };
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {

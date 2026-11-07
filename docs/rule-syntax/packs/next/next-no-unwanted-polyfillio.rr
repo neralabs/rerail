@@ -1,0 +1,35 @@
+.policy "next-no-unwanted-polyfillio" revision 4
+.description "Don't load polyfills from polyfill.io for features Next.js already polyfills; they duplicate code and add page weight."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-unwanted-polyfillio. A <script>, or the next/script component, whose src is a
+// Polyfill.io URL asking for features Next.js already ships:
+//   <script src="https://polyfill.io/v3/polyfill.min.js?features=WeakSet%2CPromise" />     reported
+//   <script src="https://polyfill.io/v3/polyfill.min.js?features=IntersectionObserver" />  fine
+// The table (hosts and NEXT_POLYFILLED_FEATURES) is generated from the JSON; see gen-polyfillio.py.
+
+#include "tsx/next.rr"
+#include "../packs/next/next-no-unwanted-polyfillio.facts.rr"   // polyfill_host, polyfilled
+
+.violation polyfill(at: node, fs: symbol) code "@next/next/no-unwanted-polyfillio"
+    "No duplicate polyfills from Polyfill.io are allowed. {fs} already shipped with Next.js. See: https://nextjs.org/docs/messages/no-unwanted-polyfillio"
+    suppress eslint "@next/next/no-unwanted-polyfillio"
+    suppress oxlint "no-unwanted-polyfillio"
+    suppress biome "lint/performance/noUnwantedPolyfillio"
+polyfill(o, cat(fs, verb)) :- features(o, l), k = count : { unwanted(l, _) }, k > 0,
+    fs = join f by f sep ", " : { unwanted(l, f) }, (k = 1, verb = " is" ; k > 1, verb = " are").
+
+// features(o, l): o's src (a plain string) is a Polyfill.io URL; l is its features parameter, decoded, between
+// commas: ",WeakSet,Promise,". Like URLSearchParams.get, the first features= counts: pre is the URL up to it.
+.decl features(o: node, l: symbol)
+features(o, cat(cat(",", @replace_all(@replace_all(f, "%2[Cc]", ","), "%40", "@")), ",")) :- script_tag(o),
+    attr(o, "src", a), child(a, s, 1), kind(s, "string"), str(s, v), polyfill_host(h), prefix(h, v),
+    match("[^?#]*\\?(?:[^&#]*&)*features=[\\s\\S]*", v), pre = @replace_all(v, "[?&]features=[\\s\\S]*", ""),
+    f = @replace_all(@slice(v, strlen(pre) + 10, strlen(v)), "[&#][\\s\\S]*", "").
+.decl unwanted(l: symbol, f: symbol)
+unwanted(l, f) :- features(_, l), polyfilled(f), contains(cat(cat(",", f), ","), l).
+// script_tag(o): <script>, or the name next/script's first specifier binds.
+.decl script_tag(o: node)
+script_tag(o) :- tag_of(o, "script").
+script_tag(o) :- tag_of(o, x), docof(o, d), first_import(d, "next/script", x).

@@ -241,7 +241,7 @@ impl fmt::Display for Literal {
             Literal::Cmp { l, op, r } => write!(f, "{l} {op} {r}"),
             Literal::Agg { var, op: AggOp::Count, atom, .. } => write!(f, "${var} = count {{ {atom} }}"),
             Literal::Agg { var, op: AggOp::Join { by, sep }, over, atom } => {
-                let by: Vec<String> = by.iter().map(|k| format!("${k}")).collect();
+                let by: Vec<String> = by.iter().map(|b| format!("${b}")).collect();
                 let sep = serde_json::to_string(sep).expect("a string serializes");
                 write!(f, "${var} = join ${} by ({}) sep {sep} : {{ {atom} }}", over.as_deref().unwrap_or_default(), by.join(", "))
             }
@@ -479,9 +479,9 @@ impl Parser<'_> {
     fn atom(&mut self, neg: bool) -> Result<Atom, Error> {
         let rel = self.id()?;
         self.p("(")?;
-        // Tree axes (decision 0036): `inside($n, $a, set)`, $a a strict ancestor of $n whose kind is in the set, and
-        // `has($a, $n, set)`, the same pairs read from the ancestor. Both are the input relation `inside_<set>(n, a)`,
-        // which the transducer makes (`Lowered::transduce_nearest`).
+        // Tree axes (decision 0036): `inside($n, $a, set)`, $a a strict ancestor of $n whose kind is in the set, the
+        // input relation `rr_inside_<set>(n, a)`; and `has($a, $n, set)`, $n a strict descendant of $a whose kind is
+        // in the set, `rr_has_<set>(n, a)`. The transducer makes both (`Lowered::transduce_nearest`).
         if (rel == "inside" || rel == "has") && matches!(self.peek_at(4), Tok::Id(_)) {
             let x = self.term()?;
             self.p(",")?;
@@ -489,8 +489,8 @@ impl Parser<'_> {
             self.p(",")?;
             let set = self.id()?;
             self.p(")")?;
-            let args = if rel == "inside" { vec![x, y] } else { vec![y, x] };
-            return Ok(Atom { rel: format!("{AXIS}{set}"), args, neg, gated: false });
+            let (axis, args) = if rel == "inside" { (AXIS, vec![x, y]) } else { (DESCENDANTS, vec![y, x]) };
+            return Ok(Atom { rel: format!("{axis}{set}"), args, neg, gated: false });
         }
         let args = self.list(Self::term)?;
         self.p(")")?;
@@ -733,7 +733,7 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
         }
     }
     // The tree axes' relations are inputs, made by the transducer.
-    let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).filter(|r| r.starts_with(AXIS)).collect();
+    let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).filter(|r| is_axis(r)).collect();
     for rel in axes {
         if !prog.decls.contains_key(&rel) {
             prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
@@ -748,18 +748,35 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
     Ok(prog)
 }
 
-/// The prefix of a tree axis's relation: `inside_<set>(n, a)` (decision 0036).
-pub(in crate::code_rule_dsl) const AXIS: &str = "inside_";
+/// The prefix of the relations the engine names itself (helpers, axes, places): a rule file may not declare one
+/// (`rr::parse_file`), so a rule's relation never collides with them.
+pub(in crate::code_rule_dsl) const RESERVED: &str = "rr_";
 
-/// The prefix of the descendant axis's relation, under `AXIS` (so it is read as a tree axis everywhere):
-/// `inside_rr_has_<set>(n, a)`, n of a kind in the set and strictly below a, which is `has(a, n, set)` (decision
-/// 0036; `rr_` names are the lowering's own).
-pub(in crate::code_rule_dsl) const HAS: &str = "inside_rr_has_";
+/// The prefix of a tree axis's relation: `rr_inside_<set>(n, a)`, a an ancestor of n whose kind is in the set
+/// (decision 0036).
+pub(in crate::code_rule_dsl) const AXIS: &str = "rr_inside_";
 
-/// A tree axis relation's set, and whether it is `has`'s (the set tested on its first column, the descendant)
-/// rather than `inside`'s (on its second, the ancestor).
+/// The prefix of the descendant axis's relation: `rr_has_<set>(n, a)`, n of a kind in the set and a any strict
+/// ancestor of n (`core.rr`'s `has(a, n, set)`: the set tests the descendant).
+pub(in crate::code_rule_dsl) const DESCENDANTS: &str = "rr_has_";
+
+/// The prefix of a `nearest(n, a, set)` literal's relation: `rr_nearest_<set>(n, a)` (`plan::lower`).
+pub(in crate::code_rule_dsl) const NEAREST: &str = "rr_nearest_";
+
+/// Whether `rel` is a tree axis's relation, which the transducer makes: `(n, a)` rows.
+pub(in crate::code_rule_dsl) fn is_axis(rel: &str) -> bool {
+    rel.starts_with(AXIS) || rel.starts_with(DESCENDANTS)
+}
+
+/// Whether the transducer makes `rel`: a tree axis's relation or a `nearest` one, `(n, a)` rows.
+pub(in crate::code_rule_dsl) fn is_transduced(rel: &str) -> bool {
+    is_axis(rel) || rel.starts_with(NEAREST)
+}
+
+/// A tree axis relation's set, and whether it is `has`'s (`DESCENDANTS`: the set tested on its first column, the
+/// descendant) rather than `inside`'s (`AXIS`: on its second, the ancestor).
 pub(in crate::code_rule_dsl) fn axis(rel: &str) -> Option<(&str, bool)> {
-    rel.strip_prefix(HAS).map(|set| (set, true)).or_else(|| rel.strip_prefix(AXIS).map(|set| (set, false)))
+    rel.strip_prefix(DESCENDANTS).map(|set| (set, true)).or_else(|| rel.strip_prefix(AXIS).map(|set| (set, false)))
 }
 
 /// A kind set's one member meaning every kind of the dialect: core.rr's `within(n, a)` is the tree axis over it

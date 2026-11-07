@@ -1,0 +1,18 @@
+.policy "ruff-pyi008-unrecognized-platform-name" revision 2
+.description "Compare sys.platform only against linux, win32, cygwin or darwin in stub files; other names are likely typos that type checkers don't recognize."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI008 (flake8-pyi), stubs only: an `if` test `sys.platform == "name"` (or `!=`) with a name type
+// checkers do not know: only linux, win32, cygwin and darwin. Reported at the string. The `if` test is checked,
+// or each operand of its top-level `and`/`or`, with sys.platform on the left.
+//   if sys.platform == "linus":       ← PYI008
+#include "python/typing.rr"
+
+.violation PYI008(at: node, x: symbol) code "PYI008" "Compare `sys.platform` against `linux`, `win32`, `cygwin` or `darwin`; type checkers don't recognize other names, so this is likely a typo. Leave it if the other name is deliberate."
+    suppress ruff "PYI008"
+PYI008(r, x) :- stub_test(c), cmp(c, o, l0, r0), (o = "==" ; o = "!="), unparen(l0, l), sys_attr(l, "platform"),
+    unparen(r0, r), plain_str(r, x), !platform(x).
+.decl platform(x: symbol)
+platform("linux"). platform("win32"). platform("cygwin"). platform("darwin").

@@ -1,0 +1,17 @@
+.policy "clippy-needless-else" revision 2
+.description "Remove empty else blocks, with no code or comment, from Rust if statements."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax.rr"
+//   has_comment(n)   a comment among n's children
+
+// Clippy's needless_else (style): an `else {}` with nothing in it, not even a comment.
+//   if b { f(); } else {}                      reported at `else`
+//   if b { f(); } else { /* keep */ }   if b { f(); } else /* keep */ {}   let _ = if b { 1 } else { 2 };
+//                                              not reported
+// Clippy skips code from macro expansions; a macro_rules! body is a token tree here, so it is never read.
+.violation needless_else(at: node) code "needless_else" "Remove this empty else block."
+    suppress clippy "clippy::needless_else", "clippy::all", "clippy::style", "warnings"
+needless_else(e) :- kind(e, "else_clause"), child(e, b, _), kind(b, "block"), !child(b, _, _), !has_comment(e).

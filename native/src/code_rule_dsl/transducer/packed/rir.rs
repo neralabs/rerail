@@ -271,6 +271,18 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         };
         let _ = writeln!(out, "  predicate {at} {kind} s{source}");
     }
+    for (at, block) in program.block_programs.iter().enumerate() {
+        let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        for (t, table) in block.tables.iter().enumerate() {
+            let _ = writeln!(out, "  block {at} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
+        }
+        for (value, op) in block.ops.iter().enumerate() {
+            let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
+        }
+        for value in &block.outputs {
+            let _ = writeln!(out, "  block {at} output %{value}");
+        }
+    }
     for (at, predicate) in program.capture_predicates.iter().enumerate() {
         let body = match predicate {
             CapturePredicate::Equal { left, right, negated, any } => {
@@ -577,6 +589,7 @@ struct Parts {
     capture_predicates: Vec<CapturePredicate>,
     directives: Vec<(String, u16, u16, Option<u16>, [i32; 4])>,
     pattern: Option<PackedPattern>,
+    block_programs: Vec<block::BlockProgram>,
     words: Vec<u32>,
 }
 
@@ -657,6 +670,54 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 other => return Err(format!("an unknown directive `{other}`")),
             };
             parts.directives.push(directive);
+        }
+        "block" => {
+            // `block N %i = op …` or `block N output %v`: program N's rows in order, a new
+            // program at the next index.
+            let at: usize = line.number("")?;
+            if at == parts.block_programs.len() {
+                parts.block_programs.push(block::BlockProgram::default());
+            } else if at + 1 != parts.block_programs.len() {
+                return Err(format!("block {at} out of order (expected {})", parts.block_programs.len()));
+            }
+            let program = parts.block_programs.last_mut().expect("pushed");
+            let first = line.word()?;
+            if first == "output" {
+                program.outputs.push(line.number("%")?);
+            } else if first == "table" {
+                let t: usize = line.number("")?;
+                if t != program.tables.len() || !program.ops.is_empty() {
+                    return Err(format!("block {at} table {t} out of order (expected {}, before the operations)", program.tables.len()));
+                }
+                let nibbles = |line: &mut Line<'_>, key: &str| -> Result<[u8; 16], String> {
+                    let word = line.word()?;
+                    let hex = word.strip_prefix(key).ok_or_else(|| format!("expected `{key}…`, found `{word}`"))?;
+                    let mut out = [0u8; 16];
+                    if hex.len() != 32 {
+                        return Err(format!("a table half is 16 bytes of hex, not `{hex}`"));
+                    }
+                    for (i, o) in out.iter_mut().enumerate() {
+                        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("bad hex `{hex}`"))?;
+                    }
+                    Ok(out)
+                };
+                let lo = nibbles(line, "lo=")?;
+                let hi = nibbles(line, "hi=")?;
+                program.tables.push(block::ClassTable { lo, hi });
+            } else {
+                let value: usize = first.strip_prefix('%').and_then(|v| v.parse().ok()).ok_or_else(|| format!("a bad value `{first}`"))?;
+                if value != program.ops.len() || !program.outputs.is_empty() {
+                    return Err(format!("block {at} value %{value} out of order (expected %{})", program.ops.len()));
+                }
+                if line.word()? != "=" {
+                    return Err("a block row is `%i = op …`".into());
+                }
+                let mut words = Vec::new();
+                while line.tokens.peek().is_some() {
+                    words.push(line.word()?);
+                }
+                program.ops.push(block::BlockOp::parse(&words)?);
+            }
         }
         "pattern" => {
             if parts.pattern.is_some() {
@@ -822,6 +883,7 @@ fn build(parts: Parts) -> Result<Program, String> {
         tree_sitter_query: parts.query,
         set_mode: parts.set_mode,
         ast_pattern: parts.pattern,
+        block_programs: parts.block_programs,
         digest: DigestMemo::default(),
     };
     program.validate().map_err(verifier)?;

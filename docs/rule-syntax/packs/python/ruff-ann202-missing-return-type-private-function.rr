@@ -1,0 +1,21 @@
+.policy "ruff-ann202-missing-return-type-private-function" revision 2
+.description "Add a return type annotation to private and nested functions so type checkers can verify what they return."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ANN202 (flake8-annotations): a private function or method with no return annotation. Private is Ruff's
+// visibility: a leading underscore (not a dunder method), a private class or module around it, a def nested in
+// a def, a module-level def left out of `__all__`, or a property's setter or deleter. Class, static and dunder
+// methods have their own codes; the implementation after an @overload is not checked. Ruff's option
+// suppress-none-returning is not supported (its default, false, is what this rule does).
+//   def _helper(): ...              ← ANN202
+//   def outer() -> None:
+//       def inner(): ...            ← ANN202: nested
+//   def __dunder__(): ...           ← ANN202: a module-level dunder is not a method
+#include "python/annotations.rr"
+
+.violation ANN202(at: node, name: symbol) code "ANN202"
+    "Add a return type annotation to `{name}` (for example `-> None` if it returns nothing)."
+    suppress ruff "ANN202"
+ANN202(nm, x) :- ann_missing_return(f, "ANN202"), field(f, "name", nm), text(nm, x).

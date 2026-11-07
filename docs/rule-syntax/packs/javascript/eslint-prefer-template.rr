@@ -1,0 +1,34 @@
+.policy "eslint-prefer-template" revision 5
+.description "Use template literals instead of building strings by joining string literals and other values with +."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-literals.rr"
+//   string_like; binop, estree_parent (tsx/eslint-a-expressions, tsx/eslint-a-common)
+
+// ESLint's prefer-template: a chain of `+` that joins a string literal (quoted or template) with anything that is
+// not one, reported once, at the outermost `+` of the chain. Parentheses do not end a chain.
+//   "Hello, " + name + "!"    `a` + b    (x + "px") + y           → reported
+//   "a" + "b"  (only literals: no-useless-concat's case)   a + b   f("a" + "b")      fine
+// A chain inside a call argument is its own chain:  "a" + f("b" + c)  reports both.
+// ESLint's autofix rewrites the chain as one template, re-escaping each literal; it is not reproduced here.
+// No options.
+.violation prefer_template(at: node) code "prefer-template" "Rewrite this + string concatenation as a single template literal."
+    suppress eslint "prefer-template"
+    suppress oxlint "prefer-template"
+    suppress biome "lint/style/useTemplate"
+prefer_template(t) :- concat_top(t), concat_leaf(t, s), string_like(s), concat_leaf(t, x), !string_like(x).
+
+// concat_top(t): a `+` whose ESTree parent is not a `+`.  concat_leaf(t, x): x is an operand in t's chain that is
+// not itself a `+`:   a + ("b" + c)   has leaves a, "b" and c.
+.decl concat(n: node)
+concat(n) :- binop(n, "+", _, _).
+.decl concat_top(t: node)
+concat_top(t) :- concat(t), !concat_parent(t).
+.decl concat_parent(n: node)
+concat_parent(n) :- concat(n), estree_parent(n, p), concat(p).
+.decl concat_in(t: node, e: node)
+concat_in(t, t) :- concat_top(t).
+concat_in(t, c) :- concat_in(t, e), binop(e, "+", l, r), (c = l ; c = r).
+.decl concat_leaf(t: node, x: node)
+concat_leaf(t, x) :- concat_in(t, x), !concat(x).

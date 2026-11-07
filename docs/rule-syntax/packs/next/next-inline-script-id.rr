@@ -1,0 +1,33 @@
+.policy "next-inline-script-id" revision 4
+.description "Give every next/script component with inline content an id; Next.js needs it to track and optimize the script."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's inline-script-id. Once next/script is imported (under the name of the import's first
+// specifier), an element of that name with inline content, children or dangerouslySetInnerHTML, needs an id:
+//   <Script>{`gtag('js', new Date())`}</Script>                   reported
+//   <Script id="ga" dangerouslySetInnerHTML={{ __html: s }} />      fine
+// Attributes inside a spread object literal count: <Script {...{ id: "ga" }}>…</Script> is fine. Any other
+// spread ({...props}) may hold an id, so the element is skipped.
+
+#include "tsx/next.rr"
+
+.violation inline_script(at: node) code "@next/next/inline-script-id"
+    "`next/script` components with inline content must specify an `id` attribute. See: https://nextjs.org/docs/messages/inline-script-id"
+    suppress eslint "@next/next/inline-script-id"
+    suppress oxlint "inline-script-id"
+    suppress biome "lint/correctness/useInlineScriptId"
+inline_script(e) :- opening(e, o), tag_of(o, x), docof(o, d), first_import(d, "next/script", x),
+    (inline_children(e) ; named(o, "dangerouslySetInnerHTML")), !named(o, "id"), !opaque_spread(o).
+
+// named(o, x): o has attribute x, directly or as a key of a spread object literal.
+.decl named(o: node, x: symbol)
+named(o, x) :- attr(o, x, _).
+named(o, x) :- spread_obj(o, ob), child(ob, p, _),
+    (kind(p, "pair"), field(p, "key", k), text(k, x) ; kind(p, "shorthand_property_identifier"), text(p, x)).
+.decl spread_obj(o: node, ob: node)  // {...{ … }} in o's attribute list
+spread_obj(o, ob) :- field(o, "attribute", a), kind(a, "jsx_expression"), child(a, s, 0), kind(s, "spread_element"),
+    child(s, ob, 0), kind(ob, "object").
+.decl opaque_spread(o: node)  // {...props}: the plugin cannot see its keys
+opaque_spread(o) :- field(o, "attribute", a), kind(a, "jsx_expression"), child(a, s, 0), kind(s, "spread_element"),
+    !spread_obj(o, _).

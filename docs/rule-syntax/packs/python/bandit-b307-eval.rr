@@ -1,0 +1,17 @@
+.policy "bandit-b307-eval" revision 3
+.description "Avoid eval() calls in Python, including through import aliases; use ast.literal_eval() when you only need to parse literal values."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B307 (its B001 blacklist, entry "eval"): a call whose qualified name, as Bandit reads it, is "eval".
+//   eval(text)                           B307
+//   from . import eval as ev; ev(text)   B307: no module, so ev maps to "eval"
+//   from builtins import eval; eval(t)   not reported: Bandit reads "builtins.eval"
+//   ast.literal_eval(text)               not reported
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B307(at: node) code "B307"
+    "This eval call executes supplied text as Python code and may be unsafe. Use ast.literal_eval when only Python literals need to be parsed."
+    suppress nosec "B307"
+B307(c) :- blacklisted(c, "B307").

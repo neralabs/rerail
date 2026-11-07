@@ -354,6 +354,25 @@ fn rule_files() -> Vec<PathBuf> {
     by_id.into_values().collect()
 }
 
+/// The codes a hand-written rule reports in log mode (`.mode log A, B`): the suite plugin, the production entry,
+/// drops them, as it drops a linter's `audit` severity. A violation's code is its `code "X"`, else its name.
+fn log_codes(check: &str) -> Vec<String> {
+    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
+    let code_of = |name: &str| {
+        text.lines()
+            .filter_map(|l| l.trim().strip_prefix(".violation "))
+            .find(|l| l.split('(').next() == Some(name))
+            .and_then(|l| l.split(" code \"").nth(1).and_then(|c| c.split('"').next()))
+            .unwrap_or(name)
+            .to_owned()
+    };
+    text.lines()
+        .filter_map(|l| l.split("//").next().unwrap().trim().strip_prefix(".mode log "))
+        .flat_map(|names| names.split(',').map(str::trim).filter(|n| !n.is_empty()).map(code_of).collect::<Vec<_>>())
+        .collect()
+}
+
 /// A check's hand-written rule (`docs/rule-syntax/data-layer/<check>.rr`, includes resolved), as `.rr` text, where
 /// it lowers and the check has no authored file (`authored()`, which follows the oracle's configurations: on
 /// layer-violations, missing-async-pairs, post-op-no-internal-dispatch, public-api-triples and swallowed-exceptions
@@ -366,6 +385,9 @@ fn hand_written(check: &str) -> Option<String> {
         return None;
     }
     let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    if !path.exists() {
+        return None;
+    }
     // A rule that does not lower falls back to the converted JSON; say why, so a broken rule is not silent.
     let program = match crate::code_rule_dsl::logic::rr::parse_file(&path) {
         Ok(p) => p,
@@ -579,6 +601,9 @@ struct Event {
     /// changes no finding), its own path skips on and only the keys compared: what a hand-written rule, which has
     /// no options, replays.
     plain: bool,
+    /// Whether the oracle ran the production entry (the suite plugin), which drops a hand-written rule's log-mode
+    /// codes (`log_codes`).
+    production: bool,
 }
 
 fn port() -> PathBuf {
@@ -624,11 +649,12 @@ fn recorded_events() -> Vec<Event> {
                 .flatten()
                 .map(|f| (f["path"].as_str().unwrap().to_owned(), f["line"].as_u64().unwrap_or_default(), f["code"].as_str().map(str::to_owned)))
                 .collect());
-            let adjust = recorded_adjust(event, &check, entry, event["production_scope"] == true);
+            let production = event["production_scope"] == true;
+            let adjust = recorded_adjust(event, &check, entry, production);
             let config = event.get("oracle_config").filter(|c| !c.is_null());
             let gate_only = config.is_none_or(|c| c.as_object().is_some_and(|c| c.keys().all(|k| k == "source_gate")));
             let plain = gate_only && !truthy("compare_message") && !truthy("compare_fields") && event["path_skip_override"] != true;
-            out.push(Event { group, test: event["test"].as_str().unwrap_or_default().to_owned(), check, files, want, keys_only, adjust, plain });
+            out.push(Event { group, test: event["test"].as_str().unwrap_or_default().to_owned(), check, files, want, keys_only, adjust, plain, production });
         }
     }
     out
@@ -736,8 +762,9 @@ fn api_events() -> Vec<Event> {
                 Some(files) => (api_want(&check, &entry, &record["expected"], &files), files),
                 None => (Err("a file whose source is not recorded".into()), Vec::new()),
             };
-            let adjust = Ok(api_adjust(&check, &entry, &record["parameters"], record["production"] == true));
-            out.push(Event { group: "batches 9-10 API records", check, test, files, want, keys_only: true, adjust, plain: false });
+            let production = record["production"] == true;
+            let adjust = Ok(api_adjust(&check, &entry, &record["parameters"], production));
+            out.push(Event { group: "batches 9-10 API records", check, test, files, want, keys_only: true, adjust, plain: false, production });
         }
     }
     out
@@ -913,6 +940,7 @@ fn converted_rules_give_the_recorded_findings() {
         // A hand-written `.rr` that lowers wins over the converted JSON. It has no options, so it replays the events
         // the oracle ran unconfigured (`Event::plain`).
         let written = hand_written(&event.check);
+        let hand = written.is_some();
         let (program, config_authored) = match written {
             Some(_) if !event.plain => {
                 skip("configured (the hand-written rule has no options)");
@@ -968,7 +996,7 @@ fn converted_rules_give_the_recorded_findings() {
             Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
             Err(_) => program,
         };
-        let got = match finding_keys(&program, &dir) {
+        let mut got = match finding_keys(&program, &dir) {
             Ok(got) => got,
             Err(e) => {
                 row.errors += 1;
@@ -987,6 +1015,11 @@ fn converted_rules_give_the_recorded_findings() {
             _ => format!("{path}:{line}"),
         };
         let mut want: Vec<String> = want.iter().map(|(p, l, c)| key(p, *l, c.as_deref())).collect();
+        // The suite plugin (a production event) drops a hand-written rule's log-mode codes.
+        if event.production && hand {
+            let log = log_codes(&event.check);
+            got.retain(|(_, _, c)| !log.contains(c));
+        }
         let mut got: Vec<String> = got.iter().map(|(p, l, c)| key(p, *l, Some(c))).collect();
         // Findings are a set of keys (J1): several of one clause on one line are one.
         let n = (want.len(), got.len());
@@ -1029,6 +1062,11 @@ fn converted_rules_give_the_recorded_findings() {
     for m in config_misses.iter().take(shown) {
         println!("{m}");
     }
+    // Per check (events, run, exact, errors) against the recorded baseline; a selection compares what it ran.
+    let counts: BTreeMap<(String, String), [usize; 4]> =
+        per_check.iter().map(|((group, check), row)| (((*group).to_owned(), check.clone()), [row.events, row.run, row.exact, row.errors])).collect();
+    let only: Option<Vec<String>> = (checks.is_some() || rules.is_some()).then(|| counts.keys().map(|(_, check)| check.clone()).collect());
+    check_baseline(&counts, only.as_deref());
 }
 
 /// Writes `files` (path, source) under `dir`, which is made though there are none (an event of no files is an empty
@@ -1051,8 +1089,9 @@ fn findings(program: &str, dir: &Path) -> Result<Vec<String>, String> {
 fn finding_keys(program: &str, dir: &Path) -> Result<Vec<(String, u64, String)>, String> {
     let out = dir.join(".out");
     super::super::plan::corpus::run(program, dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map_err(|e| e.to_string())?;
-    Ok(std::fs::read_to_string(out.join("violation.csv"))
-        .unwrap_or_default()
+    // Every output has its file, empty or not: no `violation.csv` is a program without violations.
+    let csv = std::fs::read_to_string(out.join("violation.csv")).map_err(|e| format!("violation.csv: {e}"))?;
+    Ok(csv
         .lines()
         .map(|l| {
             let f: Vec<&str> = l.split('\t').collect();
@@ -1401,6 +1440,89 @@ violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), ca
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The replay's recorded result per check (`replay_baseline.txt`): `<group> | <check> | events converted exact
+/// errors`. A check may not convert fewer events, give fewer exact, or more errors than recorded; a better result
+/// is printed, and `RERAIL_REPLAY_BLESS=1` records it. With `RERAIL_REPLAY_CHECK`, only those checks compare.
+fn check_baseline(per_check: &BTreeMap<(String, String), [usize; 4]>, only: Option<&[String]>) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt");
+    let row = |line: &str| -> Option<((String, String), [usize; 4])> {
+        let mut parts = line.split(" | ");
+        let (group, check, numbers) = (parts.next()?, parts.next()?, parts.next()?);
+        let n: Vec<usize> = numbers.split_whitespace().map(|n| n.parse().ok()).collect::<Option<_>>()?;
+        Some(((group.to_owned(), check.to_owned()), n.try_into().ok()?))
+    };
+    let recorded: BTreeMap<_, _> = std::fs::read_to_string(&path).unwrap_or_default().lines().filter(|l| !l.starts_with('#')).filter_map(row).collect();
+    if std::env::var_os("RERAIL_REPLAY_BLESS").is_some() {
+        assert!(only.is_none() && std::env::var_os("RERAIL_REPLAY_EVENT").is_none(), "bless the whole replay only");
+        let mut text = String::from("# converted_rules_give_the_recorded_findings, per check: events converted exact errors\n");
+        for ((group, check), r) in per_check {
+            text.push_str(&format!("{group} | {check} | {} {} {} {}\n", r[0], r[1], r[2], r[3]));
+        }
+        std::fs::write(&path, text).unwrap();
+        return;
+    }
+    let mut worse = Vec::new();
+    for (key, want) in &recorded {
+        if only.is_some_and(|o| !o.contains(&key.1)) {
+            continue;
+        }
+        let got = per_check.get(key).copied().unwrap_or_default();
+        if got[1] < want[1] || got[2] < want[2] || got[3] > want[3] {
+            worse.push(format!("{} {}: {:?} (recorded {want:?})", key.0, key.1, got));
+        } else if got != *want {
+            println!("better than recorded: {} {}: {got:?} (recorded {want:?}); RERAIL_REPLAY_BLESS=1 records it", key.0, key.1);
+        }
+    }
+    for (key, got) in per_check {
+        if !recorded.contains_key(key) {
+            println!("not recorded: {} {}: {got:?}", key.0, key.1);
+        }
+    }
+    assert!(!recorded.is_empty(), "no replay baseline at {}", path.display());
+    assert!(worse.is_empty(), "worse than the replay baseline:\n{}", worse.join("\n"));
+}
+
+/// The rules `rules` (comma-separated ids, or `*`) in one corpus run: each file parsed and batched once, every rule
+/// over each chunk. Prints the run as `measure_converted_rules` does, and the violations per rule.
+fn measure_all(corpus: &Path, rules: &str) {
+    let ids: Vec<String> = if rules == "*" {
+        let mut ids: Vec<String> = std::fs::read_dir(pack().join("datalog")).unwrap().filter_map(|e| {
+            let p = e.unwrap().path();
+            (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
+        }).collect();
+        ids.sort();
+        ids
+    } else {
+        rules.split(',').map(str::to_owned).collect()
+    };
+    let texts: Vec<String> = ids.iter().map(|id| std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap()).collect();
+    let programs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("measure-all");
+    if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
+        crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join("all"));
+    }
+    let r = super::super::plan::corpus::run_all(&programs, corpus, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
+    let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
+    println!(
+        "MEASURE all {} rules: {} files, {} nodes, {} chunks, violations {}, CPU {cpu:.2} s, peak RSS {rss:.0} MB; text tests {} relations, {} strings, {:.3} s CPU",
+        ids.len(), r.files, r.nodes, r.chunks, r.rows.get("violation").copied().unwrap_or(0), r.text.0, r.text.1, r.text.2
+    );
+    for (name, user, sys, rss, statements) in &r.phases {
+        println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
+    }
+    // Violations per rule: the first column of `violation.csv` is the rule's id.
+    let mut per: BTreeMap<String, usize> = BTreeMap::new();
+    for line in std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines() {
+        let id = line.split('\t').next().unwrap_or("").trim_matches('"').to_owned();
+        *per.entry(id).or_default() += 1;
+    }
+    for (id, n) in &per {
+        println!("VIOLATIONS {id} {n}");
+    }
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A measurement, not a check: converted rules (`RERAIL_MEASURE_RULES`, comma-separated rule ids) run over a corpus
 /// on disk (`RERAIL_MEASURE_CORPUS`), one run each. Prints each run's CPU (user + system) by phase, peak RSS, the
 /// violations, and the text tests' work (decision 0037): relations, distinct strings tested, their CPU.
@@ -1409,6 +1531,10 @@ violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), ca
 fn measure_converted_rules() {
     let corpus = PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
     let rules = std::env::var("RERAIL_MEASURE_RULES").expect("RERAIL_MEASURE_RULES");
+    // `RERAIL_MEASURE_ALL=1`: the rules in one run (`corpus::run_all`), `*` for every rule of the pack.
+    if std::env::var_os("RERAIL_MEASURE_ALL").is_some() {
+        return measure_all(&corpus, &rules);
+    }
     for id in rules.split(',') {
         let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap();
         // The relations the cross-file part derives, and the base relations it reads.

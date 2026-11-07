@@ -1,0 +1,20 @@
+.policy "ruff-int002-format-in-get-text-func-call" revision 2
+.description "Pass a constant template to a gettext call and format the translated result; a format method call is evaluated before the catalog lookup."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff INT002 (flake8-gettext): a translation call whose first positional argument is a `.format(…)` call, on any receiver. The text is
+// formatted before the catalog lookup, so the lookup is for the formatted string, which no catalog has.
+// Translation calls: a plain name in option `flake8-gettext.function-names` (default `_`, `gettext`, `ngettext`; plus
+// `extend-function-names`), `builtins.<one of them>`, and gettext.gettext / gettext.ngettext through imports.
+// Ruff checks ngettext's second argument only in preview.
+//   _("Hello, {}!".format(name))          ← INT002
+//   gettext("{}".format("line"))           ← INT002
+//   _("Hello, {}!").format(name)           not reported: translated first
+#include "python/misc2-messages.rr"
+
+.violation INT002(at: node) code "INT002"
+    "Translate the template, then format it: `_(\"Hello, {}!\").format(name)`, not `_(\"Hello, {}!\".format(name))`. Leave it if the callee is not a translation function or the text is a computed catalog key."
+    suppress ruff "INT002"
+INT002(a) :- msg_gettext(c), msg_arg(c, 0, a), msg_form(a, "format").

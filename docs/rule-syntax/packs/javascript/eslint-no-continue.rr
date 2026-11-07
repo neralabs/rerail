@@ -1,0 +1,15 @@
+.policy "eslint-no-continue" revision 4
+.description "Avoid continue statements in loops; restructure the loop with a condition instead."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's no-continue: every `continue`, labelled or not.
+//   for (const x of xs) { if (!x) continue; f(x); }   → reported
+// No options.
+.violation no_continue(at: node) code "no-continue"
+    "Replace this continue with an if that wraps the rest of the loop body."
+    suppress eslint "no-continue"
+    suppress oxlint "no-continue"
+    suppress biome "lint/style/noContinue"
+no_continue(n) :- kind(n, "continue_statement").

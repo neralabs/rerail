@@ -1,0 +1,26 @@
+.policy "clippy-partial-pub-fields" revision 3
+.description "Make a Rust struct's fields either all pub or all non-pub; mixing them blurs what the type exposes."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax.rr"
+//   struct_field(s, i, f)   the i-th field of struct s;   field_vis(f, v)   its visibility modifier
+
+// Clippy's partial_pub_fields (restriction): a struct mixing `pub` and non-`pub` fields. The first field
+// sets the side; the first field on the other side is reported, at its visibility (or, with none, at the
+// field). Only plain `pub` is public here: `pub(crate)` counts as private, as in Clippy.
+//   struct S { a: u8, pub b: u8 }      reported at `pub`        struct P(i32, pub i32)   reported at `pub`
+//   struct C { pub r: u8, b: u8 }      reported at `b`          struct E;  struct O(pub i32)   not reported
+.violation partial_pub_fields(at: node) code "partial_pub_fields"
+    "Match this field's visibility to the struct's other fields: make all of them pub or none of them."
+    suppress clippy "clippy::partial_pub_fields", "clippy::restriction", "warnings"
+partial_pub_fields(at) :- struct_field(s, _, _), k0 = min i : { struct_field(s, i, _) }, side(s, k0, p),
+    k = min i : { side(s, i, q), q != p }, struct_field(s, k, f), (field_vis(f, at) ; !field_vis(f, _), at = f).
+
+// side(s, i, p): field i of struct s is "pub" or "private".
+.decl side(s: node, i: number, p: symbol)
+side(s, i, "pub") :- struct_field(s, i, f), public(f).
+side(s, i, "private") :- struct_field(s, i, f), !public(f).
+.decl public(f: node)
+public(f) :- field_vis(f, v), text(v, "pub").

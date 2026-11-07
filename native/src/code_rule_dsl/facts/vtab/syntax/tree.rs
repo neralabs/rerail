@@ -1,5 +1,5 @@
-//! The relations of core.rr about the tree and the document that a batch makes only for a program that reads them
-//! (`Tree::new`'s `reads`), beside `Extra`'s text:
+//! The relations of core.rr about the tree that a batch makes only for a program that reads them (`Tree::new`'s
+//! `reads`), beside `Extra`'s text (a document's `path_part` and `file_name` are `Batch::build`'s, made for every one):
 //!
 //! ```text
 //! op_at(n, i, s)               n's operator tokens in order, from 0: its tape children in field `operator` or
@@ -10,7 +10,6 @@
 //! token(p, i, s, start, end)   p's tape children in order, anonymous ones and comments included (W's `precedes` and
 //!                              `follows` at a neighbour): each one's text and byte range
 //! visit_index(n, i)            n's place in CPython's `ast` visit order, from 0 per document (Python documents)
-//! path_part(d, s)              each directory of d's path, and its file name; file_name(d, s) the last of them
 //! ```
 //!
 //! The visit order is `ast.NodeVisitor`'s: a node, then its fields in their `_fields` order. Where tree-sitter's
@@ -31,14 +30,10 @@ pub(super) struct Tree {
     prev_token: bool,
     token: bool,
     visit_index: bool,
-    path_part: bool,
-    file_name: bool,
     op_ats: Vec<[i64; 3]>,
     prev_tokens: Vec<[i64; 2]>,
     tokens: Vec<[i64; 5]>,
     visit_indexes: Vec<[i64; 2]>,
-    path_parts: Vec<[i64; 2]>,
-    file_names: Vec<[i64; 2]>,
 }
 
 impl Tree {
@@ -49,25 +44,13 @@ impl Tree {
             prev_token: read("prev_token"),
             token: read("token"),
             visit_index: read("visit_index"),
-            path_part: read("path_part"),
-            file_name: read("file_name"),
             ..Self::default()
         }
     }
 
-    /// Document `p`'s rows (`path` its path; `python`: it is Python's). A text document (no `dialect`) has its path's.
-    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, path: &str, python: bool, string: &mut dyn FnMut(&str) -> usize) {
+    /// Document `p`'s rows (`python`: it is Python's). A text document (no `dialect`) has none.
+    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
-        let key = i64::from(p.key);
-        if self.path_part || self.file_name {
-            let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-            if self.path_part {
-                self.path_parts.extend(parts.iter().map(|s| [key, string(s) as i64]));
-            }
-            if let (true, Some(last)) = (self.file_name, parts.last()) {
-                self.file_names.push([key, string(last) as i64]);
-            }
-        }
         let Some(dialect) = dialect else { return };
         if self.op_at {
             let fields = [dialect.operator, dialect.operators];
@@ -122,12 +105,6 @@ impl Tree {
         }
         if self.visit_index {
             out.push(("visit_index", relation(&["n", "i"], &mut self.visit_indexes.iter().map(|r| r.to_vec()))));
-        }
-        if self.path_part {
-            out.push(("path_part", relation(&["d", "s"], &mut self.path_parts.iter().map(|&[d, s]| vec![d, atom(s)]))));
-        }
-        if self.file_name {
-            out.push(("file_name", relation(&["d", "s"], &mut self.file_names.iter().map(|&[d, s]| vec![d, atom(s)]))));
         }
         out
     }

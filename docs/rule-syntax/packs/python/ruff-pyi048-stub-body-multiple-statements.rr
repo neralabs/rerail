@@ -1,0 +1,16 @@
+.policy "ruff-pyi048-stub-body-multiple-statements" revision 2
+.description "Give each function in a stub file a body of exactly one statement such as an ellipsis; stubs only declare types and are never executed."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI048 (flake8-pyi), stubs only: a def whose body has more than one statement, a docstring included.
+// Reported at the def's name.
+//   def f():               ← PYI048
+//       x = 1
+//       return x
+#include "python/typing.rr"
+
+.violation PYI048(at: node) code "PYI048" "Reduce this stub function's body to a single statement, normally `...`; stub files only declare types and are never executed."
+    suppress ruff "PYI048"
+PYI048(n) :- def_body(f, b), body_len(b, k), k > 1, field(f, "name", n), in_stub(f).

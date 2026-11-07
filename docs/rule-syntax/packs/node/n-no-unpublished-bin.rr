@@ -1,0 +1,17 @@
+.policy "n-no-unpublished-bin" revision 2
+.description "Publish every file package.json lists as a bin executable: keep it in package.json's files field and out of .npmignore, or npm leaves the command out of the package."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-unpublished-bin: a file package.json's `bin` names must be published, or the installed
+// package has no executable:
+//   package.json { "bin": "./bin/cli.js", "files": ["lib"] }:   bin/cli.js reported
+// "Published" is npm's view (npm_ignored: the `files` list, else .npmignore, else .gitignore), which needs the
+// proposed native input. Reported at the Program node, as the plugin does. Not read: convertPath.
+
+#include "tsx/node-package.rr"   // pkg_bin_file, npm_ignored, program_start
+
+.violation unpublished_bin(at: loc) code "n/no-unpublished-bin"
+    "npm ignores this bin file, so the published package lacks the executable; list it in package.json's files field and keep .npmignore from ignoring it."
+    suppress eslint "n/no-unpublished-bin"
+unpublished_bin(at) :- pkg_bin_file(d), doc(d, f, _), npm_ignored(f), program_start(d, at).
