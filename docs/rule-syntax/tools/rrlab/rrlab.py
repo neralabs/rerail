@@ -245,7 +245,7 @@ def py_string(lit):
 
 def scope_glob(g):
     """A .scope glob as a regex over a root-relative path: `**/` any directories (none too), `**` anything, `*` and
-    `?` within one segment, `{a,b}` either."""
+    `?` within one segment, `[0-9_]` one listed character, `{a,b}` either, `\\` escapes the next character."""
     out, i = [], 0
     while i < len(g):
         c = g[i]
@@ -257,6 +257,13 @@ def scope_glob(g):
             out.append("[^/]*")
         elif c == "?":
             out.append("[^/]")
+        elif c == "[":   # `[A-Z]` / `[0-9_]`: one listed character (core.rr, glob)
+            j = g.find("]", i + 1)
+            if j > i + 1:
+                out.append("[" + g[i + 1:j].replace("\\", "\\\\") + "]"); i = j + 1; continue
+            out.append(re.escape(c))
+        elif c == "\\" and i + 1 < len(g):   # `\` escapes the next character
+            out.append(re.escape(g[i + 1])); i += 2; continue
         elif c == "{":
             j = g.find("}", i)
             if j > i:
