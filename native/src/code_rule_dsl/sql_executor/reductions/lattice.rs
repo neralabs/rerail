@@ -6,6 +6,7 @@ pub(super) struct Lattice {
     pub keys: usize,
     pub top: i64,
     pub aggregate: Option<String>,
+    pub tree: Option<super::join_tree::JoinTree>,
 }
 
 pub(super) fn apply(state: &Retained, w: &mut Work<'_>, changed: &str) -> Result<(Delta, u64)> {
@@ -31,12 +32,21 @@ pub(super) fn apply(state: &Retained, w: &mut Work<'_>, changed: &str) -> Result
     let candidates = format!("FROM {} h WHERE {}", state.heads, equal("h", "k", k));
     // The primary key starts with the lattice key, then value. SQLite can find extrema with
     // one indexed probe. Opaque registered joins scan only the affected key's candidates.
-    let folded = match &lattice.aggregate {
-        Some(aggregate) => format!("(SELECT {aggregate}(h.{value}) {candidates})"),
-        None => format!(
-            "CASE WHEN (SELECT min(h.{value}) {candidates})=(SELECT max(h.{value}) {candidates}) THEN (SELECT min(h.{value}) {candidates}) ELSE {} END",
-            lattice.top
-        ),
+    let folded = if let Some(tree) = &lattice.tree {
+        tree.apply(w.db, changed)?;
+        format!(
+            "(SELECT h.summary FROM {} h WHERE {})",
+            quote(&tree.roots),
+            equal("h", "k", k)
+        )
+    } else {
+        match &lattice.aggregate {
+            Some(aggregate) => format!("(SELECT {aggregate}(h.{value}) {candidates})"),
+            None => format!(
+                "CASE WHEN (SELECT min(h.{value}) {candidates})=(SELECT max(h.{value}) {candidates}) THEN (SELECT min(h.{value}) {candidates}) ELSE {} END",
+                lattice.top
+            ),
+        }
     };
     execute(
         w.db,

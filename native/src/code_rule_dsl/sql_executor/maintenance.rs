@@ -10,29 +10,21 @@ pub(super) struct Delta {
     pub inserted: u64,
     pub deleted: u64,
 }
-pub(super) struct Work<'a> {
-    pub db: &'a rusqlite::Connection,
-    pub scratch: Vec<String>,
-    pub sequence: usize,
-}
+pub(super) use super::scratch::Work;
 impl Work<'_> {
     pub fn table(&mut self, width: usize) -> Result<String> {
-        let name = format!("__rr_update_{}", self.sequence);
-        self.sequence += 1;
         let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
-        self.db
-            .execute_batch(&format!(
-                "CREATE TEMP TABLE {}({},PRIMARY KEY({})) WITHOUT ROWID",
-                quote(&name),
+        self.allocate(
+            format!(
+                "{},PRIMARY KEY({})",
                 cols.iter()
-                    .map(|c| format!("{c} INTEGER"))
+                    .map(|c| format!("{c} INTEGER NOT NULL"))
                     .collect::<Vec<_>>()
                     .join(","),
                 cols.join(",")
-            ))
-            .map_err(error)?;
-        self.scratch.push(name.clone());
-        Ok(name)
+            ),
+            true,
+        )
     }
     pub fn rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
         let name = self.table(width)?;
@@ -88,14 +80,6 @@ impl Work<'_> {
             )
             .map_err(error)? as u64;
         Ok((old, n))
-    }
-    pub fn cleanup(&self) -> Result<()> {
-        for name in self.scratch.iter().rev() {
-            self.db
-                .execute_batch(&format!("DROP TABLE IF EXISTS {}", quote(name)))
-                .map_err(error)?;
-        }
-        Ok(())
     }
 }
 

@@ -1,8 +1,10 @@
 use super::*;
 mod documents;
+mod preparation;
 mod recovery;
-mod updates;
+mod registered_joins;
 mod scaling;
+mod updates;
 
 fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();

@@ -6,6 +6,7 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
+mod join_tree;
 mod lattice;
 mod maintain;
 mod plan;
@@ -79,8 +80,6 @@ fn execute(db: &rusqlite::Connection, sql: &str) -> Result<usize> {
     db.execute(sql, []).map_err(error)
 }
 fn temporary(w: &mut Work<'_>, width: usize, extra: &str, keys: Option<usize>) -> Result<String> {
-    let name = format!("__rr_update_{}", w.sequence);
-    w.sequence += 1;
     let mut definition = schema(width);
     if !extra.is_empty() {
         definition += &format!(",{extra}");
@@ -88,13 +87,7 @@ fn temporary(w: &mut Work<'_>, width: usize, extra: &str, keys: Option<usize>) -
     if let Some(keys) = keys {
         definition += &format!(",PRIMARY KEY({})", names("", keys));
     }
-    w.db.execute_batch(&format!(
-        "CREATE TEMP TABLE {name}({definition}){}",
-        if keys.is_some() { " WITHOUT ROWID" } else { "" }
-    ))
-    .map_err(error)?;
-    w.scratch.push(name.clone());
-    Ok(name)
+    w.allocate(definition, keys.is_some())
 }
 
 /// Bootstrap once against the old facts, before any source in the atomic batch changes.
@@ -159,6 +152,18 @@ fn planned(
                         .lattice_operations
                         .get(output)
                         .map(|o| o.aggregate.clone()),
+                    tree: e
+                        .program
+                        .lattice_operations
+                        .get(output)
+                        .filter(|o| !matches!(o.aggregate.as_str(), "min" | "max"))
+                        .map(|o| join_tree::JoinTree {
+                            nodes: format!("__sql_state_{output}_join_nodes"),
+                            roots: format!("__sql_state_{output}_join_roots"),
+                            merge: o.merge.clone(),
+                            keys: *keys,
+                            top: *top,
+                        }),
                 });
         let Some(stratum) = positions.get(output) else {
             continue;
@@ -294,6 +299,9 @@ impl Retained {
             }
             for reducer in &rule.reducers {
                 reducer.index_context(db, rule)?;
+                if let Some(table) = reducer.dependency_object() {
+                    objects.push((table, true));
+                }
             }
             execute(
                 db,
@@ -304,6 +312,9 @@ impl Retained {
                     names("", self.width)
                 ),
             )?;
+        }
+        if let Some(tree) = self.lattice.as_ref().and_then(|l| l.tree.as_ref()) {
+            tree.initialize(db, &self.heads, objects)?;
         }
         Ok(())
     }

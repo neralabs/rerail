@@ -1,11 +1,13 @@
 //! Retain generated SQL tree-walk CTEs as positive relations for overdelete/rederive.
-//! Only nonrecursive rule outputs with plain seed/walk/near blocks use this path.
+//! Seeds and outputs can contain retained scalar reducers; recursive walk arms stay positive.
 use super::super::logic::sql::{
     select::{FromItem, Join, Query, Relation as Rel, Select},
     sql_ast::SqlExpression as E,
 };
 use super::*;
 use maintenance::Work;
+mod nullable;
+use nullable::Layout;
 
 fn plain(block: &Select) -> bool {
     let mut plain = true;
@@ -28,30 +30,44 @@ fn plain(block: &Select) -> bool {
     plain
 }
 
-fn rewrite(block: &mut Select, names: &BTreeMap<String, (String, Vec<String>)>) {
-    let aliases = block
-        .from
-        .iter()
-        .filter_map(|i| {
-            let columns = match &i.relation {
-                Rel::Cte(name) => names.get(name)?.1.clone(),
-                Rel::Input { rel, .. } => select::input_columns(rel)?
-                    .iter()
-                    .map(|c| c.to_string())
-                    .collect(),
-                _ => return None,
-            };
-            Some((i.alias.clone(), columns))
-        })
-        .collect::<BTreeMap<_, _>>();
+fn rewrite(block: &mut Select, names: &BTreeMap<String, (String, Layout)>) {
+    rewrite_scoped(block, names, &BTreeMap::new());
+}
+fn rewrite_scoped(
+    block: &mut Select,
+    names: &BTreeMap<String, (String, Layout)>,
+    outer: &BTreeMap<String, Layout>,
+) {
+    let mut aliases = outer.clone();
+    for item in &block.from {
+        aliases.remove(&item.alias);
+    }
+    aliases.extend(
+        block
+            .from
+            .iter()
+            .filter_map(|i| {
+                let columns = match &i.relation {
+                    Rel::Cte(name) => names.get(name)?.1.clone(),
+                    Rel::Input { rel, .. } => Layout::new(
+                        select::input_columns(rel)?
+                            .iter()
+                            .map(|c| c.to_string())
+                            .collect(),
+                    ),
+                    _ => return None,
+                };
+                Some((i.alias.clone(), columns))
+            })
+            .collect::<BTreeMap<_, _>>(),
+    );
     let mut replace = |e: &mut E| {
+        if let E::Scalar(query) | E::Exists { query, .. } = e {
+            rewrite_scoped(query, names, &aliases);
+        }
         if let E::Qualified { alias, column } = e {
             if let Some(columns) = aliases.get(alias) {
-                let i = columns
-                    .iter()
-                    .position(|c| c == column)
-                    .expect("checked CTE column");
-                *column = format!("c{i}");
+                *e = columns.access(&format!("rr_lift_{alias}"), column);
             }
         }
     };
@@ -66,6 +82,9 @@ fn rewrite(block: &mut Select, names: &BTreeMap<String, (String, Vec<String>)>) 
             for e in on {
                 e.visit_mut(&mut replace);
             }
+        }
+        if aliases.contains_key(&item.alias) {
+            item.alias = format!("rr_lift_{}", item.alias);
         }
         if let Rel::Cte(name) = &item.relation {
             item.relation = Rel::Derived {
@@ -125,13 +144,17 @@ pub(super) fn prepare(w: &mut Work<'_>, run: &mut session::Execution) -> Result<
             || q.reads()
                 .iter()
                 .any(|r| r.program_relation() == Some(step.output.as_str()))
-            || !plain(&q.body)
             || q.ctes.iter().any(|c| {
                 !["seed", "walk", "near"].iter().any(|p| {
                     c.name
                         .strip_prefix(p)
                         .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
-                }) || c.arms.iter().any(|a| !plain(a))
+                }) || c.arms.iter().any(|a| {
+                    !plain(a)
+                        && a.from
+                            .iter()
+                            .any(|i| i.relation == Rel::Cte(c.name.clone()))
+                })
             })
         {
             continue;
@@ -150,13 +173,17 @@ pub(super) fn prepare(w: &mut Work<'_>, run: &mut session::Execution) -> Result<
                 .collect::<Vec<_>>();
             names.insert(
                 cte.name.clone(),
-                (format!("__sql_walk_{}_{}_{}", step.output, id, at), columns),
+                (
+                    format!("__sql_walk_{}_{}_{}", step.output, id, at),
+                    Layout::new(columns),
+                ),
             );
         }
+        nullable::infer(&q, &mut names);
         // Initialize against old facts, in the same savepoint as fact mutation and ownership.
         for cte in &q.ctes {
             let (name, columns) = &names[&cte.name];
-            let width = columns.len();
+            let width = columns.width();
             let cols = (0..width)
                 .map(|i| format!("c{i}"))
                 .collect::<Vec<_>>()
@@ -178,7 +205,7 @@ pub(super) fn prepare(w: &mut Work<'_>, run: &mut session::Execution) -> Result<
                     &format!(
                         "INSERT OR IGNORE INTO {} {}",
                         quote(name),
-                        probe(&q, &cte.name).render()
+                        columns.probe(&q, &cte.name).render()
                     ),
                     [],
                 )
@@ -188,6 +215,7 @@ pub(super) fn prepare(w: &mut Work<'_>, run: &mut session::Execution) -> Result<
             for arm in &cte.arms {
                 let mut body = arm.clone();
                 rewrite(&mut body, &names);
+                columns.encode(&mut body);
                 let query = Query { ctes: vec![], body };
                 let reads = query
                     .reads()
@@ -223,9 +251,75 @@ pub(super) fn prepare(w: &mut Work<'_>, run: &mut session::Execution) -> Result<
         e.queries.push(q);
     }
     if changed {
+        order_dependencies(e);
         for (table, cols) in indexes::wanted(e) {
             session::index(w.db, &table, &cols).map_err(error)?;
         }
     }
     Ok(initialized.into_iter().collect())
+}
+
+/// Give the lifted seed, recursive walk, and output their dependency components.
+/// The original stratum treated the entire CTE as one indivisible SQL statement.
+fn order_dependencies(e: &mut plan::emit::Emitted) {
+    let names = e
+        .program
+        .relations
+        .iter()
+        .map(|(r, _)| r.clone())
+        .collect::<Vec<_>>();
+    let ids = names
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.clone(), i))
+        .collect::<BTreeMap<_, _>>();
+    let mut deps = vec![BTreeSet::new(); names.len()];
+    let mut users = deps.clone();
+    for (step, q) in e.program.steps.iter().zip(&e.queries) {
+        let output = ids[&step.output];
+        if let Some(q) = q {
+            for r in q.reads().iter().filter_map(|r| r.program_relation()) {
+                if let Some(&input) = ids.get(r) {
+                    deps[output].insert(input);
+                    users[input].insert(output);
+                }
+            }
+        }
+    }
+    fn finish(
+        at: usize,
+        graph: &[BTreeSet<usize>],
+        seen: &mut BTreeSet<usize>,
+        out: &mut Vec<usize>,
+    ) {
+        if !seen.insert(at) {
+            return;
+        }
+        for &next in &graph[at] {
+            finish(next, graph, seen, out);
+        }
+        out.push(at);
+    }
+    let mut order = Vec::new();
+    let mut seen = BTreeSet::new();
+    for at in 0..names.len() {
+        finish(at, &users, &mut seen, &mut order);
+    }
+    seen.clear();
+    let mut positions = vec![0u32; names.len()];
+    let mut position = 0;
+    for at in order.into_iter().rev() {
+        if seen.contains(&at) {
+            continue;
+        }
+        position += 1;
+        let mut component = Vec::new();
+        finish(at, &deps, &mut seen, &mut component);
+        for member in component {
+            positions[member] = position;
+        }
+    }
+    for step in &mut e.program.steps {
+        step.stratum = positions[ids[&step.output]];
+    }
 }

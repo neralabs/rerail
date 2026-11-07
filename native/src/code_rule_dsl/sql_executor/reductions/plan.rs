@@ -54,11 +54,6 @@ pub(super) fn expressions(block: &Select) -> Vec<&E> {
         }))
         .collect()
 }
-pub(super) fn visit(block: &Select, f: &mut dyn FnMut(&E)) {
-    for e in expressions(block) {
-        e.visit(f);
-    }
-}
 pub(super) fn replace(block: &mut Select, f: &mut dyn FnMut(&mut E)) {
     for (e, _) in &mut block.columns {
         e.visit_mut(f);
@@ -139,11 +134,21 @@ pub(super) fn rule(
     }
     let prefix = format!("__sql_state_{output}_r{id}");
     let mut occurrences = Vec::new();
-    visit(&q.body, &mut |e| {
-        if matches!(e, E::Scalar(_) | E::Exists { .. }) && !occurrences.contains(e) {
-            occurrences.push(e.clone());
-        }
-    });
+    fn collect(e: &E, occurrences: &mut Vec<E>) {
+        e.visit(&mut |e| {
+            if let E::Scalar(query) | E::Exists { query, .. } = e {
+                for nested in expressions(query) {
+                    collect(nested, occurrences);
+                }
+                if !occurrences.contains(e) {
+                    occurrences.push(e.clone());
+                }
+            }
+        });
+    }
+    for e in expressions(&q.body) {
+        collect(e, &mut occurrences);
+    }
     let mut sites = Vec::new();
     for e in occurrences {
         let Some(reducer) = Reducer::plan(
@@ -151,6 +156,7 @@ pub(super) fn rule(
             &format!("{prefix}_s{}", sites.len()),
             &e,
             &fields_by_name,
+            &sites,
         )?
         else {
             return Ok(None);
@@ -245,6 +251,9 @@ impl Rule {
     pub fn in_context(&self, e: &E, context: &str) -> E {
         let mut expression = e.clone();
         expression.visit_mut(&mut |e| {
+            if let Some(reducer) = self.reducers.iter().find(|r| r.original == *e) {
+                *e = reducer.lookup_at(self, context);
+            }
             if let E::Qualified {
                 alias,
                 column: name,
