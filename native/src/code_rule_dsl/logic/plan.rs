@@ -2142,6 +2142,38 @@ impl Run<'_> {
         Ok(total)
     }
 
+    /// Makes `rel`'s rows natively from the tables of the relations it reads (`front::Native`); returns them.
+    fn native_relation(&mut self, rel: &str, native: &crate::code_rule_dsl::logic::front::Native) -> Result<usize> {
+        use crate::code_rule_dsl::logic::front::Native;
+        let Native::DfsFirst { edge, target, roots } = native;
+        let cols = |r: &str, n: usize| (0..n).map(|c| self.model.col(r, c)).collect::<Vec<_>>();
+        let read = |sql: &str, width: usize| -> Result<Vec<Vec<i64>>> {
+            let mut st = self.db.prepare(sql)?;
+            let rows = st.query_map([], |row| (0..width).map(|i| row.get::<_, i64>(i)).collect::<rusqlite::Result<Vec<i64>>>())?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        };
+        let e = cols(edge, 3);
+        let edges: Vec<(i64, i64, i64)> = read(&format!("SELECT DISTINCT {}, {}, {} FROM {edge}", e[0], e[1], e[2]), 3)?.into_iter().map(|r| (r[0], r[1], r[2])).collect();
+        let t = cols(target, 1);
+        let targets: Vec<i64> = read(&format!("SELECT DISTINCT {} FROM {target}", t[0]), 1)?.into_iter().map(|r| r[0]).collect();
+        // `dfs_first_memo`'s roots in increasing order of their second column: a number, or a symbol as text.
+        let roots: Option<Vec<i64>> = match roots {
+            Some(roots) => {
+                let r = cols(roots, 2);
+                let symbol = self.prog.decls[roots.as_str()][1].1 == "sym" && self.model.inputs.atoms.is_some();
+                let key = if symbol { format!("sym_text({})", r[1]) } else { r[1].clone() };
+                let mut seen = BTreeSet::new();
+                let ordered = read(&format!("SELECT {}, {key} FROM {roots} ORDER BY 2, 1", r[0]), 1)?;
+                Some(ordered.into_iter().map(|row| row[0]).filter(|r| seen.insert(*r)).collect())
+            }
+            None => None,
+        };
+        let rows = crate::code_rule_dsl::logic::native::dfs_first::dfs_first(&edges, &targets, roots.as_deref());
+        let n = rows.len();
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {rel}"), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
+        Ok(n)
+    }
+
     fn refresh(&mut self, r: &str, at_least_one: bool) -> Result<()> {
         let n = self.count(&format!("SELECT count(*) FROM {r}"))? as f64;
         self.model.stats.card.insert(r.to_owned(), if at_least_one { n.max(1.0) } else { n });
@@ -2491,6 +2523,10 @@ impl Run<'_> {
         self.why_not = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
             self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
+            return Ok(false);
+        }
+        if scc.iter().any(|r| prog.natives.contains_key(r)) {
+            self.why_not = Some("a relation made natively from its inputs' tables (`dfs_first`)".into());
             return Ok(false);
         }
         let rels: Vec<&String> = scc.iter().collect();
@@ -3378,6 +3414,21 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             .chain(scc.iter().cloned())
             .collect();
         run.ensure(&read)?;
+        // A relation made natively (`dfs_first`): its inputs' rows in, the operator's rows out; its rule only
+        // ordered it after them.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(native) = prog.natives.get(*rel)
+        {
+            super::profile::stratum(&skey, "native operator over its inputs' tables (dfs_first)", || why.clone());
+            let n = run.native_relation(rel, native)?;
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            run.refresh(rel, false)?;
+            for c in 0..prog.decls[*rel].len() {
+                let d = run.count(&format!("SELECT count(DISTINCT c{c}) FROM {rel}"))?;
+                run.model.ndv.insert(((*rel).clone(), c), if d == 0 { 1.0 } else { d as f64 });
+            }
+            continue;
+        }
         let mut planned = Vec::new();
         let mut explained = Vec::new();
         let planning = super::profile::span(|| "plan".into());

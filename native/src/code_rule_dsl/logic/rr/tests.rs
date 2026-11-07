@@ -907,3 +907,37 @@ Status(@place("allowlist.json", 1), name, status) :- allow_status(name, status).
     actual.sort();
     assert_eq!(actual, ["original:valid", "tampered:invalid", "unsigned:unsigned"]);
 }
+
+/// `dfs_first` and `dfs_first_memo` through rules: the first target by edge order from each root, the ord of the
+/// root's edge that starts the path, and the memo variant over its roots in order.
+#[test]
+fn dfs_first_runs_through_rules() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("dfs");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.input node, doc
+.decl e(a: number, b: number, o: number)
+e(10, 20, 1). e(20, 30, 5). e(10, 40, 0). e(40, 10, 2). e(50, 60, 0).
+.decl t(x: number)
+t(30).
+.decl roots(r: number, k: number)
+roots(40, 1). roots(10, 2). roots(50, 3).
+.decl hit(r: number, h: number, f: number)
+hit(r, h, f) :- dfs_first(r, h, f, e, t).
+.decl hm(r: number, h: number, f: number)
+hm(r, h, f) :- dfs_first_memo(r, h, f, e, t, roots).
+.decl none(r: number)
+none(r) :- e(r, _, _), !dfs_first(r, _, _, e, t).
+.output hit, hm, none
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("hit"), "10\t30\t1\n20\t30\t5\n40\t30\t2\n");
+    assert_eq!(read("hm"), "10\t30\t1\n40\t30\t2\n");
+    assert_eq!(read("none"), "50\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -314,7 +314,8 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
         }
         filters = kept;
     }
-    let mut local: BTreeSet<String> = derived.iter().map(|r| (*r).to_owned()).collect();
+    // A relation made natively (`dfs_first`) reads the whole program's rows: never file-local.
+    let mut local: BTreeSet<String> = derived.iter().filter(|r| !prog.natives.contains_key(**r)).map(|r| (*r).to_owned()).collect();
     loop {
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> bool {
             // Each read relation's location variables; the rule's locations must form one component.

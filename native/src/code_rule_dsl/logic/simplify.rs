@@ -324,6 +324,7 @@ fn kept(prog: &Program, rel: &str) -> bool {
     prog.outputs.iter().any(|o| o == rel)
         || prog.inputs.iter().any(|i| i == rel)
         || prog.lattice.contains_key(rel)
+        || prog.natives.contains_key(rel)
         || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
         || prog.demand.iter().any(|d| d == rel)
         || prog.gates.iter().any(|(g, _)| g == rel)
