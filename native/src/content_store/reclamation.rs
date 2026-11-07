@@ -26,11 +26,10 @@ pub struct CorpusRunLease<'a> {
 
 impl Drop for CorpusRunLease<'_> {
     fn drop(&mut self) {
-        let Ok(mut connection) = self.store.connection.lock() else { return };
-        if let Ok(transaction) = connection.transaction_with_behavior(TransactionBehavior::Immediate) {
-            let _ = transaction.execute("DELETE FROM object_pins WHERE object_kind_id=?1 AND object_id=?2", params![OBJECT_CORPUS_RUN, self.id]);
-            let _ = self.store.commit(transaction);
-        }
+        // Not released (the store kept busy past its retries): the lease expires.
+        let _ = self.store.immediate_transaction(|transaction| {
+            Ok(transaction.execute("DELETE FROM object_pins WHERE object_kind_id=?1 AND object_id=?2", params![OBJECT_CORPUS_RUN, self.id])?)
+        });
     }
 }
 
@@ -41,22 +40,19 @@ pub(super) const STORE_ABSOLUTE_LIMIT: u64 = 10 * 1024 * 1024 * 1024;
 impl ContentStore {
     /// Holds collection off sources and tapes until `lease_until` or until the lease is dropped (`CorpusRunLease`).
     pub fn begin_corpus_run(&self, lease_until: i64) -> StoreResult<CorpusRunLease<'_>> {
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let owner_id = intern_string(&transaction, STRING_OWNER, "corpus-run")?;
-        let id: i64 = transaction.query_row(
-            "SELECT COALESCE(MAX(object_id), 0) + 1 FROM object_pins WHERE object_kind_id=?1",
-            [OBJECT_CORPUS_RUN],
-            |r| r.get(0),
-        )?;
-        transaction.execute(
-            "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)",
-            params![OBJECT_CORPUS_RUN, id, owner_id, lease_until],
-        )?;
-        self.commit(transaction)?;
+        let id = self.immediate_transaction(|transaction| {
+            let owner_id = intern_string(transaction, STRING_OWNER, "corpus-run")?;
+            let id: i64 = transaction.query_row(
+                "SELECT COALESCE(MAX(object_id), 0) + 1 FROM object_pins WHERE object_kind_id=?1",
+                [OBJECT_CORPUS_RUN],
+                |r| r.get(0),
+            )?;
+            transaction.execute(
+                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)",
+                params![OBJECT_CORPUS_RUN, id, owner_id, lease_until],
+            )?;
+            Ok(id)
+        })?;
         Ok(CorpusRunLease { store: self, id })
     }
 
