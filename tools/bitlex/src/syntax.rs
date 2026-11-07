@@ -82,11 +82,13 @@ pub enum Nest {
     Nested(Option<u32>),
 }
 
-/// A tier-2 condition at a node's start: the previous token is of one of `after`'s kinds, and the
-/// innermost open node is of kind `parent`.
+/// A tier-2 condition at a node's start: the previous token is of one of `after`'s kinds, the
+/// next token after the node's first token (outside strings: the token after a string node) is
+/// of one of `before`'s, and the innermost open node is of kind `parent`. Empty lists hold.
 #[derive(Clone, Debug, Default)]
 pub struct Cond {
     pub after: Vec<String>,
+    pub before: Vec<String>,
     pub parent: Option<String>,
 }
 
@@ -142,7 +144,9 @@ pub enum Stmt {
     /// first bit of `E` at or after it where count `L` after the byte equals `L` before the
     /// start; or `end with F`, with its child of field `F`; or `last token`. `nested`: on the
     /// tape writer's stack (decision 0049).
-    Node { kind: String, start: NodeStart, when: Option<Cond>, end: NodeEnd, level: Option<Nest> },
+    /// `also`: the same nodes by another rule. A target uses one of `when` and `also`, and
+    /// checks the other: a file where they differ goes to tree-sitter.
+    Node { kind: String, start: NodeStart, when: Option<Cond>, also: Option<Cond>, end: NodeEnd, level: Option<Nest> },
     /// `field NAME of KIND … = E`, `supertype NAME of KIND … = E`: a fact of the code of a node
     /// of those kinds that starts at a bit of `E`; `= start of K`, where a node of kind `K` starts
     /// too; `when C`, where `C` holds at its start.
@@ -263,7 +267,9 @@ fn lex(src: &str) -> Result<Vec<Tok>, String> {
         if *t == Tok::Nl {
             let prev_cont = matches!(joined.last(), Some(Tok::P("|" | "&" | "^" | "~" | "," | "=" | "->" | "(")));
             let next = out[k + 1..].iter().find(|t| **t != Tok::Nl);
-            let next_cont = matches!(next, Some(Tok::P("|" | "&" | "^")) | Some(Tok::Str(_)) | Some(Tok::Int(_)) | Some(Tok::UPlus(_)));
+            // A node's `also` and `end` may start lines of their own: no statement starts so.
+            let next_cont = matches!(next, Some(Tok::P("|" | "&" | "^")) | Some(Tok::Str(_)) | Some(Tok::Int(_)) | Some(Tok::UPlus(_)))
+                || matches!(next, Some(Tok::Ident(w)) if w == "also" || w == "end");
             if depth > 0 || prev_cont || next_cont || joined.last() == Some(&Tok::Nl) || joined.is_empty() {
                 continue;
             }
@@ -383,28 +389,38 @@ impl P {
         }
     }
 
-    /// `after K | after (K | K …)`, then optionally `and parent K`; or `parent K`.
+    /// Clauses joined by `and`: `after K`, `after (K | K …)`, `before` likewise, `parent K`.
     fn cond(&mut self) -> R<Cond> {
         let mut c = Cond::default();
-        if self.eat_kw("after") {
-            if self.eat_p("(") {
-                loop {
-                    c.after.push(self.kind()?);
-                    if !self.eat_p("|") {
-                        break;
-                    }
-                }
-                self.want_p(")")?;
+        loop {
+            if self.eat_kw("after") {
+                c.after = self.kinds()?;
+            } else if self.eat_kw("before") {
+                c.before = self.kinds()?;
             } else {
-                c.after.push(self.kind()?);
+                self.want_kw("parent")?;
+                c.parent = Some(self.kind()?);
             }
             if !self.eat_kw("and") {
                 return Ok(c);
             }
         }
-        self.want_kw("parent")?;
-        c.parent = Some(self.kind()?);
-        Ok(c)
+    }
+
+    /// `K` or `(K | K …)`.
+    fn kinds(&mut self) -> R<Vec<String>> {
+        if !self.eat_p("(") {
+            return Ok(vec![self.kind()?]);
+        }
+        let mut out = Vec::new();
+        loop {
+            out.push(self.kind()?);
+            if !self.eat_p("|") {
+                break;
+            }
+        }
+        self.want_p(")")?;
+        Ok(out)
     }
 
     // --- expressions ---
@@ -700,6 +716,12 @@ impl P {
                     NodeStart::At(self.expr()?)
                 };
                 let when = if self.eat_kw("when") { Some(self.cond()?) } else { None };
+                let also = if self.eat_kw("also") {
+                    self.want_kw("when")?;
+                    Some(self.cond()?)
+                } else {
+                    None
+                };
                 self.want_kw("end")?;
                 let end = if self.eat_kw("with") {
                     NodeEnd::With(self.ident()?)
@@ -718,7 +740,7 @@ impl P {
                 } else {
                     None
                 };
-                Stmt::Node { kind, start, when, end, level }
+                Stmt::Node { kind, start, when, also, end, level }
             }
             "check" => {
                 let kind = self.kind()?;
@@ -919,11 +941,41 @@ tree json {
         let Stmt::Node { when: Some(c), end: NodeEnd::With(f), start: NodeStart::At(Expr::Name(k)), .. } = &body[2] else { panic!("pair: {:?}", body[2]) };
         assert_eq!((c.after.clone(), c.parent.clone(), f.as_str(), k.as_str()), (vec!["{".to_owned(), ",".to_owned()], Some("object".to_owned()), "value", "string"));
         assert!(matches!(&body[3], Stmt::Fact { expr: FactWhen::StartOf(k), .. } if k == "pair"));
-        assert!(matches!(&body[4], Stmt::Fact { expr: FactWhen::Cond(Cond { after, parent: None }), kinds, .. } if after == &[":"] && kinds.len() == 2));
+        assert!(matches!(&body[4], Stmt::Fact { expr: FactWhen::Cond(Cond { after, parent: None, .. }), kinds, .. } if after == &[":"] && kinds.len() == 2));
         assert!(matches!(&body[5], Stmt::Fact { expr: FactWhen::Mask(_), .. }));
         assert!(matches!(&body[6], Stmt::Check { kind, validator } if kind == "number" && validator == "json_number"));
         assert!(matches!(&body[7], Stmt::Fact { expr: FactWhen::Always, kinds, .. } if kinds.len() == 2));
         assert!(matches!(&body[8], Stmt::Fact { expr: FactWhen::NotStartOf(k), .. } if k == "pair"));
         assert!(matches!(&body[9], Stmt::Node { start: NodeStart::Kind(s), end: NodeEnd::Kind(e), .. } if s == "[" && e == "]"));
+    }
+
+    /// `before` reads the next token, as `after` reads the one before; `also when` gives the
+    /// same nodes by another rule, which a target that uses one checks with the other.
+    #[test]
+    fn before_and_also_parse() {
+        let src = r#"
+lexer t
+class q = '"'
+mask s = q
+token number = start s last s
+tree json {
+  node pair start string when before ':' also when after ('{' | ',') and parent object end with value
+  field value of number when after ':'
+  node x start s when before (':' | ',') and after '{' end s
+  node y start s when before ':'
+         also when after '{'
+         end s
+}
+"#;
+        let stmts = parse(src).expect("parses");
+        let Some(Stmt::Tree { body, .. }) = stmts.iter().find(|s| matches!(s, Stmt::Tree { .. })) else { panic!("a tree") };
+        let Stmt::Node { when: Some(w), also: Some(a), .. } = &body[0] else { panic!("pair: {:?}", body[0]) };
+        assert_eq!((w.before.clone(), w.after.clone(), w.parent.clone()), (vec![":".to_owned()], vec![], None));
+        assert_eq!((a.before.clone(), a.after.clone(), a.parent.clone()), (vec![], vec!["{".to_owned(), ",".to_owned()], Some("object".to_owned())));
+        let Stmt::Node { when: Some(w), also: None, .. } = &body[2] else { panic!("x: {:?}", body[2]) };
+        assert_eq!((w.before.clone(), w.after.clone()), (vec![":".to_owned(), ",".to_owned()], vec!["{".to_owned()]));
+        // Over three lines.
+        let Stmt::Node { kind, also: Some(a), .. } = &body[3] else { panic!("y: {:?}", body[3]) };
+        assert_eq!((kind.as_str(), a.after.clone()), ("y", vec!["{".to_owned()]));
     }
 }

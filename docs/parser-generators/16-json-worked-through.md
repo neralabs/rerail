@@ -98,6 +98,11 @@ block 0 %30 = andnot %27, %29          # lasts(word), a byte late (delay 1)
 ...                                    # 41 ops in all
 ```
 
+**Built differently (doc 17 §1):** the block program keeps `before` and `after` as row
+conditions, and the analysis lowers them to the values below. The one-byte kinds are read from
+the token's byte, not tier-1 outputs. The ops below are the dataflow's, not the block
+program's.
+
 **Two new ops,** the lowering of `before` and `after`. Each carries one bit, the edge's
 answer, so no `prev` is needed at the block's edge:
 

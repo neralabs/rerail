@@ -298,8 +298,22 @@ pub(in crate::code_rule_dsl) struct NodeRow {
     pub(super) after: Vec<u16>,
     /// A node starts only where the innermost open node is of this kind.
     pub(super) parent: Option<u16>,
+    /// A node starts only where the token after its first child is of one of these kinds
+    /// (none: anywhere): the token after a string, for a key. Read from the right.
+    pub(super) before: Vec<u16>,
+    /// The same nodes by another rule. A target uses one of the two and checks the other; a
+    /// file where they differ goes to tree-sitter.
+    pub(super) also: Option<RowCond>,
     /// The built-in validator of the row's nodes of kind `.0` (`Validator`).
     pub(super) check: Option<(u16, Validator)>,
+}
+
+/// A row's start condition: `after`, `before` and `parent` as `NodeRow`'s.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct RowCond {
+    pub(super) after: Vec<u16>,
+    pub(super) before: Vec<u16>,
+    pub(super) parent: Option<u16>,
 }
 
 /// Where a row's nodes start: at each bit of an output, where a token of a kind starts (its

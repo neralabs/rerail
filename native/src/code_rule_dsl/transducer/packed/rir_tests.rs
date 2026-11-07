@@ -402,3 +402,23 @@ fn block_tree_rows_round_trip() {
     assert!(!refused(&rows.replace("node 5 kind 0 start %1", "node 5 kind 0 start k2")).is_empty(), "a token starts at a mask");
     assert!(refused(&rows.replace("extra\n", "wide\n")).contains("wide"));
 }
+
+/// `before` (the token after the node's first child, as `after` reads the one before) and
+/// `also` (the same nodes by another rule, which a target checks) round-trip and are in the
+/// digest.
+#[test]
+fn block_tree_rows_before_and_also_round_trip() {
+    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 node 0 kind 15 start first end last\n  block 0 node 1 kind 3 start k1 end k2 nested 13\n  block 0 node 2 kind 18 start %2 end with 2 before k4 also after k1 k9 parent k3\n  block 0 node 3 kind 0 start %0 end %0 leaf\n  block 0 keyword 3 7b 1\n  block 0 keyword 3 7d 2\n  0000 STOP 0\n";
+    let program = assemble(rows).unwrap_or_else(|e| panic!("{e}"));
+    let block = &program.block_programs()[0];
+    let pair = &block.nodes[2];
+    assert_eq!((pair.before.clone(), pair.after.clone(), pair.parent), (vec![4], vec![], None));
+    let also = pair.also.clone().expect("an also rule");
+    assert_eq!((also.before, also.after, also.parent), (vec![], vec![1, 9], Some(3)));
+    let text = round_trip(&program, None);
+    assert!(text.contains("node 2 kind 18 start %2 end with 2 before k4 also after k1 k9 parent k3"), "{text}");
+    let plain = assemble(&rows.replace(" also after k1 k9 parent k3", "")).unwrap_or_else(|e| panic!("{e}"));
+    assert_ne!(plain.plain_digest(), program.plain_digest(), "`also` is in the digest");
+    assert!(!refused(&rows.replace("before k4 also", "before k4 also after k1 also")).is_empty(), "a second `also`");
+    assert!(!refused(&rows.replace("also after", "also also after")).is_empty(), "one `also`");
+}

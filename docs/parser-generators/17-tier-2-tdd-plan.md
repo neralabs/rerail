@@ -32,24 +32,21 @@ the monoids' sequential references and the carries'. None of them is an executor
 - **Threadgroup memory is a budget, well under 32 KB,** for occupancy: about 9 KB for JSON.
 - **No chunk limit.** A file of any size is one pass A, one scan, one pass B.
 
-## 1. Bitlex and the block program
+## 1. Bitlex and the block program (done)
 
-**Builds:** `before X` and `after X` in tree conditions, and `also when` for the other rule.
-`BlockOp::After` (forward, a 1-bit carry, every tier-1 executor). `BlockOp::Before` (backward,
-tier 2 only: no tier-1 output may depend on one). Rows that read masks: one-byte kinds become
-masks, and the pair's start becomes `opening & before(U, ':')`.
+**Built:** `before X` and `also when` in Bitlex. A node statement may run over several lines,
+with `also` and `end` starting their own. Rows carry `before` and `also`, and `rir` prints them.
+`json.bitlex`'s pair is found by `before ':'`, with the rule from the left as its `also`.
 
-**Tests, red first:**
+**Changed from doc 16 §3:** the block program keeps rules. `before` and `after` are not tier-1
+ops. The analysis lowers the rows' conditions to values (phase 3). The one-byte kinds are not
+tier-1 outputs either: as outputs, they took JSON's loop from 178 instructions to 274. Tier 2
+reads them from the token's byte, as simdjson's stage 2 does. The punctuation row's keywords
+say which byte is which kind.
 
-- `bitlex::syntax`: `when before ':'` and `also when after ('{' | ',') and parent object`
-  parse.
-- `block_tests::after_and_before_equal_their_references`: random words and carries, against
-  a byte-at-a-time definition.
-- `rir_tests`: `after` and `before` round-trip.
-- `block_tests::after_runs_on_every_executor`: interpreter, Cranelift and Metal tier 1 agree.
-- `block_tests::an_output_may_not_depend_on_before`: `verify` refuses it.
-- `bitlex_compile_tests::json_rows_read_masks`: the pair, object and array rows start at
-  masks; the pair keeps the rule from the left as its `also`.
+**Tests:** `bitlex::syntax::before_and_also_parse`,
+`rir::tests::block_tree_rows_before_and_also_round_trip`,
+`bitlex_compile_tests::json_rows_read_kinds_as_designed`, and the tier-1 ratchets unchanged.
 
 ## 2. The monoids
 

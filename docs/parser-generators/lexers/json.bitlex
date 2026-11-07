@@ -98,9 +98,13 @@ tree json {
   mask last_byte = ~next(~empty)
 
   node document start first token end last_byte
-  # A key is known from what comes before it, as in simdjson's stage 2: a string right after a
-  # '{' or a ',' inside an object. The pair ends with its value.
-  node pair     start string when after ('{' | ',') and parent object end with value
+  # A key is a string whose next token is ':': known from the bytes alone, so no scan waits on
+  # the stack (14-tier-2-design.md §1). The same pairs from the left, as simdjson's stage 2 finds
+  # them: a string right after a '{' or a ',' inside an object. A target uses one rule and checks
+  # the other. The pair ends with its value.
+  node pair     start string when before ':'
+                also when after ('{' | ',') and parent object
+                end with value
   # Nesting on the writer's stack: 4 of the 28,470 data-layer files nest past 13.
   node object   start '{'     end '}'     nested max 13
   node array    start '['     end ']'     nested max 13

@@ -336,7 +336,7 @@ impl<'a> Ev<'a> {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
             }
-            Stmt::Node { kind, start, when, end, level } => {
+            Stmt::Node { kind, start, when, end, level, .. } => {
                 let (NodeStart::At(start), None, NodeEnd::At(end), None | Some(Nest::Level(_))) = (start, when, end, level) else {
                     self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
                     return Ok(());

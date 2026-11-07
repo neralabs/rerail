@@ -53,7 +53,7 @@
 //!   a constant, or a carried operation whose state runs on. `next` cleans its operand with
 //!   `within` when it is dirty.
 
-use super::block::{BlockOp, BlockProgram, ClassTable, CodeRow, Fact, KeywordRow, NodeRow, RowEnd, RowStart, Validator};
+use super::block::{BlockOp, BlockProgram, ClassTable, CodeRow, Fact, KeywordRow, NodeRow, RowCond, RowEnd, RowStart, Validator};
 use ::bitlex::syntax::{Arg, Cond, Expr, FactWhen, Nest, NodeEnd, NodeStart, Stmt};
 use std::collections::HashMap;
 
@@ -128,6 +128,7 @@ struct RowSpec {
     leaf: bool,
     nested: Option<u32>,
     when: Option<Cond>,
+    also: Option<Cond>,
 }
 
 enum SpecStart {
@@ -219,6 +220,7 @@ struct TreeNode {
     /// A mask, another kind's starts (by name), or the first token.
     start: Result<Option<Val>, String>,
     when: Option<Cond>,
+    also: Option<Cond>,
     /// A mask, `with` a field, or the last token.
     end: NodeEnd,
     end_mask: Option<Val>,
@@ -312,13 +314,14 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 (NodeEnd::With(f), _) => SpecEnd::With(f.clone()),
                 _ => SpecEnd::Last,
             };
-            specs.push(RowSpec { kind: n.kind.clone(), start, end, leaf: false, nested: n.nested, when: n.when.clone() });
+            specs.push(RowSpec { kind: n.kind.clone(), start, end, leaf: false, nested: n.nested, when: n.when.clone(), also: n.also.clone() });
         }
         for (kind, start, last) in &token_rows {
             let s = push(&mut vals, format!("node {kind} start"), *start);
             let e = push(&mut vals, format!("node {kind} end"), *last);
-            specs.push(RowSpec { kind: kind.clone(), start: SpecStart::At(s), end: SpecEnd::At(e), leaf: true, nested: None, when: None });
+            specs.push(RowSpec { kind: kind.clone(), start: SpecStart::At(s), end: SpecEnd::At(e), leaf: true, nested: None, when: None, also: None });
         }
+
         let tree_facts = std::mem::take(&mut low.tree.facts);
         let rows_of = |kind: &str| kind_rows(&specs, &tree_facts, &low.keywords, kind);
         for (field, name, kinds, fact) in &tree_facts {
@@ -387,11 +390,16 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         let row_of = |k: &str| specs.iter().position(|r| r.kind == k).map(|r| r as u16).ok_or_else(|| format!("no node kind `{k}`"));
         // A token row whose every token is a keyword (`required`) has kind 0: the keyword's is its.
         let required: Vec<&String> = low.keywords.iter().filter(|k| k.2).map(|k| &k.0).collect();
+        let cond = |c: &Cond| -> Result<RowCond, String> {
+            Ok(RowCond {
+                after: token_kinds(&c.after)?,
+                before: token_kinds(&c.before)?,
+                parent: c.parent.as_deref().map(|p| row_of(p).and_then(|_| id(p))).transpose()?,
+            })
+        };
         for spec in &specs {
-            let (after, parent) = match &spec.when {
-                Some(c) => (token_kinds(&c.after)?, c.parent.as_deref().map(|p| row_of(p).and_then(|_| id(p))).transpose()?),
-                None => (Vec::new(), None),
-            };
+            let RowCond { after, before, parent } = spec.when.as_ref().map(cond).transpose()?.unwrap_or_default();
+            let also = spec.also.as_ref().map(cond).transpose()?;
             low.program.nodes.push(NodeRow {
                 kind: if spec.leaf && required.contains(&&spec.kind) { 0 } else { id(&spec.kind)? },
                 start: match &spec.start {
@@ -410,6 +418,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 nested: spec.nested.map(|d| d.min(63) as u8),
                 after,
                 parent,
+                before,
+                also,
                 check: None,
             });
         }
@@ -437,6 +447,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
             }
         }
         low.program.skip = skip.map(|k| at[k]);
+
     }
     low.program.delay = delay;
     let program = live(&low.program);
@@ -491,7 +502,7 @@ impl Lowering {
                     });
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
-                Stmt::Node { kind, start, when, end, level } => {
+                Stmt::Node { kind, start, when, also, end, level } => {
                     let start = match start {
                         NodeStart::FirstToken => Ok(None),
                         // Another node kind's starts, resolved with the rows.
@@ -508,7 +519,7 @@ impl Lowering {
                         Some(Nest::Nested(max)) => Some(max.unwrap_or(63)),
                         Some(Nest::Level(_)) => return Err(format!("node {kind}: a count level is not compiled; nest it on the writer's stack (`nested`, decision 0049)")),
                     };
-                    self.tree.nodes.push(TreeNode { kind: kind.clone(), start, when: when.clone(), end: end.clone(), end_mask, nested });
+                    self.tree.nodes.push(TreeNode { kind: kind.clone(), start, when: when.clone(), also: also.clone(), end: end.clone(), end_mask, nested });
                 }
                 Stmt::Fact { field, name, kinds, expr } => {
                     let fact = match expr {

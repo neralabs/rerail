@@ -293,6 +293,9 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
 /// block N keyword R HEX K
 /// block N skip %v
 /// ```
+///
+/// A node row's conditions: `after kA…`, `parent kP`, `before kB…`, then `also` and the other
+/// rule's.
 pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
     use super::block::{Fact, RowEnd, RowStart};
     let kinds = |ks: &[u16]| ks.iter().map(|k| format!(" k{k}")).collect::<String>();
@@ -320,6 +323,21 @@ pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram
         }
         if let Some(p) = row.parent {
             let _ = write!(more, " parent k{p}");
+        }
+        if !row.before.is_empty() {
+            let _ = write!(more, " before{}", kinds(&row.before));
+        }
+        if let Some(c) = &row.also {
+            more.push_str(" also");
+            if !c.after.is_empty() {
+                let _ = write!(more, " after{}", kinds(&c.after));
+            }
+            if let Some(p) = c.parent {
+                let _ = write!(more, " parent k{p}");
+            }
+            if !c.before.is_empty() {
+                let _ = write!(more, " before{}", kinds(&c.before));
+            }
         }
         if let Some((k, v)) = row.check {
             let _ = write!(more, " check {k} {}", v.name());
@@ -829,13 +847,43 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     v if v.starts_with('k') => RowEnd::Kind(v[1..].parse().map_err(|_| format!("a bad end `{v}`"))?),
                     v => RowEnd::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad end `{v}`"))?),
                 };
-                let mut row = block::NodeRow { kind, start, end, extra: false, leaf: false, nested: None, after: Vec::new(), parent: None, check: None };
+                let mut row = block::NodeRow {
+                    kind,
+                    start,
+                    end,
+                    extra: false,
+                    leaf: false,
+                    nested: None,
+                    after: Vec::new(),
+                    parent: None,
+                    before: Vec::new(),
+                    also: None,
+                    check: None,
+                };
                 while let Ok(word) = line.word() {
+                    if word == "also" {
+                        if row.also.is_some() {
+                            return Err("a node row has one `also`".into());
+                        }
+                        row.also = Some(block::RowCond::default());
+                        continue;
+                    }
+                    // After `also`, the conditions are the other rule's.
+                    if let Some(c) = row.also.as_mut() {
+                        match word.as_str() {
+                            "after" => c.after = kind_list(line)?,
+                            "before" => c.before = kind_list(line)?,
+                            "parent" => c.parent = Some(line.number("k")?),
+                            other => return Err(format!("`also` is followed by conditions only, not `{other}`")),
+                        }
+                        continue;
+                    }
                     match word.as_str() {
                         "leaf" => row.leaf = true,
                         "extra" => row.extra = true,
                         "nested" => row.nested = Some(line.number("")?),
                         "after" => row.after = kind_list(line)?,
+                        "before" => row.before = kind_list(line)?,
                         "parent" => row.parent = Some(line.number("k")?),
                         "check" => {
                             let k = line.number("")?;
@@ -878,6 +926,7 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 program.keywords.push(block::KeywordRow { node, word, kind });
             } else if first == "skip" {
                 program.skip = Some(line.number("%")?);
+
             } else if first == "delay" {
                 // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).
                 let d: u64 = line.number("")?;

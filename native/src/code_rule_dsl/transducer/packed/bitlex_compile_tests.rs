@@ -492,6 +492,27 @@ fn json_program() -> Program {
     batch_programs().remove(0)
 }
 
+/// JSON's rows as doc 16 §3 has them: the pair found from the token after its string, with
+/// the rule from the left kept as its `also`. The one-byte kinds are the punctuation token's
+/// keywords, which tier 2 reads from the token's byte: they are not tier 1's outputs, so tier 1
+/// stays simdjson's stage 1 (its ratchets hold).
+#[test]
+fn json_rows_read_kinds_as_designed() {
+    let p = json_program();
+    let b = &p.block_programs()[0];
+    let kw = |w: &[u8]| b.keywords.iter().find(|k| k.word == w).map(|k| k.kind).expect("a keyword");
+    let (colon, comma, lbrace) = (kw(b":"), kw(b","), kw(b"{"));
+    let pair = b.nodes.iter().find(|r| r.also.is_some()).expect("the pair row has an also rule");
+    assert_eq!((pair.before.clone(), pair.after.clone(), pair.parent), (vec![colon], vec![], None));
+    let also = pair.also.clone().expect("also");
+    assert_eq!((also.after, also.before), (vec![lbrace, comma], vec![]));
+    assert!(also.parent.is_some());
+    let one_byte: Vec<&[u8]> = b.keywords.iter().filter(|k| k.word.len() == 1).map(|k| &k.word[..]).collect();
+    assert_eq!(one_byte, [&b"{"[..], b"}", b"[", b"]", b",", b":"]);
+    let rows: std::collections::BTreeSet<u16> = b.keywords.iter().filter(|k| k.word.len() == 1).map(|k| k.node).collect();
+    assert_eq!(rows.len(), 1, "one token row: the punctuation");
+}
+
 /// JSON's fallback outputs (`bitlex_compile::Compiled::fallbacks`).
 fn json_fallbacks() -> Vec<u16> {
     use ast_grep_language::LanguageExt;
