@@ -232,7 +232,7 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     pub(super) ops: Vec<BlockOp>,
     pub(super) outputs: Vec<u16>,
     /// Values, each also an output, whose set bits the extract pass writes as byte positions
-    /// (`docs/parser-generators/10-lowering-to-bit-operations.md` §4.1): simdjson's structural
+    /// (`docs/parser-generators/10-bit-programs.md` §4.1): simdjson's structural
     /// indexes from its structural mask.
     pub(super) extracts: Vec<u16>,
 }
@@ -394,7 +394,7 @@ impl BlockProgram {
     }
 }
 
-/// The extract pass on the CPU (`10-lowering-to-bit-operations.md` §4.1): a plane's set bits as
+/// The extract pass on the CPU (`10-bit-programs.md` §4.1): a plane's set bits as
 /// byte positions, into a vector allocated once at its final size.
 pub(super) mod extract {
     /// The positions of `words`' set bits, `count` of them (the mask pass's popcount), by

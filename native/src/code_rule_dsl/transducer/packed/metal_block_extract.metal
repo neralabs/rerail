@@ -1,4 +1,4 @@
-// The extract pass of block programs on Metal (`docs/parser-generators/10-lowering-to-bit-operations.md`
+// The extract pass of block programs on Metal (`docs/parser-generators/10-bit-programs.md`
 // §4.1): a plane's set bits as byte positions. A chunk is one SIMD group's span of the stream (32
 // lanes of W bytes).
 //
