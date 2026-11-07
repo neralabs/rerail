@@ -210,9 +210,7 @@ sub($c, $c) :- kind($c, "class_definition").
 sub($c, $s) :- sub($c, $m), base($s, $m).
 // The attribute lookups the program makes: a class and the attribute read from it (or from a `super()`).
 .decl need_attr(c: node, a: sym)
-need_attr($c, $a) :- attr_of($n, $o, $a), pv($o, "cls", $c).
-need_attr($c, $a) :- attr_of($n, $o, $a), pv($o, "inst", $c).
-need_attr($b, $a) :- attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b).
+need_attr($c, $a) :- alook(_, $c, $a).
 need_attr($c, "__init__") :- callee($k, $e), pv($e, "cls", $c).
 need_attr($c, "__call__") :- callee($k, $e), pv($e, "inst", $c).
 // Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance). Computed only
@@ -256,9 +254,14 @@ bv($f, $x, "cls", $s) :- method($f, $c), param($f, $x, 0), classmeth($f), sub($c
 .decl pv(n: node, k: sym, v: node)
 pv($n, $k, $v) :- look($n, $x, $s), bv($s, $x, $k, $v).
 pv($n, $k, $v) :- qn($n, $q), qv($q, $k, $v).
-pv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "cls", $c), found($c, $a, $at), bv($at, $a, $k, $v).
-pv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "inst", $c), found($c, $a, $at), bv($at, $a, $k, $v).
-pv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b), found($b, $a, $at), bv($at, $a, $k, $v).
+pv($n, $k, $v) :- alook($n, $c, $a), found($c, $a, $at), bv($at, $a, $k, $v).
+// alook(n, c, a): the attribute `o.a` at n is looked up on class c: o's class, o itself where o is a class, or each
+// base of the class `super()` is in. One join per attribute node, which the lookup above, `need_attr`, `vopen` and
+// the method resolution read, in place of each joining the object's values to the class's bindings itself.
+.decl alook(n: node, c: node, a: sym)
+alook($n, $c, $a) :- attr_of($n, $o, $a), pv($o, "cls", $c).
+alook($n, $c, $a) :- attr_of($n, $o, $a), pv($o, "inst", $c).
+alook($n, $b, $a) :- attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b).
 pv($n, $k, $v) :- kind($n, "parenthesized_expression"), child($n, $c, 0), pv($c, $k, $v).
 pv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 0), pv($c, $k, $v).
 pv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 2), pv($c, $k, $v).
@@ -315,9 +318,7 @@ attr_open($c, $a) :- need_attr($c, $a), !found($c, $a, _), !ext_base_up($c), $a 
 // An attribute an external base supplies: calling it runs no workspace definition, but as a value (a receiver, an
 // assigned value) it may be anything, a workspace class included (`cls.__class__`).
 .decl ext_attr(n: node)
-ext_attr($n) :- attr_of($n, $o, $a), pv($o, "cls", $c), need_attr($c, $a), !found($c, $a, _), ext_base_up($c).
-ext_attr($n) :- attr_of($n, $o, $a), pv($o, "inst", $c), need_attr($c, $a), !found($c, $a, _), ext_base_up($c).
-ext_attr($n) :- attr_of($n, $o, $a), pv($o, "super", $k), base($k, $c), need_attr($c, $a), !found($c, $a, _), ext_base_up($c).
+ext_attr($n) :- alook($n, $c, $a), !found($c, $a, _), ext_base_up($c).
 .decl ext_base_up(c: node)
 ext_base_up($c) :- anc($c, $b), basex($b, $e), extb($e).
 .decl bopen(s: node, x: sym)
@@ -349,9 +350,7 @@ vopen($n) :- vpos($n), qn($n, $q), qopen($q).
 vopen($n) :- vpos($n), attr_of($n, $o, _), qn($o, $q), isqmod($q), qn($n, $q2), !qknown($q2).
 vopen($n) :- vpos($n), attr_of($n, $o, _), vopen($o).
 vopen($n) :- vpos($n), attr_of($n, $o, _), kind($o, $k), !tracked($k).
-vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "cls", $c), attr_open($c, $a).
-vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "inst", $c), attr_open($c, $a).
-vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b), attr_open($b, $a).
+vopen($n) :- vpos($n), alook($n, $c, $a), attr_open($c, $a).
 vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "super", $c), base_open($c).
 vopen($n) :- vpos($n), attr_of($n, $o, _), pv($o, "fn", _).
 vopen($n) :- vpos($n), ext_attr($n), !callee(_, $n).
@@ -384,9 +383,7 @@ call_target($c, $f) :- callee($c, $e), pv($e, "fn", $f), !mro_dropped($e, $f).
 // cannot go. Candidates neither of which subclasses the other are left to C3's left-to-right merge, which this
 // does not model: the call is unknown (`mro_ambiguous`), never both.
 .decl mro_cand(n: node, c: node, at: node)
-mro_cand($n, $c, $at) :- attr_of($n, $o, $a), pv($o, "cls", $c), found($c, $a, $at).
-mro_cand($n, $c, $at) :- attr_of($n, $o, $a), pv($o, "inst", $c), found($c, $a, $at).
-mro_cand($n, $b, $at) :- attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b), found($b, $a, $at).
+mro_cand($n, $c, $at) :- alook($n, $c, $a), found($c, $a, $at).
 // Per receiver class c: a late-bound `self` may be several classes, each with its own resolution.
 .decl mro_shadowed(n: node, c: node, at: node)
 mro_shadowed($n, $c, $at) :- mro_cand($n, $c, $at), mro_cand($n, $c, $x), $x != $at, anc($x, $at).
@@ -549,8 +546,7 @@ tbv($s, $x, $k, $v) :- ibind($s, $x, $q), tqv($q, $k, $v).
 tqv(@cat($q, $x), $k, $v) :- modname($m, $q), tbv($m, $x, $k, $v).
 tv($n, $k, $v) :- look($n, $x, $s), tbv($s, $x, $k, $v).
 tv($n, $k, $v) :- qn($n, $q), tqv($q, $k, $v).
-tv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "cls", $c), found($c, $a, $at), tbv($at, $a, $k, $v).
-tv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "inst", $c), found($c, $a, $at), tbv($at, $a, $k, $v).
+tv($n, $k, $v) :- alook($n, $c, $a), found($c, $a, $at), tbv($at, $a, $k, $v).
 tv($n, $k, $v) :- kind($n, "parenthesized_expression"), child($n, $c, 0), tv($c, $k, $v).
 tv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 0), tv($c, $k, $v).
 tv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 2), tv($c, $k, $v).
