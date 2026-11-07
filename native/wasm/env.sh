@@ -22,3 +22,7 @@ export WASI_SYSROOT=$_sys
 # Link the C and C++ objects' own libc (Homebrew's wasi-libc, newer than the copy Rust bundles: its TLS start
 # `__wasi_init_tp` is not in Rust's), and libc++ for esaxx.
 export CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="-C link-self-contained=no -C link-arg=$_sys/lib/wasm32-wasip1/crt1-command.o -L native=$_sys/lib/wasm32-wasip1 -l static=c++ -l static=c++abi"
+# SQLite without the extensions the engine never uses (its SQL has no FTS3 or R-tree table; FTS5, JSON and
+# dbstat stay). `-U` after the bundled build's `-D`s; the engine uses neither on any target, so a host build in
+# this shell loses nothing.
+export LIBSQLITE3_FLAGS="-USQLITE_ENABLE_FTS3 -USQLITE_ENABLE_FTS3_PARENTHESIS -USQLITE_ENABLE_RTREE"

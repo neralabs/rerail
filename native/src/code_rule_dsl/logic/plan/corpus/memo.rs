@@ -71,8 +71,17 @@ pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Progr
     hash.finalize().into()
 }
 
+/// The memo is the tape cache's: a build without `tape-cache` has no store to keep it in, so the runner never reads or
+/// writes it, and saying so here, where the compiler sees it, leaves the store's zstd frames unlinked.
+pub(super) fn off() {
+    if !cfg!(feature = "tape-cache") {
+        unreachable!("the corpus memo is off in a build without `tape-cache`");
+    }
+}
+
 /// The stored source of `text`, stored if it is not.
 pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
+    off();
     let hash = HashKey::sha256(text.as_bytes());
     match store.source_by_hash(hash)? {
         Some(id) => Ok(id),
@@ -82,6 +91,7 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
 
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.
 pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
+    off();
     let set = plan(program);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path })?;
     match memo.results.get(&set.plans[0]) {
@@ -92,6 +102,7 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
 
 /// Memoises `entry` as the document's at `path`.
 pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
+    off();
     let set = plan(program);
     let result = FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key, ..entry.clone() }) };
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, result.entry.len() as u64);
