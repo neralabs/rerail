@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 # Only the differential binary uses tree-sitter; the evaluator itself has no dependencies.
-tree-sitter = "=0.25.10"
+tree-sitter = "=0.27.1"
 tree-sitter-python = "=0.25.0"
 tree-sitter-json = "=0.24.8"
 

@@ -92,6 +92,11 @@ directed acyclic graph of mask operations.
 | `check KIND matches "REGEX"` | Every token of `KIND` (after `keywords`) must match `REGEX` in full, or the file goes to tree-sitter. Lowered as masks when it can be (§3.3); the lexers here write those masks out instead. |
 | `skip EXPR` | Bytes that may belong to no token, such as whitespace. |
 | `error "MESSAGE" when EXPR` | If any bit of `EXPR` is set, the file goes to tree-sitter. |
+| `tree NAME { … }` | The tree section: where each node starts and ends, for the tape (`13-tape-on-the-gpu.md`). It holds the statements below, and masks and scans of its own. |
+| `node KIND start S end E [level L]` | A node at each bit of `S`. It ends at the first bit of `E` at or after its start where count `L` after the byte equals `L` before the start; without a level, at the first bit. Listed order is rank: outermost first at one byte. |
+| `field NAME of KIND … = EXPR`, `supertype NAME of KIND … = EXPR` | A node of those kinds starting at a bit of `EXPR` has the field, or is in the supertype. |
+| `extra KIND …` | Nodes of these kinds carry the extra flag. |
+| `untoken KIND …` | Tokens of these kinds are not nodes; a `node` statement makes those nodes instead. |
 
 ### 2.2 Mask expressions
 
@@ -420,6 +425,9 @@ cargo run --release --offline --manifest-path tools/bitlex/Cargo.toml -- diff LE
 … -- fstr LEXER LIST       Python: interpolations, format expressions and specs, against
                            tree-sitter and the f-string oracle
 … -- tokens LEXER FILE     the tokens and errors of one file
+… -- tree LEXER LIST       the tree section's nodes against tree-sitter's, per node in
+                           preorder: kind, field, supertypes, extra, span and size
+… -- nodes LEXER FILE      both node lists of one file, side by side
 ```
 
 Tokens are compared with tree-sitter's leaves; a `string_content` with escape children counts as

@@ -1,6 +1,7 @@
 # Parser generators: the tape from a Bitlex file
 
-Status: proposal (2026-11-06). Nothing here is built yet.
+Status: proposal (2026-11-06). Step 1 of §6 is built: the reference evaluator runs the tree
+section (§4).
 
 ## Intro
 
@@ -49,7 +50,8 @@ tree json {
   opening quote starts `pair`, `string` and `"`, listed in that order.
 - **Tokens are nodes already.** Every `token` statement is a leaf node of its kind. The compiler
   gives it the token's own start mask, and the mask of each token's last byte as its end mask.
-  At the same byte, tokens rank after the tree section's nodes.
+  At the same byte, tokens rank after the tree section's nodes. `untoken KIND` drops a token
+  kind from the nodes, for a grammar whose node is not the token.
 - **Zero-width nodes** are not allowed. A file that would need one goes to tree-sitter, as
   `01-branch-free-design.md` §2 decides.
 
@@ -84,9 +86,9 @@ Python's blocks would use indentation as their level.
 A node's code is its kind, plus facts read at its start byte:
 
 ```text
-  field key        = string & key_quote     # the node has this field where the mask is set
-  supertype _value = value_start            # the node is in this supertype where it is set
-  alias …                                   # a contextual alias, the same way
+  field key of string = key_quote           # a string starting at a bit of key_quote has `key`
+  supertype _value of object array … = value_start
+  alias …                                   # a contextual alias, the same way (not built yet)
   extra comment                             # nodes of this kind carry the extra flag
 ```
 
@@ -245,42 +247,63 @@ wrote, so the masks are not run again.
 
 ## 4. JSON's tree section
 
-This is a sketch. A differential test against tree-sitter settles the unknowns that `01` §5
-lists: where `document` starts and ends, and the exact memberships.
+`lexers/json.bitlex` ends with this section. The reference evaluator runs it (step 1 of §6),
+and its nodes equal tree-sitter's on every JSON file tried.
 
 ```text
 tree json {
-  # Bracket nesting outside strings and comments.
-  scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 1024
+  # Bytes between tokens that carry no structure: whitespace and comments.
+  mask gap         = (code & ws) | in_cmt
+  mask solid       = ~gap
+  mask first_solid = solid & ~prev(fill(solid, empty))
+  mask last_byte   = ~next(~empty)
 
-  # The structural byte before and after each byte, skipping whitespace and comments.
-  mask after_colon = prev_structural(colon)
-  mask key_end     = closing & next_structural(colon)
-  mask key_quote   = opening & back_fill(key_end, closing)  # the key's closing quote, carried back
+  # Bracket depth, after each byte.
+  scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 100000
 
-  # A value is an object, an array, a string or a scalar token.
+  # The first solid byte after a ':'; a string's closing quote whose next solid byte is ':', and
+  # its opening quote (the fact carried back over the string).
+  mask after_colon = fill(prev(code & colon), prev(solid)) & solid
+  mask key_end     = closing & next(back_fill(code & colon, solid))
+  mask key_quote   = opening & back_fill(key_end, closing)
+
   mask value_start = (code & (lbrace | lbracket)) | (opening & ~key_quote) | wstart
   mask value_end   = (code & (rbrace | rbracket)) | (closing & ~key_end) | lasts(word)
 
-  # A pair ends with its value: the key's end is not a value end, and the level skips the ends
-  # of values nested deeper.
-  node document start first_value       end last_value_end
+  node document start first_solid       end last_byte
   node pair     start key_quote         end value_end            level depth
   node object   start code & lbrace     end code & rbrace        level depth
   node array    start code & lbracket   end code & rbracket      level depth
   node string   start opening           end closing
 
-  field key        = string & key_quote
-  field value      = value_start & after_colon
-  supertype _value = value_start
+  field key of string = key_quote
+  field value of object array string number true false null = value_start & after_colon
+  supertype _value of object array string number true false null = value_start
   extra comment
 }
 ```
 
-- **Not yet in Bitlex:** `prev_structural` and `next_structural`. They test the structural byte
-  before and after, skipping whitespace and comments: a `fill` forward and a `back_fill`
-  backward. Each one is a line of masks in this file, not a new primitive.
-- **Left to the differential test:** `first_value` and `last_value_end` (step 1 of §6).
+**What the differential test settled** (tree-sitter-json 0.24.8, runtime 0.27.1):
+
+- `document` starts at the first byte that is not whitespace and ends at the end of the file,
+  trailing whitespace included;
+- `string_content` is split around escapes in the tree, as the tokens are, so no `untoken` is
+  needed;
+- a value has the supertype `_value`, a key the field `key`, and a pair's value the field
+  `value`;
+- a comment is an extra, the child of whatever node it sits in. The rank and nesting rules place
+  it with nothing added.
+
+**Results.** The evaluator's nodes are compared with tree-sitter's, node by node in preorder:
+kind id, field id, supertypes, extra flag, span and the generic rule's `size`.
+
+| corpus | files | equal | fall back | tree-sitter errors |
+|---|---:|---:|---:|---:|
+| a data-layer checkout: tracked JSON files | 900 | 899 | 0 | 1 |
+| the same checkout: every JSON file outside `.git`, `node_modules` and `.venv` | 28,470 | 28,467 | 1 (an empty file: a zero-width root) | 2 |
+
+These are the tape's inputs. The columns follow from them by `TapeImage::finish`'s formulas.
+Comparing the image itself byte for byte needs the engine, and is part of step 3.
 
 ## 5. What changes where
 

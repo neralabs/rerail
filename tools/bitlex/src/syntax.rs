@@ -78,6 +78,19 @@ pub enum Stmt {
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
     Error(String, Expr),
+    /// `tree NAME { … }`: the statements that say where each node starts and ends
+    /// (docs/parser-generators/13-tape-on-the-gpu.md).
+    Tree { name: String, body: Vec<Stmt> },
+    /// `node KIND start S end E [level L]`: a node at each bit of `S`, ending at the first bit of
+    /// `E` at or after it where count `L` after the byte equals `L` before the start.
+    Node { kind: String, start: Expr, end: Expr, level: Option<String> },
+    /// `field NAME of KIND … = E`, `supertype NAME of KIND … = E`: a fact of the code of a node
+    /// of those kinds that starts at a bit of `E`.
+    Fact { field: bool, name: String, kinds: Vec<String>, expr: Expr },
+    /// `extra KIND …`: nodes of these kinds carry the extra flag.
+    Extra(Vec<String>),
+    /// `untoken KIND …`: tokens of these kinds are not nodes; a `node` statement makes them.
+    Untoken(Vec<String>),
 }
 
 impl Stmt {
@@ -579,6 +592,36 @@ impl P {
                 Stmt::Error(m, self.expr()?)
             }
             "skip" => Stmt::Skip(self.expr()?),
+            "tree" => {
+                let name = self.ident()?;
+                Stmt::Tree { name, body: self.block()? }
+            }
+            "node" => {
+                let kind = self.kind()?;
+                self.want_kw("start")?;
+                let start = self.expr()?;
+                self.want_kw("end")?;
+                let end = self.expr()?;
+                let level = if self.eat_kw("level") { Some(self.ident()?) } else { None };
+                Stmt::Node { kind, start, end, level }
+            }
+            "field" | "supertype" => {
+                let name = self.ident()?;
+                self.want_kw("of")?;
+                let mut kinds = vec![];
+                while !self.is_p("=") {
+                    kinds.push(self.kind()?);
+                }
+                self.want_p("=")?;
+                Stmt::Fact { field: kw == "field", name, kinds, expr: self.expr()? }
+            }
+            "extra" | "untoken" => {
+                let mut kinds = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
+                    kinds.push(self.kind()?);
+                }
+                if kw == "extra" { Stmt::Extra(kinds) } else { Stmt::Untoken(kinds) }
+            }
             "token" => {
                 let kind = self.kind()?;
                 self.want_p("=")?;

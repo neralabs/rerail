@@ -36,7 +36,21 @@ pub struct Token {
     pub soft: bool,
 }
 
+/// A `tree` section's declarations, its masks evaluated.
+#[derive(Clone, Default)]
+pub struct TreeDecl {
+    /// Each node kind in order (its rank): kind, start mask, end mask, level (a count after each
+    /// byte).
+    pub nodes: Vec<(String, Mask, Mask, Option<Vec<i32>>)>,
+    /// Code facts: whether a field (else a supertype), its name, the kinds, the mask.
+    pub facts: Vec<(bool, String, Vec<String>, Mask)>,
+    pub extra: Vec<String>,
+    pub untoken: Vec<String>,
+}
+
 pub struct Output {
+    /// The `tree` section, if the file has one.
+    pub tree: Option<TreeDecl>,
     pub tokens: Vec<Token>,
     pub errors: Vec<String>,
     /// For each `rounds` block reached: a label and the rounds it took, the confirming one included.
@@ -75,6 +89,7 @@ pub struct Ev<'a> {
     keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, Vec<Vec<u8>>, bool)>,
     skip: Mask,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
+    tree: Option<TreeDecl>,
 }
 
 type R<T> = Result<T, String>;
@@ -134,10 +149,11 @@ impl<'a> Ev<'a> {
             keywords: vec![],
             skip: Mask::zeros(n),
             tables,
+            tree: None,
         };
         ev.exec(prog)?;
         let tokens = ev.finish()?;
-        Ok(Output { tokens, errors: ev.errors, rounds: ev.rounds, vars: ev.vars })
+        Ok(Output { tree: ev.tree, tokens, errors: ev.errors, rounds: ev.rounds, vars: ev.vars })
     }
 
     pub fn get_mask(&self, name: &str) -> Option<&Mask> {
@@ -307,6 +323,27 @@ impl<'a> Ev<'a> {
                 let m = self.mask(e)?;
                 self.skip = self.skip.or(&m);
             }
+            Stmt::Tree { body, .. } => {
+                self.tree.get_or_insert_with(TreeDecl::default);
+                self.exec(body)?;
+            }
+            Stmt::Node { kind, start, end, level } => {
+                let (start, end) = (self.mask(start)?, self.mask(end)?);
+                let level = match level {
+                    Some(l) => match self.vars.get(l) {
+                        Some(Val::C(c)) => Some(c.clone()),
+                        _ => return Err(format!("node {kind}: level `{l}` is not a count")),
+                    },
+                    None => None,
+                };
+                self.tree.get_or_insert_with(TreeDecl::default).nodes.push((kind.clone(), start, end, level));
+            }
+            Stmt::Fact { field, name, kinds, expr } => {
+                let m = self.mask(expr)?;
+                self.tree.get_or_insert_with(TreeDecl::default).facts.push((*field, name.clone(), kinds.clone(), m));
+            }
+            Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
+            Stmt::Untoken(kinds) => self.tree.get_or_insert_with(TreeDecl::default).untoken.extend(kinds.iter().cloned()),
             Stmt::Error(msg, e) => {
                 let m = self.mask(e)?;
                 self.err(msg, &m);

@@ -168,3 +168,48 @@ error "number: bare e"          when expc & num & (~prev(digit)
                                                    | ~(next(digit) | (next(sign) & next(digit, 2))))
 # 8. The last byte is a digit.
 error "number: bad end"         when lasts(num) & ~digit
+
+# --- The tree: tree-sitter-json's nodes, for the tape (13-tape-on-the-gpu.md) -------------------
+#
+# Each token above is a leaf node. The section adds the inner nodes, each a start mask and an
+# end mask: a node ends at the first bit of its end mask at or after its start, at its start's
+# depth when it has a level. Where several start at one byte, the one listed first is outermost.
+#
+# Observed (tree-sitter-json 0.24.8, runtime 0.27.1):
+#   - `document` starts at the first byte that is not whitespace and ends at the end of the file;
+#   - string_content is split around escapes, as the tokens are;
+#   - a value has the supertype `_value`; a key has the field `key`, a pair's value `value`;
+#   - a comment is an extra, the child of whatever node it sits in.
+
+tree json {
+  # Bytes between tokens that carry no structure: whitespace and comments.
+  mask gap         = (code & ws) | in_cmt
+  mask solid       = ~gap
+  mask first_solid = solid & ~prev(fill(solid, empty))
+  mask last_byte   = ~next(~empty)
+
+  # Bracket depth, after each byte.
+  scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 100000
+
+  # The first solid byte after a ':'; a string's closing quote whose next solid byte is ':', and
+  # its opening quote (the fact carried back over the string).
+  mask after_colon = fill(prev(code & colon), prev(solid)) & solid
+  mask key_end     = closing & next(back_fill(code & colon, solid))
+  mask key_quote   = opening & back_fill(key_end, closing)
+
+  mask value_start = (code & (lbrace | lbracket)) | (opening & ~key_quote) | wstart
+  mask value_end   = (code & (rbrace | rbracket)) | (closing & ~key_end) | lasts(word)
+
+  node document start first_solid       end last_byte
+  # A pair ends with its value: the key's end is not a value end, and the level skips values
+  # nested deeper.
+  node pair     start key_quote         end value_end            level depth
+  node object   start code & lbrace     end code & rbrace        level depth
+  node array    start code & lbracket   end code & rbracket      level depth
+  node string   start opening           end closing
+
+  field key of string = key_quote
+  field value of object array string number true false null = value_start & after_colon
+  supertype _value of object array string number true false null = value_start
+  extra comment
+}
