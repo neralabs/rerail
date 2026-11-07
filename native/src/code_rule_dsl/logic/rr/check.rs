@@ -18,6 +18,18 @@ fn vars_of(t: &Term) -> BTreeSet<String> {
     out.into_iter().collect()
 }
 
+/// What a term needs from outside, given what is bound: its variables, but of each aggregate inside it only what
+/// that aggregate's body uses and does not bind (`1 + count : { f(x) }` needs nothing).
+fn term_needs(t: &Term, bound: &BTreeSet<String>) -> BTreeSet<String> {
+    match t {
+        Term::Agg { body, .. } => inner_needs(body, bound),
+        Term::Call { args, .. } => args.iter().flat_map(|a| term_needs(a, bound)).collect(),
+        Term::Bin { l, r, .. } => term_needs(l, bound).union(&term_needs(r, bound)).cloned().collect(),
+        Term::Named(_, t) => term_needs(t, bound),
+        t => vars_of(t),
+    }
+}
+
 fn lit_vars(l: &Lit) -> BTreeSet<String> {
     let mut out = Vec::new();
     l.vars(&mut out);
@@ -120,7 +132,7 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
                 let ready = force || vs.is_subset(bound);
                 return (none(), vs, ready);
             }
-            let (lv, rv) = (vars_of(l), vars_of(r));
+            let (lv, rv) = (term_needs(l, bound), term_needs(r, bound));
             if *op != "=" {
                 let vs: BTreeSet<String> = lv.union(&rv).cloned().collect();
                 let ready = force || vs.is_subset(bound);
@@ -207,7 +219,7 @@ pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTre
     for l in pending {
         need.extend(literal(l, &bound, true).1);
     }
-    need.extend(head_vars);
+    need.extend(heads.iter().flat_map(|h| h.args.iter().flat_map(|a| term_needs(a, &bound))));
     need.extend(edits.iter().flat_map(vars_of));
     need.difference(&bound).cloned().collect()
 }

@@ -15,7 +15,7 @@ prs_lambdak("lambda").
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl prs_active(d: number, f: node)
@@ -462,9 +462,9 @@ prs_cedge(d, o, d2, t) :- prs_demand(d, o, nm, cl), prs_find(nm, cl, t), prs_fla
 prs_col(d, f, col) :- prs_seed(d, f, col).
 prs_col(d2, t, col) :- prs_col(d, f, col), prs_cedge(d, f, d2, t), prs_flag(d2, t), !prs_legacy(t).
 prs_scansource(0) :- option_value("entryPoint", "scan_source").
-prs_anyprimary(0) :- option_item("primaryPaths", _).
+prs_anyprimary(0) :- option_item("primaryPaths", _, _).
 prs_pathok(d) :- prs_doc(d, _, _), !prs_anyprimary(0).
-prs_pathok(d) :- prs_doc(d, p, _), option_item("primaryPaths", p).
+prs_pathok(d) :- prs_doc(d, p, _), option_item("primaryPaths", _, p).
 prs_active(d, f) :- prs_col(d, f, _), prs_pathok(d), !prs_scansource(0).
 prs_purecol(f) :- prs_col(_, f, "pure"), !prs_scansource(0).
 prs_strict(f) :- prs_active(_, f), !prs_explicit(f), !prs_scansource(0).

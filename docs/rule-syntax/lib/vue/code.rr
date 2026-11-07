@@ -1,0 +1,91 @@
+// vue/code: the JavaScript a component's template holds, and the names it reads.
+// A Vue file's code is parsed as guest trees of its document (core's `parsed`), at the file's own lines and columns:
+//   parsed(raw, "typescript" | "javascript" | "tsx", program)   a <script> block's text, as its lang says
+//   parsed(v, "vue-expression", program)      a directive's value or a {{ }}'s text, wrapped as `( … )`
+//   parsed(v, "vue-statements", program)      a v-on value, as statements: @click="n++; done()"
+//   parsed(v, "vue-params", program)          v-slot, #name, slot-scope, scope: parameters, wrapped `( … )=>0`
+//   parsed(v, "vue-for-alias", program)       v-for's alias as an array pattern, holes kept: `let [v, , i]=0`;
+//   parsed(v, "vue-for-source", program)      v-for's list, an expression
+// vue-eslint-parser reads the template the same way: VExpressionContainer holds an expression, a v-on's statements,
+// a VSlotScopeExpression's params or a VForExpression's left and right.
+//
+// Interface:
+//   vcode(a, g, role)       a (an attribute, or an interpolation) holds guest program g, in the role above
+//   vexpr(a, x)             a's expression, parentheses removed: `item.id` of :key="item.id", `n` of {{ n }}
+//   vparams(a, f)           a's parameters, as the arrow function f: v-slot="{ item }", slot-scope="props"
+//   vfor(e, a, l, src)      e has v-for a, alias pattern l (`[v, i]`; 0 for `v-for="in xs"`) and list expression src
+//   vfor_alias(a, i, p)     alias p of v-for a, the i-th pattern written (holes are not counted: `(v, , i)` gives v
+//                           at 0 and i at 1)
+//   vcode_el(a, e)          the element whose code a is: the attribute's element, or the interpolation's parent
+//   tvar(e, x, id, k)       element e declares template variable x at identifier id; k is "v-for" or "scope"
+//   tdestructured(id)       the variable is destructured: `{ a }`, `[a]` inside an alias or a parameter
+//   tref(r, x, a)           identifier r of a's code reads x, which nothing inside that code declares
+//   tbind(r, id)            r reads the template variable declared at id (the nearest element declaring its name)
+//   tfree(r, x, a)          a tref that no template variable binds: it reads the component instance (props, data,
+//                           setup bindings, globals)
+//
+//   <li v-for="(item, i) in items" :key="item.id">{{ item.name }}</li>
+//     tvar(li, "item", …, "v-for"), tvar(li, "i", …, "v-for"); `item` of :key and of {{ }} tbind to it;
+//     `items` is tfree (the v-for list is read outside the element's own variables)
+#include "vue/template.rr"
+#include "tsx/names.rr"
+//   ref(r, x, space), ref_site(r, site), decl_site(s, x, site, form, space)
+
+.decl vcode(a: node, g: node, role: symbol)
+vcode(a, g, role) :- vval(a, v), parsed(v, role, g).
+vcode(a, g, role) :- vattr(_, a), child(a, dv, _), kind(dv, "dynamic_directive_value"), child(dv, iv, _),
+    parsed(iv, role, g).
+vcode(i, g, role) :- kind(i, "interpolation"), child(i, raw, _), kind(raw, "raw_text"), parsed(raw, role, g).
+.decl vcode_el(a: node, e: node)
+vcode_el(a, e) :- vattr(e, a), vcode(a, _, _).
+vcode_el(i, e) :- kind(i, "interpolation"), vcode(i, _, _), nearest(i, e, vel_kind), vel(e).
+
+.decl vexpr(a: node, x: node)
+vexpr(a, x) :- vcode(a, g, role), (role = "vue-expression" ; role = "vue-for-source"),
+    child(g, s, 0), kind(s, "expression_statement"), child(s, p, 0), kind(p, "parenthesized_expression"),
+    child(p, x, 0).
+.decl vparams(a: node, f: node)
+vparams(a, f) :- vcode(a, g, "vue-params"),
+    child(g, s, 0), kind(s, "expression_statement"), child(s, f, 0), kind(f, "arrow_function").
+.decl vfor_pattern(a: node, l: node)  // `let [v, i]=0`: the array pattern
+vfor_pattern(a, l) :- vcode(a, g, "vue-for-alias"), child(g, s, 0), kind(s, "lexical_declaration"),
+    child(s, d, 0), field(d, "name", l), kind(l, "array_pattern").
+.decl vfor(e: node, a: node, l: node, src: node)
+vfor(e, a, l, src) :- vdir(e, a, "for", _), vfor_pattern(a, l), vexpr(a, src).
+vfor(e, a, 0, src) :- vdir(e, a, "for", _), !vfor_pattern(a, _), vexpr(a, src).  // 0: no alias
+.decl vfor_alias(a: node, i: number, p: node)
+vfor_alias(a, i, p) :- vfor_pattern(a, l), child(l, p, i).
+
+// ---- template variables --------------------------------------------------------------------------------------------
+.decl tvar(e: node, x: symbol, id: node, k: symbol)
+tvar(e, x, id, "v-for") :- vdir(e, a, "for", _), vfor_pattern(a, l), has(l, id, tvar_kind),
+    decl_site(_, x, id, "pattern", "value").
+.decl tvar_kind(k: symbol)
+tvar_kind("identifier"). tvar_kind("shorthand_property_identifier_pattern").
+tvar(e, x, id, "scope") :- vattr(e, a), vparams(a, f), !vdir(e, a, "for", _), decl_site(f, x, id, "param", "value").
+.decl tdestructured(id: node)
+tdestructured(id) :- tvar(e, _, id, "v-for"), vdir(e, a, "for", _), vfor_pattern(a, l), inside(id, q, tpattern_kind),
+    q != l.
+tdestructured(id) :- tvar(_, _, id, "scope"), inside(id, _, tpattern_kind).
+.decl tpattern_kind(k: symbol)
+tpattern_kind("object_pattern"). tpattern_kind("array_pattern").
+.decl tdeclares(e: node, x: symbol)
+tdeclares(e, x) :- tvar(e, x, _, _).
+
+// tref: a free name of one piece of template code. Names its own arrows or parameters bind are not free.
+.decl tref(r: node, x: symbol, a: node)
+tref(r, x, a) :- tref_in(r, x, a, _).
+.decl tref_in(r: node, x: symbol, a: node, role: symbol)
+tref_in(r, x, a, role) :- vcode(a, g, role), has(g, r, tref_kind), ref(r, x, "value"), !ref_site(r, _).
+.decl tref_kind(k: symbol)
+tref_kind("identifier"). tref_kind("shorthand_property_identifier").
+// tlook(r, x, e): the elements r's lookup visits, from the code's own element outwards. A v-for's list is read
+// outside the element's own variables: `v-for="x in x"` reads an outer x.
+.decl tlook(r: node, x: symbol, e: node)
+tlook(r, x, e) :- tref_in(r, x, a, role), role != "vue-for-source", vcode_el(a, e).
+tlook(r, x, p) :- tref_in(r, x, a, "vue-for-source"), vcode_el(a, e), vel_parent(e, p).
+tlook(r, x, p) :- tlook(r, x, e), !tdeclares(e, x), vel_parent(e, p).
+.decl tbind(r: node, id: node)
+tbind(r, id) :- tlook(r, x, e), tvar(e, x, id, _).
+.decl tfree(r: node, x: symbol, a: node)
+tfree(r, x, a) :- tref(r, x, a), !tbind(r, _).

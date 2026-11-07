@@ -6,7 +6,7 @@
 // Options as the run resolves them: every `$option` case is an alternative gated on the converter-given
 // option_value("entryPoint", v) and option_on("oracleAnalyzer") (defaults: "all", false).
 // Every clause of the policy is here. Parked in data-layer-serverplan-quality.pending.rr: only the quoted_atoms
-// rules of spq-runtime-state-annotations, which read `parsed` (CPython's `ast.parse` worker) and `string_annotation`
+// rules of spq-runtime-state-annotations, which read `parsed` (W's `annotation` grammar: Ruff's parser on the string) and `string_annotation`
 // (Ruff's table), which the corpus runner does not bind; without them a string annotation contributes no atom.
 // The forbid clauses are their matchers rule for rule:
 // - `kind` is node(_, n, kind, _, _); `regex` tests the node's whole source text (node_text), or the identifier
@@ -23,6 +23,10 @@
 //   whose text starts with `#`, per clause `*_xtok`) where a comment can stand before the node in its parent;
 //   elsewhere child()'s index is exact (said per clause);
 // - `not`, multi-branch `any` and stop rules are helper relations named after the clause.
+// - `syntax: valid` (every AST matcher; the text clause strategy-file-size has none) is `!syntax_error(d)`, the converter's one-column
+//   verdict: W's own (tree-sitter ERROR nodes, eval::query's `invalid_syntax` gate), not CPython's. No stage of the
+//   policy runs CPython's `ast.parse` (no pythonAst, no relational read of a parser error), so cpython_syntax_error
+//   is not read.
 // What a clause does not reproduce is named at the clause ("Blocked", "Not modelled").
 
 .decl doc(d: number, path: symbol, module: symbol)
@@ -2285,8 +2289,9 @@ violation("data-layer-serverplan-quality", "spq-replay-step-tags", "SPQ-047", p,
 //   as any_args' ARG spans no atom, so it ignores none: exact.
 // node_text is used for the module regex, the dotted-chain regex and text, and a relative import's module text.
 // Blocked (named): quoted_atoms. W parses a string annotation (`x: "Conn"`) with `parse: {grammar: annotation}` and
-//   reads the parsed tree's identifiers and attributes as atoms. That needs `parsed` (core.rr's CPython `ast.parse`
-//   worker) and `string_annotation` (Ruff's table of the strings its semantic model reads as type definitions), which
+//   reads the parsed tree's identifiers and attributes as atoms. That needs `parsed` (core.rr's tree of a string;
+//   W's `annotation` grammar is Ruff's `parse_type_annotation`, not CPython's `ast.parse`, so the CPython verdict
+//   now bound does not supply it) and `string_annotation` (Ruff's table of the strings its semantic model reads as type definitions), which
 //   the corpus runner does not bind: here a string annotation gives no atom. The two quoted_atoms rules wait in
 //   data-layer-serverplan-quality.pending.rr.
 

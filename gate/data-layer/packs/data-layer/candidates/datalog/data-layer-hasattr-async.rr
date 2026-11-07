@@ -15,6 +15,7 @@
 .decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
 .decl rr_agg1(a: node, st: number, xs: number)
+.decl rr_ctx2(xs: number)
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
@@ -131,7 +132,8 @@ out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 hasattr_args(c, a, s) :- node(_, c, "call", _, _), field(c, "function", fn), node_text(fn, s), field(c, "arguments", a), node(_, a, "argument_list", _, _).
 hasattr_extra(a, st) :- hasattr_args(_, a, _), token(a, _, s, st, _), match("(?:#|\\\\)(?s:.*)", s), !hasattr_child_at(a, st).
 hasattr_child_at(a, st) :- hasattr_args(_, a, _), child(a, c, _), node(_, c, _, st, _).
-rr_agg1(a, st, xs) :- node(_, x, _, xs, _), hasattr_extra(a, st), st < xs.
+rr_ctx2(xs) :- hasattr_args(_, a, _), child(a, x, i), node(_, x, _, xs, _).
+rr_agg1(a, st, xs) :- rr_ctx2(xs), hasattr_extra(a, st), st < xs.
 hasattr_pos(a, x, k) :- hasattr_args(_, a, _), child(a, x, i), node(_, x, _, xs, _), e = count : { rr_agg1(a, _, xs) }, k = @add(@add(i, e), 1).
 hasattr_named(a, k) :- hasattr_args(_, a, _), c = count : { child(a, _, _) }, e = count : { hasattr_extra(a, _) }, k = @add(c, e).
 hasattr_call(c, a, s) :- hasattr_args(c, a, s), hasattr_pos(a, x, 2), node(_, x, "string", _, _), node_text(x, t), match("['\"]\\w+_async['\"]", t).

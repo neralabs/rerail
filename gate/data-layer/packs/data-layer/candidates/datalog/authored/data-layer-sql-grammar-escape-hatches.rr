@@ -24,7 +24,7 @@
 .decl tape_line(d: number, l: number, sp: span)
 // Given by the converter (read only): the resolved options.
 .decl option_on(name: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 // Given by the converter (read only): the report gate.
 .decl report_when_gt(k: number)
 .output violation
@@ -76,7 +76,7 @@ forbidden_class_hit(d, n) :-
 // leaf) is reported where its BASE is in `aliases` (grammar) and its LEAF is not (safe = false); one finding per
 // (path, the parameter's line, the class name), at the parameter.
 .decl unsafe_seed(s: symbol)
-unsafe_seed(s) :- option_item("grammar_class_names", s).
+unsafe_seed(s) :- option_item("grammar_class_names", _, s).
 .decl unsafe_class_arg(d: number, cls: node, arg: node)
 unsafe_class_arg(d, cls, arg) :-
     node(d, cls, "class_definition", _, _), esc_doc(d), child(cls, al, _), node(d, al, "argument_list", _, _),
@@ -123,9 +123,9 @@ unsafe_known(t) :- unsafe_known(f), unsafe_alias_edge(f, t).
 // `__init__` (plain `def`: the W regex `^def\s` on its text) directly in its body block, bare or decorated.
 .decl unsafe_excluded(s: symbol)
 unsafe_excluded(s) :- esc_forbidden(s).
-unsafe_excluded(s) :- option_item("ALLOWLISTED_CLASSES", s).
-unsafe_excluded(s) :- option_item("SCHEMA_METADATA_CLASSES", s).
-unsafe_excluded(s) :- option_item("CALLSITE_PROTECTED_CLASSES", s).
+unsafe_excluded(s) :- option_item("ALLOWLISTED_CLASSES", _, s).
+unsafe_excluded(s) :- option_item("SCHEMA_METADATA_CLASSES", _, s).
+unsafe_excluded(s) :- option_item("CALLSITE_PROTECTED_CLASSES", _, s).
 .decl unsafe_grammar_class(d: number, cls: node, owner: symbol)
 unsafe_grammar_class(d, cls, owner) :-
     unsafe_class_arg(d, cls, arg), unsafe_base_of(arg, b), unsafe_known(b), unsafe_class_name(cls, owner),
@@ -183,7 +183,7 @@ unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "binary_operator", _, _), op(
 
 // The names unsafe-leaf passes over: safe_param_types and the containers.
 .decl unsafe_safe_name(s: symbol)
-unsafe_safe_name(s) :- option_item("safe_param_types", s).
+unsafe_safe_name(s) :- option_item("safe_param_types", _, s).
 .decl unsafe_container(s: symbol)
 unsafe_container("Iterable"). unsafe_container("Mapping"). unsafe_container("Optional"). unsafe_container("Sequence"). unsafe_container("dict").
 unsafe_container("frozenset"). unsafe_container("list"). unsafe_container("set"). unsafe_container("tuple").
@@ -191,8 +191,8 @@ unsafe_safe_name(s) :- unsafe_container(s).
 // `str` is not a leaf in a parameter with an identifier child (its name) in DATA_VALUE_PARAMS or OPERATOR_PARAMS
 // (W: inside the nearest typed parameter, which for a leaf under the parameter's type is the parameter).
 .decl unsafe_str_exempt(p: node)
-unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("DATA_VALUE_PARAMS", s).
-unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("OPERATOR_PARAMS", s).
+unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("DATA_VALUE_PARAMS", _, s).
+unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("OPERATOR_PARAMS", _, s).
 // LEAF text, per parameter. An identifier leaf:
 .decl unsafe_leaf(p: node, s: symbol)
 unsafe_leaf(p, s) :- unsafe_walk(p, n), node(_, n, "identifier", _, _), text(n, s), !unsafe_safe_name(s), !unsafe_str_exempt_name(p, s).

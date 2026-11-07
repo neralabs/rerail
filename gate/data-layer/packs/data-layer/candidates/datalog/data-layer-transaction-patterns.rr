@@ -11,10 +11,11 @@ txn_functions("function_definition").
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl rr_agg1(cs: number, n: symbol, s: symbol, st: symbol)
+.decl rr_agg1(cs: number, n: node, s: symbol, st: number)
+.decl rr_ctx2(cs: number)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
@@ -62,101 +63,101 @@ txn_functions("function_definition").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, value_type_of, line, syntax_error, node_text, value, token
+.input doc, token, node, child, field, text, value_type_of, line, syntax_error, node_text, value
 .output violation
-option_item("category-BACKGROUND", "_get_ripple_chain").
-option_item("category-BACKGROUND", "_run_handler").
-option_item("category-BACKGROUND", "collect_all_metrics").
-option_item("category-BACKGROUND", "create_derived_ripple_session").
-option_item("category-BACKGROUND", "detect_stale_messages").
-option_item("category-BACKGROUND", "enqueue_ripples_for_revision").
-option_item("category-BACKGROUND", "enqueue_ripples_for_revision_bridge").
-option_item("category-BACKGROUND", "get_embedding_staleness").
-option_item("category-BACKGROUND", "process_ripple_event").
-option_item("category-BACKGROUND", "process_ripple_event_bridge").
-option_item("category-BACKGROUND", "recover_stale_message").
-option_item("category-BACKGROUND", "recover_stale_messages").
-option_item("category-BACKGROUND", "wait_for_embeddings").
-option_item("category-BOOTSTRAP", "_ensure_bootstrap_session").
-option_item("category-BOOTSTRAP", "_ensure_schema").
-option_item("category-BOOTSTRAP", "_ensure_target_tip_stable").
-option_item("category-BOOTSTRAP", "backfill_revision_parents").
-option_item("category-BOOTSTRAP", "create_branch").
-option_item("category-BOOTSTRAP", "create_config_logged_table").
-option_item("category-BOOTSTRAP", "create_log_table").
-option_item("category-BOOTSTRAP", "create_staged_commit").
-option_item("category-BOOTSTRAP", "ensure_adapter_session").
-option_item("category-BOOTSTRAP", "ensure_branch").
-option_item("category-BOOTSTRAP", "ensure_database_initialized").
-option_item("category-BOOTSTRAP", "ensure_migration_table_exists").
-option_item("category-BOOTSTRAP", "ensure_type_metadata_table_exists").
-option_item("category-BOOTSTRAP", "ensure_vector_support").
-option_item("category-BOOTSTRAP", "ensure_versioning_metadata_tables").
-option_item("category-BOOTSTRAP", "execute_rebase").
-option_item("category-BOOTSTRAP", "initialize_config_schema_bridge").
-option_item("category-BOOTSTRAP", "initialize_config_system").
-option_item("category-BOOTSTRAP", "initialize_domain").
-option_item("category-BOOTSTRAP", "initialize_rbac").
-option_item("category-BOOTSTRAP", "initialize_rbac_system").
-option_item("category-BOOTSTRAP", "register_embedding_trigger").
-option_item("category-BOOTSTRAP", "versioned_write_transaction").
-option_item("category-LEGITIMATE", "__enter__").
-option_item("category-LEGITIMATE", "__exit__").
-option_item("category-LEGITIMATE", "_create_introspector").
-option_item("category-LEGITIMATE", "_create_sparse_versioned_backend").
-option_item("category-LEGITIMATE", "_execute_graphql_subscription").
-option_item("category-LEGITIMATE", "_get_conn").
-option_item("category-LEGITIMATE", "_get_data_importer").
-option_item("category-LEGITIMATE", "_get_database_exporter").
-option_item("category-LEGITIMATE", "_get_database_importer").
-option_item("category-LEGITIMATE", "_get_import_validator").
-option_item("category-LEGITIMATE", "_get_introspector_for_connection").
-option_item("category-LEGITIMATE", "_get_migration_executor").
-option_item("category-LEGITIMATE", "_get_migration_history_manager").
-option_item("category-LEGITIMATE", "_get_migration_plan_generator").
-option_item("category-LEGITIMATE", "_import_database_handler").
-option_item("category-LEGITIMATE", "_import_table_data_handler").
-option_item("category-LEGITIMATE", "_import_tables_handler").
-option_item("category-LEGITIMATE", "_validate").
-option_item("category-LEGITIMATE", "begin_schema_transaction").
-option_item("category-LEGITIMATE", "benchmark_1hop_traversal").
-option_item("category-LEGITIMATE", "benchmark_2hop_traversal").
-option_item("category-LEGITIMATE", "benchmark_filtered_traversal").
-option_item("category-LEGITIMATE", "clear_query_statistics").
-option_item("category-LEGITIMATE", "close").
-option_item("category-LEGITIMATE", "connect").
-option_item("category-LEGITIMATE", "disable_prepared_cache").
-option_item("category-LEGITIMATE", "disable_query_instrumentation").
-option_item("category-LEGITIMATE", "enable_prepared_cache").
-option_item("category-LEGITIMATE", "enable_query_instrumentation").
-option_item("category-LEGITIMATE", "get_backend_type").
-option_item("category-LEGITIMATE", "get_bulk_loader").
-option_item("category-LEGITIMATE", "get_data_importer").
-option_item("category-LEGITIMATE", "get_database_exporter").
-option_item("category-LEGITIMATE", "get_database_importer").
-option_item("category-LEGITIMATE", "get_migration_executor").
-option_item("category-LEGITIMATE", "get_migration_plan_generator").
-option_item("category-LEGITIMATE", "get_prepared_cache").
-option_item("category-LEGITIMATE", "get_prepared_cache_debug_report").
-option_item("category-LEGITIMATE", "get_prepared_cache_statistics").
-option_item("category-LEGITIMATE", "get_query_instrumentation").
-option_item("category-LEGITIMATE", "get_query_statistics").
-option_item("category-LEGITIMATE", "is_connected").
-option_item("category-LEGITIMATE", "populate_benchmark_data").
-option_item("category-LEGITIMATE", "populate_benchmark_dataset").
-option_item("category-LEGITIMATE", "read").
-option_item("category-LEGITIMATE", "read_transaction").
-option_item("category-LEGITIMATE", "record_query").
-option_item("category-LEGITIMATE", "register").
-option_item("category-LEGITIMATE", "register_backup_tools").
-option_item("category-LEGITIMATE", "register_import_tools").
-option_item("category-LEGITIMATE", "run_all_benchmarks").
-option_item("category-LEGITIMATE", "schema_transaction").
-option_item("category-LEGITIMATE", "set_connection").
-option_item("category-LEGITIMATE", "warn_if_index_missing").
-option_item("category-LEGITIMATE", "with_pinned_branch").
-option_item("category-LEGITIMATE", "write").
-option_item("category-LEGITIMATE", "write_transaction").
+option_item("category-BACKGROUND", 0, "_get_ripple_chain").
+option_item("category-BACKGROUND", 1, "_run_handler").
+option_item("category-BACKGROUND", 10, "recover_stale_message").
+option_item("category-BACKGROUND", 11, "recover_stale_messages").
+option_item("category-BACKGROUND", 12, "wait_for_embeddings").
+option_item("category-BACKGROUND", 2, "collect_all_metrics").
+option_item("category-BACKGROUND", 3, "create_derived_ripple_session").
+option_item("category-BACKGROUND", 4, "detect_stale_messages").
+option_item("category-BACKGROUND", 5, "enqueue_ripples_for_revision").
+option_item("category-BACKGROUND", 6, "enqueue_ripples_for_revision_bridge").
+option_item("category-BACKGROUND", 7, "get_embedding_staleness").
+option_item("category-BACKGROUND", 8, "process_ripple_event").
+option_item("category-BACKGROUND", 9, "process_ripple_event_bridge").
+option_item("category-BOOTSTRAP", 0, "_ensure_bootstrap_session").
+option_item("category-BOOTSTRAP", 1, "_ensure_schema").
+option_item("category-BOOTSTRAP", 10, "ensure_database_initialized").
+option_item("category-BOOTSTRAP", 11, "ensure_migration_table_exists").
+option_item("category-BOOTSTRAP", 12, "ensure_type_metadata_table_exists").
+option_item("category-BOOTSTRAP", 13, "ensure_vector_support").
+option_item("category-BOOTSTRAP", 14, "ensure_versioning_metadata_tables").
+option_item("category-BOOTSTRAP", 15, "execute_rebase").
+option_item("category-BOOTSTRAP", 16, "initialize_config_schema_bridge").
+option_item("category-BOOTSTRAP", 17, "initialize_config_system").
+option_item("category-BOOTSTRAP", 18, "initialize_domain").
+option_item("category-BOOTSTRAP", 19, "initialize_rbac").
+option_item("category-BOOTSTRAP", 2, "_ensure_target_tip_stable").
+option_item("category-BOOTSTRAP", 20, "initialize_rbac_system").
+option_item("category-BOOTSTRAP", 21, "register_embedding_trigger").
+option_item("category-BOOTSTRAP", 22, "versioned_write_transaction").
+option_item("category-BOOTSTRAP", 3, "backfill_revision_parents").
+option_item("category-BOOTSTRAP", 4, "create_branch").
+option_item("category-BOOTSTRAP", 5, "create_config_logged_table").
+option_item("category-BOOTSTRAP", 6, "create_log_table").
+option_item("category-BOOTSTRAP", 7, "create_staged_commit").
+option_item("category-BOOTSTRAP", 8, "ensure_adapter_session").
+option_item("category-BOOTSTRAP", 9, "ensure_branch").
+option_item("category-LEGITIMATE", 0, "__enter__").
+option_item("category-LEGITIMATE", 1, "__exit__").
+option_item("category-LEGITIMATE", 10, "_get_introspector_for_connection").
+option_item("category-LEGITIMATE", 11, "_get_migration_executor").
+option_item("category-LEGITIMATE", 12, "_get_migration_history_manager").
+option_item("category-LEGITIMATE", 13, "_get_migration_plan_generator").
+option_item("category-LEGITIMATE", 14, "_import_database_handler").
+option_item("category-LEGITIMATE", 15, "_import_table_data_handler").
+option_item("category-LEGITIMATE", 16, "_import_tables_handler").
+option_item("category-LEGITIMATE", 17, "_validate").
+option_item("category-LEGITIMATE", 18, "begin_schema_transaction").
+option_item("category-LEGITIMATE", 19, "benchmark_1hop_traversal").
+option_item("category-LEGITIMATE", 2, "_create_introspector").
+option_item("category-LEGITIMATE", 20, "benchmark_2hop_traversal").
+option_item("category-LEGITIMATE", 21, "benchmark_filtered_traversal").
+option_item("category-LEGITIMATE", 22, "clear_query_statistics").
+option_item("category-LEGITIMATE", 23, "close").
+option_item("category-LEGITIMATE", 24, "connect").
+option_item("category-LEGITIMATE", 25, "disable_prepared_cache").
+option_item("category-LEGITIMATE", 26, "disable_query_instrumentation").
+option_item("category-LEGITIMATE", 27, "enable_prepared_cache").
+option_item("category-LEGITIMATE", 28, "enable_query_instrumentation").
+option_item("category-LEGITIMATE", 29, "get_backend_type").
+option_item("category-LEGITIMATE", 3, "_create_sparse_versioned_backend").
+option_item("category-LEGITIMATE", 30, "get_bulk_loader").
+option_item("category-LEGITIMATE", 31, "get_data_importer").
+option_item("category-LEGITIMATE", 32, "get_database_exporter").
+option_item("category-LEGITIMATE", 33, "get_database_importer").
+option_item("category-LEGITIMATE", 34, "get_migration_executor").
+option_item("category-LEGITIMATE", 35, "get_migration_plan_generator").
+option_item("category-LEGITIMATE", 36, "get_prepared_cache").
+option_item("category-LEGITIMATE", 37, "get_prepared_cache_debug_report").
+option_item("category-LEGITIMATE", 38, "get_prepared_cache_statistics").
+option_item("category-LEGITIMATE", 39, "get_query_instrumentation").
+option_item("category-LEGITIMATE", 4, "_execute_graphql_subscription").
+option_item("category-LEGITIMATE", 40, "get_query_statistics").
+option_item("category-LEGITIMATE", 41, "is_connected").
+option_item("category-LEGITIMATE", 42, "populate_benchmark_data").
+option_item("category-LEGITIMATE", 43, "populate_benchmark_dataset").
+option_item("category-LEGITIMATE", 44, "read").
+option_item("category-LEGITIMATE", 45, "read_transaction").
+option_item("category-LEGITIMATE", 46, "record_query").
+option_item("category-LEGITIMATE", 47, "register").
+option_item("category-LEGITIMATE", 48, "register_backup_tools").
+option_item("category-LEGITIMATE", 49, "register_import_tools").
+option_item("category-LEGITIMATE", 5, "_get_conn").
+option_item("category-LEGITIMATE", 50, "run_all_benchmarks").
+option_item("category-LEGITIMATE", 51, "schema_transaction").
+option_item("category-LEGITIMATE", 52, "set_connection").
+option_item("category-LEGITIMATE", 53, "warn_if_index_missing").
+option_item("category-LEGITIMATE", 54, "with_pinned_branch").
+option_item("category-LEGITIMATE", 55, "write").
+option_item("category-LEGITIMATE", 56, "write_transaction").
+option_item("category-LEGITIMATE", 6, "_get_data_importer").
+option_item("category-LEGITIMATE", 7, "_get_database_exporter").
+option_item("category-LEGITIMATE", 8, "_get_database_importer").
+option_item("category-LEGITIMATE", 9, "_get_import_validator").
 option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
@@ -184,7 +185,8 @@ txn_ahc_left(n) :- txn_binop(n), field(n, "left", c), txn_ahc(c).
 txn_ahc_left(n) :- txn_union_nth(n, c, 1), txn_ahc(c).
 txn_ahc_right(n) :- txn_binop(n), field(n, "right", c), txn_ahc(c).
 txn_ahc_right(n) :- txn_union_nth(n, c, 2), txn_ahc(c).
-rr_agg1(cs, n, s, st) :- node(_, c, "type", cs, _), token(n, _, s, st, _), prefix("#", s), st < cs.
+rr_ctx2(cs) :- node(_, n, "union_type", _, _), child(n, c, i), node(_, c, "type", cs, _).
+rr_agg1(cs, n, s, st) :- rr_ctx2(cs), token(n, _, s, st, _), prefix("#", s), st < cs.
 txn_union_nth(n, c, k) :- node(_, n, "union_type", _, _), child(n, c, i), node(_, c, "type", cs, _), j = count : { rr_agg1(cs, n, _, _) }, k = @add(@add(i, j), 1).
 txn_wrapper(n) :- node(_, n, "type", _, _).
 txn_wrapper(n) :- node(_, n, "parenthesized_expression", _, _).
@@ -220,7 +222,7 @@ txn_call(c, conn) :- node(_, c, "call", _, _), field(c, "function", a), node(_, 
 txn_it_blocked(c, b) :- txn_call(c, _), inside(c, s, txn_functions), inside(s, b, txn_blocks).
 txn_it(f, conn) :- txn_call(c, conn), inside(c, b, txn_blocks), field(f, "body", b), node(_, f, "function_definition", _, _), !txn_it_blocked(c, b).
 txn_init_in_conn_class(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), node(_, c, "identifier", _, _), text(c, "__init__"), nearest(f, k, txn_classes), field(k, "name", kn), text(kn, s), match("(?s:.*)(?:Connection|SyncConnectionPool|Transaction|TransactionGenerator)(?s:.*)", s).
-txn_named(f, cat) :- field(f, "name", c), node(_, c, "identifier", _, _), text(c, s), option_item(cat, s), prefix("category-", cat).
+txn_named(f, cat) :- field(f, "name", c), node(_, c, "identifier", _, _), text(c, s), option_item(cat, _, s), prefix("category-", cat).
 txn_classified(f) :- txn_named(f, _).
 txn_unclassified(f) :- node(_, f, "function_definition", _, _), !txn_init_in_conn_class(f), !txn_classified(f).
 txn_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), (contains("Connection", s) ; contains("conn", s)).

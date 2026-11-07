@@ -31,7 +31,7 @@ rm_string_kind("string").
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl rm_base_sql(b: node)
@@ -71,7 +71,7 @@ rm_base_sql(b) :- node(_, b, "attribute", _, _), field(b, "attribute", a), text(
 rm_base_sql(b) :- node(_, b, "subscript", _, _), field(b, "value", v), rm_base_sql(v).
 rm_sql_class(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), rm_base_sql(b).
 rm_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "render"), nearest(f, c, rm_class_kind), rm_sql_class(c), !rm_listed(c, "LEGACY_ALLOWLISTED_CLASSES").
-rm_listed(c, o) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item(o, x).
+rm_listed(c, o) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item(o, _, x).
 rm_in_render(n) :- rm_render(f), inside(n, f, rm_fn_kind).
 rm_gate(d) :- node(d, m, "module", _, _), node_text(m, s), (contains("render(", s) ; contains("SqlFragment.static", s) ; contains("SF.static", s) ; contains(".join(", s) ; contains(".format(", s) ; contains("Template", s)).
 rm_gate(d) :- doc(d, _, _), !option_on("sourceGate").

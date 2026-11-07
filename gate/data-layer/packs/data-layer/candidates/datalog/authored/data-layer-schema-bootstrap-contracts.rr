@@ -2,9 +2,11 @@
 //
 // Its SQL runs over CPython `ast` rows (`pythonAst`); the script it ports is nera-data-layer
 // scripts/lint_schema_bootstrap_contracts.py. Here the same questions are asked of tree-sitter's tree read the
-// way `ast` reads it (parentheses transparent, a def's decorators its own). The gate is every valid module of
-// the policy's scope (no text test). Options: the defaults; the query has no entryPoint cases. The code is the
-// row's `issue` column.
+// way `ast` reads it (parentheses transparent, a def's decorators its own). The gate is every module of the
+// policy's scope (no text test) that is valid twice: W's `syntax: valid` (tree-sitter's verdict, `syntax_error(d)`)
+// and CPython's `ast.parse`, which the `pythonAst` stages run (a file it rejects fails them;
+// `cpython_syntax_error`). Options: the defaults; the query has no entryPoint cases. The code is the row's `issue`
+// column.
 //
 // Annotation names (_annotation_names): the Names and Attribute attrs below an annotation are its identifiers,
 // less keyword-argument and lambda-parameter names. A string annotation (`x: "SyncSchemaTransaction"`, adjacent
@@ -24,12 +26,13 @@
 .decl value_type_of(n: node, t: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 .decl bootstrap_doc(d: number)
-bootstrap_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d).
+bootstrap_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _).
 .decl bootstrap_fdef(kind: symbol)
 bootstrap_fdef("function_definition").
 .decl bootstrap_type(kind: symbol)

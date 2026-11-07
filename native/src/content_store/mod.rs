@@ -22,6 +22,8 @@ pub(crate) mod positional_search;
 pub(crate) mod vocabulary;
 #[allow(unused_imports)]
 pub(crate) use postings::append_delta;
+#[cfg(test)]
+pub(crate) use postings::segment_positions;
 #[allow(dead_code)]
 pub(crate) mod prefilter;
 pub(crate) use prefilter::TapePrefilter;

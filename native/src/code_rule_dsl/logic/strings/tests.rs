@@ -110,3 +110,36 @@ fn regexes_and_their_rewrites_agree() {
         assert_eq!(test("glob", s, glob), test("rx", s, rx), "{s} {glob} {rx}");
     }
 }
+
+/// `core.rr`'s text functors give the values its comments give as examples.
+#[test]
+fn text_functors_follow_core_rr() {
+    use super::functions::*;
+    assert_eq!(pkg_up("a.b.c", 1), "a.b");
+    assert_eq!(pkg_up("a.b.c", 0), "a.b.c");
+    assert_eq!(pkg_up("a", 5), "");
+    assert_eq!(pkg_up("", 1), "");
+    assert_eq!(join("src/a", "../c"), "src/c");
+    assert_eq!(join("src/a", "./b/../c.ts"), "src/a/c.ts");
+    assert_eq!(glob_sub("@/*", "src/*", "@/lib/x"), "src/lib/x");
+    assert_eq!(glob_sub("@/*", "src/*", "lib/x"), "");
+    assert_eq!(slice("_name", 1, 5), "name");
+    assert_eq!(slice("_name", -4, 5), "name");
+    assert_eq!(convert("max-age", "camelCase", "dash"), "maxAge");
+    assert_eq!(convert("maxAge", "snakeCase", ""), "max_age");
+    assert_eq!(convert("max_age", "pascalCase", "underscore"), "MaxAge");
+    assert_eq!(json_str("a\"b\u{e9}\u{1f600}"), "\"a\\\"b\\u00e9\\ud83d\\ude00\"");
+}
+
+/// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rr`'s `hint`).
+#[test]
+fn globs_nest_alternatives() {
+    let p = "{{versioned,}{databaseconnection,readtransaction},{lazyresult,lazyseq}}";
+    for s in ["ReadTransaction", "VersionedReadTransaction", "LazySeq"] {
+        assert!(super::test("iglob", s, p), "{s}");
+    }
+    for s in ["Versioned", "ReadTransactions", "x"] {
+        assert!(!super::test("iglob", s, p), "{s}");
+    }
+    assert!(super::test("glob", "a,b", "{{a\\,b,c},d}"));
+}

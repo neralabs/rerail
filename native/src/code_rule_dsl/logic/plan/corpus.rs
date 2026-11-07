@@ -57,7 +57,7 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
     let domain = |tbl: &str, col: &str| match (tbl, col) {
         ("node", "kind") => Domain::Kind,
         ("field", "f") => Domain::Field,
-        ("text" | "op", "s") | ("doc", "path" | "module") | ("pkg", "p") => Domain::Name,
+        ("text" | "op" | "op_at" | "path_part" | "file_name" | "value", "s") | ("doc", "path" | "module") | ("pkg", "p") => Domain::Name,
         _ => Domain::Int,
     };
     db.execute_batch(
@@ -182,6 +182,42 @@ use std::collections::{BTreeMap, BTreeSet};
 /// the base columns the cross-file part names are appended in memory, and the chunk is dropped. The cross-file part
 /// runs once, over the base relations held in memory and the exports read once from `x`, all bound in `main`. Memory
 /// is two chunks', the held base columns, and the cross-file part's own.
+/// The inputs read from a file in the repository (`.input r(IO=json, filename="…")`, rr's `input` setting): with
+/// no such file the relation is empty, so it is no input but a relation without rules. Reading the files
+/// themselves is not written yet (open item O76), so a file that exists is an error, not an empty relation.
+fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
+    let params: Vec<(String, String)> = prog
+        .settings
+        .iter()
+        .filter(|(k, _)| k == "input")
+        .filter_map(|(_, t)| t.split_once('(').map(|(r, p)| (r.trim().to_owned(), p.to_owned())))
+        .collect();
+    for (rel, params) in params {
+        let file = params.split("filename=").nth(1).and_then(|f| f.split('"').nth(1));
+        if let Some(f) = file
+            && root.join(f).exists()
+        {
+            return Err(Error::Plan(format!("{rel}: reading {f} is not written yet (O76)")));
+        }
+        if file.is_none() && !params.contains("artifact=") {
+            continue;
+        }
+        prog.inputs.retain(|i| *i != rel);
+    }
+    // `core.rr` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
+    for (rel, what) in NOT_MADE {
+        if prog.inputs.iter().any(|i| i == rel) {
+            crate::code_rule_dsl::logic::profile::decision("relations not made yet (O76)", || format!("{rel} is empty: {what}"));
+            prog.inputs.retain(|i| i != rel);
+        }
+    }
+    Ok(())
+}
+
+/// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty. None now:
+/// `parsed` and `string_annotation` are made (`facts::vtab::syntax::annotation`).
+const NOT_MADE: [(&str, &str); 0] = [];
+
 pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     run_typed(program, root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
 }
@@ -191,14 +227,17 @@ const CPYTHON_FUNCTORS: [&str; 2] = ["unparse", "ast_dump"];
 
 /// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
 /// (`value`, `str_part`, …), or calls a functor only CPython gives: the planner would otherwise fail on its missing
-/// statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later).
+/// statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later), so
+/// are the facts the converter gives (`convert::GIVEN`: core.rr's `option_item` among them, empty for an option of
+/// no items), and the relations not made yet are empty (`NOT_MADE`, O76).
 fn bound(prog: &front::Program) -> Result<()> {
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
     let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
+    let given = |rel: &str| crate::code_rule_dsl::logic::convert::GIVEN.contains(&rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     for rule in &prog.rules {
         for a in rule.body.iter().filter_map(front::Literal::atom) {
             let rel = a.rel.as_str();
-            if derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) {
+            if derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || given(rel) {
                 continue;
             }
             let why = match rel {
@@ -278,6 +317,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         }
     };
     let paths: HashMap<i64, String> = docs.iter().cloned().collect();
+    external_inputs(&mut prog, root)?;
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
@@ -540,7 +580,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
                         .iter()
                         .any(|p| rel.starts_with(p))
             };
-            if split.base.contains(&rel) && (own || made_here(&rel)) {
+            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || made_here(&rel)) {
                 totals.add(&rel, source.len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);

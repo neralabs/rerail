@@ -92,8 +92,10 @@ rr_kind_function_definition("function_definition").
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl rr_agg1(h: node, st: number, t: number)
-.decl rr_agg2(h: node, i: number, j: number)
-.decl rr_agg3(dn: node, i: number, x: symbol)
+.decl rr_agg3(h: node, i: number, j: number)
+.decl rr_agg5(dn: node, i: number, x: symbol)
+.decl rr_ctx2(st: number)
+.decl rr_ctx4(i: number)
 .decl source(d: number, sp: node)
 .decl src_line_lf(d: number, l: number, sp: node)
 .decl syntax_error(d: number)
@@ -151,10 +153,12 @@ optimizer_fhost(h) :- node(_, h, "format_specifier", _, _).
 optimizer_fslot_at(h, s, st) :- optimizer_fstr(h), node(_, h, "string", _, _), child(h, s, _), node(_, s, "interpolation", st, _).
 optimizer_fslot_at(h, s, st) :- optimizer_fstr(h), optimizer_part_of(p, h), child(p, s, _), node(_, s, "interpolation", st, _).
 optimizer_fslot_at(h, s, st) :- node(_, h, "format_specifier", _, _), child(h, s, _), node(_, s, "format_expression", st, _).
-rr_agg1(h, st, t) :- optimizer_fslot_at(h, s, st), optimizer_fslot_at(h, _, t), t < st.
+rr_ctx2(st) :- optimizer_fslot_at(h, s, st).
+rr_agg1(h, st, t) :- rr_ctx2(st), optimizer_fslot_at(h, _, t), t < st.
 optimizer_fslot(h, k, s) :- optimizer_fslot_at(h, s, st), k = count : { rr_agg1(h, st, _) }.
-rr_agg2(h, i, j) :- fstring_piece(h, i, "literal", v), fstring_piece(h, j, "interpolation", _), j < i.
-optimizer_flit(h, i, v, k) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v), k = count : { rr_agg2(h, i, _) }.
+rr_ctx4(i) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v).
+rr_agg3(h, i, j) :- rr_ctx4(i), fstring_piece(h, j, "interpolation", _), j < i.
+optimizer_flit(h, i, v, k) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v), k = count : { rr_agg3(h, i, _) }.
 optimizer_fcontent(h, c, st) :- optimizer_fstr(h), node(_, h, "string", _, _), child(h, c, _), node(_, c, "string_content", st, _).
 optimizer_fcontent(h, c, st) :- optimizer_fstr(h), optimizer_part_of(p, h), child(p, c, _), node(_, c, "string_content", st, _).
 optimizer_flit_lo(h, i, 0) :- optimizer_flit(h, i, _, 0).
@@ -205,8 +209,8 @@ ofc_base(d, "passes.py") :- ofc_file(d, p), p = "passes.py".
 ofc_base(d, "passes.py") :- ofc_file(d, p), suffix("/passes.py", p).
 ofc_core(d) :- ofc_file(d, p), match("(?:.*/)?l2065_plan_core/.*", p).
 ofc_at(n, d, p, l) :- node(d, n, _, _, _), ofc_file(d, p), line(n, l).
-rr_agg3(dn, i, x) :- child(dn, c, i), text(c, x).
-ofc_dotted(dn, m) :- node(_, dn, "dotted_name", _, _), m = join x by (i) sep "." : { rr_agg3(dn, i, x) }.
+rr_agg5(dn, i, x) :- child(dn, c, i), text(c, x).
+ofc_dotted(dn, m) :- node(_, dn, "dotted_name", _, _), m = join x by (i) sep "." : { rr_agg5(dn, i, x) }.
 ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), ofc_dotted(c, m).
 ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), node(_, c, "aliased_import", _, _), field(c, "name", dn), ofc_dotted(dn, m).
 ofc_import(n, m) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", dn), ofc_dotted(dn, m).

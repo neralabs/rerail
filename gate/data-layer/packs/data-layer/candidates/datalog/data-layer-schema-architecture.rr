@@ -7,6 +7,7 @@ lifecycle_type("type").
 .decl schema_planning_frame_mark(kind: symbol)
 schema_planning_frame_mark("function_definition"). schema_planning_frame_mark("decorator").
 .decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
@@ -58,7 +59,7 @@ schema_planning_frame_mark("function_definition"). schema_planning_frame_mark("d
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, syntax_error, node_text, field, text, child, token
+.input doc, node, line, syntax_error, cpython_syntax_error, node_text, field, text, child, token
 .output violation
 lifecycle_dir("l2000_connection/").
 lifecycle_dir("l3200_metadata/").
@@ -117,15 +118,15 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-schema_planning_doc(d, p) :- option_value("entryPoint", v), schema_planning_entry(v), node(d, m, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), node_text(m, s), schema_planning_trigger(x), contains(x, s).
+schema_planning_doc(d, p) :- option_value("entryPoint", v), schema_planning_entry(v), node(d, m, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), node_text(m, s), schema_planning_trigger(x), contains(x, s).
 violation("data-layer-schema-architecture", "schema-planning", "forbid-schema-planning-callback-field", p, l) :- node(d, a, "assignment", _, _), schema_planning_doc(d, p), field(a, "type", _), field(a, "left", t), node(_, t, "identifier", _, _), text(t, "planning_callback"), line(a, l).
 violation("data-layer-schema-architecture", "schema-planning", "forbid-schema-planning-callback-field", p, l) :- node(d, a, "assignment", _, _), schema_planning_doc(d, p), field(a, "type", _), field(a, "left", t), node(_, t, "attribute", _, _), field(t, "attribute", at), text(at, "planning_callback"), line(a, l).
 violation("data-layer-schema-architecture", "schema-planning", "forbid-schema-callback-queues", p, l) :- lifecycle_callee(c, x), schema_planning_queue(x), node(d, c, _, _, _), schema_planning_doc(d, p), line(c, l).
 schema_planning_frame(n, f) :- nearest(n, f, schema_planning_frame_mark), node(_, f, "function_definition", _, _).
 schema_planning_frame(n, f) :- nearest(n, dc, schema_planning_frame_mark), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
 violation("data-layer-schema-architecture", "schema-planning", "forbid-materialization-plan-mutation", p, l) :- lifecycle_callee(c, x), schema_planning_mutation(x), node(d, c, _, _, _), schema_planning_doc(d, p), schema_planning_frame(c, f), field(f, "name", nm), text(nm, y), contains("materialize_schema_operation_records", y), line(c, l).
-lifecycle_gate(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), lifecycle_dir(x), prefix(x, p), lifecycle_text_doc(d).
-lifecycle_gate(d, p) :- option_value("entryPoint", v), v != "all", node(d, _, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _).
+lifecycle_gate(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), lifecycle_dir(x), prefix(x, p), lifecycle_text_doc(d).
+lifecycle_gate(d, p) :- option_value("entryPoint", v), v != "all", node(d, _, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _).
 lifecycle_doc(d, p) :- lifecycle_gate(d, p), option_value("entryPoint", v), lifecycle_query(v).
 lifecycle_in_fn(x, f) :- inside(x, f, lifecycle_fdef).
 lifecycle_in_fn(x, f) :- node(_, f, "function_definition", _, _), field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _), inside(x, dc, lifecycle_deco).
@@ -174,5 +175,5 @@ violation("data-layer-schema-architecture", "schema-lifecycle", "SAP003", p, l) 
 lifecycle_text_doc(d) :- node(d, m, "module", _, _), node_text(m, s), lifecycle_trigger(x), contains(x, s).
 violation("data-layer-schema-architecture", "schema-lifecycle", "SAP004", p, l) :- lifecycle_executing(f), lifecycle_fn(f, p), field(f, "name", nm), text(nm, x), lifecycle_in_fn(c, f), lifecycle_name_call(c, x), line(f, l).
 violation("data-layer-schema-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :- option_value("entryPoint", "scan_source"), node(d, n, "module", _, _), in_scope(d), !out_scope(d), syntax_error(d), doc(d, p, _), line(n, l).
-parser_error_doc(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d), syntax_error(d), doc(d, p, _), lifecycle_dir(x), prefix(x, p).
+parser_error_doc(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d), syntax_error(d), cpython_syntax_error(d, _, _), doc(d, p, _), lifecycle_dir(x), prefix(x, p).
 violation("data-layer-schema-architecture", "reported-parser-error", "SAP000", p, 1) :- parser_error_doc(d, p), lifecycle_text_doc(d).

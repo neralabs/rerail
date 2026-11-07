@@ -1,0 +1,137 @@
+// python/pytest: pytest's API as Ruff's flake8-pytest-style rules (PT001–PT031) see it.
+//
+// Interface
+//   1. Decorators:  pytest_deco(o, d, e, q)   def or class o has decorator d (the `@…` line) whose expression is
+//                                             e, parentheses off; e is q or a call of q (Ruff's map_callable)
+//                   pytest_fixture(f, d, e)   d is def f's first fixture decorator, `@pytest.fixture` or
+//                                             `@pytest.yield_fixture`, bare or called; e its expression
+//                   pytest_mark(o, d, e, m)   d is `@pytest.mark.m` or `@pytest.mark.m(…)` on def or class o
+//   2. Strings:     pytest_empty_or_null(e)   e is "", None, or an f-string with no text whose fields are all
+//                                             "" or None (Ruff's is_empty_or_null_string)
+//                   pytest_several(s)         str literal s names several parameters, "a, b" (Ruff's
+//                                             split_names: comma-separated, blanks dropped)
+//   2b. Options:    pytest_broad(c, e, s)     option c ("raises" or "warns")'s require-match-for patterns,
+//                                             or their extend- list, match the name s that Ruff shows for e
+//   3. Blocks:      pytest_with(w, q)         with statement w has an item that is a call of q: `with
+//                                             pytest.raises(E) as x, open(p):`
+//                   pytest_crowded(w)         w's body is not one simple statement (PT012, PT031)
+//   4. Fixtures:    pytest_seen(f, n)         yield or call n is one that Ruff's SkipFunctionsVisitor sees in the
+//                                             body of fixture f
+//   5. Comparing:   python/compare's cmp_same / cmp_same_ask (Ruff's ComparableExpr)
+// Calls (exc_call, exc_arg, exc_argument, kwarg, exc_no_args) come from python/exceptions.
+//
+// Python and Ruff background
+//   - Ruff resolves `pytest.fixture` through imports: `from pytest import fixture`, `import pytest as pt`; a
+//     decorator is read through one call, so `@pytest.fixture` and `@pytest.fixture(scope="module")` are both
+//     the fixture decorator.
+//   - A mark is any name `pytest.mark.<name>`: `@pytest.mark.slow`, `@pytest.mark.usefixtures("db")`.
+//   - Ruff's tree has no parentheses: `@(pytest.fixture())` is a call.
+//
+//   @pytest.fixture()                   pytest_fixture: PT001 (empty parentheses)
+//   @pytest.mark.usefixtures            pytest_mark "usefixtures": PT026, and PT025 on a fixture
+//   with pytest.raises(E):              pytest_with "pytest.raises"; with two statements, pytest_crowded: PT012
+//       a = f()
+//       g(a)
+#include "python/exceptions.rr"
+#include "python/pyflakes.rr"   // plain_str
+
+// ---- 1. decorators -----------------------------------------------------------------------------------------------
+.decl pytest_deco(o: node, d: node, e: node, q: symbol)
+pytest_deco(o, d, e, q) :- kind(dd, "decorated_definition"), field(dd, "definition", o), child(dd, d, _),
+    kind(d, "decorator"), child(d, e0, 0), unparen(e0, e),
+    (exc_qual(e, q) ; kind(e, "call"), field(e, "function", g), exc_qual(g, q)).
+.decl pytest_fixture_deco(f: node, d: node, e: node)
+pytest_fixture_deco(f, d, e) :- kind(f, "function_definition"), pytest_deco(f, d, e, q),
+    (q = "pytest.fixture" ; q = "pytest.yield_fixture").
+.decl pytest_fixture(f: node, d: node, e: node)
+pytest_fixture(f, d, e) :- pytest_fixture_deco(f, d, e), !pytest_fixture_not_first(d).
+.decl pytest_fixture_not_first(d: node)  // another fixture decorator comes before d
+pytest_fixture_not_first(d) :- pytest_fixture_deco(f, d, _), pytest_fixture_deco(f, d0, _), precedes(d0, d).
+.decl pytest_mark(o: node, d: node, e: node, m: symbol)
+pytest_mark(o, d, e, m) :- pytest_deco(o, d, e, q), match("pytest\\.mark\\.(?<m>[^.]+)", q).
+
+// ---- 2. strings --------------------------------------------------------------------------------------------------
+// A plain piece is a str literal (no f, t or b prefix); an f-string piece is empty when it has no literal text and
+// each field holds "" or None (one level: f"{f'{None}'}" is not followed).
+.decl pytest_empty_or_null(e: node)
+pytest_empty_or_null(e) :- pytest_null_piece(e).
+pytest_empty_or_null(e) :- kind(e, "string"), pytest_empty_fpiece(e).
+pytest_empty_or_null(e) :- kind(e, "concatenated_string"),
+    count : { child(e, p, _), kind(p, "string"), !pytest_null_piece(p), !pytest_empty_fpiece(p) } = 0.
+.decl pytest_null_piece(e: node)
+pytest_null_piece(e) :- kind(e, "none").
+pytest_null_piece(e) :- string_kind(e, "str"), value(e, "").
+.decl pytest_empty_fpiece(s: node)
+pytest_empty_fpiece(s) :- kind(s, "string"), strprefix(s, p), contains("f", p), !has(s, _, "string_content"),
+    count : { child(s, i, _), kind(i, "interpolation"), field(i, "expression", x), unparen(x, m),
+              !pytest_null_piece(m) } = 0.
+// pytest_several(s): the str literal s, split at commas, gives two or more non-blank names: some comma has a
+// non-blank character before it and one after it.
+.decl pytest_several(s: node)
+pytest_several(s) :- plain_str(s, v), match("[\\s\\S]*[^,\\s][\\s\\S]*,[\\s\\S]*[^,\\s][\\s\\S]*", v).
+
+// ---- 2b. options ------------------------------------------------------------------------------------------------
+// Ruff's raises-require-match-for / warns-require-match-for (replacing the defaults when given) and their
+// extend- lists, as globs over the qualified name Ruff prints: a builtin without "builtins.", so "ValueError",
+// "socket.error", "pickle.*".
+.decl pytest_broad(c: symbol, e: node, s: symbol)
+pytest_broad(c, e, s) :- pytest_shown(e, s), pytest_match_for(c, p), glob(p, s).
+.decl pytest_shown(e: node, s: symbol)
+pytest_shown(e, s) :- exc_qual(e, q), (match("builtins\\.(?<x>.*)", q), s = x ; !prefix("builtins.", q), s = q).
+.decl pytest_match_for(c: symbol, p: symbol)
+pytest_match_for(c, p) :- pytest_default_broad(c, p), !option(cat(c, "-require-match-for"), _).
+pytest_match_for(c, p) :- pytest_default_broad(c, _), option(cat(c, "-require-match-for"), p).
+pytest_match_for(c, p) :- pytest_default_broad(c, _), option(cat(c, "-extend-require-match-for"), p).
+.decl pytest_default_broad(c: symbol, p: symbol)
+pytest_default_broad("raises", "BaseException"). pytest_default_broad("raises", "Exception").
+pytest_default_broad("raises", "ValueError"). pytest_default_broad("raises", "OSError").
+pytest_default_broad("raises", "IOError"). pytest_default_broad("raises", "EnvironmentError").
+pytest_default_broad("raises", "socket.error").
+pytest_default_broad("warns", "Warning"). pytest_default_broad("warns", "UserWarning").
+pytest_default_broad("warns", "DeprecationWarning").
+
+// ---- 3. with blocks ----------------------------------------------------------------------------------------------
+.decl pytest_with(w: node, q: symbol)
+pytest_with(w, q) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, it, _),
+    kind(it, "with_item"), field(it, "value", v0), (kind(v0, "as_pattern"), child(v0, v1, 0) ; !kind(v0, "as_pattern"), v1 = v0),
+    unparen(v1, c), exc_call(c, q).
+// pytest_crowded(w): Ruff's is_too_complex. One statement is fine unless it is compound; a def or class is fine
+// (it tests a decorator), a `for` whose body is `pass` or one expression other than `...` is fine only for
+// `pass`/`...`, and a nested `with` is fine when its own body is one simple statement.
+.decl pytest_crowded(w: node)
+pytest_crowded(w) :- kind(w, "with_statement"), field(w, "body", b), pytest_nstmts(b, k), k != 1.
+pytest_crowded(w) :- kind(w, "with_statement"), field(w, "body", b), pytest_only(b, s), pytest_heavy(s).
+.decl pytest_nstmts(b: node, k: number)
+pytest_nstmts(b, k) :- kind(b, "block"), k = count : { child(b, s, _), !kind(s, "comment") }.
+.decl pytest_only(b: node, s: node)
+pytest_only(b, s) :- pytest_nstmts(b, 1), child(b, s, _), !kind(s, "comment").
+.decl pytest_heavy(s: node)
+pytest_heavy(s) :- kind(s, k), exc_compound(k), k != "with_statement", k != "for_statement",
+    k != "function_definition", k != "class_definition".
+pytest_heavy(s) :- kind(s, "with_statement"), field(s, "body", b), (pytest_nstmts(b, k), k != 1 ;
+    pytest_only(b, t), kind(t, k2), (exc_compound(k2) ; k2 = "decorated_definition")).
+pytest_heavy(s) :- kind(s, "for_statement"), field(s, "body", b), !pytest_light_loop(b).
+.decl pytest_light_loop(b: node)  // `for x in it: pass` or `for x in it: ...`
+pytest_light_loop(b) :- pytest_only(b, t), kind(t, "pass_statement").
+pytest_light_loop(b) :- pytest_only(b, t), kind(t, "expression_statement"), child(t, e, 0), kind(e, "ellipsis"),
+    !child(t, _, 1).
+
+// ---- 4. fixture bodies -------------------------------------------------------------------------------------------
+// Ruff's SkipFunctionsVisitor walks the fixture's statements, not into nested defs (a nested class is entered),
+// and of the expressions only into calls: it sees `x = yield`, `print((yield))`, `request.addfinalizer(f)`,
+// but not `[(yield)]`, `lambda: (yield)` or `yield request.addfinalizer(f)`.
+.decl pytest_seen(f: node, n: node)
+pytest_seen(f, n) :- pytest_fixture(f, _, _), (kind(n, "yield") ; kind(n, "call")), def_frame(n, f),
+    field(f, "body", b), within(n, b), !pytest_hidden(f, n).
+.decl pytest_hidden(f: node, n: node)  // an expression other than a call lies between n and its statement
+pytest_hidden(f, n) :- pytest_fixture(f, _, _), field(f, "body", b), (kind(n, "yield") ; kind(n, "call")),
+    inside(n, a, pytest_opaque), within(a, b).
+.decl pytest_opaque(k: symbol)
+pytest_opaque("attribute"). pytest_opaque("subscript"). pytest_opaque("list"). pytest_opaque("tuple").
+pytest_opaque("set"). pytest_opaque("dictionary"). pytest_opaque("pair"). pytest_opaque("list_comprehension").
+pytest_opaque("dictionary_comprehension"). pytest_opaque("set_comprehension"). pytest_opaque("generator_expression").
+pytest_opaque("binary_operator"). pytest_opaque("unary_operator"). pytest_opaque("not_operator").
+pytest_opaque("boolean_operator"). pytest_opaque("comparison_operator"). pytest_opaque("lambda").
+pytest_opaque("conditional_expression"). pytest_opaque("named_expression"). pytest_opaque("await").
+pytest_opaque("string"). pytest_opaque("concatenated_string"). pytest_opaque("yield"). pytest_opaque("list_splat").
+pytest_opaque("dictionary_splat"). pytest_opaque("slice"). pytest_opaque("expression_list").

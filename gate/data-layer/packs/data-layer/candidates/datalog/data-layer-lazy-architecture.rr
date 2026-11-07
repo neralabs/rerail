@@ -272,6 +272,7 @@ lazy_fnset("function_definition").
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl rr_agg1(f: node, r: number, r2: number)
+.decl rr_ctx2(r: number)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
@@ -907,7 +908,8 @@ lazy_edge(f, c, t) :- lazy_oc(f, c), lazy_target(f, c, s), lazy_symfn(s, t), t !
 lazy_reach(r, r) :- lazy_af(r).
 lazy_reach(r, t) :- lazy_reach(r, n), lazy_nd(n, d), lazy_nd(r, d), lazy_edge(n, _, t).
 lazy_foenc(f, r) :- lazy_sym(f, _), inside(f, c, lazy_clsset), lazy_region(c, r).
-rr_agg1(f, r, r2) :- lazy_foenc(f, r), lazy_foenc(f, r2), r2 < r.
+rr_ctx2(r) :- lazy_foenc(f, r).
+rr_agg1(f, r, r2) :- rr_ctx2(r), lazy_foenc(f, r2), r2 < r.
 lazy_foel(f, i, r) :- lazy_foenc(f, r), i = count : { rr_agg1(f, r, _) }.
 lazy_foel(f, i, r) :- lazy_sym(f, _), lazy_region(f, r), i = count : { lazy_foenc(f, _) }.
 lazy_folen(f, n) :- lazy_sym(f, _), n = count : { lazy_foel(f, _, _) }.

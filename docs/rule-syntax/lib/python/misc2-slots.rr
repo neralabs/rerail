@@ -1,0 +1,41 @@
+// python/misc2-slots: classes that should declare `__slots__`, as Ruff's flake8-slots (SLOT) rules see them.
+//
+// Interface
+//   slots_missing(c, nm)     class c, in a .py file (not a stub), assigns no `__slots__` directly in its body;
+//                            nm is its name, where Ruff reports
+//   slots_base(c, b)         b is a positional base of c, parentheses off (a `*bases` is a base of its own;
+//                            `metaclass=M` and `**kw` are not bases)
+//   slots_enum(c)            c derives, directly or through classes of the project, from one of enum's Enum,
+//                            Flag, IntEnum, IntFlag, StrEnum, ReprEnum or CheckEnum (Ruff's is_enumeration)
+//
+// Python background: a subclass of an immutable builtin (str, tuple, a namedtuple) gets a per-instance
+// `__dict__` unless it sets `__slots__`, even an empty one. `__slots__ = …` and `__slots__: T = …` (and
+// `__slots__: T`) count, `(__slots__) = …` too, also as one target of `a = __slots__ = …`; one set in a method or an `if` does not.
+//
+//   class Foo(str):              slots_base(<Foo>, <str>); slots_missing(<Foo>, <Foo name>)
+//       pass
+//   class Bar(tuple):            slots_base(<Bar>, <tuple>); no slots_missing
+//       __slots__ = ()
+#include "python/ast.rr"
+
+.decl slots_missing(c: node, nm: node)
+slots_missing(c, nm) :- kind(c, "class_definition"), field(c, "name", nm), docof(c, d), file_name(d, f),
+    !suffix(".pyi", f), !slots_assigned(c).
+.decl slots_assigned(c: node)
+slots_assigned(c) :- field(c, "body", b), body_stmt(b, st, _), kind(st, "expression_statement"), child(st, a, 0),
+    assign_target(a, t0), slots_bare_target(t0, t), text(t, "__slots__").
+// slots_bare_target(t0, t): target t0 is the Name t. tree-sitter reads `(x) = …` as a one-element tuple_pattern
+// with no comma; `(x,) = …` is a real tuple.
+.decl slots_bare_target(t0: node, t: node)
+slots_bare_target(t, t) :- kind(t, "identifier").
+slots_bare_target(t0, t) :- kind(t0, "tuple_pattern"), !op(t0, ","), child(t0, x, 0), !child(t0, _, 1),
+    slots_bare_target(x, t).
+slots_bare_target(t0, t) :- kind(t0, "parenthesized_expression"), child(t0, x, 0), slots_bare_target(x, t).
+
+.decl slots_base(c: node, b: node)
+slots_base(c, b) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, x, _),
+    !kind(x, "keyword_argument"), !kind(x, "dictionary_splat"), !kind(x, "comment"), unparen(x, b).
+
+.decl slots_enum(c: node)
+slots_enum(c) :- class_def(c, q), subclass(q, b), split_dot(b, "enum", x),
+    (x = "Enum" ; x = "Flag" ; x = "IntEnum" ; x = "IntFlag" ; x = "StrEnum" ; x = "ReprEnum" ; x = "CheckEnum").

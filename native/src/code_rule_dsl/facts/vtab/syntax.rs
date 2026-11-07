@@ -131,6 +131,8 @@ struct Dialect {
     catalog: KindCatalog,
     classes: Vec<Class>,
     operator: Option<u16>,
+    /// The `operators` field: a comparison's operator tokens (`a < b <= c`).
+    operators: Option<u16>,
     canonical: Vec<u16>,
     codes: HashMap<u16, Vec<u16>>,
 }
@@ -148,7 +150,7 @@ impl Dialect {
         for (k, &c) in canonical.iter().enumerate() {
             codes.entry(c).or_default().push(k as u16);
         }
-        Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator"), canonical, codes })
+        Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes })
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
     fn code(&self, f: &Facts, id: u32) -> u16 {

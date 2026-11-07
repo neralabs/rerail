@@ -1,0 +1,90 @@
+// python/misc2-async: async code as Ruff's flake8-async (ASYNC) rules see it: where a call runs in a coroutine,
+// which calls block the event loop, and the trio / anyio / asyncio APIs the rules name.
+//
+// Interface
+//   1. Context:   async_ctx(n)             n runs inside an `async def` (Ruff's in_async_context): the nearest
+//                                          def, lambda or class n runs in is an async def. Comprehensions are
+//                                          transparent; a lambda or a class body is not async.
+//   2. Calls:     async_call(c, f, q)      call c's callee f resolves to q (through imports, aliases, builtins);
+//                                          f is where Ruff reports `call.func`
+//                 async_blocking(c, f, q)  the same, for a call c that runs in an async def
+//                 async_awaited(c)         c is the operand of `await` (parentheses do not count)
+//                 async_name_value(n, v)   name n reads a binding whose value is v: the latest binding of n
+//                                          before it in its scope (Ruff's resolve_name), and its value by
+//                                          find_binding_value: `x = v`, `(x := v)`, `with v as x`, `x, y = v, w`
+//                 async_one_arg(c, x, a)   c has exactly one argument a, given as keyword x or positionally
+//                                          (Ruff's `arguments.len() == 1` and find_argument_value(x, 0))
+//   3. APIs:      async_timeout_cm(q)      a timeout or cancel-scope context manager (ASYNC100)
+//                 async_trio_coro(q)       a trio function that returns a coroutine (ASYNC105)
+//                 async_sleep_arg(q, m, x) q is `m.sleep` of trio or anyio; x the name of its one parameter
+//   4. Bodies:    async_checkpoint(b)      block b has an `await`, `async with`, `async for` or async
+//                                          comprehension outside any def or class nested in it (Ruff's
+//                                          AwaitVisitor)
+//
+// Python background
+//   A coroutine runs until its next checkpoint (an await). A blocking call (time.sleep, requests.get,
+//   subprocess.run, open, input) stops every other task on the loop until it returns. A def, lambda or class
+//   body nested in an async def is its own scope, so a call there is not in the coroutine:
+//
+//   async def handler():
+//       time.sleep(1)                 async_blocking(<call>, <time.sleep>, "time.sleep")
+//       cb = lambda: time.sleep(1)    not async_ctx: the lambda body runs when it is called
+//       with trio.move_on_after(1):   async_timeout_cm("trio.move_on_after")
+//           await trio.sleep(2)       async_checkpoint(<the with body>)
+#include "python/ruff.rr"       // call_q, ruff_qual, ast_up, ruff_arg, call_kwarg, call_nargs
+#include "python/pyflakes.rr"   // run_scope
+#include "python/pathlib.rr"    // pth_seen, site_init: the bindings a name can read, and their values
+
+// ---- 1. context --------------------------------------------------------------------------------------------------
+.decl async_ctx(n: node)
+async_ctx(n) :- run_scope(n, f, "function"), op(f, "async").
+async_ctx(n) :- run_scope(n, c, k), (k = "comprehension" ; k = "generator"), async_ctx(c).
+
+// ---- 2. calls ----------------------------------------------------------------------------------------------------
+.decl async_call(c: node, f: node, q: symbol)
+async_call(c, f, q) :- kind(c, "call"), field(c, "function", f), ruff_qual(f, q).
+.decl async_blocking(c: node, f: node, q: symbol)
+async_blocking(c, f, q) :- async_call(c, f, q), async_ctx(c).
+.decl async_awaited(c: node)
+async_awaited(c) :- ast_up(c, p), kind(p, "await").
+.decl async_name_value(n: node, v: node)
+async_name_value(n, v) :- kind(n, "identifier"), pth_seen(n, s, _),
+    k = max i : { pth_seen(n, s, b2), visit_index(b2, i) }, pth_seen(n, s, b), visit_index(b, k), site_init(b, v).
+.decl async_one_arg(c: node, x: symbol, a: node)
+async_one_arg(c, x, a) :- async_sleep_call(c, x), call_nargs(c, 1), call_nkwargs(c, 0), ruff_arg(c, 0, a).
+async_one_arg(c, x, a) :- async_sleep_call(c, x), call_nargs(c, 0), call_nkwargs(c, 1), call_kwarg(c, x, a).
+.decl async_sleep_call(c: node, x: symbol)
+async_sleep_call(c, x) :- async_call(c, _, q), async_sleep_arg(q, _, x).
+
+// ---- 3. APIs -----------------------------------------------------------------------------------------------------
+.decl async_timeout_cm(q: symbol)
+async_timeout_cm("asyncio.timeout"). async_timeout_cm("asyncio.timeout_at").
+async_timeout_cm("anyio.move_on_after"). async_timeout_cm("anyio.fail_after"). async_timeout_cm("anyio.CancelScope").
+async_timeout_cm("trio.move_on_after"). async_timeout_cm("trio.move_on_at"). async_timeout_cm("trio.fail_after").
+async_timeout_cm("trio.fail_at"). async_timeout_cm("trio.CancelScope").
+.decl async_trio_coro(q: symbol)
+async_trio_coro(cat("trio.", x)) :- async_trio_top(x).
+async_trio_coro(cat("trio.lowlevel.", x)) :- async_trio_low(x).
+.decl async_trio_top(x: symbol)
+async_trio_top("aclose_forcefully"). async_trio_top("open_file"). async_trio_top("open_ssl_over_tcp_listeners").
+async_trio_top("open_ssl_over_tcp_stream"). async_trio_top("open_tcp_listeners"). async_trio_top("open_tcp_stream").
+async_trio_top("open_unix_socket"). async_trio_top("run_process"). async_trio_top("serve_listeners").
+async_trio_top("serve_ssl_over_tcp"). async_trio_top("serve_tcp"). async_trio_top("sleep").
+async_trio_top("sleep_forever").
+.decl async_trio_low(x: symbol)
+async_trio_low("cancel_shielded_checkpoint"). async_trio_low("checkpoint"). async_trio_low("checkpoint_if_cancelled").
+async_trio_low("open_process"). async_trio_low("permanently_detach_coroutine_object").
+async_trio_low("reattach_detached_coroutine_object"). async_trio_low("temporarily_detach_coroutine_object").
+async_trio_low("wait_readable"). async_trio_low("wait_task_rescheduled"). async_trio_low("wait_writable").
+.decl async_sleep_arg(q: symbol, m: symbol, x: symbol)
+async_sleep_arg("trio.sleep", "trio", "seconds"). async_sleep_arg("anyio.sleep", "anyio", "delay").
+
+// ---- 4. bodies ---------------------------------------------------------------------------------------------------
+.decl async_checkpoint(b: node)
+async_checkpoint(b) :- kind(b, "block"), has(b, a, async_point), within_stop(a, b, async_opaque).
+.decl async_point(n: node)
+async_point(a) :- kind(a, "await").
+async_point(s) :- (kind(s, "with_statement") ; kind(s, "for_statement") ; kind(s, "for_in_clause")), op(s, "async").
+// The visitor does not enter a nested def or class, decorators included.
+.decl async_opaque(k: symbol)
+async_opaque("function_definition"). async_opaque("class_definition"). async_opaque("decorated_definition").

@@ -1,0 +1,52 @@
+// python/simplify: the vocabulary of Ruff's flake8-simplify (SIM) rules: the operands of `and`/`or` in order,
+// what Ruff knows of an expression's truth and side effects, boolean-test positions, and the if statements
+// Ruff leaves alone.
+//
+// Interface
+//   1. Operands:  sim_operand(t, o, i, v)   v is the i-th operand (from 0) of the BoolOp t, o "and" or "or";
+//                                           `a or b or c` is one BoolOp of three, `(a or b) or c` of two
+//                 sim_nops(t, n)            t has n operands
+//   2. Values:    sim_truth(e, b)           Ruff's Truthiness: e, parentheses off, is always true (b "true") or
+//                                           always false ("false"). No row: unknown.
+//                 sim_bool_test(e)          e, parentheses off, is read only for its truth (Ruff's
+//                                           in_boolean_test): python/ruff's bool_test, and a `case` guard
+//   3. Statements: sim_exempt_if(i)         if statement i tests `sys.version_info` or `sys.platform` somewhere
+//                                           in its condition, or is `if TYPE_CHECKING:` (SIM102, SIM103)
+//                 sim_bool_return(s, b)     s is `return True` (b "true") or `return False` ("false")
+//
+// Python and Ruff background
+//   - Truthiness is python/ruff's truth_of; side effects are python/ruff's side_effect (Ruff's contains_effect).
+//
+//   x or True                sim_operand(<or>, "or", 0, <x>), sim_truth(<True>, "true")
+//   if a and (b or ""): …    sim_bool_test(<a and (b or "")>), sim_bool_test(<b or "">)
+#include "python/comprehensions.rr"   // c4_call, dict_ref; python/compare; python/ruff, python/upgrade
+
+// ---- 1. operands -------------------------------------------------------------------------------------------------
+.decl sim_operand(t: node, o: symbol, i: number, v: node)
+sim_operand(t, o, i, v) :- bool_operand(t, o, v), i = count : { bool_operand(t, o, w), w < v }.
+.decl sim_nops(t: node, n: number)
+sim_nops(t, n) :- bool_top(t, o), n = count : { bool_operand(t, o, _) }.
+
+// ---- 2. values ---------------------------------------------------------------------------------------------------
+// sim_truth(e, b): python/ruff's truth_of, parentheses off, with None as false.
+.decl sim_truth(e: node, b: symbol)
+sim_truth(e, b) :- unparen(e, m), truth_of(m, t), (t = "none", b = "false" ; t != "none", b = t).
+.decl zero_number(t: symbol)  // the text of a zero int or float literal: 0, 0x0, 0_0, 0.0, .0, 0e5, 0j (SIM113)
+zero_number(t) :- (kind(n, "integer") ; kind(n, "float")), text(n, t),
+    (match("0[xXoObB][0_]+", t) ; match("[0_.]*([eE][-+]?[0-9_]+)?[jJ]?", t), contains("0", t)).
+
+.decl sim_bool_test(e: node)
+sim_bool_test(m) :- bool_test(m).
+sim_bool_test(m) :- kind(c, "case_clause"), field(c, "guard", g), child(g, x, 0), unparen(x, m).
+sim_bool_test(m) :- sim_bool_test(t), (kind(t, "boolean_operator") ; kind(t, "not_operator")), child(t, c, _),
+    unparen(c, m).
+
+// ---- 3. statements -----------------------------------------------------------------------------------------------
+.decl sim_exempt_if(i: node)
+sim_exempt_if(i) :- kind(i, "if_statement"), field(i, "condition", c), (n = c ; within(n, c)),
+    (ruff_qual(n, "sys.version_info") ; ruff_qual(n, "sys.platform")).
+sim_exempt_if(i) :- kind(i, "if_statement"), field(i, "condition", c), unparen(c, m),
+    (kind(m, "identifier"), text(m, "TYPE_CHECKING") ; attr_of(m, _, "TYPE_CHECKING") ; typing_ref(m, "TYPE_CHECKING")).
+.decl sim_bool_return(s: node, b: symbol)
+sim_bool_return(s, b) :- kind(s, "return_statement"), child(s, v, 0), unparen(v, m),
+    (kind(m, "true"), b = "true" ; kind(m, "false"), b = "false").

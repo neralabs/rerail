@@ -40,7 +40,7 @@
 .decl value_type_of(n: node, t: symbol)                 // the type of n's own semantic value (W's `value.type`)
 .input node_text, end_line, value_type_of
 .decl option_on(name: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 
 // Kind sets for the tree built-ins.
 .decl rm_class_kind(kind: symbol)
@@ -73,7 +73,7 @@ rm_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", i), no
 
 // A class whose name is an item of the array option `o`.
 .decl rm_listed(c: node, o: symbol)
-rm_listed(c, o) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item(o, x).
+rm_listed(c, o) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item(o, _, x).
 
 // A node inside (stopBy end) such a render def.
 .decl rm_in_render(n: node)

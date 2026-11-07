@@ -1,0 +1,147 @@
+// python/exceptions: raise statements, except handlers and logging calls as Ruff's tryceratops rules (TRY) see
+// them, on top of the view of a call that Ruff's checkers share (also used by python/pytest).
+//
+// Interface
+//   1. Calls:     exc_qual(e, q)          e, parentheses off, resolves to q through imports and aliases:
+//                                         `from pytest import raises as r` gives "pytest.raises" for r; an
+//                                         unshadowed `ValueError` gives "builtins.ValueError"
+//                 exc_call(c, q)          call c's callee resolves to q
+//                 exc_arg(c, i, a)        a is c's i-th positional argument as Ruff's find_positional counts:
+//                                         none at or after the first `*args`; parentheses off
+//                 exc_argument(c, k, i, a)  find_argument_value(k, i): keyword k, else positional i (for the
+//                                         (k, i) pairs in exc_argname)
+//                 exc_no_args(c)          c is called with nothing: `f()`, `f(  # comment\n)`
+//                 kwarg(c, k, v)          (python/security) c passes k=v, parentheses off
+//                 exc_dotted(e, s)        e's text as a dotted name, without spaces or parentheses: "a.b.c"
+//                 exc_written(a, w)       w is a with its parentheses as written
+//   2. Handlers:  exc_handler(t, x)       x is an `except` (or `except*`) clause of try statement t
+//                 exc_alias(x, e)         x binds the caught exception to the name e: `except E as e`
+//                 exc_body(x, b)          x's block
+//                 exc_type(x, e)          x handles e (Ruff's extract_handled_exceptions): `except (A, B)` gives A
+//                                         and B; a bare `except:` gives nothing
+//   3. Raises:    exc_raise(r, e)         raise statement r raises e (parentheses off); no row for a bare `raise`
+//                 exc_cause(r)            r has `from …`
+//                 exc_class(e, c)         Ruff's map_callable: `ValueError("x")` gives ValueError, a name itself
+//                 exc_reraise(x, r)       raise r is one TRY201 collects in handler x's body (see section 3)
+//   4. Logging:   exc_log(c, level)       c is a logging call at level "debug", "info", "warn", "warning",
+//                                         "error", "critical" or "exception" (Ruff's logger candidates)
+//                 exc_handler_log(x, c, level)  such a call c in handler x's body, as TRY400/TRY401 walk it
+//                 exc_info_kw(c)          c passes `exc_info=True` or `exc_info=sys.exc_info()`
+//
+// Python and Ruff background
+//   - Ruff's tree has no parentheses: `raise (e)` raises the Name e; `except (ValueError):` handles ValueError.
+//   - A qualified name follows imports, aliases and the file's own definitions (names' sym_of); a name bound by
+//     an assignment or a parameter has none. A builtin has one only when nothing in the file rebinds it.
+//   - `except*` parses as an except clause, as Ruff treats it.
+#include "python/security.rr"   // kwarg; security includes python/ast and python/names
+
+// ---- 1. calls ----------------------------------------------------------------------------------------------------
+.decl exc_qual(e: node, q: symbol)
+exc_qual(e, q) :- unparen(e, m), sym_of(m, q).
+.decl exc_call(c: node, q: symbol)
+exc_call(c, q) :- kind(c, "call"), field(c, "function", f), exc_qual(f, q).
+// exc_item(c, a, j): the j-th child of c's argument list is positional (`x` or `*xs`).
+.decl exc_item(c: node, a: node, j: number)
+exc_item(c, a, j) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a, j),
+    kind(a, k), k != "keyword_argument", k != "dictionary_splat", k != "comment".
+.decl exc_splat_by(c: node, j: number)  // a `*xs` at or before position j
+exc_splat_by(c, j) :- exc_item(c, _, j), exc_item(c, s, k), kind(s, "list_splat"), k <= j.
+.decl exc_arg(c: node, i: number, a: node)
+exc_arg(c, i, a) :- exc_item(c, a0, j), !exc_splat_by(c, j), i = count : { exc_item(c, _, k), k < j }, unparen(a0, a).
+exc_arg(c, 0, g) :- kind(c, "call"), field(c, "arguments", g), kind(g, "generator_expression").   // f(x for x in y)
+// exc_argname(k, i): the parameters the rules look up by keyword or position.
+.decl exc_argname(k: symbol, i: number)
+exc_argname("argnames", 0). exc_argname("argvalues", 1). exc_argname("expected_exception", 0).
+exc_argname("expected_warning", 0). exc_argname("reason", 0). exc_argname("new", 1). exc_argname("new", 2).
+.decl exc_argument(c: node, k: symbol, i: number, a: node)
+exc_argument(c, k, i, a) :- exc_argname(k, i), kwarg(c, k, a).
+exc_argument(c, k, i, a) :- exc_argname(k, i), exc_arg(c, i, a), !kwarg(c, k, _).
+.decl exc_no_args(c: node)
+exc_no_args(c) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"),
+    count : { child(l, a, _), !kind(a, "comment") } = 0.
+// exc_written(a, w): w is a with its parentheses, as written: `f((x))` gives the outer `(…)` for x. Ruff
+// reports some findings at a parenthesized range.
+.decl exc_written(a: node, w: node)
+exc_written(a, w) :- unparen(w, a), child(p, w, _), !kind(p, "parenthesized_expression").
+// exc_dotted(e, s): Ruff's UnqualifiedName, unresolved: `self.log` gives "self.log", `f().x` nothing.
+.decl exc_dotted(e: node, s: symbol)
+exc_dotted(e, s) :- unparen(e, m), dotted_expr(m, s).
+
+// ---- 2. handlers -------------------------------------------------------------------------------------------------
+.decl exc_handler(t: node, x: node)
+exc_handler(t, x) :- kind(t, "try_statement"), child(t, x, _), kind(x, "except_clause").
+// `except E as e`: the clause's value is an as_pattern whose alias holds the name.
+.decl exc_alias(x: node, e: symbol)
+exc_alias(x, e) :- kind(x, "except_clause"), field(x, "value", ap), kind(ap, "as_pattern"), field(ap, "alias", t),
+    child(t, n, 0), kind(n, "identifier"), text(n, e).
+.decl exc_body(x: node, b: node)
+exc_body(x, b) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block").
+.decl exc_type(x: node, e: node)
+exc_type(x, e) :- kind(x, "except_clause"), field(x, "value", v), except_type(v, t0), unparen(t0, t),
+    (kind(t, "tuple"), child(t, e0, _), !kind(e0, "comment"), unparen(e0, e) ; !kind(t, "tuple"), e = t).
+
+// ---- 3. raises ---------------------------------------------------------------------------------------------------
+.decl exc_raise(r: node, e: node)
+exc_raise(r, e) :- kind(r, "raise_statement"), child(r, e0, 0), !field(r, "cause", e0), unparen(e0, e).
+.decl exc_cause(r: node)
+exc_cause(r) :- kind(r, "raise_statement"), field(r, "cause", _).
+.decl exc_class(e: node, c: node)
+exc_class(e, c) :- exc_raise(_, e), kind(e, "call"), field(e, "function", f), unparen(f, c).
+exc_class(e, e) :- exc_raise(_, e), !kind(e, "call").
+// exc_reraise(x, r): TRY201's walk of a handler's body (Ruff's RaiseStatementVisitor in verbose_raise.rs). It
+// visits every statement, into nested defs, classes, loops and branches, except that a nested `try` is entered
+// through its body and `finally` only, and the statements there are walked, not visited: a raise directly in
+// them is not collected, a raise one level deeper is.
+//   except E as e:
+//       try: raise e          not collected: directly in the inner try's body
+//       except F: raise e     not collected: in the inner try's handler
+//       try:
+//           if c: raise e     collected
+.decl exc_compound(k: symbol)  // statements with bodies of their own
+exc_compound("if_statement"). exc_compound("for_statement"). exc_compound("while_statement").
+exc_compound("with_statement"). exc_compound("try_statement"). exc_compound("match_statement").
+exc_compound("function_definition"). exc_compound("class_definition").
+// exc_sub(p, s): s is a statement of one of compound statement p's bodies (elif, else, except, finally, case).
+.decl exc_sub(p: node, s: node)
+exc_sub(p, s) :- kind(b, "block"), nearest(b, p, exc_compound), child(b, s, _), !kind(s, "comment"),
+    !kind(s, "case_clause").
+.decl exc_visit(x: node, s: node)  // visited: a raise here is collected
+exc_visit(x, s) :- exc_body(x, b), child(b, s, _), !kind(s, "comment").
+exc_visit(x, s) :- exc_visit(x, p), !kind(p, "try_statement"), exc_sub(p, s).
+exc_visit(x, s) :- exc_walk(x, p), exc_sub(p, s).
+exc_visit(x, f) :- exc_visit(x, d), kind(d, "decorated_definition"), field(d, "definition", f).
+.decl exc_walk(x: node, s: node)  // walked: its bodies are visited, but a raise here is not collected
+exc_walk(x, s) :- exc_visit(x, t), kind(t, "try_statement"), field(t, "body", b), child(b, s, _).
+exc_walk(x, s) :- exc_visit(x, t), kind(t, "try_statement"), child(t, fc, _), kind(fc, "finally_clause"),
+    child(fc, b, _), kind(b, "block"), child(b, s, _).
+exc_walk(x, f) :- exc_walk(x, d), kind(d, "decorated_definition"), field(d, "definition", f).
+.decl exc_reraise(x: node, r: node)
+exc_reraise(x, r) :- exc_visit(x, r), kind(r, "raise_statement").
+
+// ---- 4. logging --------------------------------------------------------------------------------------------------
+// Ruff's LoggerCandidateVisitor: `<logger>.<level>(…)`, where the receiver is a call of logging.getLogger or
+// logging.Logger, or resolves to the logging module or flask's `current_app.logger`, or, when it resolves to
+// nothing, its last name looks like a logger:
+//   logging.error(…)   logging.getLogger().error(…)   log.error(…)   self.logger.error(…)   LOGGER.error(…)
+// and `<level>(…)` for a function imported from logging: `from logging import error`.
+//   from foo import log; log.error(…)     not a logger: log resolves to foo.log
+// exc_handler_log(x, c, level) is the visitor's walk of handler x's body: every expression, nested defs
+// included, but not the handlers of a try nested in it (they are visited as handlers of their own).
+.decl exc_level(x: symbol)
+exc_level("debug"). exc_level("info"). exc_level("warn"). exc_level("warning"). exc_level("error").
+exc_level("critical"). exc_level("exception").
+.decl exc_log(c: node, level: symbol)
+exc_log(c, x) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, o, x), exc_level(x),
+    exc_logger(o).
+exc_log(c, x) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), kind(f, "identifier"),
+    exc_qual(f, q), split_dot(q, "logging", x), exc_level(x).
+.decl exc_logger(o: node)
+exc_logger(o) :- unparen(o, m), (exc_call(m, "logging.getLogger") ; exc_call(m, "logging.Logger")).
+exc_logger(o) :- exc_qual(o, q), (q = "logging" ; q = "flask.current_app.logger").
+exc_logger(o) :- unparen(o, m), !sym_of(m, _), leaf_name(m, x), dotted_expr(m, _),
+    match("(log|LOG).*|.*(logger|logging|LOGGER|LOGGING)", x).
+.decl exc_handler_log(x: node, c: node, level: symbol)
+exc_handler_log(x, c, l) :- exc_body(x, b), exc_log(c, l), within_stop(c, b, "except_clause").
+.decl exc_info_kw(c: node)
+exc_info_kw(c) :- kwarg(c, "exc_info", v), kind(v, "true").
+exc_info_kw(c) :- kwarg(c, "exc_info", v), exc_call(v, "sys.exc_info").

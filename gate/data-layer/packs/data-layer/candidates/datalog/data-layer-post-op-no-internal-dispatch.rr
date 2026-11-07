@@ -43,6 +43,7 @@ removed_surface_imports("import_statement"). removed_surface_imports("import_fro
 .decl removed_surface_hit(n: node)
 .decl removed_surface_name(s: symbol)
 .decl rr_agg1(p: node, s: number, t: symbol, xs: number)
+.decl rr_ctx2(xs: number)
 .decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -92,7 +93,8 @@ pod_doc(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !syntax_er
 pod_binary_cmp(c, s) :- node(_, c, "comparison_operator", _, _), child(c, _, 0), child(c, _, 1), !child(c, _, 2), op_at(c, 0, s), !op_at(c, 1, _), (s = "==" ; s = "is" ; s = "in").
 pod_nth_parent(c) :- pod_binary_cmp(c, _).
 pod_nth_parent(a) :- field(c, "arguments", a), node(_, c, "call", _, _).
-rr_agg1(p, s, t, xs) :- node(_, x, _, xs, _), token(p, _, t, s, _), prefix("#", t), s < xs.
+rr_ctx2(xs) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _).
+rr_agg1(p, s, t, xs) :- rr_ctx2(xs), token(p, _, t, s, _), prefix("#", t), s < xs.
 pod_nth(p, x, k) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _), j = count : { rr_agg1(p, _, _, xs) }, k = @add(@add(i, 1), j).
 pod_enum_attr(a, e, m) :- node(_, a, "attribute", _, _), field(a, "object", o), node(_, o, "identifier", _, _), text(o, e), pod_enum_name(e), field(a, "attribute", x), text(x, m).
 pod_is_enum_attr(a) :- pod_enum_attr(a, _, _).

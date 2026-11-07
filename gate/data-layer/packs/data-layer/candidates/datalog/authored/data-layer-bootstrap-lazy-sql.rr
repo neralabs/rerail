@@ -11,10 +11,10 @@
 // - args[0] (field 'args', position 0) is the first child of the `argument_list` that is neither a keyword
 //   argument, a `**` splat nor a comment (CPython keeps keywords apart; `*x` is in args).
 // Lines: CPython's lineno of a Call or For is its first token's line, tree-sitter's start line.
-// The outer `WHERE instr(path,'bootstrap')>0` is contains("bootstrap", p). The gate (`syntax: valid`) is
-// !syntax_error(d), tree-sitter's verdict. Remaining gap: CPython's syntax verdict (core.rr's syntax_error(d, l,
-// msg)) is not bound by the corpus runner; a gated file tree-sitter accepts and CPython rejects fails W's pythonAst
-// stage (its worker raises: the run errors), and is read here.
+// The outer `WHERE instr(path,'bootstrap')>0` is contains("bootstrap", p). The gate (`syntax: valid`, an AST
+// matcher) is !syntax_error(d), tree-sitter's verdict (W's own). The `pythonAst` stage then runs CPython's
+// `ast.parse` on each gated file: the files it accepts are !cpython_syntax_error(d, _, _) (CPython 3.13's verdict).
+// In W a file it rejects fails the stage (its worker raises: the run errors); here it is skipped, no findings.
 // Options (entryPoint, parameters) are not read by this clause. Checked against the recorded batch 9-10 API
 // events (all exact) and fixtures.
 
@@ -25,6 +25,7 @@
 .decl text(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -73,7 +74,8 @@ bootstrap_sql_iter(f, v) :- bootstrap_sql_iter(f, c), bootstrap_sql_call(c, "Nam
 
 // The documents the clause reads: in scope, parsed, a path holding "bootstrap".
 .decl bootstrap_sql_doc(d: number, p: symbol)
-bootstrap_sql_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), contains("bootstrap", p).
+bootstrap_sql_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _),
+    contains("bootstrap", p).
 
 // BLB-001: x.query_lazy(…).execute_lazy().
 violation("data-layer-bootstrap-lazy-sql", "bootstrap-sql", "BLB-001", p, l) :- bootstrap_sql_call(n, "Attribute", "execute_lazy"),

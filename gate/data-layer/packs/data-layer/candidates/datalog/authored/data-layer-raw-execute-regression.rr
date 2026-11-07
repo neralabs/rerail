@@ -8,7 +8,7 @@
 // - oracleAnalyzer: true gives the oracle analyzer's codes (removed_call, removed_definition,
 //   mixed_helper_text), false RER001;
 // - compatibilityStubFiles: the policy joins the items, regex-escaped, into `^(?:a|b|…)$` over the file path,
-//   which is an exact path match: `option_item("compatibilityStubFiles", p)`.
+//   which is an exact path match: `option_item("compatibilityStubFiles", _, p)`.
 // mixed-marker-0..4: W tests a `module` node's full text (comments, docstrings and strings included) against a
 // plain phrase, so `contains` over `node_text` is the regex exactly. (The converter's own form for 0..2, "some
 // name in the file contains the phrase", misses the phrase in comments, strings and docstrings; these replace
@@ -25,7 +25,7 @@
 .decl out_scope(d: number)
 .decl nearest(n: node, a: node, set: relation)
 .decl option_on(name: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
@@ -135,7 +135,7 @@ removed_definitions_calls(f) :- removed_definitions_own(f, x), removed_calls_cal
 
 .decl removed_definitions_stubbed(f: node)
 removed_definitions_stubbed(f) :-
-    removed_definitions_owner(d, f), doc(d, p, _), option_item("compatibilityStubFiles", p),
+    removed_definitions_owner(d, f), doc(d, p, _), option_item("compatibilityStubFiles", _, p),
     removed_definitions_raises(f), !removed_definitions_calls(f).
 
 violation("data-layer-raw-execute-regression", "removed-definitions", c, p, l) :-

@@ -6,7 +6,7 @@
 .possible log                    // side-effect calls whose receiver does not resolve
 .scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
 .scope tests false
-// Python linter: scripts/lint_plan_scope_side_effects.py (codes spelled PSE-010 … PSE-AUDIT-010 there). A plan scope is a
+// Python linter: scripts/lint_plan_scope_side_effects.py (codes PSE-010 … PSE-AUDIT-010, given by each `code`). A plan scope is a
 // `with` (or `async with`) an item of which calls open_*_plan; the innermost one governs every node below it.
 //   PSE_010 `.resolved_value`   PSE_020 resolve() / resolve_async()   PSE_030 raw SQL execution calls
 //   PSE_040 `.read()` / `.write()` legacy callbacks   PSE_050 open(), or open/sleep/run/get/… on asyncio, os, requests, …
@@ -26,6 +26,7 @@
 
 #include "python/names.rr"
 #include "python/calls.rr"
+#include "python/ast.rr"      // unparen
 
 // Calls that open a plan scope (the Python linter's PLAN_OPENERS), and the subset that opens a write plan.
 .decl opener(v: symbol)
@@ -94,20 +95,20 @@ plan(w) :- item_call(w, c), cname(c, x), opener(x).
 write_plan(w) :- item_call(w, c), cname(c, x), write_opener(x).
 
 // PSE_010: any `….resolved_value` attribute inside a plan scope (EAGER_VALUE_ATTRS has only this name).
-.violation PSE_010(at: node) "resolved_value is forbidden inside plan-scope construction."
+.violation PSE_010(at: node) code "PSE-010" "resolved_value is forbidden inside plan-scope construction."
 PSE_010(a) :- kind(a, "attribute"), field(a, "attribute", t), text(t, "resolved_value"), nearest(a, _, plan).
 
 // PSE_020: resolve() or resolve_async() called, plain or as a method, inside a plan scope.
-.violation PSE_020(at: node, name: symbol) "{name}() is eager resolution inside plan-scope construction."
+.violation PSE_020(at: node, name: symbol) code "PSE-020" "{name}() is eager resolution inside plan-scope construction."
 PSE_020(c, x) :- cname(c, x), eager_call(x), nearest(c, _, plan).
 
 // PSE_030: a raw SQL call inside a plan scope.
-.violation PSE_030(at: node, name: symbol) "{name}() is raw database execution inside plan-scope construction."
+.violation PSE_030(at: node, name: symbol) code "PSE-030" "{name}() is raw database execution inside plan-scope construction."
 PSE_030(c, x) :- cname(c, x), raw_call(x), nearest(c, _, plan).
 
 // PSE_040: read/write callbacks only as method calls (`txn.read(…)`): a bare read() is some other function.
 // The four name sets are disjoint, so separate rules give the same result as the Python linter's if/elif chain.
-.violation PSE_040(at: node, name: symbol) "Nested legacy callback API {name}() is forbidden inside plan scopes."
+.violation PSE_040(at: node, name: symbol) code "PSE-040" "Nested legacy callback API {name}() is forbidden inside plan scopes."
 PSE_040(c, x) :- method_call(c), cname(c, x), legacy_cb(x), nearest(c, _, plan).
 
 // must: proven by name resolution. may: only a textual hint. A PSE_050 resting only on a may row is "possible".
@@ -117,15 +118,15 @@ PSE_040(c, x) :- method_call(c), cname(c, x), legacy_cb(x), nearest(c, _, plan).
 must fx(c, "open") :- callee(c, n), global_ref(n, "open").
 // The callee resolves to q, e.g. "time.sleep" or "requests.get" (aliases and from-imports included). The first dotted
 // segment of q must be a side-effect module and the last segment a side-effect name.
-must fx(c, x) :- callee(c, n), sym_of(n, q), match("(?<m>[^.]+)\..*", q), fx_module(m),
-    match("(?:.*\.)?(?<x>[^.]+)", q), fx_name(x).
+must fx(c, x) :- callee(c, n), sym_of(n, q), match("(?<m>[^.]+)\\..*", q), fx_module(m),
+    match("(?:.*\\.)?(?<x>[^.]+)", q), fx_name(x).
 // `recv.get(…)` where recv does not resolve: the Python linter's receiver-token test, as a word match on the receiver's text
 // (case-insensitive). The text includes call arguments inside the receiver, which the Python linter's tokens do not.
 may  fx(c, x) :- method_call(c), cname(c, x), fx_name(x), callee(c, n), !sym_of(n, _),
-    field(n, "object", o), text(o, t), match("(?i).*\b(asyncio|subprocess|requests|httpx|socket|shutil|os|time)\b.*", t).
+    field(n, "object", o), text(o, t), match("(?i).*\\b(asyncio|subprocess|requests|httpx|socket|shutil|os|time)\\b.*", t).
 
 // PSE_050: a side-effect call inside a plan scope.
-.violation PSE_050(at: node, name: symbol) "Python side-effect call {name}() is forbidden inside plan scopes."
+.violation PSE_050(at: node, name: symbol) code "PSE-050" "Python side-effect call {name}() is forbidden inside plan scopes."
 PSE_050(c, x) :- fx(c, x), nearest(c, _, plan).
 
 // The Python linter collects names assigned from eager reads per scope (on_Assign / on_AnnAssign); this keeps the binding
@@ -141,8 +142,8 @@ if_test(i, w, t) :- kind(i, k), branch(k), field(i, "condition", t), nearest(i, 
 // PSE_AUDIT_010 has three cases: the test is itself an eager read call (`if q.count():`); the test is a name
 // bound to an eager read in the same plan (`if n:`); or a name anywhere inside the test is (`if n > 0 and ok:`).
 // Its mode is log (see .mode log PSE_AUDIT_010 above): reported, never blocking.
-.violation PSE_AUDIT_010(at: node)
+.violation PSE_AUDIT_010(at: node) code "PSE-AUDIT-010"
     "Read-then-Python-branch write orchestration inside a write plan. Prefer SQL-visible ConditionalStep, GuardedInsert, or upsert forms."
-PSE_AUDIT_010(i) :- if_test(i, _, t), cname(t, x), eager_read(x).
+PSE_AUDIT_010(i) :- if_test(i, _, t0), unparen(t0, t), cname(t, x), eager_read(x).   // `if (q.count()):` too
 PSE_AUDIT_010(i) :- if_test(i, w, t), ref_site(t, s), eager_site(s, w).
 PSE_AUDIT_010(i) :- if_test(i, w, t), within(r, t), ref_site(r, s), eager_site(s, w).

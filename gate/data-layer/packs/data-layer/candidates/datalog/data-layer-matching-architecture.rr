@@ -7,6 +7,7 @@ matching_file_import_kind("import_statement"). matching_file_import_kind("import
 .decl matching_file_kind(kind: symbol)
 matching_file_kind("function_definition").
 .decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl end_line(n: node, l: number)
 .decl field(p: node, f: symbol, c: node)
@@ -174,15 +175,18 @@ matching_file_kind("function_definition").
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl rr_agg1(i: number, j: number, n: node)
-.decl rr_agg10(d: number, x: number)
-.decl rr_agg11(d: number, f: node, k: symbol, x: number)
-.decl rr_agg2(n: node, s: number, t: number)
+.decl rr_agg10(d: number, t: number, x: symbol)
+.decl rr_agg11(d: number, f: node, t: number, x: symbol)
+.decl rr_agg12(d: number, x: number)
+.decl rr_agg13(d: number, x: number)
+.decl rr_agg14(d: number, f: node, k: symbol, x: number)
 .decl rr_agg3(n: node, s: number, t: number)
-.decl rr_agg5(d: number, x: number)
-.decl rr_agg6(d: number, x: number)
-.decl rr_agg7(d: number, t: number, x: symbol)
-.decl rr_agg8(d: number, f: node, t: number, x: symbol)
+.decl rr_agg5(n: node, s: number, t: number)
+.decl rr_agg8(d: number, x: number)
 .decl rr_agg9(d: number, x: number)
+.decl rr_ctx2(i: number)
+.decl rr_ctx4(s: number)
+.decl rr_ctx6(s: number)
 .decl source(d: number, sp: node)
 .decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
@@ -190,7 +194,7 @@ matching_file_kind("function_definition").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, source, node_text, text, syntax_error, node, child, field, strprefix, value_type_of, value, fstring_piece, line, end_line, op, name
+.input doc, source, node_text, text, syntax_error, cpython_syntax_error, node, child, field, strprefix, value_type_of, value, fstring_piece, line, end_line, op, name
 .output violation
 matching_file_contract_name("MatchSpec").
 matching_file_contract_name("MatchResult").
@@ -293,7 +297,7 @@ violation("data-layer-matching-architecture", "matching-project-ownership", "MA0
 matching_file_every_module(0) :- option_value("entryPoint", "scan_sources").
 matching_file_every_module(0) :- option_value("entryPoint", "_scan_tree").
 matching_file_application_path(p) :- option_json("parameters", k, p), match("/applicationPaths(/[^/]*)?", k).
-matching_file_candidate(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, _, "module", _, _).
+matching_file_candidate(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), node(d, _, "module", _, _).
 matching_file_contract_text(s) :- matching_file_module_text(_, s), match("(?s:.*)(?:data_layer\\.matching|l1470_matching_contracts|l5250_matching|MatchSpec|MatchResult|MatchPhysicalPlanError|MatchAccessMethodKind)(?s:.*)", s).
 matching_file_contract_text(s) :- matching_file_source_text(_, s), match("(?s:.*)(?:data_layer\\.matching|l1470_matching_contracts|l5250_matching|MatchSpec|MatchResult|MatchPhysicalPlanError|MatchAccessMethodKind)(?s:.*)", s).
 matching_file_def_match_text(s) :- matching_file_module_text(_, s), match("(?s:.*)(?:\\b(?:async\\s+)?def\\s+match(?:_async|_lazy)?\\s*\\()(?s:.*)", s).
@@ -388,22 +392,25 @@ matching_file_joined_value(n, s) :- matching_file_joined(n), !matching_file_inte
 matching_file_spec(fs) :- matching_file_node(fs), node(_, fs, "format_specifier", _, _).
 matching_file_part(n, i, v) :- matching_file_interpolated(n), fstring_piece(n, i, "literal", v).
 matching_file_part(n, i, v) :- matching_file_spec(n), fstring_piece(n, i, "literal", v).
-rr_agg1(i, j, n) :- matching_file_part(n, i, _), fstring_piece(n, j, "interpolation", _), j < i.
+rr_ctx2(i) :- matching_file_part(n, i, _).
+rr_agg1(i, j, n) :- rr_ctx2(i), fstring_piece(n, j, "interpolation", _), j < i.
 matching_file_part_window(n, i, m) :- matching_file_part(n, i, _), m = count : { rr_agg1(i, _, n) }.
 matching_file_field(n, x, s) :- matching_file_interpolated(n), matching_file_joined_piece(n, p), child(p, x, _), node(_, x, "interpolation", s, _).
 matching_file_field(n, x, s) :- matching_file_spec(n), child(n, x, _), node(_, x, "format_expression", s, _).
-rr_agg2(n, s, t) :- matching_file_field(n, x, s), matching_file_field(n, _, t), t < s.
-matching_file_field_rank(n, x, m) :- matching_file_field(n, x, s), m = count : { rr_agg2(n, s, _) }.
+rr_ctx4(s) :- matching_file_field(n, x, s).
+rr_agg3(n, s, t) :- rr_ctx4(s), matching_file_field(n, _, t), t < s.
+matching_file_field_rank(n, x, m) :- matching_file_field(n, x, s), m = count : { rr_agg3(n, s, _) }.
 matching_file_empty_content(x) :- child(p, x, _), node(_, x, "string_content", _, _), strprefix(p, q), !contains("r", q), node_text(x, t), match("(?:\\\\(?:\\r\\n|\\n|\\r))+", t).
 matching_file_contrib(n, p, s) :- matching_file_interpolated(n), matching_file_joined_piece(n, p), node(_, p, "string", s, _), !matching_file_fstr(p).
 matching_file_contrib(n, x, s) :- matching_file_interpolated(n), matching_file_joined_piece(n, p), matching_file_fstr(p), child(p, x, _), node(_, x, "string_content", s, _), !matching_file_empty_content(x).
-rr_agg3(n, s, t) :- matching_file_contrib(n, x, s), matching_file_field(n, _, t), t < s.
-matching_file_contrib_window(n, x, s, m) :- matching_file_contrib(n, x, s), m = count : { rr_agg3(n, s, _) }.
+rr_ctx6(s) :- matching_file_contrib(n, x, s).
+rr_agg5(n, s, t) :- rr_ctx6(s), matching_file_field(n, _, t), t < s.
+matching_file_contrib_window(n, x, s, m) :- matching_file_contrib(n, x, s), m = count : { rr_agg5(n, s, _) }.
 matching_file_has_contrib(n, m) :- matching_file_contrib_window(n, _, _, m).
 matching_file_part_line(n, i, l) :- matching_file_interpolated(n), matching_file_part_window(n, i, m), matching_file_has_contrib(n, m), s = min t : { matching_file_contrib_window(n, _, t, m) }, matching_file_contrib_window(n, x, s, m), line(x, l).
 matching_file_part_line(n, i, l) :- matching_file_interpolated(n), matching_file_part_window(n, i, m), !matching_file_has_contrib(n, m), matching_file_field_rank(n, x, m), line(x, l).
 matching_file_part_line(n, i, l) :- matching_file_spec(n), matching_file_part_window(n, i, 0), line(n, l).
-matching_file_part_line(n, i, l) :- matching_file_spec(n), matching_file_part_window(n, i, m), m > 0, rr_t4 = @sub(m, 1), matching_file_field_rank(n, x, rr_t4), end_line(x, l).
+matching_file_part_line(n, i, l) :- matching_file_spec(n), matching_file_part_window(n, i, m), m > 0, rr_t7 = @sub(m, 1), matching_file_field_rank(n, x, rr_t7), end_line(x, l).
 matching_file_sql_text(s) :- matching_file_joined_text(_, s), match(" *(?:[sS][eE][lL][eE][cC][tT]|[iI][nN][sS][eE][rR][tT]|[uU][pP][dD][aA][tT][eE]|[dD][eE][lL][eE][tT][eE]|[cC][rR][eE][aA][tT][eE]|[aA][lL][tT][eE][rR])(?s:.*)", s).
 matching_file_joined_text(n, s) :- matching_file_joined_value(n, s).
 matching_file_joined_text(n, s) :- matching_file_interpolated(n), s = join v by (i) sep "" : { fstring_piece(n, i, "literal", v) }.
@@ -508,10 +515,10 @@ matching_file_tuple(n) :- matching_file_node(n), node(_, n, "tuple", _, _).
 matching_file_tuple(n) :- matching_file_node(n), node(_, n, "expression_list", _, _).
 matching_file_finding_line(d, c, l) :- matching_file_finding(d, c, n), line(n, l).
 matching_file_backend(d, n) :- matching_file_ref(n, "BackendType"), node(d, n, _, _, _).
-rr_agg5(d, x) :- matching_file_backend(d, n), line(n, x).
-matching_file_finding_line(d, "MA001", l) :- matching_file_application(d), matching_file_backend(d, _), l = min x : { rr_agg5(d, x) }.
-rr_agg6(d, x) :- matching_file_backend(d, n), line(n, x).
-matching_file_finding_line(d, "MA026", l) :- matching_file_implementation(d), matching_file_backend(d, _), l = min x : { rr_agg6(d, x) }.
+rr_agg8(d, x) :- matching_file_backend(d, n), line(n, x).
+matching_file_finding_line(d, "MA001", l) :- matching_file_application(d), matching_file_backend(d, _), l = min x : { rr_agg8(d, x) }.
+rr_agg9(d, x) :- matching_file_backend(d, n), line(n, x).
+matching_file_finding_line(d, "MA026", l) :- matching_file_implementation(d), matching_file_backend(d, _), l = min x : { rr_agg9(d, x) }.
 matching_file_physical(d, l) :- matching_file_is_static(n), matching_file_static_part(n, w, 0, j), j = @strlen(w), node(d, n, _, _, _), line(n, l).
 matching_file_physical(d, l) :- matching_file_part(n, i, v), node(d, n, _, _, _), match("(?i-u:bit_hamming_ops|halfvec|hnsw|ivfflat|pgvector|sql_table_hnsw|usearch|vector_cosine_ops)", v), matching_file_part_line(n, i, l).
 matching_file_finding_line(d, "MA002", l) :- matching_file_application(d), matching_file_physical(d, _), l = min x : { matching_file_physical(d, x) }.
@@ -545,10 +552,10 @@ matching_file_finding(d, "MA031", a) :- matching_file_implementation(d), matchin
 matching_file_probe(c, f) :- matching_file_def(f, _), matching_file_callee(c, _, m), (m = "match" ; m = "match_async" ; m = "match_lazy"), node(d, f, _, _, _), node(d, c, _, _, _).
 matching_file_forward(d, x, f, c, i) :- matching_file_def(f, x), matching_file_callee(c, _, m), matching_file_match_name(m), matching_file_in(c, f), matching_file_positional_param(f, _, j, y), matching_file_arg(c, a, 1), matching_file_name(a, y), node(d, f, _, _, _), i = count : { matching_file_param_before(f, j, _) }.
 matching_file_param_before(f, j, k) :- matching_file_positional_param(f, _, j, _), matching_file_positional_param(f, _, k, _), k < j.
-rr_agg7(d, t, x) :- matching_file_forward(d, x, g, _, _), node(_, g, _, t, _).
-matching_file_forward_last(d, x, f) :- matching_file_forward(d, x, _, _, _), s = max t : { rr_agg7(d, t, x) }, matching_file_forward(d, x, f, _, _), node(_, f, _, s, _).
-rr_agg8(d, f, t, x) :- matching_file_forward(d, x, f, k, _), node(_, k, _, t, _).
-matching_file_forward_index(d, x, i) :- matching_file_forward_last(d, x, f), s = max t : { rr_agg8(d, f, t, x) }, matching_file_forward(d, x, f, c, i), node(_, c, _, s, _).
+rr_agg10(d, t, x) :- matching_file_forward(d, x, g, _, _), node(_, g, _, t, _).
+matching_file_forward_last(d, x, f) :- matching_file_forward(d, x, _, _, _), s = max t : { rr_agg10(d, t, x) }, matching_file_forward(d, x, f, _, _), node(_, f, _, s, _).
+rr_agg11(d, f, t, x) :- matching_file_forward(d, x, f, k, _), node(_, k, _, t, _).
+matching_file_forward_index(d, x, i) :- matching_file_forward_last(d, x, f), s = max t : { rr_agg11(d, f, t, x) }, matching_file_forward(d, x, f, c, i), node(_, c, _, s, _).
 matching_file_finding(d, "MA011", c) :- matching_file_application(d), matching_file_callee(c, _, m), (m = "match" ; m = "match_async" ; m = "match_lazy"), matching_file_arg(c, a, 1), matching_file_is_static(a), node(d, c, _, _, _).
 matching_file_finding(d, "MA011", c) :- matching_file_application(d), matching_file_callee(c, _, x), node(d, c, _, _, _), !matching_file_match_name(x), matching_file_forward_index(d, x, i), matching_file_arg(c, a, i), matching_file_is_static(a).
 matching_file_finding(d, "MA007", n) :- matching_file_matching(d), matching_file_sql_fstring(n), node(d, n, _, _, _).
@@ -561,12 +568,12 @@ matching_file_finding(d, "MA004", n) :- matching_file_matching(d), matching_file
 matching_file_raw_sql(d, c) :- matching_file_callee(c, _, x), (x = "nonportably_execute_sql" ; x = "SqlRaw" ; x = "SqlFragment"), node(d, c, _, _, _).
 matching_file_raw_sql(d, c) :- matching_file_callee(c, _, x), (x = "execute" ; x = "executemany"), matching_file_arg(c, a, 0), matching_file_constant(a), node(d, c, _, _, _).
 matching_file_raw_sql(d, c) :- matching_file_callee(c, _, x), (x = "execute" ; x = "executemany"), matching_file_arg(c, a, 0), matching_file_joined(a), node(d, c, _, _, _).
-rr_agg9(d, x) :- matching_file_raw_sql(d, c), line(c, x).
-matching_file_finding_line(d, "MA027", l) :- matching_file_implementation(d), matching_file_raw_sql(d, _), l = min x : { rr_agg9(d, x) }.
+rr_agg12(d, x) :- matching_file_raw_sql(d, c), line(c, x).
+matching_file_finding_line(d, "MA027", l) :- matching_file_implementation(d), matching_file_raw_sql(d, _), l = min x : { rr_agg12(d, x) }.
 matching_file_resolution(d, n) :- matching_file_attr(n, _, v), matching_file_qual(v, q), matching_file_physical_kind(q), node(d, n, _, _, _).
 matching_file_resolution(d, c) :- matching_file_callee(c, _, x), prefix("build_", x), contains("match", x), node(d, c, _, _, _).
-rr_agg10(d, x) :- matching_file_resolution(d, n), line(n, x).
-matching_file_finding_line(d, "MA021", l) :- matching_file_facade(d), matching_file_resolution(d, _), l = min x : { rr_agg10(d, x) }.
+rr_agg13(d, x) :- matching_file_resolution(d, n), line(n, x).
+matching_file_finding_line(d, "MA021", l) :- matching_file_facade(d), matching_file_resolution(d, _), l = min x : { rr_agg13(d, x) }.
 matching_file_contracts(d) :- matching_file_doc(d), doc(d, p, _), prefix("l1470_matching_contracts/", p).
 matching_file_finding(d, "MA020", a) :- matching_file_contracts(d), matching_file_class_field(c, a, x, _, "MatchSpec"), node(d, c, _, _, _), match(".*([aA][rR][tT][iI][fF][aA][cC][tT]|[aA][cC][cC][eE][sS][sS]_[mM][eE][tT][hH][oO][dD]|[pP][hH][yY][sS][iI][cC][aA][lL]|[iI][nN][dD][eE][xX]_[gG][eE][nN][eE][rR][aA][tT][iI][oO][nN]|[wW][aA][tT][eE][rR][mM][aA][rR][kK]).*", x).
 matching_file_finding(d, "MA030", a) :- matching_file_contracts(d), matching_file_class_field(c, a, _, v, k), prefix("Match", k), node(d, c, _, _, _), matching_file_label_is(v, s), matching_file_recursive(s).
@@ -596,8 +603,8 @@ matching_file_constant_arg(c) :- matching_file_arg(c, a, _), matching_file_binop
 matching_file_first(d, "MA023", f, c) :- matching_file_implementation(d), matching_file_def_call(f, c), matching_file_callee(c, _, x), prefix("Match", x), suffix("Count", x), matching_file_constant_arg(c), node(d, f, _, _, _).
 matching_file_first(d, "MA018", f, c) :- matching_file_matching(d), matching_file_def(f, x), contains("dispatch", x), matching_file_def_call(f, c), matching_file_callee(c, "Attribute", "get"), matching_file_arg(c, _, 1), node(d, f, _, _, _).
 matching_file_first(d, "MA017", f, p) :- matching_file_matching(d), matching_file_def(f, x), contains("dispatch", x), matching_file_param(f, p, _, _, k), (k = "posonlyargs" ; k = "args" ; k = "kwonlyargs"), matching_file_param_annotation(p, a), matching_file_label_is(a, "str"), node(d, f, _, _, _).
-rr_agg11(d, f, k, x) :- matching_file_first(d, k, f, n), line(n, x).
-matching_file_first_line(d, k, f, l) :- matching_file_first(d, k, f, _), l = min x : { rr_agg11(d, f, k, x) }.
+rr_agg14(d, f, k, x) :- matching_file_first(d, k, f, n), line(n, x).
+matching_file_first_line(d, k, f, l) :- matching_file_first(d, k, f, _), l = min x : { rr_agg14(d, f, k, x) }.
 matching_file_finding_line(d, k, l) :- matching_file_first_line(d, k, _, l).
 matching_file_finding(d, "MA003", f) :- matching_file_lower_layer(d), matching_file_def(f, x), (x = "match" ; x = "match_async" ; x = "match_lazy"), nearest(f, c, matching_file_class_kind), node(d, f, _, _, _), node(d, c, _, _, _).
 matching_file_finding(d, "MA005", p) :- matching_file_matching(d), matching_file_def(f, x), (x = "match" ; x = "match_async" ; x = "match_lazy"), matching_file_param(f, p, _, _, k), (k = "posonlyargs" ; k = "args" ; k = "kwonlyargs"), matching_file_param_annotation(p, a), matching_file_label_any(a, s), contains("Connection", s), node(d, f, _, _, _).

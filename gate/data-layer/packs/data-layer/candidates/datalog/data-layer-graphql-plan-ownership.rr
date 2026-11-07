@@ -3,6 +3,7 @@ graphql_authority_frame("function_definition"). graphql_authority_frame("decorat
 .decl graphql_authority_type(kind: symbol)
 graphql_authority_type("type").
 .decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
@@ -33,7 +34,6 @@ graphql_authority_type("type").
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl reported_parser_error_invalid(d: number)
-.decl reported_parser_error_stmt(b: node)
 .decl source(d: number, sp: node)
 .decl str(n: node, s: symbol)
 .decl syntax_error(d: number)
@@ -42,7 +42,7 @@ graphql_authority_type("type").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, node_text, child, field, value, value_type_of, fstring_piece, text, str, token, line, syntax_error, source
+.input doc, node, syntax_error, cpython_syntax_error, node_text, child, field, value, value_type_of, fstring_piece, text, str, token, line, source
 .output violation
 option_value("entryPoint", "all").
 option_value("parameters", "{}").
@@ -55,7 +55,7 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-graphql_authority_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !reported_parser_error_invalid(d), !out_scope(d), graphql_authority_gate(d), doc(d, p, _).
+graphql_authority_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), !out_scope(d), graphql_authority_gate(d), doc(d, p, _).
 graphql_authority_gate(d) :- option_value("entryPoint", "scan_source"), node(d, _, "module", _, _).
 graphql_authority_gate(d) :- !option_value("entryPoint", "scan_source"), node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:LazyResult|PlanScope|ServerPlan|Transaction)(?s:.*)", s).
 graphql_authority_fn(n, f) :- nearest(n, f, graphql_authority_frame), node(_, f, "function_definition", _, _).
@@ -97,8 +97,6 @@ graphql_authority_ref(e, x) :- node(_, e, "attribute", _, _), field(e, "attribut
 graphql_authority_decorator(c, x) :- field(dd, "definition", c), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e0, 0), graphql_authority_unparen(e0, e), !node(_, e, "call", _, _), graphql_authority_ref(e, x).
 graphql_authority_decorator(c, x) :- field(dd, "definition", c), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e0, 0), graphql_authority_unparen(e0, e), node(_, e, "call", _, _), field(e, "function", g0), graphql_authority_unparen(g0, g), graphql_authority_ref(g, x).
 violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO004", p, l) :- node(d, c, "class_definition", _, _), graphql_authority_decorator(c, "reusable_template"), field(c, "body", b), child(b, es, _), node(_, es, "expression_statement", _, _), child(es, a, 0), node(_, a, "assignment", _, _), field(a, "type", ty), graphql_authority_word(ty), graphql_authority_file(d, p), line(a, l).
-reported_parser_error_stmt(b) :- node(_, b, "block", _, _), child(b, c, _), node(_, c, _, _, _).
-reported_parser_error_invalid(d) :- syntax_error(d).
-reported_parser_error_invalid(d) :- node(d, b, "block", _, _), !reported_parser_error_stmt(b).
+reported_parser_error_invalid(d) :- cpython_syntax_error(d, _, _).
 violation("data-layer-graphql-plan-ownership", "reported-parser-error", "GPO000", p, 1) :- option_value("entryPoint", "scan_source"), reported_parser_error_invalid(d), in_scope(d), !out_scope(d), doc(d, p, _).
 violation("data-layer-graphql-plan-ownership", "reported-parser-error", "GPO000", p, 1) :- !option_value("entryPoint", "scan_source"), reported_parser_error_invalid(d), in_scope(d), !out_scope(d), source(d, sp), match_all("ServerPlan|PlanScope|Transaction|LazyResult", sp, _), doc(d, p, _).

@@ -37,11 +37,11 @@
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, file_name, line, syntax_error, node, field, child
+.input doc, line, node_text, file_name, syntax_error, node, field, child
 .output violation
 constructors_catname("_get_versioned_table_projection_info").
 constructors_catname("catalog_versioned_merged_projection").
@@ -51,18 +51,18 @@ constructors_frame_kind("class_definition", 0).
 constructors_pattern_kind("pattern_list").
 constructors_pattern_kind("list_pattern").
 constructors_pattern_kind("tuple_pattern").
-option_item("expectedCallers", "_compile_versioned.py:_versioned_merged_source_cte").
-option_item("expectedCallers", "_compile_versioned.py:compile_versioned_query").
-option_item("expectedCallers", "_compile_write.py:compile_versioned_delete_tombstone").
-option_item("expectedCallers", "fk_cascade_step.py:RestrictCheckStep.compile").
-option_item("expectedCallers", "intent_versioning_extended.py:_build_versioned_batch_merged_cte").
-option_item("expectedCallers", "intent_versioning_extended.py:_build_versioned_upsert_plan").
-option_item("expectedCallers", "pending_tombstone_from_merged.py:PendingTombstoneFromMergedStep.compile").
-option_item("expectedCallers", "query_paginate.py:_build_versioned_keyset_stmt").
-option_item("expectedCallers", "sql_graph_query_builder.py:SqlGraphQueryBuilder._with_staged_graph_overlay").
-option_item("expectedCallers", "versioned_lazy_support.py:MatchVersionedRowsByKeyToLiteralSequenceStep.compile").
-option_item("expectedCallers", "versioned_query_steps.py:VersionedSelectManyRawStep.compile").
-option_item("expectedCallers", "versioned_upsert_steps.py:VersionedUpsertReturnStep.compile").
+option_item("expectedCallers", 0, "_compile_versioned.py:_versioned_merged_source_cte").
+option_item("expectedCallers", 1, "_compile_versioned.py:compile_versioned_query").
+option_item("expectedCallers", 10, "versioned_query_steps.py:VersionedSelectManyRawStep.compile").
+option_item("expectedCallers", 11, "versioned_upsert_steps.py:VersionedUpsertReturnStep.compile").
+option_item("expectedCallers", 2, "_compile_write.py:compile_versioned_delete_tombstone").
+option_item("expectedCallers", 3, "fk_cascade_step.py:RestrictCheckStep.compile").
+option_item("expectedCallers", 4, "intent_versioning_extended.py:_build_versioned_batch_merged_cte").
+option_item("expectedCallers", 5, "intent_versioning_extended.py:_build_versioned_upsert_plan").
+option_item("expectedCallers", 6, "pending_tombstone_from_merged.py:PendingTombstoneFromMergedStep.compile").
+option_item("expectedCallers", 7, "query_paginate.py:_build_versioned_keyset_stmt").
+option_item("expectedCallers", 8, "sql_graph_query_builder.py:SqlGraphQueryBuilder._with_staged_graph_overlay").
+option_item("expectedCallers", 9, "versioned_lazy_support.py:MatchVersionedRowsByKeyToLiteralSequenceStep.compile").
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l9700_sql_graph_query/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
@@ -96,7 +96,7 @@ constructors_cfn(c, f, ls) :- constructors_ctor(d, c, s, e), constructors_frame(
 constructors_cown(c, f) :- constructors_cfn(c, f, ls), ls = max x : { constructors_cfn(c, _, x) }.
 constructors_afn(a, f, ls) :- constructors_asg(d, a, s, e, _, _), constructors_frame(d, f, ls, fe, _, 1), ls < s, fe >= e.
 constructors_aown(a, f) :- constructors_afn(a, f, ls), ls = max x : { constructors_afn(a, _, x) }.
-constructors_fok(e, d, q) :- option_item("expectedCallers", e), constructors_doc(d, _), file_name(d, f), k = @strlen(f), n = @strlen(e), n > k, @substr(e, 0, k) = f, @substr(e, k, 1) = ":", q = @substr(e, @add(k, 1), @sub(@sub(n, k), 1)), !contains(":", q).
+constructors_fok(e, d, q) :- option_item("expectedCallers", _, e), constructors_doc(d, _), file_name(d, f), k = @strlen(f), n = @strlen(e), n > k, @substr(e, 0, k) = f, @substr(e, k, 1) = ":", q = @substr(e, @add(k, 1), @sub(@sub(n, k), 1)), !contains(":", q).
 constructors_mis(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, q), constructors_cframe(c, f), constructors_fdepth(f, j), constructors_frame(_, f, _, _, nm, _), x = @concat("(?:[^.]*\\.){", @concat(@to_string(j), @concat("}", @concat(nm, "(?:\\.[^.]*)*")))), !match(x, q).
 constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, ""), constructors_nframe(c, 0).
 constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, q), constructors_nframe(c, k), k > 0, x = @concat("[^.]*(?:\\.[^.]*){", @concat(@to_string(@sub(k, 1)), "}")), match(x, q), !constructors_mis(c, e).
@@ -112,4 +112,4 @@ constructors_ok(c) :- constructors_ctor(d, c, _, _), constructors_proj(c, v), no
 constructors_ok(c) :- constructors_ctor(_, c, _, _), constructors_proj(c, v), node(_, v, "identifier", _, _), node_text(v, x), constructors_catalog(c, x).
 violation("data-layer-versioned-merged-identity", "constructors", "VMI002", p, l) :- constructors_ctor(d, c, _, _), !constructors_reviewed(c), constructors_doc(d, p), line(c, l).
 violation("data-layer-versioned-merged-identity", "constructors", "VMI003", p, l) :- constructors_ctor(d, c, _, _), constructors_reviewed(c), !constructors_ok(c), constructors_doc(d, p), line(c, l).
-violation("data-layer-versioned-merged-identity", "constructors", "VMI001", "impl/common/l2070_server_plan/steps", 1) :- option_item("expectedCallers", e), !constructors_found(e).
+violation("data-layer-versioned-merged-identity", "constructors", "VMI001", "impl/common/l2070_server_plan/steps", 1) :- option_item("expectedCallers", _, e), !constructors_found(e).

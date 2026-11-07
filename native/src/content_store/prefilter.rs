@@ -8,7 +8,7 @@
 //! Kinds are atoms (`tape tag · 1024 + kind code`). A set row (`prefilter_sets`) carries the
 //! version the rows were built under; publishing again replaces them.
 //!
-//! - `tape_kind_counts`: per (tape, kind), the count and the delta-varint preorder postings: the
+//! - `tape_kind_counts`: per (tape, kind), the count and the preorders as a container segment: the
 //!   access path for "which nodes of this tape have kind k", without decoding the tape.
 //! - `term_postings`: case-exact leaf text per (lang, term, tape, kind), and `term_freq` the number
 //!   of (tape, kind) rows carrying each term. A term is its text's atom (`atoms`), interned in the
@@ -26,8 +26,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
 /// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
-/// edges (`kind_size`, `edge_freq`). 5: terms are atoms.
-pub(crate) const PREFILTER_VERSION: i64 = 5;
+/// edges (`kind_size`, `edge_freq`). 5: terms are atoms. 6: kind postings are container segments
+/// (`postings::segment_positions`, decision 0045).
+pub(crate) const PREFILTER_VERSION: i64 = 6;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub(crate) const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -111,11 +112,11 @@ impl ContentStore {
             .optional()?)
     }
 
-    /// The preorders of `tape`'s nodes of kind atom `kind`, decoded in SQL (`nera_postings`).
+    /// The preorders of `tape`'s nodes of kind atom `kind`, decoded in SQL (`nera_segment`).
     pub(crate) fn kind_positions(&self, tape: TapeId, kind: u32) -> StoreResult<Vec<u32>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
-            "SELECT p.pre FROM tape_kind_counts c, nera_postings(c.postings) p \
+            "SELECT p.pre FROM tape_kind_counts c, nera_segment(c.postings) p \
              WHERE c.tape_id=?1 AND c.kind=?2",
         )?;
         let rows = statement

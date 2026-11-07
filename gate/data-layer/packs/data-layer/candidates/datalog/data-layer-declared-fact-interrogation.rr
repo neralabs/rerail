@@ -15,6 +15,7 @@
 .decl override_identity_self_args(g: node)
 .decl override_identity_type_attr(a: node)
 .decl rr_agg1(a: node, b: number, e: number)
+.decl rr_ctx2(b: number)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
@@ -64,7 +65,8 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 contract_attribute_args(n, a) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "identifier", _, _), text(f, x), (x = "getattr" ; x = "hasattr"), field(n, "arguments", a).
 contract_attribute_comment(a, e) :- contract_attribute_args(_, a), token(a, _, t, _, e), match("#(?s:.*)", t).
-rr_agg1(a, b, e) :- node(_, s, "string", b, _), contract_attribute_comment(a, e), e <= b.
+rr_ctx2(b) :- contract_attribute_args(_, a), child(a, s, i), node(_, s, "string", b, _).
+rr_agg1(a, b, e) :- rr_ctx2(b), contract_attribute_comment(a, e), e <= b.
 contract_attribute_second(a, s) :- contract_attribute_args(_, a), child(a, s, i), node(_, s, "string", b, _), k = count : { rr_agg1(a, b, _) }, @add(i, k) = 1.
 violation("data-layer-declared-fact-interrogation", "contract-attribute", "CONTRACT_ATTR_PROBE", p, l) :- contract_attribute_args(n, a), contract_attribute_second(a, s), value_type_of(s, "str"), value(s, v), contract_attribute_name(v), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 override_identity_other_op(n) :- node(_, n, "comparison_operator", _, _), token(n, _, s, _, _), override_identity_op(s).

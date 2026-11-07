@@ -32,7 +32,11 @@
 //   decorators apart, as CPython 3.8+ has it);
 // - bfs (breadth-first order, used where the SQL picks the first or last def/class of a name) is (ast depth, start):
 //   bootstrap_invariants_depth counts the ast statement nodes around a node, an elif counting the Ifs it nests in.
-// The `syntax: valid` gate is !syntax_error(d) (tree-sitter's ERROR verdict, not CPython's compile); the scope is
+// The `syntax: valid` gates (and `syntax: invalid`, coverage_errors and bootstrap-source-syntax's invalid_source) are
+// W's own verdict, !syntax_error(d) (the tape's ERROR/MISSING nodes); the pythonAst stage then runs CPython's
+// ast.parse over the gated files: every row the SQL reads comes from it, so a gated file CPython rejects has none,
+// `!cpython_syntax_error(d, _, _)` (W's worker raised there, failing the stage for the batch; here that file reads
+// nothing and the others are read); the final query's gate (coverage_errors' condition) is W's verdict alone. The scope is
 // in_scope/out_scope. The source text the SQL reads (effective_source: source_text(path, 0, module end); the
 // `$SOURCE` capture: the module's text) is node_text of the module (it differs from source_text(path, 0, …) only
 // by the whitespace before the first token, which holds no surface); a line counted as the SQL does (newlines
@@ -46,9 +50,6 @@
 // defaults.
 //
 // Remaining gaps, each where it is used and each blocked on something the corpus runner does not bind:
-// - "parses" is tree-sitter's verdict (syntax_error), not CPython's syntax verdict (core.rr's syntax_error(d, l,
-//   msg), unbound), in the gates, coverage_errors and bootstrap-source-syntax: a gated file CPython rejects fails
-//   W's pythonAst stage (its worker raises), and is read here;
 // - an imaginary literal that underflows to 0j (`1e-400j`) is not seen as zero (BEI007): value has no text for a
 //   complex;
 // - a Constant piece of an f-string is reported at its host's first line (BEI036): fstring_piece has no position;
@@ -68,6 +69,7 @@
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl node_text(n: node, s: symbol)
 .decl src_line_lf(d: number, l: number, sp: node)
 .decl inside(n: node, a: node, set: relation)
@@ -501,10 +503,14 @@ bootstrap_invariants_base_bootstrap(d) :- bootstrap_invariants_base(d, b), conta
 .decl bootstrap_invariants_engine(d: number)
 bootstrap_invariants_engine(d) :- bootstrap_invariants_engine_path(d).
 bootstrap_invariants_engine(d) :- bootstrap_invariants_bootstrap_path(d).
-// The inputs gate and source: parsed modules in scope (none at entryPoint _collect_primitive_install_coverage_violations).
-.decl bootstrap_invariants_valid(d: number, p: symbol)
-bootstrap_invariants_valid(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), bootstrap_invariants_entry(e),
+// The inputs gate and source: parsed modules in scope (none at entryPoint _collect_primitive_install_coverage_violations),
+// by W's verdict.
+.decl bootstrap_invariants_gate(d: number, p: symbol)
+bootstrap_invariants_gate(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), bootstrap_invariants_entry(e),
     e != "_collect_primitive_install_coverage_violations".
+// The gated modules the pythonAst stage reads: those CPython's ast.parse accepts.
+.decl bootstrap_invariants_valid(d: number, p: symbol)
+bootstrap_invariants_valid(d, p) :- bootstrap_invariants_gate(d, p), !cpython_syntax_error(d, _, _).
 // effective_source: the raw source parameters give the document, else the module's text.
 .decl bootstrap_invariants_source(d: number, s: symbol)
 bootstrap_invariants_source(d, s) :- bootstrap_invariants_valid(d, _), bootstrap_invariants_raw(d, s).
@@ -1057,7 +1063,7 @@ bootstrap_invariants_coverage_error(p) :- bootstrap_invariants_entry("all"), doc
     (p = "l3200_metadata/bootstrap_coordinator.py" ; p = "l3200_metadata/bootstrap_data_plan.py").
 .decl bootstrap_invariants_quiet(x: number)
 bootstrap_invariants_quiet(1) :- bootstrap_invariants_coverage_error("l3200_metadata/bootstrap_coordinator.py").
-bootstrap_invariants_quiet(1) :- bootstrap_invariants_coverage_error(_), bootstrap_invariants_valid(_, "l3200_metadata/bootstrap_coordinator.py").
+bootstrap_invariants_quiet(1) :- bootstrap_invariants_coverage_error(_), bootstrap_invariants_gate(_, "l3200_metadata/bootstrap_coordinator.py").
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-invariants", i, p, l) :- bootstrap_invariants_entry("all"), !bootstrap_invariants_quiet(1), bootstrap_invariants_row(d, i, l), doc(d, p, _).
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-invariants", "BEI007", p, l) :- bootstrap_invariants_entry("_collect_fake_executor_violations"),
     bootstrap_invariants_row(d, "BEI007", l), doc(d, p, _).
@@ -1069,10 +1075,10 @@ violation("data-layer-bootstrap-engine-invariants", "bootstrap-invariants", i, p
 // bfs) is named as BootstrapDataPrimitiveKind.<member> in one of bootstrap_coordinator.py's install functions
 // (each the last def of its name, by bfs). Reported at bootstrap_coordinator.py's module, line 1 (its start byte
 // 0). Across two documents. The gate: parsed modules in scope, at entryPoint "all" or
-// _collect_primitive_install_coverage_violations.
+// _collect_primitive_install_coverage_violations, by W's verdict and CPython's (the pythonAst stage's rows).
 .decl primitive_install_valid(d: number, p: symbol)
-primitive_install_valid(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), bootstrap_invariants_entry(e),
-    (e = "_collect_primitive_install_coverage_violations" ; e = "all").
+primitive_install_valid(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _),
+    bootstrap_invariants_entry(e), (e = "_collect_primitive_install_coverage_violations" ; e = "all").
 .decl primitive_install_install_name(x: symbol)
 primitive_install_install_name("_data_primitive_plan_for_plan"). primitive_install_install_name("_enqueue_application_schema_lazy").
 primitive_install_install_name("_install_schema_primitive_contract"). primitive_install_install_name("_install_data_mutation_contract").

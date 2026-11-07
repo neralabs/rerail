@@ -3,7 +3,9 @@
 // Options at their defaults (entryPoint "all", parameters "{}"; neither is read by these clauses).
 //
 // Each clause is one UNION ALL of contract checks over one file of the scope; the code is the row's `issue`
-// column (GLSP-0NN), the line its `line`. Gate: python, syntax valid (`!syntax_error(d)`); partitionBy file.
+// column (GLSP-0NN), the line its `line`. Gate: python, syntax valid (`!syntax_error(d)`, W's own verdict: the
+// tape's ERROR/MISSING nodes), and CPython's parse for the pythonAst stage (`!cpython_syntax_error(d, _, _)`);
+// partitionBy file.
 // The stage relations, as CPython's `ast` columns read them (metadata.structure_index):
 //   - fn / cls: the nearest enclosing FunctionDef/AsyncFunctionDef / ClassDef, each independently (lambdas are
 //     not functions). "fn IS NULL AND cls IS NULL" is a node with no def or class above it: graph_plan_contracts_nested.
@@ -30,6 +32,7 @@
 .decl text(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
@@ -48,19 +51,10 @@ graph_plan_contracts_deco("decorator").
 
 // The file: in scope, parsed, its path.
 .decl graph_plan_contracts_file(d: number, p: symbol)
-graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d), !graph_plan_contracts_unparsed(d),
-    !out_scope(d), doc(d, p, _).
-// GAP (blocked: CPython's syntax verdict, core.rr's syntax_error(d, l, msg), needs core.rr's isolated ast.parse
-// worker, which the corpus runner does not run): the stages' rows are CPython's `ast` of the file (pythonAst), so a
-// file ast.parse rejects has none, its module row included, and no check fires there. Here, beside W's own gate
-// (`!syntax_error(d)`, the tape's ERROR nodes), one rejection tree-sitter does not mark is approximated: a block
-// with no statement (`if True:` or `def f():` with no body: tree-sitter gives an empty block, CPython an
-// IndentationError; comments are not in node). Any other ast.parse rejection that leaves the tape with no ERROR
-// node is not seen.
-.decl graph_plan_contracts_stmt(b: node)
-graph_plan_contracts_stmt(b) :- node(_, b, "block", _, _), child(b, c, _), node(_, c, _, _, _).
-.decl graph_plan_contracts_unparsed(d: number)
-graph_plan_contracts_unparsed(d) :- node(d, b, "block", _, _), !graph_plan_contracts_stmt(b).
+graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d),
+    !cpython_syntax_error(d, _, _), !out_scope(d), doc(d, p, _).
+// The stages' rows are CPython's `ast` of the file (pythonAst), so a file ast.parse rejects has none, its module
+// row included, and no check fires there: `!cpython_syntax_error(d, _, _)`, beside W's own gate (`!syntax_error(d)`).
 
 // A node with a def or class above it (fn or cls not NULL).
 .decl graph_plan_contracts_nested(n: node)

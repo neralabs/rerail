@@ -146,6 +146,7 @@ conditional_type_kinds("type").
 .decl conditional_tparams(tp: node)
 .decl conditional_type_error_raise(r: node)
 .decl conditional_unparen(e: node, m: node)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
@@ -155,13 +156,12 @@ conditional_type_kinds("type").
 .decl node_text(n: node, s: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl visit_index(n: node, i: number)
-.input doc, node, child, field, text, name, node_text, line, visit_index, value, value_type_of, syntax_error
+.input doc, node, child, field, text, name, node_text, line, visit_index, value, value_type_of, cpython_syntax_error
 .output violation
 conditional_attr_chain("identifier").
 conditional_attr_chain("attribute").
@@ -220,7 +220,7 @@ in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/_conditio
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/sql_conditional.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/sql_backend_executor.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p).
-conditional_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+conditional_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !cpython_syntax_error(d, _, _).
 conditional_gate(d) :- conditional_doc(d, _), !conditional_case(1), node(d, m, "module", _, _), node_text(m, s), (contains(".compile(", s) ; contains("ConditionalStep", s) ; contains("compile_conditional_step", s) ; contains("not ctx.backend_type.is_sql_backend", s) ; contains("not ctx.supports_data_modifying_ctes", s)).
 conditional_case(1) :- option_value("entryPoint", "conditional_architecture_findings").
 conditional_owner(n, o) :- nearest(n, o, conditional_frames), !node(_, o, "decorator", _, _).

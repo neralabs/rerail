@@ -15,7 +15,7 @@ fstring_defs("function_definition").
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, strprefix, line, syntax_error
+.input doc, node, child, field, strprefix, line, syntax_error, text
 .output violation
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).

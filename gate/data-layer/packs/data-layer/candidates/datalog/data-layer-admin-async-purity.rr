@@ -1,12 +1,14 @@
+.decl admin_async_code(d: number, l: number)
+.decl admin_async_hit(d: number, l: number, clause: symbol)
+.decl admin_async_quote(d: number, l: number, m: node)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl in_scope(d: number)
-.decl line(n: node, l: number)
-.decl name(n: node, s: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
-.decl text(n: node, s: symbol)
+.decl rr_agg1(d: number, j: number, l: number, m: node)
+.decl rr_ctx2(l: number)
+.decl src_line(d: number, l: number, sp: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, text, name, line
+.input doc, src_line
 .output violation
 in_scope(d) :- doc(d, p, _), glob("l8000_admin/tools/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
@@ -17,6 +19,13 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/*test_*", p).
-violation("data-layer-admin-async-purity", "pattern-0", "AAP001", p, l) :- node(_, n, "attribute", _, _), name(n, v1), (glob("*.asyncio.to_thread", v1) ; glob("asyncio.to_thread", v1)), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-admin-async-purity", "pattern-1", "AAP001", p, l) :- node(_, n, "identifier", _, _), text(n, v2), v2 = "run_in_executor", node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-admin-async-purity", "pattern-2", "AAP001", p, l) :- node(_, n, "identifier", _, _), text(n, v3), v3 = "disable_sync_in_async_check", node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+admin_async_quote(d, l, m) :- src_line(d, l, sp), match_all("\"\"\"|'''", sp, m).
+admin_async_hit(d, l, "pattern-0") :- in_scope(d), !out_scope(d), src_line(d, l, sp), match_all("\\basyncio\\.to_thread\\b", sp, _), !match_all("\"\"\"|'''", sp, _), !match_all("^\\s*#", sp, _).
+admin_async_hit(d, l, "pattern-1") :- in_scope(d), !out_scope(d), src_line(d, l, sp), match_all("\\brun_in_executor\\b", sp, _), !match_all("\"\"\"|'''", sp, _), !match_all("^\\s*#", sp, _).
+admin_async_hit(d, l, "pattern-2") :- in_scope(d), !out_scope(d), src_line(d, l, sp), match_all("\\bdisable_sync_in_async_check\\b", sp, _), !match_all("\"\"\"|'''", sp, _), !match_all("^\\s*#", sp, _).
+rr_ctx2(l) :- admin_async_hit(d, l, _).
+rr_agg1(d, j, l, m) :- rr_ctx2(l), admin_async_quote(d, j, m), j < l.
+admin_async_code(d, l) :- admin_async_hit(d, l, _), k = count : { rr_agg1(d, _, l, _) }, @sub(k, @mul(2, @div(k, 2))) = 0.
+violation("data-layer-admin-async-purity", "pattern-0", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-0"), admin_async_code(d, l), doc(d, p, _).
+violation("data-layer-admin-async-purity", "pattern-1", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-1"), admin_async_code(d, l), doc(d, p, _).
+violation("data-layer-admin-async-purity", "pattern-2", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-2"), admin_async_code(d, l), doc(d, p, _).

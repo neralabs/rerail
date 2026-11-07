@@ -56,7 +56,9 @@ introspection_frame_mark("function_definition"). introspection_frame_mark("decor
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl rr_agg1(b: number, b2: number, e: node)
-.decl rr_agg2(e: node, i: number, i2: number)
+.decl rr_agg3(e: node, i: number, i2: number)
+.decl rr_ctx2(b: number)
+.decl rr_ctx4(i: number)
 .decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -233,10 +235,12 @@ introspection_not_next(e, o, b) :- introspection_after(e, o, b), introspection_a
 introspection_run(e, k, l) :- introspection_item(e, o, l), introspection_after(e, o, k), !introspection_not_next(e, o, k).
 introspection_run(e, k, l) :- introspection_item(e, o, l), !introspection_after(e, o, _), node(_, e, _, _, k).
 introspection_run_line(e, k, l) :- introspection_run(e, k, _), l = min l2 : { introspection_run(e, k, l2) }.
-rr_agg1(b, b2, e) :- introspection_field(e, _, b, _), introspection_field(e, _, b2, _), b2 < b.
+rr_ctx2(b) :- introspection_field(e, _, b, _).
+rr_agg1(b, b2, e) :- rr_ctx2(b), introspection_field(e, _, b2, _), b2 < b.
 introspection_ford(e, b, j) :- introspection_field(e, _, b, _), j = count : { rr_agg1(b, _, e) }.
-rr_agg2(e, i, i2) :- fstring_piece(e, i, "interpolation", _), fstring_piece(e, i2, "interpolation", _), i2 < i.
-introspection_pord(e, i, j) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _), j = count : { rr_agg2(e, i, _) }.
+rr_ctx4(i) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _).
+rr_agg3(e, i, i2) :- rr_ctx4(i), fstring_piece(e, i2, "interpolation", _), i2 < i.
+introspection_pord(e, i, j) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _), j = count : { rr_agg3(e, i, _) }.
 introspection_later(e, i) :- introspection_fhost(e), fstring_piece(e, i, _, _), fstring_piece(e, i2, _, _), i2 > i.
 introspection_fconst(e, v, l) :- introspection_ford(e, b, j), introspection_pord(e, i, j), fstring_piece(e, h, "literal", v), i = @add(h, 1), introspection_run_line(e, b, l).
 introspection_fconst(e, v, l) :- introspection_fhost(e), node(_, e, _, _, k), fstring_piece(e, h, "literal", v), !introspection_later(e, h), introspection_run_line(e, k, l).

@@ -52,17 +52,17 @@ fn rule_syntax_files_pass_check_rr() {
     let lib: Vec<PathBuf> = rr_files().into_iter().filter(|p| p.starts_with(library())).collect();
     let mut given = BTreeSet::new();
     for f in &lib {
-        given.extend(check::fix_relations(&read(f).unwrap()));
+        given.extend(check::fix_relations(&read(f).unwrap().0));
     }
     let mut problems = Vec::new();
     for f in rr_files() {
-        for (line, vars) in check::grounded(&read(&f).unwrap(), &given) {
+        for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
         }
-        let mut program = program(&f).unwrap();
+        let mut program = program(&f).unwrap().0;
         let core = library().join("core.rr").canonicalize().unwrap();
         if !program.iter().any(|(p, _)| *p == core) {
-            program.push((core.clone(), read(&core).unwrap()));
+            program.push((core.clone(), read(&core).unwrap().0));
         }
         let named: Vec<(String, Vec<syntax::Statement>)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
         problems.extend(check::declarations(&named).into_iter().map(|p| format!("{}: {p}", short(&f))));
@@ -155,8 +155,8 @@ best(n, @dot("a", x)) :- name(n, x).
     let owner: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "owner").collect();
     assert_eq!(owner[0].body, [Literal::Nearest { n: "n".to_owned(), a: "a".to_owned(), kindset: "scope".to_owned() }]);
     assert!(matches!(&owner[1].body[0], Literal::Atom(a) if a.rel == "inside_rr_kind_module"));
-    // A count over two literals reads a helper of every variable, the body's own `_` where the aggregate reads it; a
-    // min over two, the ones shared and its own.
+    // A count over two literals reads a helper of every variable, grouped by the ones shared (`_` for the body's
+    // own); a min over two, the ones shared and its own.
     let helper = |head: &str| -> Vec<String> {
         let r = p.rules.iter().find(|r| r.head.rel == head).unwrap();
         r.body.iter().filter_map(|l| if let Literal::Agg { atom, .. } = l { Some(format!("{atom}")) } else { None }).collect()
@@ -178,7 +178,7 @@ fn unlowered_constructs_are_named() {
         (".decl a(n: node)\na(n) :- n ~ `exec($X)`.", "pattern"),
         (".decl a(x: number)\nmust a(1) :- a(2).", "must"),
         (".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.", "mean"),
-        (".decl a(x: symbol)\na(x) :- a(y), match(\"(?<x>.*)\", y).", "named groups"),
+        (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
         (".violation v(at: span) \"m\"", "at a span"),
     ] {
         let e = parse(src).unwrap_err().to_string();
@@ -383,4 +383,30 @@ fn hand_written_rules_lowering_report() {
         let result = parse_file(&f);
         println!("{}: {}", short(&f), result.map_or_else(|e| e.to_string(), |p| format!("lowers: {} rules", p.rules.len())));
     }
+}
+
+/// Decision 0044 §4: a program is a derivation of the library files it read. Reading it again
+/// reuses it; editing a file it read, or creating one where an include looked, reads it again.
+#[test]
+fn programs_are_kept_by_the_hashes_of_what_they_read() {
+    let dir = std::env::temp_dir().join(format!("rr-library-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (main, helper) = (dir.join("main.rr"), dir.join("zz_helper_0044.rr"));
+    std::fs::write(&helper, ".decl h(x: number)\nh(1).\n").unwrap();
+    std::fs::write(&main, "#include \"zz_helper_0044.rr\"\n.decl r(x: number)\nr(x) :- h(x).\n.output r\n").unwrap();
+    let (first, files) = read_file(&main).unwrap();
+    let names: Vec<String> = files.iter().map(|f| f.path.file_name().unwrap().to_string_lossy().into_owned()).collect();
+    assert_eq!(names.first().map(String::as_str), Some("core.rr"), "core.rr first: {names:?}");
+    // In reading order: each file, then what it includes; the helper twice, as the library probe
+    // that found nothing and as the file beside main.rr.
+    assert_eq!(names, ["core.rr", "main.rr", "zz_helper_0044.rr", "zz_helper_0044.rr"]);
+    assert!(files.iter().any(|f| f.sha256.is_none() && f.path.starts_with(library())), "the include's library probe is recorded");
+    assert!(files.iter().filter_map(LibraryFile::fact).all(|f| f.starts_with("library_file(") && f.contains("\"sha256:")));
+    let (again, files_again) = read_file(&main).unwrap();
+    assert_eq!((format!("{first:?}"), &files), (format!("{again:?}"), &files_again), "unchanged files: the same program");
+    std::fs::write(&helper, ".decl h(x: number)\nh(2).\n").unwrap();
+    let (edited, edited_files) = read_file(&main).unwrap();
+    assert_ne!(format!("{first:?}"), format!("{edited:?}"), "an edited include is read again");
+    assert_ne!(files, edited_files);
+    std::fs::remove_dir_all(&dir).unwrap();
 }

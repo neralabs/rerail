@@ -9,6 +9,7 @@ graph_plan_contracts_fdef("function_definition").
 .decl graph_plan_contracts_imports(kind: symbol)
 graph_plan_contracts_imports("import_statement"). graph_plan_contracts_imports("import_from_statement"). graph_plan_contracts_imports("future_import_statement").
 .decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl graph_plan_contracts_alias(y: symbol, x: symbol)
@@ -41,14 +42,12 @@ graph_plan_contracts_imports("import_statement"). graph_plan_contracts_imports("
 .decl graph_plan_contracts_req_mention(clause: symbol, p: symbol, o: symbol, x: symbol, y: symbol, code: symbol)
 .decl graph_plan_contracts_req_method(clause: symbol, p: symbol, o: symbol, x: symbol, code: symbol)
 .decl graph_plan_contracts_req_symbol(clause: symbol, p: symbol, x: symbol, code: symbol)
-.decl graph_plan_contracts_stmt(b: node)
 .decl graph_plan_contracts_surface(d: number)
 .decl graph_plan_contracts_symbol(d: number, x: symbol, k: symbol, l: number)
 .decl graph_plan_contracts_target(a: node, t: node)
 .decl graph_plan_contracts_tclass(d: number, x: symbol, c: node, s: number)
 .decl graph_plan_contracts_topdef(d: number, x: symbol, s: number, k: symbol, l: number)
 .decl graph_plan_contracts_unparen(e: node, m: node)
-.decl graph_plan_contracts_unparsed(d: number)
 .decl graph_plan_contracts_wanted(x: symbol)
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
@@ -64,7 +63,7 @@ graph_plan_contracts_imports("import_statement"). graph_plan_contracts_imports("
 .decl tparam_shape(p: node, nm: node, k: symbol, b: node)
 .decl type_param(o: node, p: node, nm: node, i: number, kind: symbol, bound: node, dflt: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, op, child, node, field, text, syntax_error, line, token
+.input doc, op, child, node, field, text, syntax_error, cpython_syntax_error, line, token
 .output violation
 .pragma "magic-transform" "reaches, unparen"
 graph_plan_contracts_alias("legacy", "_legacy_delegate_stub").
@@ -169,9 +168,7 @@ tparam_shape(p, nm, "typevar", b) :- tparam_item(_, _, p, _), child(p, c, 0), no
 tparam_shape(p, nm, "typevartuple", b) :- tparam_item(_, _, p, _), child(p, s, 0), node(_, s, "splat_type", _, _), op(s, "*"), child(s, nm, 0), rr_core_unset(b).
 tparam_shape(p, nm, "paramspec", b) :- tparam_item(_, _, p, _), child(p, s, 0), node(_, s, "splat_type", _, _), op(s, "**"), child(s, nm, 0), rr_core_unset(b).
 type_param(o, p, nm, i, k, b, d) :- tparam_list(o, l), tparam_item(l, i, p, d), tparam_shape(p, nm, k, b).
-graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d), !graph_plan_contracts_unparsed(d), !out_scope(d), doc(d, p, _).
-graph_plan_contracts_stmt(b) :- node(_, b, "block", _, _), child(b, c, _), node(_, c, _, _, _).
-graph_plan_contracts_unparsed(d) :- node(d, b, "block", _, _), !graph_plan_contracts_stmt(b).
+graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), !out_scope(d), doc(d, p, _).
 graph_plan_contracts_nested(n) :- inside(n, _, graph_plan_contracts_defs).
 graph_plan_contracts_in_fn(n) :- inside(n, _, graph_plan_contracts_fdef).
 graph_plan_contracts_tclass(d, x, c, s) :- node(d, c, "class_definition", s, _), !graph_plan_contracts_nested(c), field(c, "name", nm), text(nm, x).

@@ -1,0 +1,81 @@
+// python/flow-return: a function's returns and the branches after a jump, as Ruff's flake8-return (RET) reads
+// them. Ruff walks one def's body once (its ReturnVisitor), without entering nested defs and classes, and
+// collects the return statements and each `if`'s first elif/else clause. python/flow has statement order.
+//
+// Interface
+//   ret_function(f)          def f is one RET checks: its body is not a lone `return`, and it is not a generator
+//   fn_stmt(f, s)            statement s is in f's own body, not in a nested def or class
+//   fn_return(f, r)          r is a return statement of f's own body (nested defs and classes have their own)
+//   returns_value(f)         some return of f has a value other than None: `return x`, not `return None`
+//   bare_return(r)           r is `return` with no value;  none_return(r): r is `return None`
+//   first_alternative(i, b, c, kw)  if statement i has body b and first elif or else clause c, whose keyword
+//                            token is kw. Later clauses are not paired with the elif before them.
+//   first_jump(b, k)         the first statement of block b (directly in it) that is a return, raise, break or
+//                            continue is of kind k: "return", "raise", "break" or "continue"
+//   branch_word(c, w)        clause c is an "elif" or an "else"
+//   else_after_jump(kw, w, j)  keyword kw of an "elif" or "else" (w) follows an if body whose first jump is j,
+//                            in a def RET checks (RET505-RET508)
+//   property_def(f)          f is decorated as a property: property, enum.property, functools.cached_property,
+//                            abc.abstractproperty, types.DynamicClassAttribute (called or not)
+//
+// Python background
+//   A generator's `return x` sets StopIteration.value, so return rules skip any def with a `yield`. An `else`
+//   after a branch that always leaves (return, raise, break, continue) can be dedented: only the first jump in
+//   the branch's own statements is looked at, not jumps inside nested blocks.
+//
+//   def f(x):
+//       if x:
+//           return 1                 first_jump(<if body>, "return")
+//       else:                        first_alternative(<if>, <if body>, <else clause>, <else>)
+//           return                   fn_return(<f>, <return>), bare_return(<return>); returns_value(<f>)
+#include "python/ast.rr"   // body_stmt, body_len, unparen, decorator, sym_of
+
+.decl ret_function(f: node)
+ret_function(f) :- kind(f, "function_definition"), field(f, "body", b), body_len(b, k), k > 0, !lone_return(b),
+    !fn_yields(f).
+.decl lone_return(b: node)
+lone_return(b) :- body_len(b, 1), body_stmt(b, s, 0), kind(s, "return_statement").
+// fn_yields(f): a `yield` or `yield from` runs in f's walk. A yield in a nested def's defaults or annotations is
+// counted for the nested def here, for f in Ruff: rare.
+.decl fn_yields(f: node)
+fn_yields(f) :- kind(y, "yield"), nearest(y, f, "function_definition").
+.decl fn_return(f: node, r: node)
+fn_return(f, r) :- kind(r, "return_statement"), fn_stmt(f, r).
+// fn_stmt(f, s): s is in def f's own walk: not inside a nested def or class body.
+.decl fn_stmt(f: node, s: node)
+fn_stmt(f, s) :- nearest(s, f, walk_stop), kind(f, "function_definition").
+.decl walk_stop(k: symbol)
+walk_stop("function_definition"). walk_stop("class_definition").
+.decl bare_return(r: node)
+bare_return(r) :- kind(r, "return_statement"), count : { child(r, c, _), !kind(c, "comment") } = 0.
+.decl none_return(r: node)
+none_return(r) :- kind(r, "return_statement"), child(r, v, 0), unparen(v, n), kind(n, "none").
+.decl returns_value(f: node)
+returns_value(f) :- fn_return(f, r), !bare_return(r), !none_return(r).
+
+.decl first_alternative(i: node, b: node, c: node, kw: span)
+// The lowest child index, not next_sibling: a comment before the `else` is a child of the if statement too.
+first_alternative(i, b, c, kw) :- kind(i, "if_statement"), field(i, "consequence", b),
+    j = min k : { field(i, "alternative", a), child(i, a, k) }, child(i, c, j), first_token(c, kw).
+.decl branch_word(c: node, w: symbol)
+branch_word(c, "elif") :- kind(c, "elif_clause").
+branch_word(c, "else") :- kind(c, "else_clause").
+.decl jump_kind(k: symbol, w: symbol)
+jump_kind("return_statement", "return"). jump_kind("raise_statement", "raise").
+jump_kind("break_statement", "break"). jump_kind("continue_statement", "continue").
+.decl first_jump(b: node, w: symbol)
+first_jump(b, w) :- kind(b, "block"), j = min i : { child(b, s, i), kind(s, k), jump_kind(k, _) },
+    child(b, s, j), kind(s, k), jump_kind(k, w).
+
+// else_after_jump(kw, w, jump): in a def RET checks, the `elif`/`else` keyword kw (w says which) follows an if
+// body whose first jump is `jump` (RET505-RET508).
+.decl else_after_jump(kw: span, w: symbol, jump: symbol)
+else_after_jump(kw, w, j) :- ret_function(f), fn_stmt(f, i), first_alternative(i, b, c, kw), first_jump(b, j),
+    branch_word(c, w).
+
+.decl property_def(f: node)
+property_def(f) :- decorator(f, e0), (kind(e0, "call"), field(e0, "function", e) ; !kind(e0, "call"), e = e0),
+    sym_of(e, q), property_q(q).
+.decl property_q(q: symbol)
+property_q("builtins.property"). property_q("enum.property"). property_q("functools.cached_property").
+property_q("abc.abstractproperty"). property_q("types.DynamicClassAttribute").

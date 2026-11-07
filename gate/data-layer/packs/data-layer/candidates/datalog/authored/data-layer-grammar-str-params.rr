@@ -21,7 +21,7 @@
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl node_text(n: node, s: symbol)
 .input node_text
 
@@ -113,7 +113,7 @@ str_params_sql_name(s) :- text(_, s), (prefix("Sql", s) ; prefix("_Sql", s)).
 .decl str_params_grammar_class(c: node)
 str_params_grammar_class(c) :- node(_, c, "class_definition", _, _), !str_params_listed_class(c), str_params_grammarish(c).
 .decl str_params_listed_class(c: node)
-str_params_listed_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item("ALLOWLISTED_STR_CLASSES", x).
+str_params_listed_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item("ALLOWLISTED_STR_CLASSES", _, x).
 .decl str_params_grammarish(c: node)
 str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), node(_, b, "identifier", _, _), text(b, s), str_params_sql_name(s).
 str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), node(_, b, "attribute", _, _), field(b, "attribute", i), text(i, s), str_params_sql_name(s).
