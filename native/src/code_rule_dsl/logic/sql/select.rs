@@ -117,6 +117,14 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "token_before" | "token_after" => &["x", "t"],
         "tree_digest" => &["n", "s"],
         "rx_span" => &["p", "c", "j", "g", "m"],
+        // Decision 0055's (`facts::vtab::syntax::guests`).
+        "guest" => &["g", "host", "at", "grammar"],
+        "doc_role" => &["d", "r"],
+        "doc_root" => &["d", "n"],
+        "tape_of" => &["d", "t"],
+        "parsed" => &["s", "grammar", "root"],
+        "sub_tape" => &["at", "grammar", "t"],
+        "host_node" => &["n", "h"],
         // The repository inputs (`facts::repository`).
         "option" => &["name", "v"],
         "option_item" => &["name", "i", "v"],

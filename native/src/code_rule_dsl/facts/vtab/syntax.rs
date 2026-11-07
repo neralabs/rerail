@@ -32,11 +32,14 @@ use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
+use crate::code_rule_dsl::logic::front::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 mod core_rr;
 use core_rr::Family;
+mod guests;
+use guests::GuestRows;
 
 /// Which projection of the tree a batch serves.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -57,14 +60,21 @@ pub(crate) struct Projection {
     /// The regexes the program runs over `source` or `src_line` spans (`front::Program::rx_spans`): their matches'
     /// groups are spans, rows of `rx_span`.
     pub(crate) rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, String)>,
+    /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
+    /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
+    pub(crate) partial: BTreeSet<String>,
 }
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), partial: BTreeSet::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
+    }
+    /// Whether a guest of `grammar` that does not parse keeps its partial tree.
+    fn keeps_partial(&self, grammar: &str) -> bool {
+        self.partial.contains("*") || self.partial.contains(grammar)
     }
     /// `core.rr`'s shape for a program that includes `core.rr` (declares every relation it declares as an input),
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
@@ -75,7 +85,11 @@ impl Projection {
             std::fs::read_to_string(path).ok().and_then(|src| crate::code_rule_dsl::logic::rr::parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
         });
         let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect() }
+        let partial = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
+            [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
+            _ => None,
+        });
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), partial: partial.collect() }
     }
 }
 
@@ -85,6 +99,61 @@ mod within;
 pub(crate) const WITHIN: &str = "within";
 /// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
 pub(crate) const SPAN_WITHIN: &str = "span_within";
+
+/// The relation a program's guest settings are facts of (`.guests`, `.on guest_error`; decision 0055):
+/// `guest_policy("library", "on" | "off")`, `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
+pub(crate) const GUEST_POLICY: &str = "guest_policy";
+
+/// A guest document's place (decision 0055): the host document and the node or span it stands at, its grammar and
+/// role, its root, and how its bytes map to the host's.
+#[derive(Clone, Debug)]
+pub(crate) struct Guest {
+    pub host: u32,
+    /// `at`: the host's node or span (`host << 32 | local`).
+    pub at: i64,
+    pub grammar: String,
+    /// "program" or "fragment" (`doc_role`).
+    pub role: String,
+    /// The core id of the guest's root: a fragment's expression inside its wrapper, else the tree's root. The
+    /// document is that node's subtree.
+    pub root: u32,
+    /// Where its bytes stand in its host's text (`host_node`).
+    pub place: Placement,
+    /// Where they stand in its file's text: `place` composed with its host's `in_file` when the host is a guest
+    /// too (a string inside a parsed annotation). Its positions are these.
+    pub in_file: Placement,
+}
+
+/// Where a guest's bytes stand in its host's source.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Placement {
+    /// A copied stretch: guest byte `b` is host byte `b + delta`, kept within the host bytes `within` (a wrapper's
+    /// written `(` and `)` stand at the stretch's ends).
+    Copied { delta: i64, within: [u32; 2] },
+    /// A decoded value (an escaped string, a concatenation): every node stands at the host bytes `at`.
+    At([u32; 2]),
+}
+
+impl Placement {
+    fn host(&self, [a, b]: [u32; 2]) -> [u32; 2] {
+        match *self {
+            Placement::Copied { delta, within: [lo, hi] } => {
+                let map = |x: u32| (i64::from(x) + delta).clamp(i64::from(lo), i64::from(hi)) as u32;
+                [map(a), map(b)]
+            }
+            Placement::At(at) => at,
+        }
+    }
+
+    /// `inner`, a placement in this one's text, as a placement in this one's host's.
+    pub fn then(self, inner: Placement) -> Placement {
+        match (self, inner) {
+            (Placement::At(at), _) => Placement::At(at),
+            (Placement::Copied { delta, .. }, Placement::Copied { delta: d, within }) => Placement::Copied { delta: delta + d, within: self.host(within) },
+            (Placement::Copied { .. }, Placement::At(at)) => Placement::At(self.host(at)),
+        }
+    }
+}
 
 /// One document of a batch.
 #[derive(Clone)]
@@ -97,6 +166,19 @@ pub(crate) struct Document {
     pub core: String,
     pub digest: [u8; 32],
     pub facts: Arc<Facts>,
+    /// A guest's place in its host (decision 0055); `None` for a file's own tree. A guest's `path` is its host's.
+    pub guest: Option<Arc<Guest>>,
+}
+
+/// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
+/// kind name. For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
+pub(crate) fn numbering(doc: &Document) -> StoreResult<Vec<(u32, &'static str)>> {
+    let tag = (doc.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
+    let dialect = Dialect::new(tag)?;
+    // A guest's nodes are its root's subtree.
+    let guest = doc.guest.as_deref().map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
+    let p = Projected::new(doc.key, Arc::clone(&doc.facts), &dialect, Shape::Core, false, guest);
+    Ok(p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect())
 }
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
@@ -251,16 +333,40 @@ struct Projected {
 /// A document's lines, and its spans past its nodes: from local id `len()`, its anonymous tokens (`tokens` of them,
 /// in preorder), then its whole text, then each line.
 struct Extra {
-    lines: core_rr::Lines,
+    lines: Arc<core_rr::Lines>,
     spans: Vec<[u32; 2]>,
     tokens: u32,
     /// Where `rx_span`'s spans start in `spans` (after the lines); `spans.len()` when there are none.
     matched: u32,
+    /// A guest's host lines and placement: its places are the host's (decision 0055). A guest has no source-text
+    /// spans of its own (`source`, `src_line`): those are its file's.
+    host: Option<(Arc<core_rr::Lines>, Placement)>,
+}
+
+impl Extra {
+    /// A span's first line, last line and start column, in its file.
+    fn place(&self, span: [u32; 2]) -> (u32, u32, u32) {
+        match &self.host {
+            Some((lines, place)) => lines.place(place.host(span)),
+            None => self.lines.place(span),
+        }
+    }
+    /// The file line of this document's line `l`.
+    fn file_line(&self, l: u32) -> u32 {
+        match &self.host {
+            Some((lines, place)) => {
+                let at = if self.lines.count() == 0 { 0 } else { self.lines.span((l as usize).clamp(1, self.lines.count()))[0] };
+                lines.line(place.host([at, at])[0])
+            }
+            None => l,
+        }
+    }
 }
 
 impl Projected {
-    /// A `withheld` document (`core.rr`: one that does not parse) has no nodes and no spans: no facts.
-    fn new(key: u32, facts: Arc<Facts>, dialect: &Dialect, shape: Shape, withheld: bool) -> Self {
+    /// A `withheld` document (`core.rr`: one that does not parse) has no nodes and no spans: no facts. A guest's
+    /// nodes are its root's subtree, placed in its host's lines (`host`).
+    fn new(key: u32, facts: Arc<Facts>, dialect: &Dialect, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
         let f = &*facts;
         let mut p = Projected {
             key,
@@ -276,12 +382,17 @@ impl Projected {
             facts: Arc::clone(&facts),
         };
         let mut next_idx: Vec<u32> = Vec::new();
-        for id in 0..if withheld { 0 } else { f.len() as u32 } {
+        let (first, last) = match guest {
+            Some((g, _)) => (g.root, f.subtree_end.get(g.root as usize).copied().unwrap_or(g.root + 1).max(g.root + 1)),
+            None => (0, f.len() as u32),
+        };
+        for id in first..if withheld { first } else { last.min(f.len() as u32) } {
             if !f.named(id) || (shape == Shape::T && dialect.class(f, id) == Class::Comment) {
                 continue;
             }
             // T walks named children from the root: a node under one left out is not reached.
             let parent = match f.parent(id) {
+                _ if id == first => NONE,
                 None => NONE,
                 Some(q) if p.local[q as usize] != NONE => p.local[q as usize],
                 Some(_) => continue,
@@ -312,7 +423,7 @@ impl Projected {
             p.size[q] += p.size[i] + 1;
         }
         if shape == Shape::Core {
-            let lines = core_rr::Lines::new(&f.source, dialect.family == Family::Python);
+            let lines = Arc::new(core_rr::Lines::new(&f.source, dialect.family == Family::Python));
             let mut spans: Vec<[u32; 2]> = Vec::new();
             for &id in &p.core {
                 for &c in f.children(id) {
@@ -322,12 +433,13 @@ impl Projected {
                 }
             }
             let tokens = spans.len() as u32;
-            if !withheld {
+            if !withheld && guest.is_none() {
                 spans.push([0, f.source.len() as u32]);
                 spans.extend((1..=lines.count()).map(|l| lines.span(l)));
             }
             let matched = spans.len() as u32;
-            p.extra = Some(Box::new(Extra { lines, spans, tokens, matched }));
+            let host = guest.map(|(g, lines)| (lines, g.in_file));
+            p.extra = Some(Box::new(Extra { lines, spans, tokens, matched, host }));
         }
         p
     }
@@ -484,7 +596,24 @@ impl Batch {
         } else {
             Vec::new()
         };
-        let mut docs = Vec::with_capacity(documents.len());
+        let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
+        // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
+        // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
+        let mut g = GuestRows::default();
+        let mut lines_of: HashMap<u32, Arc<core_rr::Lines>> = HashMap::new();
+        // Each guest's file: its host's, through guests of guests. Files' keys are below every guest's, so a file
+        // is projected (and its lines known) before its guests; a guest's guests may come before it.
+        let host: HashMap<u32, u32> = documents.iter().filter_map(|d| d.guest.as_ref().map(|g| (d.key, g.host))).collect();
+        let file_of = |mut k: u32| {
+            for _ in 0..=host.len() {
+                match host.get(&k) {
+                    Some(&h) => k = h,
+                    None => break,
+                }
+            }
+            k
+        };
+        let mut withheld_at = Vec::with_capacity(documents.len());
         for d in &documents {
             let tag = (d.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
             if !dialects.contains_key(&tag) {
@@ -493,12 +622,19 @@ impl Batch {
             let dialect = &dialects[&tag];
             // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
             // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
+            // A guest that does not parse is withheld too, unless the policy keeps its partial tree (decision 0055 §6).
             let error = if core { core_rr::verdict(&d.facts, dialect) } else { None };
-            let withheld = error.is_some();
-            let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld);
-            if !rx_spans.is_empty() && !withheld {
+            let guest = d.guest.as_deref().filter(|_| core);
+            let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
+            let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
+            let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
+            if !rx_spans.is_empty() && !withheld && guest.is_none() {
                 c.matches(&mut p, &rx_spans, &mut string);
             }
+            if core && guest.is_none() && let Some(x) = &p.extra {
+                lines_of.insert(d.key, Arc::clone(&x.lines));
+            }
+            withheld_at.push(withheld);
             let key = i64::from(d.key);
             // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.
@@ -591,15 +727,23 @@ impl Batch {
                     c.node(&p, dialect, local as u32, &mut string, wants_text);
                 }
             }
-            if let Some(error) = &error {
-                c.withheld(&p, error, &mut string);
-            } else if core {
-                c.document(&p, dialect, &mut string, wants_text, wants_tokens);
+            if let Some((line, msg)) = &error {
+                let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
+                c.withheld(&p, &(line, msg.clone()), &mut string);
+            }
+            if core && !withheld {
+                c.document(&p, dialect, &mut string, wants_text, wants_tokens, guest.is_none());
                 if wants_digests {
                     c.digests(&p, dialect, &mut string);
                 }
             }
             docs.push(p);
+        }
+        // The guests' rows, once every document is projected: a guest's host may be a guest after it.
+        if core {
+            for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
+                g.document(p, d, d.guest.as_deref(), withheld, &docs, projection.wants("host_node"), &mut string);
+            }
         }
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
@@ -633,6 +777,7 @@ impl Batch {
         ];
         if core {
             relations.extend(c.relations(&atom));
+            relations.extend(g.relations(&atom));
         } else {
             relations.extend([
                 ("value", pairs(&["n", "s"], &value, [false, true])),
@@ -876,8 +1021,7 @@ impl Viewed {
             if column == 0 {
                 return p.global(local);
             }
-            let lines = &p.extra.as_ref().expect("core.rr's lines").lines;
-            let (line, last, col) = lines.place(p.span(local));
+            let (line, last, col) = p.extra.as_ref().expect("core.rr's lines").place(p.span(local));
             return match place {
                 Place::Line => i64::from(line),
                 Place::EndLine => i64::from(last),

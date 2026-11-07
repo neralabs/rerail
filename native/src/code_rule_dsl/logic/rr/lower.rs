@@ -32,6 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::syntax::{Code, Head, Item, Lit, Statement, Suppress, Term as STerm};
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
+use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
 
 /// The text tests: their `.rr` names and the engine's.
@@ -414,7 +415,8 @@ impl Lowerer {
                 }
             })
             .collect();
-        if self.violations.is_empty() && on.is_empty() {
+        let guest_errors = self.guest_policy();
+        if self.violations.is_empty() && on.is_empty() && guest_errors.is_empty() {
             return;
         }
         let policy = self
@@ -459,7 +461,9 @@ impl Lowerer {
             let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(what.clone()), Term::Str(code), v("rr_p"), v("rr_l")], neg: false, gated: false };
             let body = if what == "syntax_error" {
                 let line = if line_one { Term::Wild } else { v("rr_l") };
-                let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
+                // A file's own error: a guest's is `.on guest_error`'s.
+                let not_guest = Literal::Atom(Atom { rel: "guest".to_owned(), args: vec![v("rr_d"), Term::Wild, Term::Wild, Term::Wild], neg: true, gated: false });
+                let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), not_guest];
                 if line_one {
                     body.push(Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(1) });
                 }
@@ -472,8 +476,84 @@ impl Lowerer {
                     self.prog.inputs.push(rel.to_owned());
                 }
             }
+            if what == "syntax_error" {
+                self.guest_input();
+            }
             self.prog.rules.push(Rule { head, body });
         }
+        // A guest that does not parse, reported at its host's line (`syntax_error` of a guest is a file line).
+        for (grammar, code) in guest_errors {
+            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str("guest_error".to_owned()), Term::Str(code), v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let g = grammar.map_or(Term::Wild, Term::Str);
+            let body = vec![atom("syntax_error", vec![v("rr_d"), v("rr_l"), Term::Wild]), atom("guest", vec![v("rr_d"), Term::Wild, Term::Wild, g]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
+            for (rel, cols) in [
+                ("syntax_error", &[("d", "int"), ("l", "int"), ("msg", "sym")][..]),
+                ("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")][..]),
+            ] {
+                self.prog.decls.entry(rel.to_owned()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+                if !self.prog.inputs.iter().any(|i| i == rel) {
+                    self.prog.inputs.push(rel.to_owned());
+                }
+            }
+            self.guest_input();
+            self.prog.rules.push(Rule { head, body });
+        }
+    }
+
+    /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
+    fn guest_input(&mut self) {
+        let cols = [("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")];
+        self.prog.decls.entry("guest".to_owned()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        if !self.prog.inputs.iter().any(|i| i == "guest") {
+            self.prog.inputs.push("guest".to_owned());
+        }
+    }
+
+    /// Decision 0055's settings as `guest_policy` facts, which the corpus runner and the batch read:
+    /// - `.guests on | off`: `guest_policy("library", …)`, whether the libraries' `embed`s are made (on by default);
+    /// - `.on guest_error [GRAMMAR] skip | partial [warn | report CODE]`, or `.on guest_error [GRAMMAR] warn | report
+    ///   CODE` (skip): `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`. A skipped guest is
+    ///   withheld; a partial one keeps the tree it has. `warn` and `report` both give a finding, `warn`'s of severity
+    ///   warning (`.severity guest_error warning`); the findings are returned, `(grammar, code)`, for `findings`.
+    fn guest_policy(&mut self) -> Vec<(Option<String>, String)> {
+        let mut facts = Vec::new();
+        let mut findings = Vec::new();
+        let mut warn = false;
+        for (key, text) in &self.prog.settings {
+            let words: Vec<&str> = text.split_whitespace().collect();
+            if key == "guests" {
+                if let [v @ ("on" | "off")] = words.as_slice() {
+                    facts.push(("library".to_owned(), (*v).to_owned()));
+                }
+                continue;
+            }
+            let ["guest_error", rest @ ..] = words.as_slice() else { continue };
+            if key != "on" {
+                continue;
+            }
+            let (grammar, rest) = match rest {
+                [g, rest @ ..] if !matches!(*g, "skip" | "partial" | "warn" | "report") => (Some((*g).to_owned()), rest),
+                _ => (None, rest),
+            };
+            let (mode, rest) = match rest {
+                [m @ ("skip" | "partial"), rest @ ..] => (*m, rest),
+                _ => ("skip", rest),
+            };
+            facts.push((grammar.as_ref().map_or("errors".to_owned(), |g| format!("errors:{g}")), mode.to_owned()));
+            if let [how @ ("warn" | "report"), code] = rest {
+                warn |= *how == "warn";
+                findings.push((grammar, (*code).to_owned()));
+            }
+        }
+        if warn {
+            self.prog.settings.push(("severity".to_owned(), "guest_error warning".to_owned()));
+        }
+        if !facts.is_empty() {
+            self.prog.decls.insert(GUEST_POLICY.to_owned(), vec![("k".to_owned(), "sym".to_owned()), ("v".to_owned(), "sym".to_owned())]);
+            let rows = self.prog.facts.entry(GUEST_POLICY.to_owned()).or_default();
+            rows.extend(facts.into_iter().map(|(k, v)| vec![Value::Str(k), Value::Str(v)]));
+        }
+        findings
     }
 
     fn clause(&mut self, heads: &[Head], body: &[Lit]) -> Result<(), Error> {
@@ -638,6 +718,9 @@ impl Lowerer {
                 vec![vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![self.term(s)?, Term::Str(re.clone())]), op: "=", r: Term::Int(0) }]]
             }
             Lit::Atom { rel, args, neg } => {
+                if !*neg && matches!(rel.as_str(), "parsed" | "sub_tape") {
+                    self.embed_demand(args)?;
+                }
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
                 // variables (`front::finish`'s computed-term check).
                 let mut atom = self.atom(rel, args, *neg)?;
@@ -655,6 +738,52 @@ impl Lowerer {
             }
             Lit::Cmp { l, op, r } => self.comparison(l, op, r, outer)?,
         })
+    }
+
+    /// `parsed(s, "g", r)` or `sub_tape(s, "g", t)` asks for the guest at s (decision 0055): `rr_embed_req(s, "g")`
+    /// over the rule's other literals that bind s, those that read no guest (not r or t, no `parsed` or `sub_tape`:
+    /// the guest is what they wait for). The corpus runner runs these rules first, parses the guests asked for and
+    /// rebinds the batch with them. A grammar that is not a constant, or an s nothing else binds, asks for nothing:
+    /// the atom reads the guests other rules or libraries asked for.
+    fn embed_demand(&mut self, args: &[STerm]) -> Result<(), Error> {
+        let [STerm::Var(s), STerm::Str(g), out] = args else { return Ok(()) };
+        // What reads the guest: the literals joined to r (or t) by variables other than s, and the guest relations.
+        let mut reads = body_vars(&[Lit::Cmp { l: out.clone(), op: "=", r: out.clone() }]);
+        reads.remove(s);
+        let guest_rel = |l: &Lit| matches!(l, Lit::Atom { rel, .. } if GUEST_RELATIONS.contains(&rel.as_str()));
+        let mut keep: Vec<bool> = self.siblings.iter().map(|l| !guest_rel(l)).collect();
+        for l in self.siblings.iter().filter(|l| guest_rel(l)) {
+            reads.extend(body_vars(std::slice::from_ref(l)).into_iter().filter(|x| x != s));
+        }
+        loop {
+            let mut grew = false;
+            for (l, k) in self.siblings.iter().zip(keep.iter_mut()) {
+                let vars = body_vars(std::slice::from_ref(l));
+                if *k && vars.iter().any(|x| reads.contains(x)) {
+                    *k = false;
+                    reads.extend(vars.into_iter().filter(|x| x != s));
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        let saved = self.siblings.clone();
+        let mut keep = keep.into_iter();
+        self.siblings.retain(|_| keep.next().unwrap_or(false));
+        let binds = self.siblings.iter().any(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier") && body_vars(std::slice::from_ref(l)).contains(s));
+        let ctx = if binds { Some(self.context(std::slice::from_ref(s))) } else { None };
+        self.siblings = saved;
+        let Some(ctx) = ctx.transpose()? else { return Ok(()) };
+        let demand = "rr_embed_req";
+        self.prog.decls.insert(demand.to_owned(), vec![("s".to_owned(), "node".to_owned()), ("g".to_owned(), "sym".to_owned())]);
+        let head = Atom { rel: demand.to_owned(), args: vec![Term::Var(s.clone()), Term::Str(g.clone())], neg: false, gated: false };
+        let rule = Rule { head, body: vec![Literal::Atom(ctx)] };
+        if !self.prog.rules.contains(&rule) {
+            self.prog.rules.push(rule);
+        }
+        Ok(())
     }
 
     /// `!(l, …)`: a helper relation of the conjunction, over the variables it shares with the rule (bound inside
@@ -1637,6 +1766,9 @@ fn groups(re: &str) -> Vec<String> {
 }
 
 /// The variables of literals, the relations passed to built-ins (`nearest(n, a, scope)`'s `scope`) left out.
+/// The relations of decision 0055's guests: a rule's request for a guest cannot wait on them.
+const GUEST_RELATIONS: [&str; 7] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node"];
+
 fn body_vars(lits: &[Lit]) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for l in lits {
