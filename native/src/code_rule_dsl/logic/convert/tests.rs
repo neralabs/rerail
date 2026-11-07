@@ -488,6 +488,11 @@ fn converted_rules_give_the_recorded_findings() {
             Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
             Err(_) => program,
         };
+        // `RERAIL_REPLAY_PROFILE=<dir>`: each event's run profiled into <dir>/e<k> (`logic::profile`), to be summed.
+        if let Ok(profiles) = std::env::var("RERAIL_REPLAY_PROFILE") {
+            crate::code_rule_dsl::logic::profile::set(true);
+            crate::code_rule_dsl::logic::profile::set_directory(&std::path::Path::new(&profiles).join(format!("e{k}")));
+        }
         let ran = super::super::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18)
             // Every output has its file, empty or not: no `violation.csv` is a program without violations.
             .and_then(|_| std::fs::read_to_string(out.join("violation.csv")).map_err(|e| super::super::plan::Error::Plan(format!("violation.csv: {e}"))));
