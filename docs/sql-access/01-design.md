@@ -40,23 +40,42 @@ The gaps:
 
 ## 1. The catalog: rules and relations as data
 
-There is one eponymous virtual table per row type, built from the prepared program and persisted
-by program digest beside `compiled_plans`:
+**Built (step 1, `sql_executor/catalog.rs`).** These are temporary tables of the executor session,
+rebuilt from the retained programs after every run, removal and reset. Every program the session
+retains is one `execution`:
 
 ```text
-rr_relation(name, arity, kind, file_local, stratum, lattice, producer)
-  -- kind: base | derived | lattice | native | demand | sql
-rr_column(relation, ord, name, type)        -- type: node | doc | atom | int | text | …
-rr_rule(id, pack, file, span, head, digest, text)
-rr_atom(rule, ord, relation, negated, aggregate)
-rr_plan(step, rule, stratum, mode, sql, decisions)
+rr_relation(execution, name, kind, arity, stratum, output, file_local, view)
+  -- kind: input | derived | lattice | native
+rr_column(execution, relation, ord, name, type)     -- the .decl's names and types
+rr_rule(rule, execution, ord, head, text)
+rr_atom(rule, ord, kind, relation, negated, aggregate, text)
+  -- kind: atom | aggregate | compare | nearest | ast
+rr_plan(execution, step, stratum, output, reads, sql)  -- reads: a JSON array
 ```
 
-`rr_plan` turns today's `wave_step.sql` and explain output into rows.
+`rr_plan` holds the program's wave steps, which `wave_step` keeps only until the next run.
+
+The `rr_` prefix is reserved: a program cannot declare a relation named `rr_…`.
+
+**Not built yet:**
+- the rules' source file and span, which the logic AST does not keep;
+- persistence by program digest beside `compiled_plans`;
+- `sql` kinds, which come with SQL producers (§3).
 
 ## 2. Reading relations: `rel_<name>` *(user: option C)*
 
-Every relation is readable as `rel_<name>`. Its column names and types come from its `.decl`.
+Every relation is readable as `rr_rel_<name>`. Its column names and types come from its `.decl`.
+The prefix is `rr_rel_` rather than `rel_` because rule packs already declare relations named
+`rel_base`, `rel_expr` and so on.
+
+**Built (step 1):** inside an executor session, `rr_rel_<name>` is a temporary view over the
+session's relation, for every input and derived relation whose width matches its `.decl`. A
+logically nullary relation has one column, `present`. The derived view wins over an input of the
+same name from another program.
+
+**Not built yet:** everything below, which is the target. That covers the memo frames,
+cross-file relations, staleness, materialisation and the decoding functions.
 
 - **Storage is the frames the engine already writes**, read per (relation, document) and merged
   with the in-memory overlay. Nothing new is written for SQL's sake.
@@ -118,7 +137,7 @@ big_module($m) :- module_size($m, $c), $c > 500.
 
 This follows Soufflé's provenance evaluation (Zhao, Subotić and Scholz, TOPLAS 2020).
 
-- **Every derived row has two hidden columns on `rel_*`:**
+- **Every derived row has two hidden columns on `rr_rel_*`:**
   - `_rule`, the rule that first derived it;
   - `_height`, its derivation depth.
 - **A proof tree is rebuilt on demand:** `rr_why('calls', a, b)` looks up the rule's body through

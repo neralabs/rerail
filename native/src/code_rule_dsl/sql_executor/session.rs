@@ -6,6 +6,8 @@ pub(super) struct Execution {
     pub inputs: BTreeSet<String>,
     pub objects: Vec<(String, bool)>,
     pub emitted: Arc<plan::emit::Emitted>,
+    /// The program as declared (pruned, before lowering), for the catalog.
+    pub program: Arc<front::Program>,
     pub counts: BTreeMap<String, u64>,
     pub outputs: Vec<String>,
     pub max_waves: u32,
@@ -69,7 +71,7 @@ impl CodeRuleSqlExecutor {
         self.generated.retain(|object| !objects.contains(object));
         self.clear_control()?;
         self.db.reset_execution();
-        Ok(())
+        self.refresh_catalog()
     }
 
     pub(super) fn result_index(&self, relation: &str, columns: &[u32]) -> Result<()> {

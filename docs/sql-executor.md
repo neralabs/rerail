@@ -339,6 +339,15 @@ Additional producers can bind integer facts without changing the SQL compiler.
 Rust extensions can register SQL functions or virtual tables through `session.connection()`.
 The connection belongs to the session, so Rust statements and cursors borrow that session.
 
+## Catalog and typed views
+
+After every run, removal and reset, the session rebuilds a catalog of its retained programs as temporary tables:
+- `rr_relation`, `rr_column`, `rr_rule`, `rr_atom` and `rr_plan` (`sql_executor/catalog.rs`);
+- for each relation, the typed view `rr_rel_<name>`, whose columns are the `.decl`'s names.
+
+For example, `SELECT src, dst FROM rr_rel_reach` reads `reach`, whose own columns are `c0, c1`. The `rr_` prefix is reserved.
+Design: `docs/sql-access/01-design.md`.
+
 ## Execution boundary
 
 The planner emits seed statements and recursive delta statements.

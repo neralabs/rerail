@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
+mod catalog;
 mod documents;
 mod indexes;
 mod live;
@@ -446,7 +447,7 @@ fn reserved(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name == "atoms"
         || name.starts_with("__rr_update_")
-        || ["sqlite_", "wave_", "delta_", "new_", "rdl_"]
+        || ["sqlite_", "wave_", "delta_", "new_", "rdl_", catalog::PREFIX]
             .iter()
             .any(|prefix| name.starts_with(prefix))
 }
@@ -666,6 +667,7 @@ impl CodeRuleSqlExecutor {
         max_waves: u32,
     ) -> Result<String> {
         let outputs = program.outputs.clone();
+        let declared = Arc::new(program.clone());
         let arities: BTreeMap<_, _> = program
             .decls
             .iter()
@@ -835,10 +837,12 @@ impl CodeRuleSqlExecutor {
             objects,
             counts,
             emitted: Arc::new(emitted.clone()),
+            program: declared,
             outputs,
             max_waves,
             reductions: None,
         });
+        self.refresh_catalog()?;
         serde_json::to_string(
             &json!({"waves": waves, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes}),
         )
@@ -864,7 +868,7 @@ impl CodeRuleSqlExecutor {
         self.generated.clear();
         self.executions.clear();
         self.db.reset_execution();
-        Ok(())
+        self.refresh_catalog()
     }
 
     fn clear_control(&self) -> Result<()> {

@@ -424,3 +424,40 @@ fn stored_core_facts_bind_without_source_files_and_rebinding_refreshes_them() {
 }
 
 mod reductions;
+
+#[test]
+fn the_catalog_lists_rules_relations_and_plans_and_names_their_columns() {
+    let (_dir, mut executor) = executor();
+    edge(&mut executor, json!([[1, 2], [2, 3]]));
+    executor.run(CLOSURE.into(), "python".into(), None).unwrap();
+    assert_eq!(
+        rows(&executor, "SELECT name, kind, arity, output, view FROM rr_relation ORDER BY name"),
+        json!([["edge", "input", 2, 0, "rr_rel_edge"], ["reach", "derived", 2, 1, "rr_rel_reach"]])
+    );
+    assert_eq!(
+        rows(&executor, "SELECT relation, ord, name FROM rr_column WHERE relation = 'reach' ORDER BY ord"),
+        json!([["reach", 0, "src"], ["reach", 1, "dst"]])
+    );
+    // Typed views read the positional relations under their declared column names.
+    assert_eq!(
+        rows(&executor, "SELECT src, dst FROM rr_rel_reach WHERE src = 1 ORDER BY dst"),
+        json!([[1, 2], [1, 3]])
+    );
+    assert_eq!(rows(&executor, "SELECT count(*) FROM rr_rel_edge"), json!([[2]]));
+    // Which rules read `edge`, and through which literal.
+    assert_eq!(
+        rows(&executor, "SELECT r.ord, a.ord, a.kind FROM rr_atom a JOIN rr_rule r USING (rule) WHERE a.relation = 'edge' ORDER BY r.ord"),
+        json!([[0, 0, "atom"], [1, 1, "atom"]])
+    );
+    assert!(
+        rows(&executor, "SELECT count(*) FROM rr_plan WHERE output = 'reach' AND sql LIKE '%delta_reach%'")[0][0]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    // Programs cannot take the catalog's names, and a reset empties it.
+    assert!(executor.run(".decl rr_x(a: number)\nrr_x(1).\n.output rr_x\n".into(), "python".into(), None).is_err());
+    executor.reset().unwrap();
+    assert_eq!(rows(&executor, "SELECT count(*) FROM rr_relation"), json!([[0]]));
+    assert_eq!(rows(&executor, "SELECT count(*) FROM temp.sqlite_schema WHERE name = 'rr_rel_reach'"), json!([[0]]));
+}
