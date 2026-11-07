@@ -814,8 +814,6 @@ bcall(c, x) :- callee(c, e), builtin_ref(e, x), bclass(x).
 btype(v, t) :- tv(_, "builtin", v), kind(v, k), lit_type(k, t), !bytes_lit(v).
 btype(v, "bytes") :- tv(_, "builtin", v), bytes_lit(v).
 btype(v, x) :- tv(_, "builtin", v), bcall(v, x).
-// Declared returns (`typing::declare`, `typing::deps`: the corpus runner adds a `declared_ret(q, t)` per member
-// of a closed declared return) type a call of a name the workspace does not define.
 // Values of builtin and external classes (`tv(n, k, v)`, read by the types only). `builtin`: a literal, or a call of a
 // builtin class (`btype` gives v's class). `ext`: a value from outside the workspace (a name an import of an
 // external module binds, a builtin name, an attribute of such a value, a comparison), whose class is not named. They
@@ -840,9 +838,6 @@ tv(n, k, v) :- alook(n, c, a), found(c, a, at), tbv(at, a, k, v).
 tv(n, k, v) :- pass(n, c), tv(c, k, v).
 tv(c, k, v) :- callee(c, e), pv(e, "fn", f), !isasync(f), !isgen(f), retval(f, r), tv(r, k, v).
 tv(c, k, v) :- callee(c, e), pv(e, "fn", f), !method(f, _), retparam(f, i, _), posarg(c, i, a), tv(a, k, v).
-.decl declared_ret(q: symbol, t: symbol)
-.decl declared_call(c: node)
-declared_call(c) :- vpos(c), callee(c, e), qn(e, q), !qknown(q), declared_ret(q, _).
 // A workspace class's qualified name: a module's class, or a class's class. Classes in a function have none.
 .decl cls_q(c: node, q: symbol)
 cls_q(c, @dot(m, x)) :- modname(s, m), rdefn(s, x, c), kind(c, "class_definition").
@@ -852,7 +847,6 @@ cls_q(c, @dot(q, x)) :- cls_q(o, q), rdefn(o, x, c), kind(c, "class_definition")
 type_of(n, q) :- vpos(n), pv(n, "inst", c), cls_q(c, q).
 type_of(n, t) :- vpos(n), tv(n, "builtin", v), btype(v, t).
 type_of(n, t) :- vpos(n), tv(n, "decl", m), dtype(m, t).
-type_of(c, t) :- declared_call(c), callee(c, e), qn(e, q), declared_ret(q, t).
 // A class object's class is `type`, unless a metaclass may make it another: a `metaclass=` keyword, an external base
 // (`enum.Enum`, `abc.ABC`) or a base that is no known class, on the class or an ancestor. A builtin base keeps `type`.
 type_of(n, "type") :- vpos(n), pv(n, "cls", c), !meta_open(c).
@@ -867,8 +861,8 @@ meta_open(c) :- anc(c, b), kind(b, "class_definition"), field(b, "superclasses",
 meta_open(c) :- anc(c, b), basex(b, e), extb(e), !builtin_ref(e, _).
 meta_open(c) :- anc(c, b), base_open(b).
 .decl type_open(n: node)
-type_open(n) :- vpos(n), vopen(n), !declared_call(n), !ext_mod(n).
-type_open(n) :- vpos(n), !vopen(n), !pv(n, _, _), !tv(n, _, _), !declared_call(n), !ext_mod(n).
+type_open(n) :- vpos(n), vopen(n), !ext_mod(n).
+type_open(n) :- vpos(n), !vopen(n), !pv(n, _, _), !tv(n, _, _), !ext_mod(n).
 // Functions and `super()` objects are values the relations do not name a class for.
 type_open(n) :- vpos(n), pv(n, k, _), k != "inst", k != "cls", k != "mod".
 type_open(n) :- vpos(n), tv(n, "ext", _), !ext_mod(n).

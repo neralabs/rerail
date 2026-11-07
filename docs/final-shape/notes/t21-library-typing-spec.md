@@ -240,9 +240,15 @@ Each step is scored against the Jedi corpus on the same 84 files, and its cost m
    This finds out how many of the 1,571 calls become decided. The ceiling is about 760 (the categories above),
    less what needs §5.1.
 2. **E5: library cross-file rows as a derivation.** The goal is a warm workspace run that costs at most 10% more
-   than today.
+   than today. *Built and measured (0058): replay costs more than the workspace's demand-driven derivation, so it
+   is off by default. What it left: the rounds read what no round changes from one run before them.*
 3. **Site directories, stub packages, `py.typed`, `.pth`, user declarations as `.pyi`.** Retire `deps.rs`,
-   `declare.rs` and the `declared_ret` facts.
+   `declare.rs` and the `declared_ret` facts. *Built: `python/modules.rr`'s layers in §2.2's order, the venv's site
+   directory and `.pth` lines (`python/env.rr`); fixtures `world_site` and `world_decl`. `calls.rr` reads no
+   `declared_ret`: the inputs of the `deps`/`declare` test type the same calls from `.pyi` declarations and installed
+   sources. Not yet: a workspace `.pyi` beside its `.py` (the corpus reads `.py` files); `partial` stub packages.
+   `deps.rs`, `declare.rs` and `corpus/typing.rs` remain for `workload.rr` and its test, unreached by `calls.rr`;
+   removing them is the user's call.*
 4. **§5.1–§5.3**, ordered by what the score says is left.
 5. **A second language's `env.rr` and `modules.rr`** (TypeScript: `.d.ts` is the same shape), as the test that
    the blueprint is generic.

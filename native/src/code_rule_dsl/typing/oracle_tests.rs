@@ -611,6 +611,27 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
     let _ = std::fs::remove_dir_all(&out);
 }
 
+#[test]
+fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
+    // fixtures/python/world_decl/app: the inputs `typed_corpus_reads_declarations_and_dependency_summaries` gave
+    // `typing::deps` and `typing::declare`, as t21 reads them (step 3): the user's declarations are `.pyi` files under
+    // `python.declarations`, and the installed package `vendor` (no stubs, no `py.typed`) is read from its sources
+    // with `python.untyped = read`. `make`'s declaration comes first (PEP 561's order), over vendor/core.py's int.
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_decl/app");
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("decl");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let text = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
+    let mut got: Vec<&str> = text.lines().filter_map(|l| l.split_once('\t')).map(|(_, t)| t).filter(|t| *t != "module").collect();
+    got.sort();
+    // version() and make(): str; other.thing(): bytes | None.
+    assert_eq!(got, ["None", "bytes", "str", "str"], "{text}");
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert!(targets.contains("world_decl/decls/vendor/core.pyi:"), "{targets}");
+    assert!(targets.contains("world_decl/decls/other.pyi:"), "{targets}");
+    assert!(targets.contains("site-packages/vendor/__init__.py:"), "{targets}");
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a
