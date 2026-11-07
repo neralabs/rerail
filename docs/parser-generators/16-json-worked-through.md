@@ -4,6 +4,11 @@ Status: worked example, for review (2026-11-07). Nothing here is built. It follo
 `json.bitlex` from the Bitlex file to generated Cranelift and Metal. Doc 14 gave the design
 and doc 15 the representation. Working the example through changed six things in them (§9).
 
+**Corrected after review (doc 17 §0):** the scan phase has one barrier, not six; entries go
+to device memory as arrays of words, written in coalesced segments; threadgroup memory is a
+budget of about 9 KB, for occupancy; and there is no chunk limit. Where this page says
+otherwise, doc 17 holds.
+
 ## Intro
 
 The compiler has five levels. This page shows JSON's code at each one:

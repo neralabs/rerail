@@ -3,6 +3,11 @@
 Status: design, for review (2026-11-07). Nothing here is built. It is designed for JSON, the
 simdjson case, first. §10 lists what must generalise. §11 records the answers given so far.
 
+**Corrected after review (doc 17 §0):** the scan phase has one barrier, not six; entries go
+to device memory as arrays of words, written in coalesced segments; threadgroup memory is a
+budget of about 9 KB, for occupancy; and there is no chunk limit. Where this page says
+otherwise, doc 17 holds.
+
 ## Intro
 
 A Bitlex file compiles to two tiers (decision 0049):
