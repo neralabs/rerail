@@ -175,3 +175,20 @@ finding(t) :- constant(t), prefix("invented",t).
     let vocabulary = as_relations(&mut program).unwrap();
     assert!(vocabulary.tests.is_empty(), "all writers must supply prepared vocabulary symbols");
 }
+
+/// The repository's existing public signature verifies without changing signed artifacts.
+#[test]
+fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    functions::register(&db).unwrap();
+    let key = "7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6";
+    let message = r#"{"allowlist":[],"linter":"lint_admin_async_purity","version":1}"#;
+    let signature = "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==";
+    let verify = |k: &str, m: &str, s: &str| db.query_row("SELECT ed25519_ok(?1,?2,?3)",
+        rusqlite::params![k,m,s], |row| row.get::<_, i64>(0)).unwrap();
+    assert_eq!(verify(key,message,signature), 1);
+    assert_eq!(verify(key,&message.replace("[]", "[\"added.py\"]"),signature), 0);
+    assert_eq!(verify(key,message,"not base64"), 0);
+    assert_eq!(verify("wrong key",message,signature), 0);
+    assert_eq!(verify(key,message,&signature[..60]), 0);
+}
