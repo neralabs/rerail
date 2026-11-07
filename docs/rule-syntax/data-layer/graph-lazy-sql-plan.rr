@@ -63,13 +63,6 @@ glsp_direct(d, cx, m, f) :- kind(f, "function_definition"), def_name(f, m), near
     glsp_binding(d, cx, "class", c).
 .decl glsp_method(d: number, cx: symbol, m: symbol, f: node)
 glsp_method(d, cx, m, f) :- glsp_direct(d, cx, m, f), count : { glsp_direct(d, cx, m, f2), f2 > f } = 0.
-// glsp_dec(f, k): def f has a decorator named k: deco_word (`@k`, `@a.k`, `@k(…)`), and `@(k)`, which deco_word
-// does not see through yet (requested in NOTES-conn.md).
-.decl glsp_dec(f: node, k: symbol)
-glsp_dec(f, k) :- deco_word(f, k).
-glsp_dec(f, k) :- decorator(f, d), kind(d, "parenthesized_expression"), unparen(d, e),
-    (g = e ; kind(e, "call"), field(e, "function", g0), unparen(g0, g)),
-    (kind(g, "identifier"), text(g, k) ; attr_of(g, _, k)).
 // glsp_mentions(f, x): a Name x, or an attribute `….x`, is inside method f (its decorators included).
 .decl glsp_mentions(f: node, x: symbol)
 glsp_mentions(f, x) :- glsp_method(_, _, _, f), def_walk(n, f), ast_name(n, x).
@@ -96,7 +89,7 @@ GLSP(@place(p, 1), "GLSP-002", "VersionedReadTransactionLazyMixin class not foun
 GLSP(@place(p, l), "GLSP-003", "graph_lazy must exist as a pure lazy graph entrypoint") :- glsp_mixin(d, l),
     !glsp_method(d, "VersionedReadTransactionLazyMixin", "graph_lazy", _), doc(d, p, _).
 GLSP(f, "GLSP-004", "graph_lazy must be decorated with @pure_lazy") :- glsp_mixin(d, _),
-    glsp_method(d, "VersionedReadTransactionLazyMixin", "graph_lazy", f), !glsp_dec(f, "pure_lazy").
+    glsp_method(d, "VersionedReadTransactionLazyMixin", "graph_lazy", f), !deco_word(f, "pure_lazy").
 GLSP(f, "GLSP-003", cat("removed graph shortcut must remain absent: ", m)) :- glsp_mixin(d, _),
     glsp_method(d, "VersionedReadTransactionLazyMixin", m, f), (m = "graph_query_builder_lazy" ; m = "graph_traverse_lazy").
 
@@ -119,7 +112,7 @@ GLSP(@place(p, l), "GLSP-008", cat("SqlPlanGraphQueryBuilder terminal is missing
     glsp_class(d, "SqlPlanGraphQueryBuilder", l), glsp_terminal(m), !glsp_method(d, "SqlPlanGraphQueryBuilder", m, _),
     doc(d, p, _).
 GLSP(f, "GLSP-009", cat(m, " must be decorated with @pure_lazy")) :- glsp_file(d, "sql"), glsp_terminal(m),
-    glsp_method(d, "SqlPlanGraphQueryBuilder", m, f), !glsp_dec(f, "pure_lazy").
+    glsp_method(d, "SqlPlanGraphQueryBuilder", m, f), !deco_word(f, "pure_lazy").
 
 // ---- versioned_transactions.py --------------------------------------------------------------------------------
 .decl glsp_surface(m: symbol, k: symbol)  // the public delegate surfaces and their decorators
@@ -131,7 +124,7 @@ GLSP(@place(p, 1), "GLSP-006", "LazyVersionedReadTransaction class not found") :
 GLSP(@place(p, l), "GLSP-007", cat(m, " must exist as a public delegate surface")) :- glsp_txn(d, l), glsp_surface(m, _),
     !glsp_method(d, "LazyVersionedReadTransaction", m, _), doc(d, p, _).
 GLSP(f, "GLSP-010", cat(m, cat(" must be decorated with @", k))) :- glsp_txn(d, _), glsp_surface(m, k),
-    glsp_method(d, "LazyVersionedReadTransaction", m, f), !glsp_dec(f, k).
+    glsp_method(d, "LazyVersionedReadTransaction", m, f), !deco_word(f, k).
 GLSP(f, "GLSP-011", cat(m, " must remain a legacy delegate shell")) :- glsp_txn(d, _), glsp_surface(m, _),
     glsp_method(d, "LazyVersionedReadTransaction", m, f),
     !glsp_mentions(f, "_legacy_delegate_stub"), !glsp_mentions(f, "_txn_legacy_delegate_body"),

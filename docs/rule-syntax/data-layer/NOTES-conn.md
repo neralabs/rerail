@@ -71,7 +71,7 @@ None remain. Two forms were changed so that they lower:
 
 ## Library and core changes
 
-One requested: `deco_word`, at the end. I added no library file. Each linter has its own variant of "a decorator's name" (Name only,
+One requested and done: `deco_word`, at the end. I added no library file. Each linter has its own variant of "a decorator's name" (Name only,
 Name or Attribute, through calls or not), of "a class's methods" (first or last of a name, top-level classes
 only, merged across same-named classes) and of "a docstring-free body". So the rules keep short local helpers,
 with prefixes `cms_`, `lcb_`, `csb_`, `csa_`, `gpo_`, `bcgp_` and `glsp_`. If a later group needs the same
@@ -109,8 +109,9 @@ because of `pos_arg`'s aggregate.
 
 ## Library change request: `lib/data-layer/boot-python.rr`, `deco_word`
 
-`deco_word` does not see through parentheses, so `@(pure_lazy)` gives no word, but in `ast` it is a Name.
-graph_lazy_sql_plan keeps one local rule for that case until this lands. Replace the two rules with
+Done (coordinator): `deco_word` sees through parentheses, and graph_lazy_sql_plan's local `glsp_dec` is gone (115 / 115;
+schema_bootstrap_contracts 16 / 16 and bootstrap_engine_invariants' file scan 74 / 75 unchanged). Before, `@(pure_lazy)`
+gave no word, but in `ast` it is a Name. The two rules are now
 
 ```
 deco_word(f, x) :- decorator(f, d0), unparen(d0, d), (e0 = d ; kind(d, "call"), field(d, "function", e0)),
