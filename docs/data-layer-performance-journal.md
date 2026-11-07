@@ -13,7 +13,7 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 Every area in the 975-submission survey now has an executable prototype.
 Production retains C. Runtime changes live in an isolated worktree and a checked patch, with no production algorithm flag.
 The [design and decisions](sql-post-c-spikes.md) describe the selected shapes and remaining integration.
-The [checked evidence](../fixtures/host/data-layer-port/profiling/post-c-spikes-20261024.json) retains complete trials, hashes, accounting, and validation.
+The [checked evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/post-c-spikes-20261024.json) retains complete trials, hashes, accounting, and validation.
 
 ### Combined runtime result
 
@@ -119,7 +119,7 @@ No Linear tickets are created.
 ## Remaining SQL submission survey: 2026-10-24
 
 Production remains at `82d82d89`: 975 engine submissions, 106 SQLite internal executions, and zero unknown origins.
-The [checked survey](../fixtures/host/data-layer-port/profiling/post-c-sql-survey-20261024.json) assigns every engine statement to one disjoint bucket.
+The [checked survey](../gate/data-layer/fixtures/host/data-layer-port/profiling/post-c-sql-survey-20261024.json) assigns every engine statement to one disjoint bucket.
 Candidate execution costs 312, event clauses cost 202, flow execution costs 184, index/reader setup costs 176, compiler inference costs 53, and publication costs 48.
 The guard includes two observations through snapshot and workspace paths. Four physical index lifetimes cover two source hashes.
 These lifecycle counts do not predict full-repository CPU savings.
@@ -255,7 +255,7 @@ Candidate preparation contributes 308, relational evaluation contributes 366, an
 These counts identify remaining work. They do not price a new implementation chunk or establish full-repository performance.
 The final 100 gate and broader recovery requirements remain open.
 
-The [checked delivery evidence](../fixtures/host/data-layer-port/profiling/state-domain-admission-recovery-20261024.json) records all trials, source and artifact hashes, validation, and accounting.
+The [checked delivery evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/state-domain-admission-recovery-20261024.json) records all trials, source and artifact hashes, validation, and accounting.
 Raw builds, captures, controls, external profiles, and parity reports reside under `.rerail/profiles/chunk-c-20261024/`.
 Builds use the standing permission to finish. Runtime checks and experiments remain within 115 seconds.
 
@@ -291,7 +291,7 @@ Median peak RSS is 325,600 → 285,312 KiB.
 These controls cover only the frontend experiment and small guard. They are independent of the earlier B timing series.
 They do not measure the unimplemented input precondition or the complete repository.
 
-The [checked scope evidence](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) retains the exact consumers, transformed schemas, sessions, trials, and artifact hashes.
+The [checked scope evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) retains the exact consumers, transformed schemas, sessions, trials, and artifact hashes.
 Raw policies, transformation code, controls, and reports reside under `.rerail/profiles/chunk-c-scope-20261024/`.
 All experiment commands complete within the 115-second deadline. No production code or Linear tickets change during this scoping work.
 
@@ -307,7 +307,7 @@ It includes typed operation batches, private pipelines, version membership, scop
 Cold compilation, publication, result emission, and cleanup remain inside the same budget.
 The first implementation step must price the complete executable schedule. Replacement counts and CPU improvement remain unproven.
 
-The [frozen C ledger](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) records all six remaining phases and their source hashes.
+The [frozen C ledger](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) records all six remaining phases and their source hashes.
 Its counts sum to 2,250, with 181 separately reported SQLite internal executions.
 Acceptance also requires complete parity, genuine nonempty shared execution, repeatable CPU improvement, and no memory regression.
 Smaller TDD commits support C but cannot complete the delivery by themselves.
@@ -386,7 +386,7 @@ A separate traced capture spends much of its sampled time writing instrumentatio
 The next investigation should measure compilation, lowering, allocation, and regex costs with a broader bounded sample.
 The remaining 2,150 excess submissions also need a new complete inventory before the next delivery receives a target.
 
-The [checked evidence](../fixtures/host/data-layer-port/profiling/relational-storage-recovery-20261024.json) retains all timing trials, exact accounting, artifact hashes, and experiment decisions.
+The [checked evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/relational-storage-recovery-20261024.json) retains all timing trials, exact accounting, artifact hashes, and experiment decisions.
 Raw reports and immutable addons reside under `.rerail/profiles/chunk-b-20261024/`.
 
 ## Candidate ownership delivery R5-A: 2026-10-24
@@ -484,7 +484,7 @@ Its retirement component is now 324 to 200, rather than 1,028 to 200. It cannot 
 The updated plan leaves 2,389 submissions after that target, still above the final 100 limit.
 This chunk does not run the full repository or the complete 3,210-observation corpus.
 
-Evidence: [checked measurements and all timing trials](../fixtures/host/data-layer-port/profiling/candidate-ownership-recovery-20261024.json).
+Evidence: [checked measurements and all timing trials](../gate/data-layer/fixtures/host/data-layer-port/profiling/candidate-ownership-recovery-20261024.json).
 Raw captures and commands remain in `.rerail/profiles/chunk-a-20261024/`.
 
 ## Original execution reduction planning: 2026-10-24
@@ -504,7 +504,7 @@ Its retirement target starts from R5-A's replacement deletes, so the same drop r
 Schema and binding compatibility must be audited before producer data reuse receives credit.
 These are planning targets. No corresponding runtime saving has been achieved in this planning turn.
 
-The [checked ledger](../fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json) reconciles every engine submission and records assumptions and source hashes.
+The [checked ledger](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json) reconciles every engine submission and records assumptions and source hashes.
 CPU, memory, complete parity, and the fixed 100-submission requirement remain mandatory.
 After those targets, at most 2,259 submissions remain. Their next reductions require a fresh inventory rather than fabricated estimates.
 
@@ -553,8 +553,8 @@ Native consumer ordinals can differ across processes, so native acceptance compa
 
 **Decision:** retain the owner-projection rewrite and relevant-identifier filtering. Remove generic family packing and scalar-fusion packing from the engine.
 The rejected paths reduce submissions but regress CPU. Their raw captures, all timing trials, and source snapshot remain available.
-The checked [recovery evidence](../fixtures/host/data-layer-port/profiling/selector-materialization-recovery-20261024.json) records both decisions.
-The [rejected source artifact](../fixtures/host/data-layer-port/profiling/rejected-selector-family-spike-20261024.patch) preserves the abandoned design for review.
+The checked [recovery evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/selector-materialization-recovery-20261024.json) records both decisions.
+The [rejected source artifact](../gate/data-layer/fixtures/host/data-layer-port/profiling/rejected-selector-family-spike-20261024.patch) preserves the abandoned design for review.
 Neither artifact selects an alternate production algorithm.
 Raw evidence remains in `.rerail/profiles/selector-family-recovery-20261024/`.
 
@@ -667,7 +667,7 @@ The remaining candidate preparation and cleanup total **5,532 submissions**, abo
 Repeated temporary selector construction, indexes, and cleanup remain the next measured target.
 The universal node-property fill already executes once in these frontiers; scoped node demand and empty-relation simplification remain open.
 WP3 and aggregate recovery remain incomplete. This slice does not establish full-corpus or repository acceptance.
-Checked evidence: [shared child demand](../fixtures/host/data-layer-port/profiling/shared-child-demand-recovery-20261024.json).
+Checked evidence: [shared child demand](../gate/data-layer/fixtures/host/data-layer-port/profiling/shared-child-demand-recovery-20261024.json).
 Raw captures, commands, and all nine CPU pairs remain in `.rerail/profiles/child-demand-recovery-20261024/`.
 
 ### Different fields in one ready wave: red
@@ -732,7 +732,7 @@ Final diagnostic parity passes. The full corpus and repository checks remain nec
 The remaining preparation and cleanup submissions total 6,468, about 75% of engine submissions in this case.
 The next slice can now measure their repeated materialization against a reproducible frontier.
 Node/child demand coalescing, selector ownership across frontiers, broad SQL consumers, whole-job publication, and session lifetimes remain open.
-Checked evidence: [canonical frontier recovery](../fixtures/host/data-layer-port/profiling/canonical-frontier-recovery-20261024.json).
+Checked evidence: [canonical frontier recovery](../gate/data-layer/fixtures/host/data-layer-port/profiling/canonical-frontier-recovery-20261024.json).
 Raw captures, all timing trials, the red audit, and commands remain in `.rerail/profiles/frontier-recovery-20261024/`.
 
 ### Same-object plan permutations: red
@@ -807,7 +807,7 @@ Decision: keep one-pass batched dependency waves for spans, without an algorithm
 The next recovery slice must make frontier construction independent of allocation addresses and earlier producer-cache warmth.
 It must prove this on fixed plan permutations before another aggregate optimization claim.
 Other property fills, repeated selector construction, whole-job publication, session lifetimes, and complete repository acceptance remain open.
-Checked evidence: [shared span waves](../fixtures/host/data-layer-port/profiling/shared-span-waves-20261024.json).
+Checked evidence: [shared span waves](../gate/data-layer/fixtures/host/data-layer-port/profiling/shared-span-waves-20261024.json).
 All raw controls and rejected trials remain in `.rerail/profiles/shared-producers-20261024/`.
 
 ### Shared span dependency waves: red
@@ -873,7 +873,7 @@ WP1 has its first catalog/export checkpoint. Private authored-stage exports and 
 WP2 must union ready selector demand by binding and dependency wave, then publish rows and completion atomically.
 It must remove separate fills while preserving admission, empty results, edits, cancellation, and packet lifetimes.
 Whole-job publication, session lifetimes, and full repository acceptance remain open.
-Checked evidence: [shared producer foundation](../fixtures/host/data-layer-port/profiling/shared-producer-foundation-20261024.json).
+Checked evidence: [shared producer foundation](../gate/data-layer/fixtures/host/data-layer-port/profiling/shared-producer-foundation-20261024.json).
 Raw runs and commands remain in `.rerail/profiles/shared-producers-20261024/`.
 
 ### Real compiler export: red
@@ -930,7 +930,7 @@ This scope does not replace the full 3,210-observation corpus or whole-repositor
 
 R3 remains open for whole-job publication and session lifetimes. R4 must share physical runtime producers and coalesce admitted source-span demand.
 Those runtime statements dominate the remaining count. Compiler metadata sharing alone cannot meet the allowance or establish CPU recovery.
-Checked evidence: [stage schema recovery](../fixtures/host/data-layer-port/profiling/sql-stage-schema-recovery-20261023.json).
+Checked evidence: [stage schema recovery](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-stage-schema-recovery-20261023.json).
 Raw captures, commands, and all timing trials remain in `.rerail/profiles/sql-stage-recovery-20261023/`.
 
 ### Compiler schema reuse across documents: red
@@ -1009,7 +1009,7 @@ Compiler stage boundaries alone exceed 100 before the complete runtime workload 
 The next recovery slices need compiler stage schemas, whole-job publication, named shared physical producers, and broad SQL consumers.
 No unsupported engine-feature ticket follows from the rejected experiments.
 
-Checked evidence: [compiler recovery checkpoint](../fixtures/host/data-layer-port/profiling/sql-recovery-compiler-20261023.json).
+Checked evidence: [compiler recovery checkpoint](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-recovery-compiler-20261023.json).
 Detailed evidence stays in `.rerail/profiles/sql-recovery-compiler-20261023/`.
 
 ### Work-estimate physical order: rejected
@@ -1292,7 +1292,7 @@ One complete bulk insert uses 11.545 ms, 70.6% below packet transactions and 50.
 The packet forms leave five segments; the complete bulk statement leaves one.
 All variants preserve positional results, deletion, and replacement.
 The earlier development-build medians were 64.771, 50.572, and 26.594 ms; they are separate controls.
-The [optimized evidence](../fixtures/host/data-layer-port/profiling/fts-bulk-publication-20261023.json) retains every trial and the schema/binary identities.
+The [optimized evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/fts-bulk-publication-20261023.json) retains every trial and the schema/binary identities.
 This result supports whole-frontier `INSERT ... SELECT`, rather than suspending user triggers or changing the FTS layout.
 Whole-job integration remains pending; the isolated result does not predict aggregate linter CPU.
 
@@ -1308,7 +1308,7 @@ The rebuilt inventory contains 5,176 candidate construction, 2,534 cleanup, 1,78
 
 ## Recovery checkpoint: 2026-10-23
 
-The [checkpoint evidence](../fixtures/host/data-layer-port/profiling/sql-recovery-checkpoint-20261023.json) records the final measured addon and exact controls.
+The [checkpoint evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-recovery-checkpoint-20261023.json) records the final measured addon and exact controls.
 All original positive and clean state-tripwire observations pass snapshot and workspace parity.
 Every connection receipt and origin counter reconciles. No SQL execution has an unknown origin or phase.
 The complete job submits **10,443 engine statements**, plus **994 SQLite internal statements**.
@@ -1377,7 +1377,7 @@ Missing coverage, incomplete operations, or failed parity prevent acceptance, in
 Ordinary SQL capture and report commands preserve evidence and return nonzero when the gate fails.
 A mandatory CI step uses original positive and clean state-tripwire observations.
 
-The new [evidence](../fixtures/host/data-layer-port/profiling/sql-execution-budget-20261023.json) records a complete real acceptance attempt.
+The new [evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-execution-budget-20261023.json) records a complete real acceptance attempt.
 Two original observations run through both snapshot and workspace paths in one cold process.
 Both observations pass parity, with one positive, one clean, and no engine or execution-path failures.
 The 136 connection lifecycles and their statement counts reconcile, without coverage errors.
@@ -1428,7 +1428,7 @@ The archived pre-SQL reference has SHA-256 `52692a151eea8bab2add9c1c3aeb8400bf0c
 Its archived changed-source manifest matches the corresponding files at `5616076a`.
 The interrupted first attempt uses addon `4df3c64a06c079d4199e942fbf3daa46dba5405e635c6228f7deb199f57c92a6`.
 The final SQL reference is `dab45422f19898d582f330c38fd402aadffc0bd4edb8d916827d85cd63c90419`.
-The [aggregate evidence](../fixtures/host/data-layer-port/profiling/aggregate-checkpoint-20261023.json) records current validation progress and frozen source identities.
+The [aggregate evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/aggregate-checkpoint-20261023.json) records current validation progress and frozen source identities.
 Both references use engine optimization level 1, dependency level 3, no cross-crate LTO, 256 codegen units, and the system-malloc shim.
 
 Serial comparisons cover the original first-50 and combined 60-rule repository snapshots.
@@ -1777,7 +1777,7 @@ Clash reports contain both origins and exact field differences.
 Binding diagnostics explain why different options, generations, snapshots, or domains prevent sharing.
 Different demand sets can share a keyed producer. Unknown semantic fields fail declaration checks.
 
-The [evidence](../fixtures/host/data-layer-port/profiling/shared-producer-discovery-20261023.json) retains capture hashes and discovery witnesses.
+The [evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/shared-producer-discovery-20261023.json) retains capture hashes and discovery witnesses.
 The tool processed the earlier state and ten-rule captures, without new engine execution.
 Both reports cover every host statement, without skipped scopes.
 
@@ -1817,7 +1817,7 @@ Statements and result packets read those owners without embedding another materi
 The design covers demand waves, empty completion, semantic domains, clause sharing, and retirement.
 It retains indexed base access and single-use pipelines without blanket materialization.
 
-The [static placement audit](../fixtures/host/data-layer-port/profiling/sql-materialization-design-20261023.json) resolves local dependencies and typed parameters before comparing definitions.
+The [static placement audit](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-materialization-design-20261023.json) resolves local dependencies and typed parameters before comparing definitions.
 It identifies 248 state definitions and 420 ten-rule definitions present in multiple generated statements.
 One demanded-span definition appears in 61 state statements and 90 ten-rule statements.
 These are SQL placement counts, not measured execution counts or CPU savings.
@@ -1832,7 +1832,7 @@ Earlier benchmark results remain the baseline for implementation.
 This bounds temporary storage. CPU and process RSS remain mostly flat on the measured snapshots.
 
 The [implementation](sql-composition-implementation.md#candidate-relation-lifetimes) describes the execution contract.
-The [evidence](../fixtures/host/data-layer-port/profiling/sql-relation-lifetimes-20261023.json) retains trials, source hashes, storage measurements, allocation peaks, and corpus results.
+The [evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-relation-lifetimes-20261023.json) retains trials, source hashes, storage measurements, allocation peaks, and corpus results.
 The reference addon has SHA-256 `7a193b2a060803b6e5f73e6760066e72c43d962aa673c2fd81f51f38405f6c3b`.
 The final addon has SHA-256 `86846fe45e731c10b44beecb54cbfb35b7610c2eafb71f199ce3840969c07b6d`.
 The data-layer source remains at `2b1504adc4291daaf080b2e932962b134da1a69a`.
@@ -1954,7 +1954,7 @@ The real Git index remains unchanged.
 Keep the streaming packed-node adapter. These choices add no production algorithm switch.
 
 The [implementation](sql-composition-implementation.md) describes the interfaces and SQL execution boundaries.
-The [evidence](../fixtures/host/data-layer-port/profiling/sql-composition-promotion-20261022.json) records artifacts, source hashes, trials, diagnostics, and corpus results.
+The [evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-composition-promotion-20261022.json) records artifacts, source hashes, trials, diagnostics, and corpus results.
 The reference checkout remains `5616076ad60127d6ac3df0fbf60eff9f7a523ca0` with the existing uncommitted typed-fact changes.
 The saved reference addon has SHA-256 `efa0dcf04b170a10588e4661c7843a846989ce98262e68b6bc6abbb6a7dca72f`.
 The measured addon has SHA-256 `7a193b2a060803b6e5f73e6760066e72c43d962aa673c2fd81f51f38405f6c3b`.
@@ -2080,7 +2080,7 @@ Extra copied column buffers do not establish a CPU improvement.
 These are isolated experiments. They add no production execution switch or engine cutover.
 
 The [design](sql-composition-opportunities.md) records the sibling survey and integration requirements.
-The [evidence](../fixtures/host/data-layer-port/profiling/sql-composition-20261022.json) retains every measured trial, query, plan, source hash, and scope limit.
+The [evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-composition-20261022.json) retains every measured trial, query, plan, source hash, and scope limit.
 The baseline is `5616076ad60127d6ac3df0fbf60eff9f7a523ca0` with the existing typed-fact changes.
 The engine addon remains `efa0dcf04b170a10588e4661c7843a846989ce98262e68b6bc6abbb6a7dca72f`.
 
@@ -2167,7 +2167,7 @@ The copied column prototype remains a rejected CPU alternative in the isolated l
 **Decision:** keep typed column storage, SQL column demand, deferred preparation, and bounded SQL import.
 These changes remove per-row JSON maps from normal AST projections. They do not establish an end-to-end performance improvement.
 SQLite still executes the rules. The engine has one execution path and no new algorithm switches.
-The [evidence](../fixtures/host/data-layer-port/profiling/typed-facts-20261022.json) records individual trials, hashes, counters, failures, and reproduction commands.
+The [evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/typed-facts-20261022.json) records individual trials, hashes, counters, failures, and reproduction commands.
 
 ### Implementation
 
@@ -2215,8 +2215,8 @@ Missing-file contracts contribute to those findings; the source replay also chec
 The matched single-worker Python observations measure 0.264 s CPU for the state file and 1.429 s for the ten-rule snapshot.
 Native execution remains approximately 12 and 16 times slower on these selections.
 These are small selections, not the full 50-rule repository run or a comparison against its historical 1,400-second result.
-The checked [state selection](../fixtures/host/data-layer-port/profiling/typed-facts-state-one.json) and
-[ten-rule selection](../fixtures/host/data-layer-port/profiling/typed-facts-ten-four.json) preserve source hashes and snapshot expectations.
+The checked [state selection](../gate/data-layer/fixtures/host/data-layer-port/profiling/typed-facts-state-one.json) and
+[ten-rule selection](../gate/data-layer/fixtures/host/data-layer-port/profiling/typed-facts-ten-four.json) preserve source hashes and snapshot expectations.
 
 ### Storage proof and remaining costs
 
@@ -2266,7 +2266,7 @@ The baseline archive captures that complete pre-experiment SQL source and its na
 Both rebuilt comparison binaries use release dependencies, engine optimization level 1, 256 code generation units, and no LTO.
 Both use the same system-malloc shim, bundled SQLite settings, one worker, and 32-file ingestion requests.
 Parser generation now builds at optimization level 3 to fit the bounded build deadline; this changes build-tool execution only.
-The [evidence file](../fixtures/host/data-layer-port/profiling/sql-preparation-20261022.json) records binary and source hashes.
+The [evidence file](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-preparation-20261022.json) records binary and source hashes.
 
 Each cell below is the median of three fresh serial runs, with before/after order alternated.
 Detailed tracing, SQL capture, census, and external sampling are off during timing runs.
@@ -2471,7 +2471,7 @@ The public native suites passed 320 tests, with two existing skips.
 The source smoke replay passed ten positive and ten clean calls without differences.
 Both profiling and production configurations passed Clippy. Repository checks and profiling-tool tests also passed.
 
-Evidence: [value access and decoded properties](../fixtures/host/data-layer-port/profiling/value-access-20261021.json).
+Evidence: [value access and decoded properties](../gate/data-layer/fixtures/host/data-layer-port/profiling/value-access-20261021.json).
 
 ## Candidate SQL CPU root cause: 2026-10-21
 
@@ -2560,7 +2560,7 @@ Sharing demanded decoded properties across SQL statements is the next remedy for
 
 The final code retains batched preparation and one execution path.
 It adds no optional execution backend.
-The [root-cause evidence](../fixtures/host/data-layer-port/profiling/index-root-cause-20261021.json) records source identities, reference files, traces, counters, experiments, and validation.
+The [root-cause evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/index-root-cause-20261021.json) records source identities, reference files, traces, counters, experiments, and validation.
 
 Validation passes 1,202 DSL tests and 194 workspace tests, with 22 existing native skips.
 The public suites pass 320 tests, with two existing skips.
@@ -2606,7 +2606,7 @@ The comparison covers complete implementations and does not isolate the candidat
 The ten-rule batched control has no completed result within the two-minute cap.
 It therefore has no valid total CPU over/under result.
 
-The [comparison evidence](../fixtures/host/data-layer-port/profiling/index-comparison-20261021.json) records every trial, binary identity, fingerprint, metric, and percentage.
+The [comparison evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/index-comparison-20261021.json) records every trial, binary identity, fingerprint, metric, and percentage.
 
 ## Batch candidate preparation: 2026-10-21
 
@@ -2647,7 +2647,7 @@ Three repeated consumption passes issue none.
 Another regression prepares 65 plans across 64 files in three batches and reuses every result.
 Budget, retry, and discarded-dependency tests also pass.
 
-The final measurements and binary identity appear in the [batch evidence](../fixtures/host/data-layer-port/profiling/sql-batch-candidates-20261021.json).
+The final measurements and binary identity appear in the [batch evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-batch-candidates-20261021.json).
 The two-rule positive control contains all twelve source files and retains all 61 expected findings.
 It has no false positives, false negatives, or engine failures.
 The five-file quality control also checks unchanged and edited revisions.
@@ -2781,7 +2781,7 @@ The saved Rust baseline also reproduces an existing Python NFKC false negative.
 The semantic name prefilter now retains non-ASCII names for authoritative resolution.
 The existing identifier test passes after that correction.
 
-The [corpus evidence](../fixtures/host/data-layer-port/profiling/sql-corpus-index-20261021.json) records source hashes, binary identities, controls, lifecycle counters, validation, and diagnostic bytecode.
+The [corpus evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-corpus-index-20261021.json) records source hashes, binary identities, controls, lifecycle counters, validation, and diagnostic bytecode.
 The measured binary SHA-256 is `b8347b9f50101a7a9c2a089840c9eb806365d020e5509405c8193734bbea7f46`.
 Every command remains below the two-minute limit.
 Bounded runs stop after 112 seconds.
@@ -2897,7 +2897,7 @@ An earlier Rust five-file control used 2.848 CPU seconds.
 Both controls finish within the two-minute command limit.
 The SQL build also disables SQLite's global page-cache group, while the saved Rust control retains it.
 The comparison covers the complete branch change and does not isolate index storage alone.
-The [evidence](../fixtures/host/data-layer-port/profiling/sql-ast-index-20261021.json) records binary identities, source hashes, rejected trials, external samples, and passing checks.
+The [evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-ast-index-20261021.json) records binary identities, source hashes, rejected trials, external samples, and passing checks.
 
 This SQL implementation is a storage and comparison baseline, not a performance improvement.
 Candidate selection consumes 81.422 CPU seconds, against 3.722 seconds for Rust.
@@ -2923,7 +2923,7 @@ Persistent corpus indexing, SQL scope integration, and the spike's later value-p
 ## Field-aware anchors and shared input indexes: 2026-10-21, after `a92c126a`
 
 **Keep selective anchors and share one index across each file's relational inputs.**
-The [evidence](../fixtures/host/data-layer-port/profiling/anchor-execution-20261021.json) records the controls, rejected trial, navigation counters, external samples, and tests.
+The [evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/anchor-execution-20261021.json) records the controls, rejected trial, navigation counters, external samples, and tests.
 
 The implementation uses the existing kind and value postings, plus sparse postings for requested AST fields.
 Each field posting identifies the first child in that field.
@@ -3014,7 +3014,7 @@ Every command retains a deadline shorter than two minutes.
 **The remaining problem is large fact construction, repeated AST navigation, and large SQL intermediates.**
 The earlier 1,114.637-second reference also contains substantial profiling work.
 Removing that measurement flaw does not remove the engine's preparation costs.
-The [evidence](../fixtures/host/data-layer-port/profiling/cpu-memory-attribution-20261021.json) records controls, ownership counts, samples, and validation.
+The [evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/cpu-memory-attribution-20261021.json) records controls, ownership counts, samples, and validation.
 The [profiling guide](code-rule-profiling.md#measure-cpu-and-memory) describes the new tools.
 
 ### Matched Python comparison
@@ -3157,7 +3157,7 @@ No Rust unit execution pass or new full-repository benchmark is claimed.
 
 **All 60 rules now pass together over 9,021 files: 24,993 findings and zero engine failures.**
 Cold, unchanged-file, and trailing-newline edit comparisons have zero missing or extra findings.
-The [diagnosis evidence](../fixtures/host/data-layer-port/profiling/batch-six-root-cause-20261021.json) contains reports, source hashes, test receipts, SQL counters, and external samples.
+The [diagnosis evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/batch-six-root-cause-20261021.json) contains reports, source hashes, test receipts, SQL counters, and external samples.
 
 Both combined runs use the same 137,924,324-byte pinned snapshot and reference harness.
 CPU includes process user and system time, including the profiling build's residency accounting.
@@ -3358,7 +3358,7 @@ Global projected AST extraction and its SQL demand frontier remain CPU preparati
 ## Full repository verification: 2026-10-21, execution `3285b48f`
 
 **The first 50 rules pass at repository scale. Batch six fails at repository scale.**
-The [complete evidence](../fixtures/host/data-layer-port/profiling/full-repository-20261021.json) preserves reports, failures, commands, source hashes, binary hashes, and corpus coverage.
+The [complete evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/full-repository-20261021.json) preserves reports, failures, commands, source hashes, binary hashes, and corpus coverage.
 This entry changes no engine implementation or limits.
 
 ### Repository results
@@ -3463,7 +3463,7 @@ The evidence retains the actual invocation commands and ordered rule sets.
 ## Current baseline: 2026-10-21, execution `7da151b8`
 
 This entry establishes the comparison point after removal of the experimental execution paths.
-The [baseline evidence](../fixtures/host/data-layer-port/profiling/execution-baseline-7da151b8.json) contains all 15 timing runs, diagnostic summaries, and external samples.
+The [baseline evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/execution-baseline-7da151b8.json) contains all 15 timing runs, diagnostic summaries, and external samples.
 The evidence includes policy, source, binary, allocator, and measurement-code hashes.
 
 All times in this table are **process CPU milliseconds**, including user and system time.
@@ -3505,7 +3505,7 @@ The workloads run sequentially, with alternating order between rounds, on a shar
 Small differences within the observed ranges do not establish an optimization gain.
 
 The three performance selections expect zero findings.
-Positive coverage remains separate from timing: the quality policy and addon match the [promotion proof](../fixtures/host/data-layer-port/profiling/sql-shape-decisions.json).
+Positive coverage remains separate from timing: the quality policy and addon match the [promotion proof](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-shape-decisions.json).
 That proof contains 200 upstream cases, including 135 positives, plus 219 production comparisons and 177 edit transitions.
 This baseline reuses that proof. It does not claim another corpus replay.
 
@@ -3596,7 +3596,7 @@ The first budget model charges native visits too heavily and treats derived outp
 The corrected model retains limits and cancellation without those duplicate charges.
 This result requires both positive corpus coverage and the larger pinned workload.
 
-Evidence: [native relation experiments](native-relations-spikes.md), [implementation report](native-relations-implementation.md), and [measurements](../fixtures/host/data-layer-port/profiling/native-relations-implementation.json).
+Evidence: [native relation experiments](native-relations-spikes.md), [implementation report](native-relations-implementation.md), and [measurements](../gate/data-layer/fixtures/host/data-layer-port/profiling/native-relations-implementation.json).
 
 ### 2026-10-20: shared syntax preparation
 
@@ -3605,7 +3605,7 @@ The implementation at `c4bd76bf` shares immutable syntax facts and uses direct p
 SQL no longer reconstructs those facts for the quality groups.
 This change addresses the expensive preparation that limited earlier native-access experiments.
 
-Evidence: [requirement](shared-syntax-requirement.md), [implementation](shared-syntax-implementation.md), and [controlled measurements](../fixtures/host/data-layer-port/profiling/shared-syntax-metrics.json).
+Evidence: [requirement](shared-syntax-requirement.md), [implementation](shared-syntax-implementation.md), and [controlled measurements](../gate/data-layer/fixtures/host/data-layer-port/profiling/shared-syntax-metrics.json).
 
 ### 2026-10-21: broad producer passes
 
@@ -3617,7 +3617,7 @@ Tests keep the number of passes constant as roots, files, and policies increase.
 The motivation includes the future GPU execution contract. This is a CPU reference, not a GPU speed measurement.
 Batching alone does not establish a large CPU gain.
 
-Evidence: [execution contract](gpu-producer-execution-contract.md) and [producer measurements](../fixtures/host/data-layer-port/profiling/batched-producer-evidence.json).
+Evidence: [execution contract](gpu-producer-execution-contract.md) and [producer measurements](../gate/data-layer/fixtures/host/data-layer-port/profiling/batched-producer-evidence.json).
 
 ### 2026-10-21: complete SQL instrumentation
 
@@ -3665,7 +3665,7 @@ UNION ALL removes sorts and lowers VM counts. The materialized CTE and unpivot r
 Those counter reductions do not offset their other execution costs.
 The accepted combination retains the original root query.
 
-Evidence: [experiment report](sql-shape-spikes.md) and [individual runs and counters](../fixtures/host/data-layer-port/profiling/sql-shape-spikes.json).
+Evidence: [experiment report](sql-shape-spikes.md) and [individual runs and counters](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-shape-spikes.json).
 
 ### 2026-10-21: promotion and removal of optional paths
 
@@ -3681,7 +3681,7 @@ Live tables and cursors retain their own references.
 
 Validation covers 400 native tests in each build, the producer gate, the positive corpus, production comparisons, and edit transitions.
 Typechecking and Clippy pass in both build modes.
-The [promotion evidence](../fixtures/host/data-layer-port/profiling/sql-shape-decisions.json) records the exact scope and hashes.
+The [promotion evidence](../gate/data-layer/fixtures/host/data-layer-port/profiling/sql-shape-decisions.json) records the exact scope and hashes.
 
 ### 2026-10-24: R5-A acceptance starts with a failing ownership test
 
@@ -4002,7 +4002,7 @@ The implementation uses one deduplication boundary for each alternative family a
 It preserves known kind domains and duplicate-free results.
 
 Optional capture fallbacks provide another proven source of unnecessary work.
-The [public-api rule](../packs/data-layer/candidates/rules/data-layer-public-api-triples.json#L237) includes an unrestricted candidate arm beside structural capture arms.
+The [public-api rule](../gate/data-layer/packs/data-layer/candidates/rules/data-layer-public-api-triples.json#L237) includes an unrestricted candidate arm beside structural capture arms.
 The compiler now skips other candidate arms when one already covers the entire input scope.
 The authoritative matcher retains the authored capture order and complete predicate semantics.
 A test requires that gate to work before any additional producer can enter admission.
@@ -4587,7 +4587,7 @@ Cold CPU is 7.182 times the passing 125.804-second reference.
 It is also 0.50% above the previous failed 899.070-second measurement.
 These measurements do not demonstrate aggregate CPU recovery.
 Failure-only snapshot copying adds work after the error, so this failed timing is diagnostic.
-The [checked receipt](../fixtures/host/data-layer-port/profiling/recovery-full-candidate-20261025.json) preserves identities and measurements.
+The [checked receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/recovery-full-candidate-20261025.json) preserves identities and measurements.
 
 Across all phases, exclusive counters record 453.404 seconds in selection, 206.421 in index preparation, and 93.175 in physical planning.
 The earlier failed run records 418.068, 183.807, and 132.476 seconds respectively.
@@ -4635,7 +4635,7 @@ The correction passes both cases and checks the complete expected edge sets unde
 Both comparisons retain identical typed-row digests and counts.
 The edge set contains 790,115 rows. These measurements include result hashing and exclude ingestion and the original allowance.
 Each replay command has a 110-second deadline. Other diagnostic work overlaps the replays.
-The [checked experiments](../fixtures/host/data-layer-port/profiling/dead-code-demand-recovery-20261025.json) retain results and limitations.
+The [checked experiments](../gate/data-layer/fixtures/host/data-layer-port/profiling/dead-code-demand-recovery-20261025.json) retain results and limitations.
 
 A separate experiment changes the edge union to UNION ALL with one outer DISTINCT.
 It removes all sort operations, but edge CPU increases from 34.738 to 39.815 seconds.
@@ -4647,7 +4647,7 @@ Aggregate recovery remains open. No successful full-rule-set performance result 
 
 The corrected dead-code policy completes the full original repository oracle with 4,931 expected and actual findings.
 It reports zero false positives, false negatives, or engine failures over all 9,021 files.
-The [full validation receipt](../fixtures/host/data-layer-port/profiling/dead-code-full-validation-20261025.json) preserves identities and the concurrent-timing qualification.
+The [full validation receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/dead-code-full-validation-20261025.json) preserves identities and the concurrent-timing qualification.
 Cold CPU is 157.516 seconds, wall time is 200.574 seconds, and OS peak RSS is 2,702,163,968 bytes.
 That single-rule measurement overlaps other work and does not establish aggregate performance acceptance.
 
@@ -4688,7 +4688,7 @@ Both return 3,876 identical posting rows. CPU changes from 2.968 to 0.033 second
 Approximate VM work changes from 81,708,000 to 84,000 steps.
 This probe uses host SQLite 3.54.1 and omits tape decoding. It is component evidence, not aggregate acceptance.
 The production regression uses bundled SQLite 3.53.2.
-The [checked experiment](../fixtures/host/data-layer-port/profiling/regex-file-scope-recovery-20261026.json) preserves these qualifications and full corpus coverage.
+The [checked experiment](../gate/data-layer/fixtures/host/data-layer-port/profiling/regex-file-scope-recovery-20261026.json) preserves these qualifications and full corpus coverage.
 Keep the bounded regex path. It removes work proportional to unrelated retained vocabulary without an execution switch.
 The first complete repository measurement of this replacement remains required.
 
@@ -4698,7 +4698,7 @@ The frozen older addon completes the repository with 2,714.768 cold CPU seconds 
 Compilation takes 1.985 CPU seconds and 3.358 wall seconds.
 OS peak RSS is 12,607,602,688 bytes (11.742 GiB).
 The run overlaps development, replays, and external sampling. Its timing is diagnostic.
-The [checked receipt](../fixtures/host/data-layer-port/profiling/recovery-all-60-candidate-20261025.json) records the frozen identities.
+The [checked receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/recovery-all-60-candidate-20261025.json) records the frozen identities.
 
 It reports 20,062 of 24,993 findings, zero false positives, and seven failures.
 All 4,931 missing findings belong to the older dead-code policy; its correction passes the separate full repository oracle.
@@ -4727,7 +4727,7 @@ Typed projection storage decreases from 93,716,350 to 11,696,974 bytes, an 87.5%
 Driver peak RSS changes only from 1,655,357,440 to 1,649,115,136 bytes.
 Census CPU changes from 20.336 to 18.423 seconds, but concurrent work prevents a timing acceptance claim.
 This addresses retained column padding. It does not prove full-repository RSS recovery.
-The [checked census](../fixtures/host/data-layer-port/profiling/projection-capacity-recovery-20261026.json) preserves scope and identities.
+The [checked census](../gate/data-layer/fixtures/host/data-layer-port/profiling/projection-capacity-recovery-20261026.json) preserves scope and identities.
 
 
 ### Quality imports and conditional ordinal demand (2026-10-26)
@@ -4743,7 +4743,7 @@ The complete contract clause finishes without errors or findings on that file.
 Its original interrupted trace records 114,708,243 VM steps; the complete corrected trace records 47,135,698.
 These totals cover different completion states. No allowance increases apply.
 Red commit `c830a02f` bounds import collection and checks cross-file node-ID collisions.
-The [checked trace](../fixtures/host/data-layer-port/profiling/quality-import-demand-recovery-20261026.json) preserves stage counters.
+The [checked trace](../gate/data-layer/fixtures/host/data-layer-port/profiling/quality-import-demand-recovery-20261026.json) preserves stage counters.
 
 Red commit `8beede3e` requires conditional ordinals only for four demanded parent kinds.
 The correction numbers every child within those complete parent partitions.
@@ -4768,7 +4768,7 @@ The two complete result queries now finish with zero failures and findings.
 Their VM work changes from interrupted lower bounds of 89,917,664 and 91,771,764 steps to 288,939 and 275,619 steps.
 These are traced component results. They do not establish full-repository CPU or RSS recovery.
 A separate experiment that hides the range bound inside CASE still fails both files. It is rejected.
-The [checked comparison](../fixtures/host/data-layer-port/profiling/projection-scope-recovery-20261026.json) retains each file's counters.
+The [checked comparison](../gate/data-layer/fixtures/host/data-layer-port/profiling/projection-scope-recovery-20261026.json) retains each file's counters.
 
 The same investigation found repeated identifier scans in module constant propagation.
 Red commit `2d296f25` measures 64,000 text reads for 80 bindings and 800 identifier uses.
@@ -4800,7 +4800,7 @@ Alias resolution needs import declarations and direct dotted-name or aliased-imp
 The narrowed selector retains those entries. Other selector arms retain syntax needed by bodies and annotations.
 A production-policy native regression changes 400 unused identifier observations to zero over 100 imports.
 It retains all 100 import declarations, aliased imports, and direct dotted names.
-The [checked preparation receipt](../fixtures/host/data-layer-port/profiling/conditional-preparation-recovery-20261026.json) records stored widths and unchanged limits.
+The [checked preparation receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/conditional-preparation-recovery-20261026.json) records stored widths and unchanged limits.
 The complete conditional repository check remains required before closing this failure.
 
 The fixed SQL accounting diagnostic records 296 engine submissions and 45 SQLite internal executions.
@@ -4813,7 +4813,7 @@ The column-only full conditional experiment still fails at `conditional_function
 Its trace attributes 373,032,217 VM steps and 5.485 CPU seconds to constructing the node relation.
 Four node indexes cost another 4.365 CPU seconds. Ownership construction costs 4.295 CPU seconds and 108,719,114 VM steps.
 These costs precede the later failure. Narrower function storage alone does not close the outer budget failure.
-The [two diagnostic receipts](../fixtures/host/data-layer-port/profiling/conditional-budget-diagnosis-20261026.json) preserve both failures.
+The [two diagnostic receipts](../gate/data-layer/fixtures/host/data-layer-port/profiling/conditional-budget-diagnosis-20261026.json) preserve both failures.
 The subsequent run includes the narrowed import selector. Its result remains pending.
 
 All 51 final production-shape tests pass. Static checks and the profiling suite pass.
@@ -4826,7 +4826,7 @@ No own build, test, or profiling workload will overlap their timing intervals.
 
 The narrowed-import conditional check completes all 9,021 files with zero execution failures.
 Its output matches the clause's empty repository diagnostic oracle. The original positive corpus also remains green.
-The work allowances are unchanged. The [full validation receipt](../fixtures/host/data-layer-port/profiling/conditional-full-validation-20261026.json) records artifact identities and limits.
+The work allowances are unchanged. The [full validation receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/conditional-full-validation-20261026.json) records artifact identities and limits.
 This closes the reproduced conditional execution failure; it does not establish combined-rule performance acceptance.
 The frozen first-50 measurement starts next, followed by all 60. Neither run overlaps this agent's builds, tests, or profiling probes.
 
@@ -4844,7 +4844,7 @@ Cold CPU is 25.54% below the earlier failed 903.546-second candidate.
 That earlier run omitted 4,931 findings and performed failure snapshot copying, so it is not a clean correctness-matched speed baseline.
 The new complete result still uses 5.348 times the passing 125.804-second pre-SQL CPU reference.
 Peak RSS is 2.86% above the earlier failed candidate. The sparse-column improvement does not establish full-workload RSS recovery.
-The [checked receipt](../fixtures/host/data-layer-port/profiling/recovery-first50-full-20261026.json) retains counters and resource accounting.
+The [checked receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/recovery-first50-full-20261026.json) retains counters and resource accounting.
 Aggregate recovery remains rejected. The sequential all-60 measurement starts after this process exits.
 
 
@@ -4860,7 +4860,7 @@ Cold CPU is only 6.41% below the earlier failed 2,714.768-second candidate.
 OS peak RSS decreases 45.57% from 12,607,602,688 bytes.
 The earlier candidate reports seven failures and includes snapshot work, so the CPU comparison remains qualified.
 No own builds, tests, traces, census, replay copies, or external samples overlap the new sequential measurements.
-The [checked receipt](../fixtures/host/data-layer-port/profiling/recovery-all60-full-20261026.json) preserves identities, accounting, and the comparison limits.
+The [checked receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/recovery-all60-full-20261026.json) preserves identities, accounting, and the comparison limits.
 
 The final deferred apply alone takes 1,392.224 CPU seconds and 1,446.935 wall seconds.
 It includes deferred file analyses as well as repository-wide clauses; it is not one global SQL query.
@@ -4877,7 +4877,7 @@ The generator helper supports both plans, but the earlier checked-policy update 
 The bounded-work regression now executes every applicable native contract plan and fails on the second plan before the correction.
 The checked policy now applies the same existing subtree producer to both consumers, with their independent file scopes.
 All 16 shared-SQL tests and the complete original quality fixture group pass.
-The [bounded comparison](../fixtures/host/data-layer-port/profiling/all-contract-import-recovery-20261026.json) preserves result-query CPU and external samples.
+The [bounded comparison](../gate/data-layer/fixtures/host/data-layer-port/profiling/all-contract-import-recovery-20261026.json) preserves result-query CPU and external samples.
 This policy correction follows the frozen full 50/60 measurements; those reports retain their original hashes.
 
 The 128-file all-ten-rule profile completes within 14 seconds, with no engine failures.
@@ -4901,7 +4901,7 @@ The corrected CPU-only trace records the same 5,259 RSS boundaries with zero all
 Its deferred CPU changes from 6.775 to 2.174 seconds. The new diagnostic overlaps Clippy and is not a controlled engine-speed comparison.
 The explicit-census check retains allocator statistics at all 266 observed boundaries.
 External samples identify allocator enumeration directly; the mocked-probe regression checks that it is never called in CPU-only mode.
-The [checked receipt](../fixtures/host/data-layer-port/profiling/cpu-trace-overhead-recovery-20261026.json) records identities and qualifications.
+The [checked receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/cpu-trace-overhead-recovery-20261026.json) records identities and qualifications.
 Full repository acceptance timings use tracing off and do not contain this overhead.
 
 The rebuilt DSL suite passes 1,540 tests, with 23 explicit ignores.
@@ -4963,7 +4963,7 @@ No production execution alternative is added.
 
 The [spike report](cold-cpu-spike-results.md) records decisions for every aspect of the [workplan](cold-cpu-recovery-plan.md).
 The plan now contains four bounded implementation deliveries, their regression ladders, budget isolation requirements, and full-resource gates.
-The [attribution receipt](../fixtures/host/data-layer-port/profiling/cold-cpu-attribution-20261026.json) and [experiment receipt](../fixtures/host/data-layer-port/profiling/cold-cpu-architectural-spikes-20261026.json) preserve identities and measured trials.
+The [attribution receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/cold-cpu-attribution-20261026.json) and [experiment receipt](../gate/data-layer/fixtures/host/data-layer-port/profiling/cold-cpu-architectural-spikes-20261026.json) preserve identities and measured trials.
 Raw evidence remains under `.rerail/profiles/cold-cpu-spikes-20261026/`.
 
 The complete traced all-60 run passes across 9,021 files: 24,993 expected and actual findings, with zero FP, FN, or failures.
@@ -5471,7 +5471,7 @@ No new Linear issues or production optimization flags were added.
 
 ### Recover rule-port continuation after the performance work (2026-11-03)
 
-The [restart plan](data-layer-port-restart.md) and [machine-readable inventory](../fixtures/host/data-layer-port/restart-20261103.json) recover the complete original 142-check scope.
+The [restart plan](data-layer-port-restart.md) and [machine-readable inventory](../gate/data-layer/fixtures/host/data-layer-port/restart-20261103.json) recover the complete original 142-check scope.
 A fresh read-only Git inventory confirms 60 candidate policies matching batches 1–6 exactly, with 82 unported checks in batches 7–15.
 The associated-test survey has no parse errors. Batch seven has ten associated modules and 168 test definitions before parameter expansion.
 These are survey results, not new oracle, native parity, or performance passes.
@@ -5514,7 +5514,7 @@ Jeremy approved integrated-engine compatibility and capabilities as part of the 
 
 The seven candidates pass 163 recorded observations: 109 positive and 54 clean.
 Snapshot and resident-workspace APIs have zero finding differences and zero failures.
-The [receipt](../fixtures/host/data-layer-port/batch-07-local-evidence.json) records policies, addon identity, and every replay result.
+The [receipt](../gate/data-layer/fixtures/host/data-layer-port/batch-07-local-evidence.json) records policies, addon identity, and every replay result.
 The integrated addon is a clean normal-allocator build of `9bc955cc5`.
 These small source observations are correctness evidence, not a full-repository performance comparison.
 
@@ -5587,7 +5587,7 @@ Legacy interruptions remain under investigation. The cumulative gate has not pas
 The complete legacy intent source reproduces an interrupted final query.
 The unchanged pinned reporter returns zero findings on that same file.
 The regression reuses the full source already present in `batch-06-recording.json`.
-Its byte count and SHA-256 are recorded in the [engine regression receipt](../fixtures/host/data-layer-port/batch-07-engine-regressions.json).
+Its byte count and SHA-256 are recorded in the [engine regression receipt](../gate/data-layer/fixtures/host/data-layer-port/batch-07-engine-regressions.json).
 
 SQL instrumentation identifies the `LEG-083` arm.
 It starts from syntax nodes and asks a correlated question over eager anchors and active functions.
@@ -5699,8 +5699,8 @@ The 24 sixth-batch shards retain complete observation domains and aggregate posi
 Both worktrees pass typechecking. The 32 integrated frontend/schema/options tests pass.
 The broad native test qualification remains: 2,515 passes, one inherited snapshot failure, and 67 ignored tests.
 
-The [batch receipt](../fixtures/host/data-layer-port/batch-07-evidence.json) records coverage, retained calls, source identities, and policy hashes.
-The [engine pin](../fixtures/host/data-layer-port/batch-07-engine.json) records the companion branch and build contract.
+The [batch receipt](../gate/data-layer/fixtures/host/data-layer-port/batch-07-evidence.json) records coverage, retained calls, source identities, and policy hashes.
+The [engine pin](../gate/data-layer/fixtures/host/data-layer-port/batch-07-engine.json) records the companion branch and build contract.
 The [full measurement](performance-decisions/data-layer-batch-seven-20261103.json) retains the complete execution and close receipts.
 There are now 70 candidate policies out of the pinned 142 checks, leaving 72.
 The pack remains inactive. Signing workflows, uncaptured integration tests, and wave/GPU migration remain separate contracts.
@@ -5735,7 +5735,7 @@ A real worktree supplies it, but inherited `GIT_PAGER` still violates the upstre
 Removing only that variable makes all 933 sixth-batch tests pass.
 No scan guard or upstream assertion was disabled or changed.
 
-The [testsuite receipt](../fixtures/host/data-layer-port/testsuite-positive-coverage-20261103.json) records per-rule native positive and clean counts.
+The [testsuite receipt](../gate/data-layer/fixtures/host/data-layer-port/testsuite-positive-coverage-20261103.json) records per-rule native positive and clean counts.
 The [coverage report](data-layer-testsuite-coverage.md) separates oracle tests, native observations, controls, and remaining exclusions.
 The resolved production post-op program has identical before/after SHA-256 `e6d5f2ff3ab1166ae96aa9718231568520f7da2bd022645e025d02a5fce732d8`.
 The historical repository benchmark remains unchanged; these tests do not establish a new performance result.
@@ -6047,7 +6047,7 @@ The engine and rule set differ. These results do not establish a speed compariso
 The earlier roughly 1,400-second measurement is also a different workload and remains historical.
 
 The [measurement receipt](performance-decisions/data-layer-batch-eight-20261104.json) preserves the measured phases and identities.
-The [batch evidence](../fixtures/host/data-layer-port/batch-08-evidence.json) binds the final 522 observations and 50 transitions to the same addon.
+The [batch evidence](../gate/data-layer/fixtures/host/data-layer-port/batch-08-evidence.json) binds the final 522 observations and 50 transitions to the same addon.
 All 80 compiled digests match the repository receipt and current policy files.
 The compatibility tool now records both each source-file hash and its authored compiled digest.
 Typechecking also passes after that instrumentation change.
@@ -6121,7 +6121,7 @@ The integrated frontend and compiler accept all 80 current policies.
 All 50 batch-eight edit, restoration and removal transitions pass.
 The native Rust suite was not rerun because this audit changes no engine code.
 
-The new [case ledger](../fixtures/host/data-layer-port/batch-08-case-coverage.json) lists every batch-eight case and its actual evidence.
+The new [case ledger](../gate/data-layer/fixtures/host/data-layer-port/batch-08-case-coverage.json) lists every batch-eight case and its actual evidence.
 The audit rejects dropped calls, duplicate calls and finding differences, even when other positive coverage remains.
 Its input hashes and retained-call inventory have a regression gate.
 The ledger records scanner observations for 247 cases and discovery observations for five cases, with one overlap.
@@ -6131,8 +6131,8 @@ These source comparisons do not certify the helper assertions that inspect them.
 Diagnostic prose remains outside comparison unless it forms the recorded diagnostic identity.
 This boundary is explicit; passing Python tests does not imply complete translation of their internal assertions.
 
-The [80-rule receipt](../fixtures/host/data-layer-port/testsuite-positive-coverage-20261104.json) records current counts, input hashes and qualifications.
-The [batch evidence](../fixtures/host/data-layer-port/batch-08-evidence.json) records current policy hashes and the unchanged addon.
+The [80-rule receipt](../gate/data-layer/fixtures/host/data-layer-port/testsuite-positive-coverage-20261104.json) records current counts, input hashes and qualifications.
+The [batch evidence](../gate/data-layer/fixtures/host/data-layer-port/batch-08-evidence.json) records current policy hashes and the unchanged addon.
 The historical complete-repository receipt retains its original policy digests.
 It was not relabeled after the three diagnostic projections changed.
 
@@ -6153,7 +6153,7 @@ New Python audit tools and tests use subdirectories. They add no directory-size 
 
 The previous audit did not translate semantic helper assertions. Its Python pass count overstated the native evidence.
 This delivery replaces those calls and adds a guard against original semantic execution.
-The [native assertion receipt](../fixtures/host/data-layer-port/batch-08-native-assertions.json) binds the tested policies, adapters and addon by hash.
+The [native assertion receipt](../gate/data-layer/fixtures/host/data-layer-port/batch-08-native-assertions.json) binds the tested policies, adapters and addon by hash.
 
 The first direct run exposed eight purity failures and eight callback failures.
 A subsequent lazy-architecture run exposed missing diagnostic symbols, messages and stable identities.
@@ -6403,7 +6403,7 @@ The corpus combines 133 upstream linter/framework cases, 13 adjacent codemod cas
 One native instrumentation translation measures actual parse and module-walk counters.
 The other 244 API results require complete-value parity.
 Detector-disabled controls must fail the original positive assertions for all ten checks.
-The final [assertion receipt](../fixtures/host/data-layer-port/batch-09-native-assertions.json) records each native execution path.
+The final [assertion receipt](../gate/data-layer/fixtures/host/data-layer-port/batch-09-native-assertions.json) records each native execution path.
 
 The new service-rule repository test exposed concrete preparation defects:
 
@@ -6428,7 +6428,7 @@ No capacity or statement limit increased.
 The new canonical-column kernel uses twenty files, 44,980 source bytes and 400 findings.
 Both retained addons execute the same kernel. Each row reports the median of three fresh processes.
 Compilation is separate from evaluation. The command also performs one repeated evaluation.
-The [kernel receipt](../fixtures/host/data-layer-port/batch-09-kernels.json) retains all six runs and addon hashes.
+The [kernel receipt](../gate/data-layer/fixtures/host/data-layer-port/batch-09-kernels.json) retains all six runs and addon hashes.
 
 | Retained implementation | Compile CPU, Node | Cold evaluation CPU, Node | Cold evaluation wall | Whole-command family CPU | Maximum RSS |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -6473,7 +6473,7 @@ The plan-composition producer is only called by the test harness; the default ru
 Four upstream MCP composition cases were omitted. They pass when explicitly selected through the adapted harness.
 Neither lazy-SQL entry point has a dedicated upstream pytest module; the earlier recovered-tests statement was incorrect.
 
-The [audit](data-layer-batch-nine-audit.md) and [evidence](../fixtures/host/data-layer-port/batch-09-audit-20261105.json) retain the reproductions.
+The [audit](data-layer-batch-nine-audit.md) and [evidence](../gate/data-layer/fixtures/host/data-layer-port/batch-09-audit-20261105.json) retain the reproductions.
 The 201-case historical receipt remains valid evidence of those runs, rather than complete batch-nine acceptance.
 The completion claim is withdrawn. No Linear issues were created.
 
@@ -6519,7 +6519,7 @@ SQL retains the detector predicates. Probe failures fail closed.
 The runner rejects stale snapshot source. Fresh bytecode paths also cover same-size edits with unchanged modification times.
 Low-level compiled composition rules require explicit observations; the supported CLI and host API supply them automatically.
 
-The [batch report](data-layer-batch-nine.md) and [assertion receipt](../fixtures/host/data-layer-port/batch-09-native-assertions.json) record reproduction and identities.
+The [batch report](data-layer-batch-nine.md) and [assertion receipt](../gate/data-layer/fixtures/host/data-layer-port/batch-09-native-assertions.json) record reproduction and identities.
 The previous kernel receipt remains historical. It does not measure this repaired build.
 No cumulative cold repository run or new performance claim forms part of this repair.
 No capacity or statement limit increased. No Linear issues were created.
@@ -6528,7 +6528,7 @@ No capacity or statement limit increased. No Linear issues were created.
 
 The previous repair claim at `8e4cede5f` still overstated completion.
 A passing DTO comparison did not establish correct public diagnostics or configured-plugin behavior.
-The [second audit evidence](../fixtures/host/data-layer-port/batch-09-public-audit-20261105.json) preserves the actual failing output.
+The [second audit evidence](../gate/data-layer/fixtures/host/data-layer-port/batch-09-public-audit-20261105.json) preserves the actual failing output.
 
 BEI035 reported line three in a SQL field, but its public span pointed to line one.
 Both adapters read the SQL field, so both passed the same incorrect production result.
@@ -6577,7 +6577,7 @@ The final combined TypeScript acceptance run passes 86 tests, including 30 publi
 ## 2026-11-05 — Third audit: equality and presence boundaries
 
 The audit of `e5d9cc2a7` finds two more SQL translation defects.
-The [audit evidence](../fixtures/host/data-layer-port/batch-09-third-audit-20261105.json) retains six failing API evaluations across both native modes.
+The [audit evidence](../gate/data-layer/fixtures/host/data-layer-port/batch-09-third-audit-20261105.json) retains six failing API evaluations across both native modes.
 
 The BEI007 predicate casts canonical numeric text to a SQLite real value.
 Overflowing Python literals produce infinity. SQLite casts their text to zero, so the port reports a false positive.
@@ -6632,7 +6632,7 @@ The other 29 added cases test aliases, annotation forms, parser errors, source r
 Disabled detectors cause 145 original assertions to fail. Every one of the ten detectors is rejected by positive controls.
 Both APIs also match 61 configured-default observations from actual upstream reporters and file discovery.
 
-The [assertion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds the complete runs and controls to their engine and implementation files.
+The [assertion receipt](../gate/data-layer/fixtures/host/data-layer-port/batch-10-native-assertions.json) binds the complete runs and controls to their engine and implementation files.
 The unchanged pytest runs each finish in about 70 seconds under concurrent verification load.
 These times describe assertion execution. They are not cold performance baselines.
 
@@ -7140,7 +7140,7 @@ A temporary duplicate fixture-root resolver was removed in favor of the shared P
 
 The review targets `9ceb4c8ef` and the pinned source.
 It uses the restart plan's per-batch and migration criteria.
-The [review](data-layer-batch-ten-dod-audit.md) and [record](../fixtures/host/data-layer-port/batch-10-dod-audit-20261106.json) retain the findings.
+The [review](data-layer-batch-ten-dod-audit.md) and [record](../gate/data-layer/fixtures/host/data-layer-port/batch-10-dod-audit-20261106.json) retain the findings.
 
 Six original scenarios run through both public native APIs in bounded commands.
 Two default scenarios expose missing optimizer findings: malformed verifier syntax suppresses document checks.
@@ -8011,3 +8011,32 @@ User direction: use Final rerail shape as the active engine and stop extending t
 - Preserved the unfinished 66th translation as a draft; 34 of the 100 translations remain absent. No full migration acceptance is claimed.
 
 The five-argument regex occurrence producer was developed after the engine merge already included by Final shape. It requires a focused forward port onto this baseline, not restoration of old engine files. Root builds and acceptance results will be recorded below.
+
+### Root build and acceptance results
+
+The adoption commit `56fdb0a5a` has Final shape `879486272` as its second parent. Its native code, frontend, build files, and locks have no diff against that parent. The sole subsequent native change is the positional regex forward port, committed after failing regressions (`36a7cef59`, then `cbd504d18`).
+
+Builds used the root checkout, Rust 1.97.1, and default language features. The unchanged headless CLI build took 82 seconds. The final headless CLI build took 37.38 seconds. The standard unit-test builds took 157 seconds before the repair and 69 seconds after it. These are compile wall times, not execution benchmarks. Builds were allowed to finish under the existing authorization.
+
+The final frozen root CLI is `38164d10366011ccfb131813f753d728f4b44e71f47fe066c3b07045ab3b4b06`. Reader receipts identify only libraries under the active root checkout.
+
+| Check | Result |
+| --- | --- |
+| Draft policy reader | 66 passed; baseline rejected only the missing positional regex API |
+| Rule-reader unit suite, excluding the broad inventory check | 49 passed, two upstream ignored writer/report tests |
+| Simplifier unit suite | Nine passed |
+| Syntax-view unit suite | 14 passed |
+| File-local unit suite | Six passed, one upstream ignored benchmark |
+| Python tooling | 44 passed |
+| Gate format contracts | Two passed |
+| API-import original tests | Four passed; four complete API returns; no omitted calls or semantic fallbacks |
+| API-import supplemental APIs and reporting | 50 API cases and 49 reporter cases passed |
+| API-import positive mutation control | Original positive assertion rejected an empty native detector |
+| Long-source reporter regressions | All 36 cases passed on both baseline and final root builds |
+| Unfinished error-handling port | All five original tests passed on the final root build; broader acceptance remains outstanding |
+
+The full library inventory unit test exceeded the fixed 115-second execution limit in a combined run and again in isolation. Both attempts are retained as timeouts. This test is not certified. The first unit-test build used `headless`, which removes addon methods called by workspace tests; it failed with 15 compile errors. The standard unit-test build then succeeded. The first API-import replay omitted the fixed hash seed; that run was retained but replaced by a passing replay with `PYTHONHASHSEED=0`.
+
+The first Vitest command also discovered obsolete test copies under `.rerail`. Discovery now excludes that workspace data. The authoring contract resides in Final shape's existing data-layer gate. The two gate tests pass there. No full repository cold execution was run.
+
+Evidence: [root adoption and focused acceptance](../gate/data-layer/fixtures/host/data-layer-port/rr-modern-root-adoption.json.gz) and [original assertions with positive control](../gate/data-layer/fixtures/host/data-layer-port/rr-modern-root-direct-contracts.json.gz). The inventory remains 66 drafts and 34 absent translations. Full migration acceptance remains false. Continue ports against the root engine.

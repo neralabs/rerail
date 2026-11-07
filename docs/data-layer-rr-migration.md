@@ -103,7 +103,7 @@ Existing signatures and signed hashes remain input contracts. Do not re-sign rep
 
 The independent inventory now covers 125 original modules from 4,467 scanned test files.
 It retains 5,754 detector-related cases, 33 integration cases, and 52 workflow cases.
-[The inventory](../fixtures/host/data-layer-port/rr-original-test-inventory.json) also retains each collected assertion site and definition hash.
+[The inventory](../gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory.json) also retains each collected assertion site and definition hash.
 Collection does not certify native execution. Four checks have no detector-imported suite at this source revision:
 `bootstrap_eager_resolve`, `bootstrap_lazy_sql`, `plan_optimizer_v2`, and `rust_sql_grammar_boundary`.
 Those checks need explicit source-derived contracts, with their provenance stated separately.
@@ -147,7 +147,7 @@ The reports compare complete API returns. For supported legacy normalization, th
 Both executions use `PYTHONHASHSEED=0`: one test constructs source from a Python set.
 The original source recording has three skipped async cases. The native run executes their reviewed assertion transfers.
 
-[The compressed receipt](../fixtures/host/data-layer-port/rr-direct-source-assertions.json.gz) retains the source recording and all eight shard reports.
+[The compressed receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-direct-source-assertions.json.gz) retains the source recording and all eight shard reports.
 It binds source files, rule includes, the frozen engine, and harness files.
 The lossless source recording also preserves complete dataclass fields, tuple shape, snippets, order, and duplicates.
 All 317 recorded detector API returns receive that comparison, including returns the legacy normalizer could not represent.
@@ -191,7 +191,7 @@ The original regex and helper assertions execute through native contracts.
 The original CLI still performs host-side argument handling and signature verification.
 This does not certify native configured reporting or native signature verification.
 
-[The kernel profile](../fixtures/host/data-layer-port/rr-line-vocabulary-profile.json) records one cold sample per build over 2,000 logical lines.
+[The kernel profile](../gate/data-layer/fixtures/host/data-layer-port/rr-line-vocabulary-profile.json) records one cold sample per build over 2,000 logical lines.
 Process CPU fell from 1.49 seconds to 0.99 seconds; maximum RSS rose from 94,879,744 to 104,251,392 bytes.
 The complete native diagnostics match. Other assertion processes were active, so wall times are descriptive only.
 These results do not establish a repository-wide improvement.
@@ -212,7 +212,7 @@ The eleven direct original modules pass all **771 test bodies**, without native-
 They make 714 native calls and compare all 430 recorded API returns.
 The source recording has 768 passes and three skips. The native run executes the three reviewed assertion transfers.
 
-[The direct-suite receipt](../fixtures/host/data-layer-port/rr-eleven-direct-contracts.json.gz) retains the source recording, sixteen shards, and eleven positive mutation controls.
+[The direct-suite receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-eleven-direct-contracts.json.gz) retains the source recording, sixteen shards, and eleven positive mutation controls.
 Each control disables detection and requires an original positive test to fail its complete API comparison.
 The lifecycle control stops before two later calls in that same test. Its receipt retains those unreached calls.
 Passing runs require every recorded call.
@@ -268,12 +268,12 @@ All thirteen disabled-policy controls reject an original positive case.
 The native run has no skips, missing recorded calls, or source detector fallbacks.
 The offline source run has 966 passes and three reviewed skips. The native run transfers those three assertions.
 
-[The receipt](../fixtures/host/data-layer-port/rr-thirteen-direct-contracts.json.gz) retains the recording, 24 native shards, and thirteen mutation controls.
+[The receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-thirteen-direct-contracts.json.gz) retains the recording, 24 native shards, and thirteen mutation controls.
 It lists 273 cases without native calls. Those assertions ran, but do not count as native detector coverage.
 Forty-eight observations lack the legacy normalized DTO. Their complete source API returns still receive comparisons.
 The receipt explicitly sets `fullMigrationAcceptance` to false.
 
-[Additional contracts](../fixtures/host/data-layer-port/rr-native-traversal-contracts.json.gz) retain 47 ForwardRef cases and 37 type-safety cases.
+[Additional contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-native-traversal-contracts.json.gz) retain 47 ForwardRef cases and 37 type-safety cases.
 The same engine also passes the seventeen ClassVar and thirty-one Rust API contracts in that bundle.
 These are source-derived cases, with zero original pytest cases claimed.
 They cover traversal order, state restoration, Unicode, invalid input, explicit file scope, and source-argument gates.
@@ -303,7 +303,7 @@ Its commit is `aa7ce065a5e9a9bee148a7905dde6be95628304b`.
 The frozen executable SHA-256 is `dce138fed59e4f7c565b8e1d4c1f81da5516f2746c5680516992f3cf0ce67d70`.
 Twenty-four focused reader tests pass, including the metadata regression.
 
-[Reporter contracts](../fixtures/host/data-layer-port/rr-type-safety-reporting-contracts.json.gz) compare all six fields returned by the unchanged upstream plugin reporter.
+[Reporter contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-type-safety-reporting-contracts.json.gz) compare all six fields returned by the unchanged upstream plugin reporter.
 All 26 cases pass. A disabled native policy fails the original positive reporter value.
 The native reporter harness imports no source detector modules. It supplies every case document to the native engine.
 The native rule selects production roots and exclusions itself, in SQL.
@@ -313,7 +313,7 @@ The rule now emits upstream labels, preserves the raw text API, and follows the 
 Dynamic layer-package discovery also covers Unicode decimal digits and unusual directory names.
 
 The updated rule passes all 193 original direct cases, with 203 native calls and 51 complete API comparisons.
-[The direct receipt](../fixtures/host/data-layer-port/rr-type-safety-direct-contracts.json.gz) retains those runs and their positive mutation control.
+[The direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-type-safety-direct-contracts.json.gz) retains those runs and their positive mutation control.
 All 37 supplementary API cases also pass on this engine.
 The earlier thirteen-module receipt remains a historical checkpoint at its recorded engine and policy hashes.
 
@@ -349,10 +349,10 @@ The other direct-suite receipts remain historical; they do not certify the lates
 
 The committed evidence is:
 
-- [Original direct suites](../fixtures/host/data-layer-port/rr-three-native-syntax-direct-contracts.json.gz).
-- [Supplementary API contracts](../fixtures/host/data-layer-port/rr-three-native-syntax-api-contracts.json.gz).
-- [Snapshot reporter contracts](../fixtures/host/data-layer-port/rr-three-native-syntax-reporting-contracts.json.gz).
-- [Native and guard TDD ladder](../fixtures/host/data-layer-port/rr-native-syntax-and-capture-ladder.json.gz).
+- [Original direct suites](../gate/data-layer/fixtures/host/data-layer-port/rr-three-native-syntax-direct-contracts.json.gz).
+- [Supplementary API contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-three-native-syntax-api-contracts.json.gz).
+- [Snapshot reporter contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-three-native-syntax-reporting-contracts.json.gz).
+- [Native and guard TDD ladder](../gate/data-layer/fixtures/host/data-layer-port/rr-native-syntax-and-capture-ladder.json.gz).
 
 The automatic converter refused all 40 absent policies. No partial conversion was installed.
 Use manual relational ports and original assertions to close them.
@@ -400,10 +400,10 @@ The same engine also reruns all 215 original cases for ForwardRef, type safety, 
 All 224 native calls and 63 complete API returns pass. The 35 cases without native calls remain individually listed.
 This regression run does not recertify those rules' older supplemental or reporter receipts.
 
-- [HNSW original assertions](../fixtures/host/data-layer-port/rr-hnsw-native-direct-contracts.json.gz).
-- [HNSW API and reporter contracts](../fixtures/host/data-layer-port/rr-hnsw-native-supplemental-contracts.json.gz).
-- [Native Constant TDD ladder](../fixtures/host/data-layer-port/rr-hnsw-native-constant-ladder.json.gz).
-- [Three-rule original regression](../fixtures/host/data-layer-port/rr-three-hnsw-regression.json.gz).
+- [HNSW original assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-hnsw-native-direct-contracts.json.gz).
+- [HNSW API and reporter contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-hnsw-native-supplemental-contracts.json.gz).
+- [Native Constant TDD ladder](../gate/data-layer/fixtures/host/data-layer-port/rr-hnsw-native-constant-ladder.json.gz).
+- [Three-rule original regression](../gate/data-layer/fixtures/host/data-layer-port/rr-three-hnsw-regression.json.gz).
 
 
 ## Removed compatibility surfaces, 7 November
@@ -427,10 +427,10 @@ The inventory still contains 60 drafts and 40 absent translations. Full migratio
 
 Both the direct assertion and reporter controls reject disabled detection.
 
-- [Original removed-surface assertions](../fixtures/host/data-layer-port/rr-removed-native-direct-contracts.json.gz).
-- [Supplemental API and reporter contracts](../fixtures/host/data-layer-port/rr-removed-native-supplemental-contracts.json.gz).
-- [API defects before repair](../fixtures/host/data-layer-port/rr-removed-ast-red.json.gz).
-- [Reporter multiplicity before repair](../fixtures/host/data-layer-port/rr-removed-reporter-red.json.gz).
+- [Original removed-surface assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-removed-native-direct-contracts.json.gz).
+- [Supplemental API and reporter contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-removed-native-supplemental-contracts.json.gz).
+- [API defects before repair](../gate/data-layer/fixtures/host/data-layer-port/rr-removed-ast-red.json.gz).
+- [Reporter multiplicity before repair](../gate/data-layer/fixtures/host/data-layer-port/rr-removed-reporter-red.json.gz).
 
 
 ## Final-shape merge and sync/async signatures, 7 November
@@ -456,9 +456,9 @@ All 21 configured reporter cases pass, including Unicode layer-directory digits 
 Both the original positive test and the reporter reject disabled detection.
 Original display strings normalize only the caller's temporary root. Detector logic never runs in Python.
 
-- [Original signature assertions](../fixtures/host/data-layer-port/rr-signatures-native-direct-contracts.json.gz).
-- [Supplemental API and reporter contracts](../fixtures/host/data-layer-port/rr-signatures-native-supplemental-contracts.json.gz).
-- [Original positive test before the port](../fixtures/host/data-layer-port/rr-signatures-first-positive-red.json.gz).
+- [Original signature assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-signatures-native-direct-contracts.json.gz).
+- [Supplemental API and reporter contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-signatures-native-supplemental-contracts.json.gz).
+- [Original positive test before the port](../gate/data-layer/fixtures/host/data-layer-port/rr-signatures-first-positive-red.json.gz).
 
 The inventory is 61 drafts and 39 absent translations. Full acceptance remains false.
 
@@ -483,11 +483,11 @@ The two failing alias regressions now pass. CLI execution retains only named arg
 Rules do not invoke Python, and no source detector method runs during native validation.
 The original default-target test is no longer merely a Python constant assertion.
 
-- [Original facade assertions](../fixtures/host/data-layer-port/rr-facade-purity-native-direct-contracts.json.gz).
-- [Supplemental contracts and wrong-count control](../fixtures/host/data-layer-port/rr-facade-purity-native-supplemental-contracts.json.gz).
-- [Original suite before the port](../fixtures/host/data-layer-port/rr-facade-purity-original-red.json.gz).
-- [Missing native statistics regression](../fixtures/host/data-layer-port/rr-facade-purity-stats-red.json.gz).
-- [Final-shape merge and regressions](../fixtures/host/data-layer-port/rr-final-shape-merge-tdd.json.gz).
+- [Original facade assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-facade-purity-native-direct-contracts.json.gz).
+- [Supplemental contracts and wrong-count control](../gate/data-layer/fixtures/host/data-layer-port/rr-facade-purity-native-supplemental-contracts.json.gz).
+- [Original suite before the port](../gate/data-layer/fixtures/host/data-layer-port/rr-facade-purity-original-red.json.gz).
+- [Missing native statistics regression](../gate/data-layer/fixtures/host/data-layer-port/rr-facade-purity-stats-red.json.gz).
+- [Final-shape merge and regressions](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-merge-tdd.json.gz).
 
 The inventory is 64 drafts and 36 absent translations. No rule has full migration acceptance yet.
 Associated suites, native printing and canonical serialization, and production workspace acceptance remain outstanding.
@@ -524,11 +524,11 @@ The integration engine checkpoint is fed982e1393ecc815735f766941c0b3785512589.
 The replacement compiler required a dependency rebuild; its final unit and CLI passes took 240 and 79 seconds.
 Build time is separate from rule execution. No repository-wide cold run was performed.
 
-- [All original backend assertions](../fixtures/host/data-layer-port/rr-coupling-native-direct-contracts.json.gz).
-- [Supplemental contracts and configuration provenance](../fixtures/host/data-layer-port/rr-coupling-native-supplemental-contracts.json.gz).
-- [TYPE_CHECKING counterexamples](../fixtures/host/data-layer-port/rr-coupling-typechecking-red.json.gz).
-- [Framework discovery counterexample](../fixtures/host/data-layer-port/rr-coupling-scope-red.json.gz).
-- [Native Boolean-relation regression and build records](../fixtures/host/data-layer-port/rr-nullary-native-tdd.json.gz).
+- [All original backend assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-coupling-native-direct-contracts.json.gz).
+- [Supplemental contracts and configuration provenance](../gate/data-layer/fixtures/host/data-layer-port/rr-coupling-native-supplemental-contracts.json.gz).
+- [TYPE_CHECKING counterexamples](../gate/data-layer/fixtures/host/data-layer-port/rr-coupling-typechecking-red.json.gz).
+- [Framework discovery counterexample](../gate/data-layer/fixtures/host/data-layer-port/rr-coupling-scope-red.json.gz).
+- [Native Boolean-relation regression and build records](../gate/data-layer/fixtures/host/data-layer-port/rr-nullary-native-tdd.json.gz).
 
 The inventory is 63 drafts and 37 absent translations. Full migration acceptance remains false.
 
@@ -546,8 +546,8 @@ All 45 API cases and 33 reporter cases pass again. Both positive controls still 
 The receipts retain the exact rebuilt executable hash and source commit.
 The inventory remains 63 drafts and 37 absent translations. This focused merge check does not certify the entire integrated test suite.
 
-- [Post-merge original assertions](../fixtures/host/data-layer-port/rr-coupling-followup-native-direct-contracts.json.gz).
-- [Post-merge API and reporter contracts](../fixtures/host/data-layer-port/rr-final-shape-followup-native-contracts.json.gz).
+- [Post-merge original assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-coupling-followup-native-direct-contracts.json.gz).
+- [Post-merge API and reporter contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-followup-native-contracts.json.gz).
 
 
 ## Connection caches and variable regexes, 7 November
@@ -575,11 +575,11 @@ The unit and CLI builds took 35.99 and 23.48 seconds. Compile times are separate
 All 43 tooling tests and both format tests pass. Structure retains the same three pre-existing directory-size findings.
 The integration checkpoint is 85749d23ede770a6eeb55bf0ad2512fcd01788ae.
 
-- [All original cache assertions](../fixtures/host/data-layer-port/rr-connection-caches-native-direct-contracts.json.gz).
-- [Supplemental cases and configuration provenance](../fixtures/host/data-layer-port/rr-connection-caches-native-supplemental-contracts.json.gz).
-- [Dynamic-pattern failure](../fixtures/host/data-layer-port/rr-connection-caches-dynamic-pattern-red.json.gz).
-- [Helper type and source-gate failures](../fixtures/host/data-layer-port/rr-connection-caches-helper-source-gate-red.json.gz).
-- [Native regex regression](../fixtures/host/data-layer-port/rr-dynamic-regex-native-tdd.json.gz).
+- [All original cache assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-connection-caches-native-direct-contracts.json.gz).
+- [Supplemental cases and configuration provenance](../gate/data-layer/fixtures/host/data-layer-port/rr-connection-caches-native-supplemental-contracts.json.gz).
+- [Dynamic-pattern failure](../gate/data-layer/fixtures/host/data-layer-port/rr-connection-caches-dynamic-pattern-red.json.gz).
+- [Helper type and source-gate failures](../gate/data-layer/fixtures/host/data-layer-port/rr-connection-caches-helper-source-gate-red.json.gz).
+- [Native regex regression](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-regex-native-tdd.json.gz).
 
 The inventory is 64 drafts and 36 absent translations. Full migration acceptance remains false.
 
@@ -593,7 +593,7 @@ The inventory records each path, hash, and source line. It does not claim all 24
 The next shared fix must preserve exact requested source and line text without restoring copies of every large AST subtree.
 Earlier short-case receipts remain historical evidence; they do not certify this boundary.
 
-- [Failing native control and consumer inventory](../fixtures/host/data-layer-port/rr-long-source-text-red-and-audit.json.gz).
+- [Failing native control and consumer inventory](../gate/data-layer/fixtures/host/data-layer-port/rr-long-source-text-red-and-audit.json.gz).
 
 ## Exact demanded text and filtered positional joins, 7 November
 
@@ -619,7 +619,7 @@ The checkpoint is bac50064f72ca4748cc9ed28420428c0c555e482.
 All five focused locality tests pass; one profiling test remains ignored. GPU-specific suites were not run.
 The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
 
-- [Failing tests, repairs, all 36 comparisons, and profiles](../fixtures/host/data-layer-port/rr-long-source-native-repair.json.gz).
+- [Failing tests, repairs, all 36 comparisons, and profiles](../gate/data-layer/fixtures/host/data-layer-port/rr-long-source-native-repair.json.gz).
 
 ## Current guest and typing architecture, 7 November
 
@@ -637,7 +637,7 @@ All 43 tooling tests pass. These checks do not certify execution parity for ever
 The final unit and CLI builds took 121 and 62 seconds. Build time is separate from execution.
 The inventory remains 64 drafts and 36 absent translations. Full migration acceptance remains false.
 
-- [Merge failures, native suites, all draft readers, and reporter comparisons](../fixtures/host/data-layer-port/rr-final-shape-guest-typing-merge.json.gz).
+- [Merge failures, native suites, all draft readers, and reporter comparisons](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-guest-typing-merge.json.gz).
 
 ## API root imports and regex occurrences, 7 November
 
@@ -667,9 +667,36 @@ All 43 tooling tests and four format tests pass. Structure retains only the thre
 Regex occurrence producers remain cross-file operators. These focused tests do not certify repository-scale CPU or memory cost.
 The inventory is 65 drafts and 35 absent translations. Full migration acceptance remains false.
 
-- [Original assertions and import positive control](../fixtures/host/data-layer-port/rr-no-api-root-imports-native-direct-contracts.json.gz).
-- [API cases, reporter cases, and example positive control](../fixtures/host/data-layer-port/rr-no-api-root-imports-native-supplemental-contracts.json.gz).
-- [Initial execution failure](../fixtures/host/data-layer-port/rr-no-api-root-imports-execution-red.json.gz).
-- [Decoded-line failure](../fixtures/host/data-layer-port/rr-no-api-root-imports-constant-lines-red.json.gz).
-- [Nested-constant order failure](../fixtures/host/data-layer-port/rr-no-api-root-imports-constant-order-red.json.gz).
-- [Native occurrence regression and planner repair](../fixtures/host/data-layer-port/rr-regex-occurrence-native-tdd.json.gz).
+- [Original assertions and import positive control](../gate/data-layer/fixtures/host/data-layer-port/rr-no-api-root-imports-native-direct-contracts.json.gz).
+- [API cases, reporter cases, and example positive control](../gate/data-layer/fixtures/host/data-layer-port/rr-no-api-root-imports-native-supplemental-contracts.json.gz).
+- [Initial execution failure](../gate/data-layer/fixtures/host/data-layer-port/rr-no-api-root-imports-execution-red.json.gz).
+- [Decoded-line failure](../gate/data-layer/fixtures/host/data-layer-port/rr-no-api-root-imports-constant-lines-red.json.gz).
+- [Nested-constant order failure](../gate/data-layer/fixtures/host/data-layer-port/rr-no-api-root-imports-constant-order-red.json.gz).
+- [Native occurrence regression and planner repair](../gate/data-layer/fixtures/host/data-layer-port/rr-regex-occurrence-native-tdd.json.gz).
+
+
+## 2026-11-07 — Final shape is the active engine
+
+The root adoption commit is `56fdb0a5a38d3ec9096db84ed81c5faa496d890e`, with Final shape `879486272cd1b44b3567320c85847ba0fd19a918` as its second parent.
+Its native code, frontend, build files, and dependency locks match that parent exactly.
+The unfinished migration is preserved under `gate/data-layer/`. The nested integration engine is retired.
+
+The only later native delta is the generic regex occurrence capability and its dependency handling in `cbd504d18`.
+The regression tests were committed first in `36a7cef59` and failed on the modern baseline.
+The implementation was applied as a contextual patch to the modern files. No old whole engine files were restored.
+The current root CLI hash is `38164d10366011ccfb131813f753d728f4b44e71f47fe066c3b07045ab3b4b06`.
+
+All 66 draft policies pass the root reader. API-import acceptance passes all four original tests, 50 supplemental API cases, and 49 reporter cases.
+Its original positive assertion rejects an empty detector. All 36 long-source reporter regressions also pass.
+The unfinished error-handling draft passes its five original tests on this root build; its supplemental and configured contracts remain outstanding.
+These checks do not establish full migration acceptance.
+
+The focused native suites pass 49 rule-reader tests, nine simplifier tests, 14 syntax-view tests, and six file-local tests.
+Three pre-existing report, writer, or benchmark tests remain ignored by their upstream annotations.
+The separate full library inventory check exceeded 115 seconds twice. It remains unverified, not passed.
+The headless unit-test build failed because workspace tests call addon methods absent under that feature.
+The standard unit-test build succeeds; the headless CLI build succeeds. Neither required an upstream API change.
+All 44 Python tooling tests and both gate format tests pass.
+
+- [Root engine adoption, builds, tests, and supplemental contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-modern-root-adoption.json.gz).
+- [Original API-import assertions and positive control on the root engine](../gate/data-layer/fixtures/host/data-layer-port/rr-modern-root-direct-contracts.json.gz).
