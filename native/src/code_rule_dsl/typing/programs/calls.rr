@@ -226,6 +226,123 @@ found(c, a, x) :- base(c, b), !bound_in(c, a), found(b, a, x).
 anc(c, c) :- kind(c, "class_definition").
 anc(c, b) :- anc(c, m), base(m, b).
 
+// ---- declared types (annotations) ---------------------------------------------------------------------------------
+// A parameter's, a return's and a class attribute's annotation declare the values they hold. They are trusted, as a
+// type checker trusts them: an annotation naming a workspace class C holds an instance of C or of any workspace
+// subclass (the closed world `self` already assumes), a builtin class's name a value of it, `None` None. Unions
+// (`A | B`, `Optional[A]`, `Union[A, B]`) are their members; a generic (`LazyResult[T]`, `list[int]`) is its class,
+// without arguments; `type[C]` is C's class objects; `Self` is the method's class. Any other member (a type
+// variable, `Any`, a `Protocol`, an external class, a quoted annotation) leaves the declaration open: its known
+// members are a lower bound.
+.decl ann(t: node, e: node)
+ann(t, e) :- kind(t, "type"), child(t, e, 0).
+.decl union_q(q: symbol)
+union_q("typing.Optional"). union_q("typing.Union"). union_q("typing_extensions.Optional"). union_q("typing_extensions.Union").
+.decl uhead(e: node)
+uhead(e) :- kind(e, "generic_type"), child(e, h, 0), qn(h, q), union_q(q).
+uhead(e) :- kind(e, "subscript"), field(e, "value", h), qn(h, q), union_q(q).
+// amem(t, e): e is a member of annotation t's union, or an expression that has members.
+.decl amem(t: node, e: node)
+amem(t, e) :- ann(t, e).
+amem(t, m) :- amem(t, e), kind(e, "binary_operator"), op(e, "|"), field(e, "left", m).
+amem(t, m) :- amem(t, e), kind(e, "binary_operator"), op(e, "|"), field(e, "right", m).
+amem(t, m) :- amem(t, e), kind(e, "parenthesized_expression"), child(e, m, 0).
+amem(t, m) :- amem(t, e), kind(e, "union_type"), child(e, u, _), child(u, m, 0).
+amem(t, m) :- amem(t, e), uhead(e), kind(e, "generic_type"), child(e, p, 1), child(p, u, _), child(u, m, 0).
+amem(t, m) :- amem(t, e), uhead(e), kind(e, "subscript"), field(e, "subscript", m).
+.decl asplit(e: node)
+asplit(e) :- kind(e, "binary_operator"), op(e, "|").
+asplit(e) :- kind(e, "parenthesized_expression").
+asplit(e) :- kind(e, "union_type").
+asplit(e) :- uhead(e).
+// A member that is not split further, and the name it is headed by (`LazyResult` in `LazyResult[T]`).
+.decl aleaf(t: node, m: node)
+aleaf(t, m) :- amem(t, m), !asplit(m).
+aleaf(t, m) :- amem(t, m), kind(m, "binary_operator"), !op(m, "|").
+.decl ahead(m: node, h: node)
+ahead(m, h) :- aleaf(_, m), kind(m, "generic_type"), child(m, h, 0).
+ahead(m, h) :- aleaf(_, m), kind(m, "subscript"), field(m, "value", h).
+ahead(m, m) :- aleaf(_, m), !kind(m, "generic_type"), !kind(m, "subscript").
+// The argument of a one-argument generic (`C` in `type[C]`).
+.decl aarg(m: node, a: node)
+aarg(m, a) :- kind(m, "generic_type"), child(m, p, 1), child(p, u, 0), !child(p, _, 1), child(u, a, 0).
+aarg(m, a) :- kind(m, "subscript"), field(m, "subscript", a), !kind(a, "expression_list"), !kind(a, "tuple").
+// ainst(t, c): t declares instances of class c (and of its workspace subclasses); acls(t, c): c's class objects.
+.decl ainst(t: node, c: node)
+ainst(t, c) :- aleaf(t, m), ahead(m, h), pv(h, "cls", c).
+.decl acls(t: node, c: node)
+acls(t, c) :- aleaf(t, m), ahead(m, h), builtin_ref(h, "type"), aarg(m, a), pv(a, "cls", c).
+// aself(m): `Self`.
+.decl aself(m: node)
+aself(m) :- aleaf(_, m), ahead(m, h), qn(h, "typing.Self").
+aself(m) :- aleaf(_, m), ahead(m, h), qn(h, "typing_extensions.Self").
+// dtype(m, t): member m declares a value of builtin class t, or None.
+.decl dtype(m: node, t: symbol)
+dtype(m, "None") :- aleaf(_, m), kind(m, "none").
+dtype(m, x) :- aleaf(_, m), ahead(m, h), builtin_ref(h, x), bclass(x), x != "object".
+// A class whose instances need not derive from it: a `Protocol`.
+.decl proto_q(q: symbol)
+proto_q("typing.Protocol"). proto_q("typing_extensions.Protocol").
+.decl aproto(c: node)
+aproto(c) :- anc(c, b), basex(b, e), qn(e, q), proto_q(q).
+aproto(c) :- anc(c, b), basex(b, e), kind(e, "generic_type"), child(e, h, 0), qn(h, q), proto_q(q).
+aproto(c) :- anc(c, b), basex(b, e), kind(e, "subscript"), field(e, "value", h), qn(h, q), proto_q(q).
+.decl aknown(t: node, m: node)
+aknown(t, m) :- aleaf(t, m), dtype(m, _).
+aknown(t, m) :- aleaf(t, m), aself(m).
+aknown(t, m) :- aleaf(t, m), ahead(m, h), pv(h, "cls", c), !aproto(c), !builtin_ref(h, "type").
+aknown(t, m) :- aleaf(t, m), ahead(m, h), builtin_ref(h, "type"), aarg(m, a), pv(a, "cls", _).
+.decl aopen(t: node)
+aopen(t) :- aleaf(t, m), !aknown(t, m).
+// Parameters: `x: T` and `x: T = v` (the default's own value is added as an assignment's is).
+.decl pann(f: node, x: symbol, t: node)
+pann(f, x, t) :- field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_parameter"), child(p, id, 0), kind(id, "identifier"),
+    text(id, x), field(p, "type", t).
+pann(f, x, t) :- field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_default_parameter"), field(p, "name", id), text(id, x),
+    field(p, "type", t).
+.decl pdefault(f: node, x: symbol, v: node)
+pdefault(f, x, v) :- field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_default_parameter"), field(p, "name", id), text(id, x),
+    field(p, "value", v).
+.decl pclosed(f: node, x: symbol)
+pclosed(f, x) :- pann(f, x, t), !aopen(t).
+bv(f, x, "inst", s) :- pann(f, x, t), ainst(t, c), sub(c, s).
+bv(f, x, "cls", s) :- pann(f, x, t), acls(t, c), sub(c, s).
+bv(f, x, "inst", s) :- pann(f, x, t), aleaf(t, m), aself(m), method(f, c), sub(c, s).
+bv(f, x, k, v) :- pdefault(f, x, d), pv(d, k, v).
+tbv(f, x, "decl", m) :- pann(f, x, t), aleaf(t, m), dtype(m, _).
+tbv(f, x, k, v) :- pdefault(f, x, d), tv(d, k, v).
+// Returns: `def f(...) -> T`. A call of f holds T's values (beside what its returns are seen to hold); when T is
+// closed, the call is known whatever its returns are.
+.decl rann(f: node, t: node)
+rann(f, t) :- kind(f, "function_definition"), field(f, "return_type", t).
+.decl rclosed(f: node)
+rclosed(f) :- rann(f, t), !aopen(t), !isasync(f).
+pv(c, "inst", s) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), ainst(t, k), sub(k, s).
+pv(c, "cls", s) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), acls(t, k), sub(k, s).
+pv(c, "inst", s) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf(t, m), aself(m), method(f, k), sub(k, s).
+tv(c, "decl", m) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf(t, m), dtype(m, _).
+// Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
+.decl cann(c: node, x: symbol, t: node)
+cann(c, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", t), nearest(a, c, scope),
+    kind(c, "class_definition").
+bound_in(c, x) :- cann(c, x, _).
+bv(c, x, "inst", s) :- cann(c, x, t), ainst(t, k), sub(k, s).
+bv(c, x, "cls", s) :- cann(c, x, t), acls(t, k), sub(k, s).
+tbv(c, x, "decl", m) :- cann(c, x, t), aleaf(t, m), dtype(m, _).
+// An attribute declared closed: assignments elsewhere (`self.x = ...`) conform to it.
+.decl adeclared(c: node, a: symbol)
+adeclared(c, a) :- need_attr(c, a), found(c, a, at), cann(at, a, t), !aopen(t).
+// A decorator declared to return its argument's own type (`def d(fn: F) -> F`, F a type variable: a type
+// parameter of d, or a module's `TypeVar`): the decorated name keeps the function, as a type checker reads it.
+.decl tvar(g: node, x: symbol)
+tvar(g, x) :- field(g, "type_parameters", tp), child(tp, p, _), child(p, e, 0), ann(p, e), kind(e, "identifier"), text(e, x).
+tvar(g, x) :- field(g, "type_parameters", tp), child(tp, p, _), child(p, e, 0), ann(p, e), kind(e, "constrained_type"), child(e, u, 0),
+    child(u, i, 0), kind(i, "identifier"), text(i, x).
+tvar(g, x) :- kind(g, "function_definition"), docof(g, d), modnode(d, m), rasg(m, x, r, _), callee(r, h), qn(h, "typing.TypeVar").
+.decl ident_dec(g: node)
+ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), kind(e, "identifier"), text(e, v), rann(g, r), ann(r, e2), kind(e2, "identifier"),
+    text(e2, v), tvar(g, v).
+
 // ---- values ---------------------------------------------------------------------------------------------------
 .decl attr_of(n: node, o: node, a: symbol)
 attr_of(n, o, a) :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a).
@@ -247,7 +364,8 @@ isqmod(q) :- modname(_, q).
 bv(s, x, "fn", f) :- live_def(s, x, f), kind(f, "function_definition"), !opaque_dec(f, _).
 bv(s, x, "cls", c) :- live_def(s, x, c), kind(c, "class_definition").
 bv(s, x, "fn", f) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), retparam(g, 0, _).
-bv(s, x, k, v) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), retval(g, r), pv(r, k, v).
+bv(s, x, k, v) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), !ident_dec(g), retval(g, r), pv(r, k, v).
+bv(s, x, "fn", f) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), ident_dec(g).
 bv(s, x, k, v) :- live_asg(s, x, r), pv(r, k, v).
 bv(s, x, k, v) :- ibind(s, x, q), qv(q, k, v).
 // `self` (the first parameter of a method that is not static) and `cls` (of a class method) are late bound.
@@ -298,6 +416,7 @@ vpos(r) :- retval(_, r).
 vpos(e) :- dexpr(_, e).
 vpos(e) :- basex(_, e).
 vpos(a) :- posarg(_, _, a).
+vpos(v) :- pdefault(_, _, v).
 vpos(c) :- vpos(n), kind(n, "parenthesized_expression"), child(n, c, 0).
 vpos(c) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 0).
 vpos(c) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 2).
@@ -325,7 +444,7 @@ base_open(c) :- basex(c, e), !pv(e, "cls", _), !extb(e).
 .decl attr_open(c: node, a: symbol)
 attr_open(c, a) :- need_attr(c, a), found(c, a, at), bopen(at, a).
 attr_open(c, a) :- need_attr(c, a), anc(c, b), base_open(b).
-attr_open(c, a) :- need_attr(c, a), anc(c, b), iattr(b, a).
+attr_open(c, a) :- need_attr(c, a), anc(c, b), iattr(b, a), !adeclared(c, a).
 // Neither bound by a workspace class nor reachable through an external base: set dynamically, or an AttributeError.
 attr_open(c, a) :- need_attr(c, a), !found(c, a, _), !ext_base_up(c), a != "__init__", a != "__call__".
 // An attribute an external base supplies: calling it runs no workspace definition, but as a value (a receiver, an
@@ -336,15 +455,16 @@ ext_attr(n) :- alook(n, c, a), !found(c, a, _), ext_base_up(c).
 ext_base_up(c) :- anc(c, b), basex(b, e), extb(e).
 .decl bopen(s: node, x: symbol)
 bopen(s, x) :- otgt(s, x).
-bopen(f, x) :- param(f, x, i), !selfparam(f, i).
+bopen(f, x) :- param(f, x, i), !selfparam(f, i), !pclosed(f, x).
+bopen(f, x) :- pdefault(f, x, v), vopen(v).
 bopen(s, x) :- live_asg(s, x, r), vopen(r).
 bopen(s, x) :- ifrom(s, x, m, _), isqmod(m), ibind(s, x, q), qopen(q).
 bopen(s, x) :- ifrom(s, x, m, _), isqmod(m), ibind(s, x, q), !qknown(q).
 bopen(s, x) :- live_def(s, x, f), opaque_dec(f, _), !dec1(f, _).
 bopen(s, x) :- live_def(s, x, f), dec1(f, e), !pv(e, "fn", _).
 bopen(s, x) :- live_def(s, x, f), dec1(f, e), vopen(e).
-bopen(s, x) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), retval(g, r), !retparam(g, 0, r), vopen(r).
-bopen(s, x) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), !retval(g, _).
+bopen(s, x) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), !ident_dec(g), retval(g, r), !retparam(g, 0, r), vopen(r).
+bopen(s, x) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), !ident_dec(g), !retval(g, _).
 // A property's value is what its getter returns.
 bopen(s, x) :- live_def(s, x, f), dexpr(f, e), builtin_ref(e, "property").
 .decl selfparam(f: node, i: number)
@@ -374,11 +494,11 @@ vopen(n) :- vpos(n), kind(n, "boolean_operator"), child(n, c, _), vopen(c).
 vopen(c) :- vpos(c), callee(c, e), vopen(e).
 vopen(c) :- vpos(c), callee(c, e), !pv(e, _, _), !pv(c, "super", _), !bcall(c, _).
 vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), isasync(f).
-vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), isgen(f).
-vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), retval(f, r), !retparam(f, _, r), vopen(r).
-vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), retparam(f, i, _), !posarg(c, i, _).
-vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), retparam(f, i, _), posarg(c, i, a), vopen(a).
-vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), method(f, _), retparam(f, _, _).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), !rclosed(f), isgen(f).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), !rclosed(f), retval(f, r), !retparam(f, _, r), vopen(r).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), !rclosed(f), retparam(f, i, _), !posarg(c, i, _).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), !rclosed(f), retparam(f, i, _), posarg(c, i, a), vopen(a).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), !rclosed(f), method(f, _), retparam(f, _, _).
 vopen(c) :- vpos(c), callee(c, e), pv(e, "inst", _).
 vopen(c) :- vpos(c), callee(c, e), pv(e, "mod", _).
 
@@ -570,6 +690,7 @@ cls_q(c, @dot(q, x)) :- cls_q(o, q), rdefn(o, x, c), kind(c, "class_definition")
 .decl type_of(n: node, t: symbol)
 type_of(n, q) :- vpos(n), pv(n, "inst", c), cls_q(c, q).
 type_of(n, t) :- vpos(n), tv(n, "builtin", v), btype(v, t).
+type_of(n, t) :- vpos(n), tv(n, "decl", m), dtype(m, t).
 type_of(c, t) :- declared_call(c), callee(c, e), qn(e, q), declared_ret(q, t).
 // A class object's class is `type`, unless a metaclass may make it another: a `metaclass=` keyword, an external base
 // (`enum.Enum`, `abc.ABC`) or a base that is no known class, on the class or an ancestor. A builtin base keeps `type`.
