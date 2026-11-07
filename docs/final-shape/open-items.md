@@ -1812,16 +1812,26 @@ and 1.56 GB. Thirteen more rules now run, 62 in all:
 The 62 rules together on s50: 19.2 s CPU, 303.8e9 instructions, 637 violations (each rule's count equals its count
 alone), and a peak of 1.43 GB, **over the 1 GB budget**.
 
-Left out, by cause:
+**Later on 2026-11-07** (t10 §2l). schema-architecture and bootstrap-engine-invariants run too: 64 rules.
 
-- **schema-architecture**: over 60 s alone, not yet profiled.
-- **bootstrap-engine-invariants**: `no symbol 25416499766238680` (a node or span id read as a symbol). The flattened
-  program types correctly, so the column is likely one the engine makes at run time.
-- **lazy-architecture**: refused as an aggregate in recursion. `la_cls`'s `@cat` recursion goes through
-  `ast_parent(e, f) :- decorator(f, e)`, which is not a tree move, so the bound is not proved.
-- **plan-composition-architecture, test-budget**: revision and stamped-artifact readers are not written.
-- **versioned-table-names**: `n ~ `pattern`` (an AST pattern literal) has no lowering or executor. It needs the
-  matcher as an input relation (O103).
+| corpus | CPU | instructions | peak (the run's) | violations |
+|---|---|---|---|---|
+| s50 | 15–17 s | 302e9 | 913 MB (995 MB profiled) | 637 |
+| s200 | 43.0 s | | **2.39 GB** | 2,960 |
+
+s50 is within the 1 GB budget; s200 is not. On s200 the footprint is about 1.5 GB at the end of each chunk's
+file-local run, and binding the cross-file part's inputs adds 800 MB (the base relations held for it, and the
+exports read back from `x`).
+
+Left out, by cause (none of them is a quick fix):
+
+- **lazy-architecture**: refused as an unbounded value cycle. `la_cls`'s `@cat` recursion climbs `ast_parent`,
+  whose decorator rule (`ast_parent(e, f) :- decorator(f, e)`) moves to a *later* node in preorder (decorators
+  come before the definition), while its other rules move to earlier ones. It does move up in depth (two edges up,
+  one down), but `front::cycles` measures by preorder and has no depth count.
+- **plan-composition-architecture, test-budget**: they read CI artifacts (`artifact="plan_composition_probes"`,
+  `artifact="test_collection"`). Stamped-artifact readers are not written.
+- **versioned-table-names**: `n ~ `pattern`` (O103).
 
 **Closure:** the pack's rules run on the full corpus, within the budgets, with every rule left out named.
 
