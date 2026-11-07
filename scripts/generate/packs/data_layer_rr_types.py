@@ -54,10 +54,10 @@ tsp_source(d, t) :- source(d, sp), text(sp, t).
         text += f'tsp_signature_trigger(d) :- tsp_source(d, t), contains({q(trigger)}, t).\n'
     text += r'''
 .decl tsp_text_mode(d: number)
-tsp_text_mode(d) :- doc(d, _, _), !option("entryPoint", _).
+tsp_text_mode(d) :- doc(d, _, _), !option("entryPoint", _), !syntax_error(d, _, _).
 tsp_text_mode(d) :- doc(d, _, _), option("entryPoint", e),
     (e = "check_file_for_patterns" ; e = "check_file_content_for_patterns").
-tsp_text_mode(d) :- tsp_fact_file(d), option("entryPoint", "_issues_for_files").
+tsp_text_mode(d) :- tsp_fact_file(d), option("entryPoint", "_issues_for_files"), !syntax_error(d, _, _).
 .decl tsp_fact_file(d: number)
 tsp_fact_file(d) :- file_name(d, n), suffix(".py", n), !path_part(d, "tests"), !path_part(d, "test").
 .decl tsp_signature_mode(d: number)
