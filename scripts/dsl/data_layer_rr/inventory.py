@@ -126,6 +126,10 @@ def assemble(manifest, shards):
         for name, collected in shard['files'].items():
             if name in files or collected['exitCode'] or collected['errors'] or collected['deselected'] or set(collected['before']) != set(collected['cases']):
                 raise ValueError('Incomplete original collection: ' + name)
+            if len(collected['before']) != len(collected['cases']) or any(
+                    identity.split('::', 1)[0] != name or case['file'] != name
+                    for identity, case in collected['cases'].items()):
+                raise ValueError('Original case belongs to another module: ' + name)
             files[name] = dict(**manifest['files'][name], cases=len(collected['cases']))
             target = cases if files[name]['detectors'] else integration if files[name]['integrationReferences'] else adjacent
             if set(target) & set(collected['cases']):
@@ -136,6 +140,7 @@ def assemble(manifest, shards):
     return dict(format='rerail.data-layer-original-test-inventory/v1', sourcePin=PIN,
                 scannedTestFiles=manifest['scannedTestFiles'], unparsedTestFiles=[], files=files, cases=cases,
                 adjacentWorkflowCases=adjacent, suiteIntegrationCases=integration,
+                discoverySha256=shards[0]['discoverySha256'], collectorSha256=shards[0]['collectorSha256'],
                 note='Independent whole-module collection. Counts and static assertion sites do not certify native execution.')
 
 
