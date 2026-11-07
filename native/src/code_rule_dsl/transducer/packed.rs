@@ -269,6 +269,10 @@ mod block_tests;
 mod bitlex_compile;
 #[cfg(test)]
 mod bitlex_compile_tests;
+// Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
+mod block_monoid;
+#[cfg(test)]
+mod block_plan_tests;
 mod value_packing;
 mod value_prefix;
 

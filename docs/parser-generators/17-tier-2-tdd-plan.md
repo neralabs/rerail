@@ -48,20 +48,23 @@ say which byte is which kind.
 `rir::tests::block_tree_rows_before_and_also_round_trip`,
 `bitlex_compile_tests::json_rows_read_kinds_as_designed`, and the tier-1 ratchets unchanged.
 
-## 2. The monoids
+## 2. The monoids (done)
 
-**Builds:** `block_plan::monoid`: S1's 16-bit function, `last` (forward and backward),
-`dyck` (38 bits), `add`, `or`. Each with an identity, a combine, a step, a block summary and a
-sequential reference.
+**Built:** `block_monoid`: `StateFn` (S1's 16-bit table, with an identity that keeps the
+halos coming in), `Last` and `First` (forward and backward `last`), and `Dyck`. `add` and `or`
+are integer operations.
 
-**Tests:**
+**Changed from doc 14 §3:** the stack effect has a **peak**, 4 bits: the most levels above the
+piece's start. `nested max 13` bounds the absolute depth, and a nesting inside a piece that
+closes again before its end shows in no final count. A file fails when, from its start, the
+effect has a mismatch, a close with nothing open, or a peak past 13. The effect is 41 bits.
 
-- `monoid_laws`: identity and associativity on random values, for each monoid.
-- `s1_summaries_compose_to_the_carries`: blocks of random JSON-like bytes; S1 summaries
-  combined in any grouping give the carries and halos that tier 1 has at each block.
-- `dyck_equals_a_stack`: random bracket strings; the combined effects give the stack, and
-  the error, that a stack walk gives.
-- `last_and_before_equal_a_walk`.
+**Tests** (`block_plan_tests`): `state_fn_laws`, `state_fn_composes_like_a_walk`, `dyck_laws`,
+`dyck_equals_a_stack`, `last_and_first_equal_a_walk`. Breaking the peak's combine fails the two
+Dyck tests.
+
+**Moved to phase 3:** S1's summaries against tier 1's carries need the block program's carried
+slice, which the analysis finds.
 
 ## 3. The analysis
 
