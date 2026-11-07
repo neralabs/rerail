@@ -12,14 +12,14 @@
 //     defaults and annotations are in that def; a class's decorators are in the class's fn (graphql_authority_fn).
 //   - authority_words: the words of ast.unparse(annotation), scanned by `\A[^A-Za-z_]*([A-Za-z_][\p{L}\p{N}_]*)`.
 //     Here: piece by piece (graphql_authority_piece), each piece one unparse writes between non-word characters, so
-//     its words are the output's there: each identifier, and each string constant's text as unparse writes it, up
-//     to the scan: W's decoded value (escapes decoded, adjacent literals joined) for a str, an f-string's literal
-//     pieces (fstring_piece) for a JoinedStr, each character str.isprintable() rejects (which repr writes as `\n`,
-//     `\xhh`, `\uhhhh`: a backslash and a word) as " x". One regex says the scan holds a matching word
-//     (graphql_authority_word). GAP (blocked: ast.unparse is @unparse, which needs CPython): an identifier is read as
-//     written, not NFKC-normalized as ast's Name id is; a bytes constant is read as written, piece by piece (W's value
-//     has no bytes text), not as repr writes the bytes; f-string pieces are as 3.12's unparse writes them (`\n`, `\t`
-//     escaped); \p{C}/\p{Z} are the regex crate's Unicode tables, not CPython's unicodedata.
+//     its words are the output's there: each identifier as ast's id (@nfkc of its text, PEP 3131), and each string
+//     constant's text as unparse writes it, up to the scan: W's decoded value (escapes decoded, adjacent literals
+//     joined) for a str, an f-string's literal pieces (fstring_piece) for a JoinedStr, each character
+//     str.isprintable() rejects (which repr writes as `\n`, `\xhh`, `\uhhhh`: a backslash and a word) as " x". One
+//     regex says the scan holds a matching word (graphql_authority_word). GAP (blocked: ast.unparse is @unparse, which
+//     needs CPython): a bytes constant is read as written, piece by piece (W's value has no bytes text), not as repr
+//     writes the bytes; f-string pieces are as 3.12's unparse writes them (`\n`, `\t` escaped); \p{C}/\p{Z} are the
+//     regex crate's Unicode tables, not CPython's unicodedata.
 //   - authority_seeds: positional-or-keyword, positional-only and keyword-only parameters of a def (not *args,
 //     **kwargs) whose annotation has a word in {ServerPlan, BaseServerPlan, _GraphQLServerPlan, LazyResult} or
 //     ending in Transaction or PlanScope.
@@ -29,7 +29,8 @@
 //     root is an authority name, to a fixpoint.
 // Rows: GPO001 private attribute read on an authority receiver; GPO002 getattr(authority, …); GPO003
 // object.__getattribute__(authority, …); GPO004 an annotated field of a @reusable_template class with an authority
-// annotation word. Code: the `issue` column; line: the node's line (ast's lineno is the expression's start).
+// annotation word. Code: the `issue` column; line: the node's line (ast's lineno is the expression's start). Every
+// name compared (ast_name: Name id, arg, Attribute attr) is the identifier's ast name, graphql_authority_id (@nfkc).
 //
 // reported-parser-error. Input: every file in scope; parsed: for entryPoint "scan_source" every one, else those whose
 // source matches `ServerPlan|PlanScope|Transaction|LazyResult`; a row (GPO000, line 1) where CPython's ast.parse fails
@@ -71,6 +72,9 @@ graphql_authority_frame("function_definition"). graphql_authority_frame("decorat
 .decl graphql_authority_type(kind: symbol)
 graphql_authority_type("type").
 
+// An identifier's ast name (Name id, arg, attr): CPython NFKC-normalizes identifiers (PEP 3131).
+.decl graphql_authority_id(i: node, x: symbol)
+graphql_authority_id(i, x) :- node(_, i, "identifier", _, _), text(i, t), x = @nfkc(t).
 // fn(n, f): f is n's ast fn.
 // mirrors python/ast.rr def_frame (also: a class decorator's fn is the class's fn, as metadata.structure_index visits it)
 .decl graphql_authority_fn(n: node, f: node)
@@ -93,7 +97,7 @@ graphql_authority_strtext(n, v) :- graphql_authority_strhost(n), value(n, v), va
 graphql_authority_strtext(n, v) :- graphql_authority_strhost(n), fstring_piece(n, _, "literal", v).
 graphql_authority_strtext(n, v) :- node(_, n, "format_specifier", _, _), fstring_piece(n, _, "literal", v).
 .decl graphql_authority_piece(i: node, s: symbol)
-graphql_authority_piece(i, s) :- node(_, i, "identifier", _, _), text(i, s).
+graphql_authority_piece(i, s) :- graphql_authority_id(i, s).
 graphql_authority_piece(n, s) :- graphql_authority_strtext(n, v), s = @rx_replace(v, "[\\p{C}\\p{Z}--\\x20]", " x").
 graphql_authority_piece(n, s) :- node(_, n, "string", _, _), value_type_of(n, "bytes"), str(n, s).
 // An annotation (a `type` node) with an authority word.
@@ -104,13 +108,13 @@ graphql_authority_word(ty) :- graphql_authority_piece(i, s), inside(i, ty, graph
 // authority_seeds: (def, parameter name).
 .decl graphql_authority_seed(f: node, x: symbol)
 graphql_authority_seed(f, x) :- field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_parameter", _, _),
-    child(p, nm, 0), node(_, nm, "identifier", _, _), text(nm, x), field(p, "type", ty), graphql_authority_word(ty).
+    child(p, nm, 0), graphql_authority_id(nm, x), field(p, "type", ty), graphql_authority_word(ty).
 graphql_authority_seed(f, x) :- field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_default_parameter", _, _),
-    field(p, "name", nm), text(nm, x), field(p, "type", ty), graphql_authority_word(ty).
+    field(p, "name", nm), graphql_authority_id(nm, x), field(p, "type", ty), graphql_authority_word(ty).
 
 // expression_roots: root(e, x).
 .decl graphql_authority_root(e: node, x: symbol)
-graphql_authority_root(e, x) :- node(_, e, "identifier", _, _), text(e, x).
+graphql_authority_root(e, x) :- graphql_authority_id(e, x).
 graphql_authority_root(e, x) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), graphql_authority_root(i, x).
 graphql_authority_root(e, x) :- node(_, e, "attribute", _, _), field(e, "object", o), graphql_authority_root(o, x).
 graphql_authority_root(e, x) :- node(_, e, "call", _, _), field(e, "function", g), graphql_authority_root(g, x).
@@ -125,7 +129,7 @@ graphql_authority_chain(a, c) :- graphql_authority_chain(a, b), field(b, "right"
 .decl graphql_authority_edge(f: node, s: symbol, t: symbol)
 graphql_authority_edge(f, s, t) :- graphql_authority_chain(a, b), field(b, "right", v), !node(_, v, "assignment", _, _),
     graphql_authority_root(v, s), graphql_authority_chain(a, b2), field(b2, "left", l), graphql_authority_bare(l, tn),
-    text(tn, t), graphql_authority_fn(a, f).
+    graphql_authority_id(tn, t), graphql_authority_fn(a, f).
 // A direct Name target: an identifier, or `(t)` (a tuple_pattern of one, no comma), which `ast` reads as Name t.
 .decl graphql_authority_bare(l: node, t: node)
 graphql_authority_bare(l, l) :- node(_, l, "identifier", _, _).
@@ -138,7 +142,7 @@ graphql_authority_auth(f, t) :- graphql_authority_auth(f, s), graphql_authority_
 
 // GPO001: `<authority>._private` in a def.
 violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO001", p, l) :-
-    node(d, n, "attribute", _, _), field(n, "attribute", at), text(at, x), prefix("_", x), field(n, "object", o),
+    node(d, n, "attribute", _, _), field(n, "attribute", at), graphql_authority_id(at, x), prefix("_", x), field(n, "object", o),
     graphql_authority_fn(n, f), graphql_authority_root(o, r), graphql_authority_auth(f, r),
     graphql_authority_file(d, p), line(n, l).
 // A call's first positional argument (ast's args[0]: keywords and **kwargs are not args).
@@ -153,19 +157,19 @@ graphql_authority_unparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expr
 graphql_authority_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), graphql_authority_unparen(i, m).
 // GPO002: getattr(<authority>, …).
 violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO002", p, l) :-
-    node(d, n, "call", _, _), field(n, "function", g0), graphql_authority_unparen(g0, g), node(_, g, "identifier", _, _),
-    text(g, "getattr"), graphql_authority_arg0(n, a), graphql_authority_fn(n, f), graphql_authority_root(a, r),
+    node(d, n, "call", _, _), field(n, "function", g0), graphql_authority_unparen(g0, g), graphql_authority_id(g, "getattr"),
+    graphql_authority_arg0(n, a), graphql_authority_fn(n, f), graphql_authority_root(a, r),
     graphql_authority_auth(f, r), graphql_authority_file(d, p), line(n, l).
 // GPO003: object.__getattribute__(<authority>, …).
 violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO003", p, l) :-
     node(d, n, "call", _, _), field(n, "function", g0), graphql_authority_unparen(g0, g), node(_, g, "attribute", _, _),
-    field(g, "attribute", at), text(at, "__getattribute__"), field(g, "object", o0), graphql_authority_unparen(o0, o),
-    node(_, o, "identifier", _, _), text(o, "object"), graphql_authority_arg0(n, a), graphql_authority_fn(n, f),
+    field(g, "attribute", at), graphql_authority_id(at, "__getattribute__"), field(g, "object", o0),
+    graphql_authority_unparen(o0, o), graphql_authority_id(o, "object"), graphql_authority_arg0(n, a), graphql_authority_fn(n, f),
     graphql_authority_root(a, r), graphql_authority_auth(f, r), graphql_authority_file(d, p), line(n, l).
 // single_decorators by name: a class's decorators, by Name id / Attribute attr of the expression or a Call's func.
 .decl graphql_authority_ref(e: node, x: symbol)
-graphql_authority_ref(e, x) :- node(_, e, "identifier", _, _), text(e, x).
-graphql_authority_ref(e, x) :- node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x).
+graphql_authority_ref(e, x) :- graphql_authority_id(e, x).
+graphql_authority_ref(e, x) :- node(_, e, "attribute", _, _), field(e, "attribute", a), graphql_authority_id(a, x).
 // mirrors python/names.rr decorator (by the expression's or its call's Name id / Attribute attr)
 .decl graphql_authority_decorator(c: node, x: symbol)
 graphql_authority_decorator(c, x) :- field(dd, "definition", c), child(dd, dc, _), node(_, dc, "decorator", _, _),
