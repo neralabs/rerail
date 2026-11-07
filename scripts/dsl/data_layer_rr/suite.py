@@ -130,7 +130,9 @@ class Suite:
                            originalRetainedReason=original.get('retained_reason'))
         self.observations.append(observation)
         from data_layer_record import ADAPTERS, snapshot, normalize
-        if check == 'hnsw_architecture':
+        if check == 'backend_type_strings' and entry in {'should_skip_file', 'find_python_files'}:
+            files, scope, root = [], dict(include=[], exclude=[]), self.item.funcargs.get('tmp_path')
+        elif check == 'hnsw_architecture':
             files, scope, root = snapshot(module, 'files', args, kwargs)
         elif check == 'data_layer_compat_aliases':
             from aliases_port import snapshot
@@ -171,7 +173,9 @@ class Suite:
             scope = dict(include=[], exclude=[])
         compare_inputs(original, files, scope)
         from data_layer_batch_two import normalize as normalize_two
-        if check == 'connection_caches':
+        if check == 'backend_type_strings' and entry in {'should_skip_file', 'find_python_files'}:
+            actual = []
+        elif check == 'connection_caches':
             from connection_caches_port import normalize
             actual = normalize(result, root)
         elif check == 'error_handling':

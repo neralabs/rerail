@@ -11,6 +11,8 @@ def main():
     from migration import ROOT  # Also locates the existing source recorder.
     import data_layer_record as recording
     recording.ADAPTERS += (('hnsw_architecture', 'find_hnsw_architecture_findings', 'files'),
+                           ('backend_type_strings', 'should_skip_file', 'backend_helper'),
+                           ('backend_type_strings', 'find_python_files', 'backend_helper'),
                            ('error_handling', 'scan_file_content', 'error_file'),
                            ('connection_caches', 'find_violations', 'connection_targets'),
                            ('data_layer_facade_purity', 'lint_targets', 'facade_targets'))
@@ -29,6 +31,8 @@ def main():
     recording.snapshot = input_snapshot
     original_normalize = recording.normalize
     def result_snapshot(check, entry, result, root, files):
+        if check == 'backend_type_strings' and entry in {'should_skip_file', 'find_python_files'}:
+            return []  # Helpers return values, not detector findings; sourceResult keeps the full value.
         if check == 'error_handling':
             from error_handling_port import normalize
             return normalize(result, root)
@@ -43,6 +47,12 @@ def main():
 
     class Recorder(original_recorder):
         def pytest_configure(self):
+            current_snapshot = recording.snapshot
+            def case_snapshot(module, kind, args, kwargs):
+                if kind == 'backend_helper':
+                    return [], dict(include=[], exclude=[]), self.item.funcargs.get('tmp_path') if self.item else None
+                return current_snapshot(module, kind, args, kwargs)
+            recording.snapshot = case_snapshot
             super().pytest_configure()
             adapters = {(check, entry): kind for check, entry, kind in
                         (*recording.ADAPTERS, *recording.batch_two.ADAPTERS)}
@@ -84,6 +94,10 @@ def main():
                         if (event['check'], event['entry']) != (check, recorded_entry):
                             raise AssertionError('Original call identity changed during lossless capture')
                         event['sourceResult'] = canonical(result, root)
+                        if kind == 'backend_helper':
+                            event['observationKind'] = 'helper-value'
+                            if event.get('retained_reason') == 'No readable source files (file discovery or I/O contract)':
+                                event.pop('retained_reason')
                         if check == 'sync_async_signatures':
                             for finding in event.get('findings', []):
                                 finding['message'] = canonical(finding['message'], root)

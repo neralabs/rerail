@@ -16,11 +16,17 @@ DISABLED = '.policy "disabled-control" revision 1\n.language python\n.violation 
 def auxiliary_output(check, row):
     """Only these transport outputs can remain in a disabled backend detector."""
     allowed = {'backend_coupling': {'BC_CONFIG', 'BC_CHECK', 'BC_FILE'},
+               'backend_type_strings': {'BTS_CONFIG', 'BTS_SKIP', 'BTS_FILE', 'BTS_SKIPPED'},
                'connection_caches': {'CC_CONFIG', 'CC_PATTERN', 'CC_ALLOWED', 'CC_SKIP'}}
     return row['code'] in allowed.get(check, set())
 
 
 def disable_policy(check, source):
+    if check == 'backend_type_strings':
+        disabled, count = re.subn(r'(?m)^(BackendBT\d+\([^\n]*?\)\s*:-)', r'\1 1 = 0,', source)
+        if count != 6:
+            raise ValueError('Expected all six backend finding outputs')
+        return disabled
     clause = {'backend_coupling': 'Coupling', 'connection_caches': 'Cache'}.get(check)
     if clause is None:
         return DISABLED

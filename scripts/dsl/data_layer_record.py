@@ -181,7 +181,10 @@ class Recorder:
                             event["compare_clause"] = True
                         # Preserve path skipping, including the upstream no_skip fixture.
                         if check == "backend_type_strings" and files:
-                            if module.should_skip_file(Path(args[0])):
+                            # This is recorder metadata, not another public API call. Bypass
+                            # recorder wrappers while retaining caller-supplied test predicates.
+                            import inspect
+                            if inspect.unwrap(module.should_skip_file)(Path(args[0])):
                                 event["scope"] = {"include": [], "exclude": []}
                             event["path_skip_override"] = "no_skip" in self.item.funcargs
                     except Exception as error:

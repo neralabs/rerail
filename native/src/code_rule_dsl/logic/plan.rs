@@ -3581,10 +3581,15 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
     let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
-        Some((p, demanded)) => {
+        Some((mut p, demanded)) => {
             super::profile::decision("demand (decision 0048)", || {
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
             });
+            // Demand planning can introduce variable-free Boolean contexts after the initial
+            // SQL normalization. Give those new relations the same physical presence column.
+            if p.decls.values().any(Vec::is_empty) {
+                super::sql::program::physical(&mut p);
+            }
             split = p;
             &split
         }
