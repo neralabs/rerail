@@ -391,11 +391,68 @@ said(s) :- comment(_, s).
     );
     let out = dir.join("out");
     let options = serde_json::json!({"name": "ÀB", "list": ["x", "y"]});
-    corpus::run_with_options(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+    corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(read("dotted"), "a.b\nb\n");
     assert_eq!(read("low"), "àb\n");
     assert_eq!(read("item"), "0\tx\n1\ty\n");
     assert_eq!(read("said"), "hello\n");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `within` and `span_within` (decision 0050) hold exactly the pairs that comparing every pair of one document's
+/// nodes gives (preorder intervals for the tree, spans for the other): looked up by either column, and scanned.
+/// The documents with errors and empty bodies bring nodes of zero width.
+#[test]
+fn within_holds_exactly_the_contained_pairs() {
+    let store = ContentStore::open(&temp("within")).unwrap();
+    let mut docs: Vec<Document> = documents().into_iter().take(3).collect();
+    for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
+        let path = format!("broken{at}.py");
+        let facts = facts(&path, source);
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts });
+    }
+    let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
+    let nodes = *batch.nodes.last().unwrap();
+    let id = |r: usize| batch.id(r);
+    // (document, local, size, depth, start, end) of node row r.
+    let at = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let core = p.core[local] as usize;
+        (p.key, local, p.size[local] as usize, p.depth[local] as usize, p.facts.start[core], p.facts.end[core])
+    };
+    let zero = (0..nodes).filter(|&r| at(r).4 == at(r).5).count();
+    assert!(zero > 0, "the broken documents have nodes of zero width");
+    for mode in [within::Mode::Tree, within::Mode::Span] {
+        let within = within::Within::new(Arc::clone(&batch), mode);
+        let mut expected = BTreeSet::new();
+        for a in 0..nodes {
+            for b in 0..nodes {
+                let ((da, la, _, _, sa, ea), (db, lb, zb, _, sb, eb)) = (at(a), at(b));
+                let holds = da == db
+                    && match mode {
+                        within::Mode::Tree => lb < la && la <= lb + zb,
+                        within::Mode::Span => sb <= sa && ea <= eb,
+                    };
+                if holds {
+                    expected.insert((id(a), id(b)));
+                }
+            }
+        }
+        let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
+        let ids: Vec<i64> = (0..nodes).map(id).collect();
+        // By outer first (half the nodes), then by inner, then the scan: rows made by one lookup serve the others.
+        let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
+        assert_eq!(rows(within.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, b)| half.contains(b)).copied().collect());
+        assert_eq!(rows(within.lookup(0, &ids).unwrap()), expected);
+        assert_eq!(rows(within.lookup(1, &ids).unwrap()), expected);
+        assert_eq!(rows((0..within.len()).collect()), expected);
+        // Each node's containers are made once: the inner side's rows are exactly the pairs.
+        assert_eq!(within.lookup(0, &ids).unwrap().len(), expected.len());
+        let own = usize::from(mode == within::Mode::Span);
+        assert_eq!(within.estimated_len(), (0..nodes).map(|r| at(r).3 + own).sum::<usize>());
+        if mode == within::Mode::Tree {
+            assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
+        }
+    }
 }

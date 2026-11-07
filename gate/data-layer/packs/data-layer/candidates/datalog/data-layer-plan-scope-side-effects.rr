@@ -11,44 +11,44 @@
 k0("with_statement").
 .decl k1(kind: symbol)
 k1("module").
-.decl blocked111(low: node, high: node)
-.decl blocked153(low: node, high: node)
-.decl blocked20(low: node, high: node)
-.decl blocked51(low: node, high: node)
-.decl blocked82(low: node, high: node)
+.decl blocked137(low: node, high: node)
+.decl blocked35(low: node, high: node)
+.decl blocked4(low: node, high: node)
+.decl blocked66(low: node, high: node)
+.decl blocked95(low: node, high: node)
 .decl in_scope(d: number)
-.decl m103(n: node)
-.decl m109(n: node)
+.decl m104(n: node)
 .decl m110(n: node)
+.decl m111(n: node)
 .decl m119(n: node)
-.decl m12(n: node)
+.decl m13(n: node)
 .decl m131(n: node)
 .decl m134(n: node)
 .decl m135(n: node)
-.decl m145(n: node)
-.decl m151(n: node)
+.decl m146(n: node)
 .decl m152(n: node)
+.decl m153(n: node)
 .decl m161(n: node)
-.decl m18(n: node)
 .decl m19(n: node)
+.decl m20(n: node)
 .decl m28(n: node)
 .decl m33(n: node)
-.decl m43(n: node)
-.decl m49(n: node)
+.decl m44(n: node)
 .decl m50(n: node)
+.decl m51(n: node)
 .decl m59(n: node)
 .decl m64(n: node)
-.decl m74(n: node)
-.decl m80(n: node)
+.decl m75(n: node)
 .decl m81(n: node)
+.decl m82(n: node)
 .decl m90(n: node)
 .decl out_scope(d: number)
 .decl u125(n: node)
-.decl u137(n: node)
-.decl u35(n: node)
-.decl u4(n: node)
-.decl u66(n: node)
-.decl u95(n: node)
+.decl u138(n: node)
+.decl u36(n: node)
+.decl u5(n: node)
+.decl u67(n: node)
+.decl u96(n: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
@@ -62,54 +62,54 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-m12(n) :- node(_, n, "identifier", _, _), text(n, v9), (v9 = "open_provider_read_plan" ; v9 = "open_provider_versioned_read_plan" ; v9 = "open_provider_versioned_write_plan" ; v9 = "open_provider_write_plan" ; v9 = "open_read_plan" ; v9 = "open_write_plan").
-m12(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v10), node(_, v10, "identifier", _, _), text(v10, v11), (v11 = "open_provider_read_plan" ; v11 = "open_provider_versioned_read_plan" ; v11 = "open_provider_versioned_write_plan" ; v11 = "open_provider_write_plan" ; v11 = "open_read_plan" ; v11 = "open_write_plan").
-m18(n) :- node(_, n, "identifier", _, _), text(n, v15), (v15 = "open_provider_read_plan" ; v15 = "open_provider_versioned_read_plan" ; v15 = "open_provider_versioned_write_plan" ; v15 = "open_provider_write_plan" ; v15 = "open_read_plan" ; v15 = "open_write_plan").
-m18(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v16), node(_, v16, "identifier", _, _), text(v16, v17), (v17 = "open_provider_read_plan" ; v17 = "open_provider_versioned_read_plan" ; v17 = "open_provider_versioned_write_plan" ; v17 = "open_provider_write_plan" ; v17 = "open_read_plan" ; v17 = "open_write_plan").
-m19(n) :- node(_, n, "call", _, _), field(n, "function", v8), m12(v8).
-m19(n) :- node(_, n, "as_pattern", _, _), child(n, v13, _), node(_, v13, "call", _, _), field(v13, "function", v14), m18(v14).
-u4(n) :- node(_, n, "with_statement", _, _), child(n, v5, _), node(_, v5, "with_clause", _, _), child(v5, v6, _), node(_, v6, "with_item", _, _), field(v6, "value", v7), m19(v7).
-blocked20(low, high) :- inside(low, s, k0), u4(s), inside(s, high, k0).
+m13(n) :- node(_, n, "identifier", _, _), text(n, v10), (v10 = "open_provider_read_plan" ; v10 = "open_provider_versioned_read_plan" ; v10 = "open_provider_versioned_write_plan" ; v10 = "open_provider_write_plan" ; v10 = "open_read_plan" ; v10 = "open_write_plan").
+m13(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v11), node(_, v11, "identifier", _, _), text(v11, v12), (v12 = "open_provider_read_plan" ; v12 = "open_provider_versioned_read_plan" ; v12 = "open_provider_versioned_write_plan" ; v12 = "open_provider_write_plan" ; v12 = "open_read_plan" ; v12 = "open_write_plan").
+m19(n) :- node(_, n, "identifier", _, _), text(n, v16), (v16 = "open_provider_read_plan" ; v16 = "open_provider_versioned_read_plan" ; v16 = "open_provider_versioned_write_plan" ; v16 = "open_provider_write_plan" ; v16 = "open_read_plan" ; v16 = "open_write_plan").
+m19(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v17), node(_, v17, "identifier", _, _), text(v17, v18), (v18 = "open_provider_read_plan" ; v18 = "open_provider_versioned_read_plan" ; v18 = "open_provider_versioned_write_plan" ; v18 = "open_provider_write_plan" ; v18 = "open_read_plan" ; v18 = "open_write_plan").
+m20(n) :- node(_, n, "call", _, _), field(n, "function", v9), m13(v9).
+m20(n) :- node(_, n, "as_pattern", _, _), child(n, v14, _), node(_, v14, "call", _, _), field(v14, "function", v15), m19(v15).
+u5(n) :- node(_, n, "with_statement", _, _), child(n, v6, _), node(_, v6, "with_clause", _, _), child(v6, v7, _), node(_, v7, "with_item", _, _), field(v7, "value", v8), m20(v8).
+blocked4(low, high) :- inside(low, s, k0), u5(s), inside(s, high, k0).
 m28(n) :- node(_, n, "module", _, _), node(v21, n, _, _, _), node(v21, v22, _, _, _), name(v22, v23), (contains("open_provider_read_plan", v23) ; contains("open_provider_versioned_read_plan", v23) ; contains("open_provider_versioned_write_plan", v23) ; contains("open_provider_write_plan", v23) ; contains("open_read_plan", v23) ; contains("open_write_plan", v23)).
 m28(n) :- inside(n, v24, k1), node(_, v24, "module", _, _), node(v25, v24, _, _, _), node(v25, v26, _, _, _), name(v26, v27), (contains("open_provider_read_plan", v27) ; contains("open_provider_versioned_read_plan", v27) ; contains("open_provider_versioned_write_plan", v27) ; contains("open_provider_write_plan", v27) ; contains("open_read_plan", v27) ; contains("open_write_plan", v27)).
-violation("data-layer-plan-scope-side-effects", "eager-value", "PSE-010", p, l) :- node(_, n, "attribute", _, _), field(n, "attribute", v1), node(_, v1, "identifier", _, _), text(v1, v2), v2 = "resolved_value", inside(n, v3, k0), !blocked20(n, v3), u4(v3), m28(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-plan-scope-side-effects", "eager-value", "PSE-010", p, l) :- node(_, n, "attribute", _, _), field(n, "attribute", v1), node(_, v1, "identifier", _, _), text(v1, v2), v2 = "resolved_value", inside(n, v3, k0), !blocked4(n, v3), u5(v3), m28(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m33(n) :- node(_, n, "identifier", _, _), text(n, v30), (v30 = "resolve" ; v30 = "resolve_async").
 m33(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v31), node(_, v31, "identifier", _, _), text(v31, v32), (v32 = "resolve" ; v32 = "resolve_async").
-m43(n) :- node(_, n, "identifier", _, _), text(n, v40), (v40 = "open_provider_read_plan" ; v40 = "open_provider_versioned_read_plan" ; v40 = "open_provider_versioned_write_plan" ; v40 = "open_provider_write_plan" ; v40 = "open_read_plan" ; v40 = "open_write_plan").
-m43(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v41), node(_, v41, "identifier", _, _), text(v41, v42), (v42 = "open_provider_read_plan" ; v42 = "open_provider_versioned_read_plan" ; v42 = "open_provider_versioned_write_plan" ; v42 = "open_provider_write_plan" ; v42 = "open_read_plan" ; v42 = "open_write_plan").
-m49(n) :- node(_, n, "identifier", _, _), text(n, v46), (v46 = "open_provider_read_plan" ; v46 = "open_provider_versioned_read_plan" ; v46 = "open_provider_versioned_write_plan" ; v46 = "open_provider_write_plan" ; v46 = "open_read_plan" ; v46 = "open_write_plan").
-m49(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v47), node(_, v47, "identifier", _, _), text(v47, v48), (v48 = "open_provider_read_plan" ; v48 = "open_provider_versioned_read_plan" ; v48 = "open_provider_versioned_write_plan" ; v48 = "open_provider_write_plan" ; v48 = "open_read_plan" ; v48 = "open_write_plan").
-m50(n) :- node(_, n, "call", _, _), field(n, "function", v39), m43(v39).
-m50(n) :- node(_, n, "as_pattern", _, _), child(n, v44, _), node(_, v44, "call", _, _), field(v44, "function", v45), m49(v45).
-u35(n) :- node(_, n, "with_statement", _, _), child(n, v36, _), node(_, v36, "with_clause", _, _), child(v36, v37, _), node(_, v37, "with_item", _, _), field(v37, "value", v38), m50(v38).
-blocked51(low, high) :- inside(low, s, k0), u35(s), inside(s, high, k0).
+m44(n) :- node(_, n, "identifier", _, _), text(n, v41), (v41 = "open_provider_read_plan" ; v41 = "open_provider_versioned_read_plan" ; v41 = "open_provider_versioned_write_plan" ; v41 = "open_provider_write_plan" ; v41 = "open_read_plan" ; v41 = "open_write_plan").
+m44(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v42), node(_, v42, "identifier", _, _), text(v42, v43), (v43 = "open_provider_read_plan" ; v43 = "open_provider_versioned_read_plan" ; v43 = "open_provider_versioned_write_plan" ; v43 = "open_provider_write_plan" ; v43 = "open_read_plan" ; v43 = "open_write_plan").
+m50(n) :- node(_, n, "identifier", _, _), text(n, v47), (v47 = "open_provider_read_plan" ; v47 = "open_provider_versioned_read_plan" ; v47 = "open_provider_versioned_write_plan" ; v47 = "open_provider_write_plan" ; v47 = "open_read_plan" ; v47 = "open_write_plan").
+m50(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v48), node(_, v48, "identifier", _, _), text(v48, v49), (v49 = "open_provider_read_plan" ; v49 = "open_provider_versioned_read_plan" ; v49 = "open_provider_versioned_write_plan" ; v49 = "open_provider_write_plan" ; v49 = "open_read_plan" ; v49 = "open_write_plan").
+m51(n) :- node(_, n, "call", _, _), field(n, "function", v40), m44(v40).
+m51(n) :- node(_, n, "as_pattern", _, _), child(n, v45, _), node(_, v45, "call", _, _), field(v45, "function", v46), m50(v46).
+u36(n) :- node(_, n, "with_statement", _, _), child(n, v37, _), node(_, v37, "with_clause", _, _), child(v37, v38, _), node(_, v38, "with_item", _, _), field(v38, "value", v39), m51(v39).
+blocked35(low, high) :- inside(low, s, k0), u36(s), inside(s, high, k0).
 m59(n) :- node(_, n, "module", _, _), node(v52, n, _, _, _), node(v52, v53, _, _, _), name(v53, v54), (contains("open_provider_read_plan", v54) ; contains("open_provider_versioned_read_plan", v54) ; contains("open_provider_versioned_write_plan", v54) ; contains("open_provider_write_plan", v54) ; contains("open_read_plan", v54) ; contains("open_write_plan", v54)).
 m59(n) :- inside(n, v55, k1), node(_, v55, "module", _, _), node(v56, v55, _, _, _), node(v56, v57, _, _, _), name(v57, v58), (contains("open_provider_read_plan", v58) ; contains("open_provider_versioned_read_plan", v58) ; contains("open_provider_versioned_write_plan", v58) ; contains("open_provider_write_plan", v58) ; contains("open_read_plan", v58) ; contains("open_write_plan", v58)).
-violation("data-layer-plan-scope-side-effects", "eager-call", "PSE-020", p, l) :- node(_, n, "call", _, _), field(n, "function", v29), m33(v29), inside(n, v34, k0), !blocked51(n, v34), u35(v34), m59(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-plan-scope-side-effects", "eager-call", "PSE-020", p, l) :- node(_, n, "call", _, _), field(n, "function", v29), m33(v29), inside(n, v34, k0), !blocked35(n, v34), u36(v34), m59(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m64(n) :- node(_, n, "identifier", _, _), text(n, v61), (v61 = "execute_raw" ; v61 = "fetchall_raw" ; v61 = "fetchone_raw" ; v61 = "nonportably_execute_sql").
 m64(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v62), node(_, v62, "identifier", _, _), text(v62, v63), (v63 = "execute_raw" ; v63 = "fetchall_raw" ; v63 = "fetchone_raw" ; v63 = "nonportably_execute_sql").
-m74(n) :- node(_, n, "identifier", _, _), text(n, v71), (v71 = "open_provider_read_plan" ; v71 = "open_provider_versioned_read_plan" ; v71 = "open_provider_versioned_write_plan" ; v71 = "open_provider_write_plan" ; v71 = "open_read_plan" ; v71 = "open_write_plan").
-m74(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v72), node(_, v72, "identifier", _, _), text(v72, v73), (v73 = "open_provider_read_plan" ; v73 = "open_provider_versioned_read_plan" ; v73 = "open_provider_versioned_write_plan" ; v73 = "open_provider_write_plan" ; v73 = "open_read_plan" ; v73 = "open_write_plan").
-m80(n) :- node(_, n, "identifier", _, _), text(n, v77), (v77 = "open_provider_read_plan" ; v77 = "open_provider_versioned_read_plan" ; v77 = "open_provider_versioned_write_plan" ; v77 = "open_provider_write_plan" ; v77 = "open_read_plan" ; v77 = "open_write_plan").
-m80(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v78), node(_, v78, "identifier", _, _), text(v78, v79), (v79 = "open_provider_read_plan" ; v79 = "open_provider_versioned_read_plan" ; v79 = "open_provider_versioned_write_plan" ; v79 = "open_provider_write_plan" ; v79 = "open_read_plan" ; v79 = "open_write_plan").
-m81(n) :- node(_, n, "call", _, _), field(n, "function", v70), m74(v70).
-m81(n) :- node(_, n, "as_pattern", _, _), child(n, v75, _), node(_, v75, "call", _, _), field(v75, "function", v76), m80(v76).
-u66(n) :- node(_, n, "with_statement", _, _), child(n, v67, _), node(_, v67, "with_clause", _, _), child(v67, v68, _), node(_, v68, "with_item", _, _), field(v68, "value", v69), m81(v69).
-blocked82(low, high) :- inside(low, s, k0), u66(s), inside(s, high, k0).
+m75(n) :- node(_, n, "identifier", _, _), text(n, v72), (v72 = "open_provider_read_plan" ; v72 = "open_provider_versioned_read_plan" ; v72 = "open_provider_versioned_write_plan" ; v72 = "open_provider_write_plan" ; v72 = "open_read_plan" ; v72 = "open_write_plan").
+m75(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v73), node(_, v73, "identifier", _, _), text(v73, v74), (v74 = "open_provider_read_plan" ; v74 = "open_provider_versioned_read_plan" ; v74 = "open_provider_versioned_write_plan" ; v74 = "open_provider_write_plan" ; v74 = "open_read_plan" ; v74 = "open_write_plan").
+m81(n) :- node(_, n, "identifier", _, _), text(n, v78), (v78 = "open_provider_read_plan" ; v78 = "open_provider_versioned_read_plan" ; v78 = "open_provider_versioned_write_plan" ; v78 = "open_provider_write_plan" ; v78 = "open_read_plan" ; v78 = "open_write_plan").
+m81(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v79), node(_, v79, "identifier", _, _), text(v79, v80), (v80 = "open_provider_read_plan" ; v80 = "open_provider_versioned_read_plan" ; v80 = "open_provider_versioned_write_plan" ; v80 = "open_provider_write_plan" ; v80 = "open_read_plan" ; v80 = "open_write_plan").
+m82(n) :- node(_, n, "call", _, _), field(n, "function", v71), m75(v71).
+m82(n) :- node(_, n, "as_pattern", _, _), child(n, v76, _), node(_, v76, "call", _, _), field(v76, "function", v77), m81(v77).
+u67(n) :- node(_, n, "with_statement", _, _), child(n, v68, _), node(_, v68, "with_clause", _, _), child(v68, v69, _), node(_, v69, "with_item", _, _), field(v69, "value", v70), m82(v70).
+blocked66(low, high) :- inside(low, s, k0), u67(s), inside(s, high, k0).
 m90(n) :- node(_, n, "module", _, _), node(v83, n, _, _, _), node(v83, v84, _, _, _), name(v84, v85), (contains("open_provider_read_plan", v85) ; contains("open_provider_versioned_read_plan", v85) ; contains("open_provider_versioned_write_plan", v85) ; contains("open_provider_write_plan", v85) ; contains("open_read_plan", v85) ; contains("open_write_plan", v85)).
 m90(n) :- inside(n, v86, k1), node(_, v86, "module", _, _), node(v87, v86, _, _, _), node(v87, v88, _, _, _), name(v88, v89), (contains("open_provider_read_plan", v89) ; contains("open_provider_versioned_read_plan", v89) ; contains("open_provider_versioned_write_plan", v89) ; contains("open_provider_write_plan", v89) ; contains("open_read_plan", v89) ; contains("open_write_plan", v89)).
-violation("data-layer-plan-scope-side-effects", "raw-database", "PSE-030", p, l) :- node(_, n, "call", _, _), field(n, "function", v60), m64(v60), inside(n, v65, k0), !blocked82(n, v65), u66(v65), m90(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m103(n) :- node(_, n, "identifier", _, _), text(n, v100), (v100 = "open_provider_read_plan" ; v100 = "open_provider_versioned_read_plan" ; v100 = "open_provider_versioned_write_plan" ; v100 = "open_provider_write_plan" ; v100 = "open_read_plan" ; v100 = "open_write_plan").
-m103(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v101), node(_, v101, "identifier", _, _), text(v101, v102), (v102 = "open_provider_read_plan" ; v102 = "open_provider_versioned_read_plan" ; v102 = "open_provider_versioned_write_plan" ; v102 = "open_provider_write_plan" ; v102 = "open_read_plan" ; v102 = "open_write_plan").
-m109(n) :- node(_, n, "identifier", _, _), text(n, v106), (v106 = "open_provider_read_plan" ; v106 = "open_provider_versioned_read_plan" ; v106 = "open_provider_versioned_write_plan" ; v106 = "open_provider_write_plan" ; v106 = "open_read_plan" ; v106 = "open_write_plan").
-m109(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v107), node(_, v107, "identifier", _, _), text(v107, v108), (v108 = "open_provider_read_plan" ; v108 = "open_provider_versioned_read_plan" ; v108 = "open_provider_versioned_write_plan" ; v108 = "open_provider_write_plan" ; v108 = "open_read_plan" ; v108 = "open_write_plan").
-m110(n) :- node(_, n, "call", _, _), field(n, "function", v99), m103(v99).
-m110(n) :- node(_, n, "as_pattern", _, _), child(n, v104, _), node(_, v104, "call", _, _), field(v104, "function", v105), m109(v105).
-u95(n) :- node(_, n, "with_statement", _, _), child(n, v96, _), node(_, v96, "with_clause", _, _), child(v96, v97, _), node(_, v97, "with_item", _, _), field(v97, "value", v98), m110(v98).
-blocked111(low, high) :- inside(low, s, k0), u95(s), inside(s, high, k0).
+violation("data-layer-plan-scope-side-effects", "raw-database", "PSE-030", p, l) :- node(_, n, "call", _, _), field(n, "function", v60), m64(v60), inside(n, v65, k0), !blocked66(n, v65), u67(v65), m90(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m104(n) :- node(_, n, "identifier", _, _), text(n, v101), (v101 = "open_provider_read_plan" ; v101 = "open_provider_versioned_read_plan" ; v101 = "open_provider_versioned_write_plan" ; v101 = "open_provider_write_plan" ; v101 = "open_read_plan" ; v101 = "open_write_plan").
+m104(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v102), node(_, v102, "identifier", _, _), text(v102, v103), (v103 = "open_provider_read_plan" ; v103 = "open_provider_versioned_read_plan" ; v103 = "open_provider_versioned_write_plan" ; v103 = "open_provider_write_plan" ; v103 = "open_read_plan" ; v103 = "open_write_plan").
+m110(n) :- node(_, n, "identifier", _, _), text(n, v107), (v107 = "open_provider_read_plan" ; v107 = "open_provider_versioned_read_plan" ; v107 = "open_provider_versioned_write_plan" ; v107 = "open_provider_write_plan" ; v107 = "open_read_plan" ; v107 = "open_write_plan").
+m110(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v108), node(_, v108, "identifier", _, _), text(v108, v109), (v109 = "open_provider_read_plan" ; v109 = "open_provider_versioned_read_plan" ; v109 = "open_provider_versioned_write_plan" ; v109 = "open_provider_write_plan" ; v109 = "open_read_plan" ; v109 = "open_write_plan").
+m111(n) :- node(_, n, "call", _, _), field(n, "function", v100), m104(v100).
+m111(n) :- node(_, n, "as_pattern", _, _), child(n, v105, _), node(_, v105, "call", _, _), field(v105, "function", v106), m110(v106).
+u96(n) :- node(_, n, "with_statement", _, _), child(n, v97, _), node(_, v97, "with_clause", _, _), child(v97, v98, _), node(_, v98, "with_item", _, _), field(v98, "value", v99), m111(v99).
+blocked95(low, high) :- inside(low, s, k0), u96(s), inside(s, high, k0).
 m119(n) :- node(_, n, "module", _, _), node(v112, n, _, _, _), node(v112, v113, _, _, _), name(v113, v114), (contains("open_provider_read_plan", v114) ; contains("open_provider_versioned_read_plan", v114) ; contains("open_provider_versioned_write_plan", v114) ; contains("open_provider_write_plan", v114) ; contains("open_read_plan", v114) ; contains("open_write_plan", v114)).
 m119(n) :- inside(n, v115, k1), node(_, v115, "module", _, _), node(v116, v115, _, _, _), node(v116, v117, _, _, _), name(v117, v118), (contains("open_provider_read_plan", v118) ; contains("open_provider_versioned_read_plan", v118) ; contains("open_provider_versioned_write_plan", v118) ; contains("open_provider_write_plan", v118) ; contains("open_read_plan", v118) ; contains("open_write_plan", v118)).
-violation("data-layer-plan-scope-side-effects", "legacy-callback", "PSE-040", p, l) :- node(_, n, "call", _, _), field(n, "function", v91), node(_, v91, "attribute", _, _), field(v91, "attribute", v92), node(_, v92, "identifier", _, _), text(v92, v93), (v93 = "read" ; v93 = "read_async" ; v93 = "write" ; v93 = "write_async"), inside(n, v94, k0), !blocked111(n, v94), u95(v94), m119(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-plan-scope-side-effects", "legacy-callback", "PSE-040", p, l) :- node(_, n, "call", _, _), field(n, "function", v91), node(_, v91, "attribute", _, _), field(v91, "attribute", v92), node(_, v92, "identifier", _, _), text(v92, v93), (v93 = "read" ; v93 = "read_async" ; v93 = "write" ; v93 = "write_async"), inside(n, v94, k0), !blocked95(n, v94), u96(v94), m119(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m131(n) :- field(n, "attribute", v127), name(v127, v129), (iglob("asyncio", v129) ; iglob("httpx", v129) ; iglob("os", v129) ; iglob("requests", v129) ; iglob("shutil", v129) ; iglob("socket", v129) ; iglob("subprocess", v129) ; iglob("time", v129)).
 m131(n) :- field(n, "object", v130), u125(v130).
 m134(n) :- node(_, n, "identifier", _, _), text(n, v126), (iglob("asyncio", v126) ; iglob("httpx", v126) ; iglob("os", v126) ; iglob("requests", v126) ; iglob("shutil", v126) ; iglob("socket", v126) ; iglob("subprocess", v126) ; iglob("time", v126)).
@@ -119,15 +119,15 @@ m134(n) :- node(_, n, "subscript", _, _), field(n, "value", v133), u125(v133).
 u125(n) :- m134(n).
 m135(n) :- node(_, n, "identifier", _, _), text(n, v121), v121 = "open".
 m135(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v122), node(_, v122, "identifier", _, _), text(v122, v123), (v123 = "Popen" ; v123 = "delete" ; v123 = "get" ; v123 = "open" ; v123 = "patch" ; v123 = "post" ; v123 = "put" ; v123 = "request" ; v123 = "run" ; v123 = "sleep"), field(n, "object", v124), u125(v124).
-m145(n) :- node(_, n, "identifier", _, _), text(n, v142), (v142 = "open_provider_read_plan" ; v142 = "open_provider_versioned_read_plan" ; v142 = "open_provider_versioned_write_plan" ; v142 = "open_provider_write_plan" ; v142 = "open_read_plan" ; v142 = "open_write_plan").
-m145(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v143), node(_, v143, "identifier", _, _), text(v143, v144), (v144 = "open_provider_read_plan" ; v144 = "open_provider_versioned_read_plan" ; v144 = "open_provider_versioned_write_plan" ; v144 = "open_provider_write_plan" ; v144 = "open_read_plan" ; v144 = "open_write_plan").
-m151(n) :- node(_, n, "identifier", _, _), text(n, v148), (v148 = "open_provider_read_plan" ; v148 = "open_provider_versioned_read_plan" ; v148 = "open_provider_versioned_write_plan" ; v148 = "open_provider_write_plan" ; v148 = "open_read_plan" ; v148 = "open_write_plan").
-m151(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v149), node(_, v149, "identifier", _, _), text(v149, v150), (v150 = "open_provider_read_plan" ; v150 = "open_provider_versioned_read_plan" ; v150 = "open_provider_versioned_write_plan" ; v150 = "open_provider_write_plan" ; v150 = "open_read_plan" ; v150 = "open_write_plan").
-m152(n) :- node(_, n, "call", _, _), field(n, "function", v141), m145(v141).
-m152(n) :- node(_, n, "as_pattern", _, _), child(n, v146, _), node(_, v146, "call", _, _), field(v146, "function", v147), m151(v147).
-u137(n) :- node(_, n, "with_statement", _, _), child(n, v138, _), node(_, v138, "with_clause", _, _), child(v138, v139, _), node(_, v139, "with_item", _, _), field(v139, "value", v140), m152(v140).
-blocked153(low, high) :- inside(low, s, k0), u137(s), inside(s, high, k0).
+m146(n) :- node(_, n, "identifier", _, _), text(n, v143), (v143 = "open_provider_read_plan" ; v143 = "open_provider_versioned_read_plan" ; v143 = "open_provider_versioned_write_plan" ; v143 = "open_provider_write_plan" ; v143 = "open_read_plan" ; v143 = "open_write_plan").
+m146(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v144), node(_, v144, "identifier", _, _), text(v144, v145), (v145 = "open_provider_read_plan" ; v145 = "open_provider_versioned_read_plan" ; v145 = "open_provider_versioned_write_plan" ; v145 = "open_provider_write_plan" ; v145 = "open_read_plan" ; v145 = "open_write_plan").
+m152(n) :- node(_, n, "identifier", _, _), text(n, v149), (v149 = "open_provider_read_plan" ; v149 = "open_provider_versioned_read_plan" ; v149 = "open_provider_versioned_write_plan" ; v149 = "open_provider_write_plan" ; v149 = "open_read_plan" ; v149 = "open_write_plan").
+m152(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v150), node(_, v150, "identifier", _, _), text(v150, v151), (v151 = "open_provider_read_plan" ; v151 = "open_provider_versioned_read_plan" ; v151 = "open_provider_versioned_write_plan" ; v151 = "open_provider_write_plan" ; v151 = "open_read_plan" ; v151 = "open_write_plan").
+m153(n) :- node(_, n, "call", _, _), field(n, "function", v142), m146(v142).
+m153(n) :- node(_, n, "as_pattern", _, _), child(n, v147, _), node(_, v147, "call", _, _), field(v147, "function", v148), m152(v148).
+u138(n) :- node(_, n, "with_statement", _, _), child(n, v139, _), node(_, v139, "with_clause", _, _), child(v139, v140, _), node(_, v140, "with_item", _, _), field(v140, "value", v141), m153(v141).
+blocked137(low, high) :- inside(low, s, k0), u138(s), inside(s, high, k0).
 m161(n) :- node(_, n, "module", _, _), node(v154, n, _, _, _), node(v154, v155, _, _, _), name(v155, v156), (contains("open_provider_read_plan", v156) ; contains("open_provider_versioned_read_plan", v156) ; contains("open_provider_versioned_write_plan", v156) ; contains("open_provider_write_plan", v156) ; contains("open_read_plan", v156) ; contains("open_write_plan", v156)).
 m161(n) :- inside(n, v157, k1), node(_, v157, "module", _, _), node(v158, v157, _, _, _), node(v158, v159, _, _, _), name(v159, v160), (contains("open_provider_read_plan", v160) ; contains("open_provider_versioned_read_plan", v160) ; contains("open_provider_versioned_write_plan", v160) ; contains("open_provider_write_plan", v160) ; contains("open_read_plan", v160) ; contains("open_write_plan", v160)).
-violation("data-layer-plan-scope-side-effects", "python-side-effect", "PSE-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v120), m135(v120), inside(n, v136, k0), !blocked153(n, v136), u137(v136), m161(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-plan-scope-side-effects", "python-side-effect", "PSE-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v120), m135(v120), inside(n, v136, k0), !blocked137(n, v136), u138(v136), m161(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 .output violation

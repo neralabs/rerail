@@ -70,9 +70,9 @@ impl ContentStore {
         self.immediate_transaction(|transaction| {
             let mut counts = Counts::default();
             for set in sets {
-                put(transaction, set, &mut counts)?;
+                put(transaction, set, &mut counts, &self.atoms)?;
             }
-            counts.flush(transaction)
+            counts.flush(transaction, &self.atoms)
         })?;
         self.hold_prefilters(sets);
         Ok(())
@@ -150,7 +150,7 @@ impl ContentStore {
             let mut connection = self.connection.lock().expect("content store mutex poisoned");
             let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
             let value = operation(&transaction)?;
-            transaction.commit()?;
+            self.commit(transaction)?;
             Ok(value)
         })();
         cache(1_024)?;
@@ -162,6 +162,10 @@ impl ContentStore {
     /// identity and grammar but not their bytes, which candidate SQL never reads.
     pub(crate) fn capture_prefilter(&self, path: &std::path::Path, tapes: &[i64]) -> StoreResult<()> {
         drop(ContentStore::open(path)?);
+        // The capture copies the atoms' segments: the pending ones are written first.
+        if self.atoms.pending() {
+            self.immediate_transaction(|_| Ok(()))?;
+        }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let target = path.to_str().ok_or_else(|| StoreError::Invalid("capture path is not UTF-8".to_owned()))?;
         connection.execute("ATTACH DATABASE ?1 AS capture", [target])?;
@@ -193,7 +197,7 @@ impl ContentStore {
                  INSERT INTO capture.tape_kind_counts SELECT k.* FROM temp.capture_tapes c JOIN main.tape_kind_counts k USING(tape_id);
                  INSERT INTO capture.term_postings SELECT p.* FROM temp.capture_tapes c JOIN main.term_postings p USING(tape_id);
                  INSERT INTO capture.term_coverage SELECT v.* FROM temp.capture_tapes c JOIN main.term_coverage v USING(tape_id);
-                 INSERT OR IGNORE INTO capture.atoms SELECT * FROM main.atoms;
+                 INSERT OR IGNORE INTO capture.atom_segment SELECT * FROM main.atom_segment;
                  INSERT INTO capture.kind_size SELECT * FROM main.kind_size;
                  INSERT INTO capture.edge_freq SELECT * FROM main.edge_freq;
                  INSERT INTO capture.term_freq SELECT * FROM main.term_freq;
@@ -259,19 +263,13 @@ impl Counts {
     }
 
     /// Writes and clears the sums; postings in key order, so consecutive rows share leaves.
-    fn flush(&mut self, transaction: &Transaction<'_>) -> StoreResult<()> {
+    fn flush(&mut self, transaction: &Transaction<'_>, store: &super::atoms::Atoms) -> StoreResult<()> {
         let counts = std::mem::take(self);
-        // Each term's atom: new texts are appended to `atoms` (dense: a new row's atom is the
-        // table's next), then every text is looked up.
-        let texts = counts.term_freq.keys().map(|(_, term)| term.as_str()).collect::<BTreeSet<_>>();
-        insert(transaction, "INSERT INTO atoms(value)", "ON CONFLICT(value) DO NOTHING", texts.iter().map(|&text| [Value::Text(text.to_owned())]))?;
-        let mut atoms = BTreeMap::new();
-        {
-            let mut atom = transaction.prepare_cached("SELECT atom FROM atoms WHERE value=?1")?;
-            for &text in &texts {
-                atoms.insert(text, atom.query_row([text], |row| row.get::<_, i64>(0))?);
-            }
-        }
+        // Each term's atom, from the store's arena (decision 0049): new ones are pending, and the
+        // transaction's commit appends them before these rows (`ContentStore::commit`).
+        let texts = counts.term_freq.keys().map(|(_, term)| term.as_str()).collect::<Vec<_>>();
+        let ids = store.intern_all(&texts)?;
+        let atoms: BTreeMap<&str, i64> = texts.iter().copied().zip(ids.into_iter().map(i64::from)).collect();
         let atom = |term: &str| atoms.get(term).copied().ok_or_else(|| StoreError::Invalid("a posting's term has no atom".to_owned()));
         insert(
             transaction,
@@ -326,7 +324,7 @@ impl Counts {
     }
 }
 
-fn put(transaction: &Transaction<'_>, set: &TapePrefilter, counts: &mut Counts) -> StoreResult<()> {
+fn put(transaction: &Transaction<'_>, set: &TapePrefilter, counts: &mut Counts, atoms: &super::atoms::Atoms) -> StoreResult<()> {
     let tape = set.tape_id.row();
     // Publishing again replaces: the cascade and triggers count the old rows down, so the sums
     // so far are written first, as they would have been one tape at a time.
@@ -335,7 +333,7 @@ fn put(transaction: &Transaction<'_>, set: &TapePrefilter, counts: &mut Counts) 
             .prepare_cached("SELECT EXISTS(SELECT 1 FROM prefilter_sets WHERE tape_id=?1)")?
             .query_row([tape], |row| row.get(0))?;
         if published {
-            counts.flush(transaction)?;
+            counts.flush(transaction, atoms)?;
         }
     }
     transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape])?;

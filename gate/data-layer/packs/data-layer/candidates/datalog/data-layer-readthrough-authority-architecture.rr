@@ -9,15 +9,19 @@
 .decl k0(kind: symbol)
 k0("call").
 .decl k1(kind: symbol)
-k1("identifier").
+k1("function_definition").
 .decl k2(kind: symbol)
-k2("import_from_statement"). k2("import_statement").
+k2("identifier").
 .decl k3(kind: symbol)
-k3("keyword_argument").
+k3("import_from_statement"). k3("import_statement").
 .decl k4(kind: symbol)
-k4("concatenated_string"). k4("string").
+k4("keyword_argument").
 .decl k5(kind: symbol)
-k5("assignment").
+k5("concatenated_string"). k5("string").
+.decl k6(kind: symbol)
+k6("assignment").
+.decl k7(kind: symbol)
+k7("dictionary").
 .decl in_scope(d: number)
 .decl m100(n: node)
 .decl m102(n: node)
@@ -102,10 +106,10 @@ m6(n) :- node(_, n, "string", _, _).
 m6(n) :- node(_, n, "concatenated_string", _, _).
 m14(n) :- node(_, n, "identifier", _, _), text(n, v11), (v11 = "_load_local_row_overlays" ; v11 = "_load_local_row_overlays_async").
 m14(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v12), node(_, v12, "identifier", _, _), text(v12, v13), (v13 = "_load_local_row_overlays" ; v13 = "_load_local_row_overlays_async").
-violation("data-layer-readthrough-authority-architecture", "bind-load", "RTA001", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v7), node(_, v7, "identifier", _, _), text(v7, v8), (v8 = "_bind_cache_to_current_authority" ; v8 = "_bind_cache_to_current_authority_native"), inside(v9, n, k0), node(_, v9, "call", _, _), field(v9, "function", v10), m14(v10), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-readthrough-authority-architecture", "bind-load", "RTA001", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v7), node(_, v7, "identifier", _, _), text(v7, v8), (v8 = "_bind_cache_to_current_authority" ; v8 = "_bind_cache_to_current_authority_native"), inside(v9, n, k1), node(_, v9, "call", _, _), field(v9, "function", v10), m14(v10), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m20(n) :- node(_, n, "import_statement", _, _).
 m20(n) :- node(_, n, "import_from_statement", _, _).
-m21(n) :- inside(n, v19, k2), m20(v19).
+m21(n) :- inside(n, v19, k3), m20(v19).
 m23(n) :- field(v22, "name", n), node(_, v22, "function_definition", _, _).
 m25(n) :- field(v24, "name", n), node(_, v24, "class_definition", _, _).
 m27(n) :- field(v26, "name", n), node(_, v26, "keyword_argument", _, _).
@@ -115,32 +119,32 @@ m38(n) :- field(n, "body", v32), child(v32, v33, _), node(_, v33, "expression_st
 violation("data-layer-readthrough-authority-architecture", "principal-field", "RTA004", p, l) :- node(_, n, "class_definition", _, _), field(n, "name", v30), node(_, v30, "identifier", _, _), text(v30, v31), v31 = "ReadThroughLocalOverlayRecord", !m38(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m47(n) :- node(_, n, "import_statement", _, _).
 m47(n) :- node(_, n, "import_from_statement", _, _).
-m48(n) :- inside(n, v46, k2), m47(v46).
+m48(n) :- inside(n, v46, k3), m47(v46).
 m50(n) :- field(v49, "name", n), node(_, v49, "function_definition", _, _).
 m52(n) :- field(v51, "name", n), node(_, v51, "class_definition", _, _).
 m54(n) :- field(v53, "name", n), node(_, v53, "keyword_argument", _, _).
 m56(n) :- child(v55, n, _), node(_, v55, "parameters", _, _).
 m60(n) :- node(_, n, "import_statement", _, _).
 m60(n) :- node(_, n, "import_from_statement", _, _).
-m61(n) :- inside(n, v59, k2), m60(v59).
+m61(n) :- inside(n, v59, k3), m60(v59).
 m63(n) :- field(v62, "name", n), node(_, v62, "function_definition", _, _).
 m65(n) :- field(v64, "name", n), node(_, v64, "class_definition", _, _).
 m67(n) :- field(v66, "name", n), node(_, v66, "keyword_argument", _, _).
 m69(n) :- child(v68, n, _), node(_, v68, "parameters", _, _).
 m70(n) :- node(_, n, "identifier", _, _), text(n, v45), v45 = "proposed_lease_ref", !m48(n), !m50(n), !m52(n), !m54(n), !m56(n).
-m70(n) :- inside(v57, n, k1), node(_, v57, "identifier", _, _), text(v57, v58), v58 = "proposed_lease_ref", !m61(v57), !m63(v57), !m65(v57), !m67(v57), !m69(v57).
-m71(n) :- inside(v41, n, k3), node(_, v41, "keyword_argument", _, _), field(v41, "name", v42), node(_, v42, "identifier", _, _), text(v42, v43), v43 = "after_refs", field(v41, "value", v44), m70(v44).
+m70(n) :- within(v57, n), node(_, v57, "identifier", _, _), text(v57, v58), v58 = "proposed_lease_ref", !m61(v57), !m63(v57), !m65(v57), !m67(v57), !m69(v57).
+m71(n) :- inside(v41, n, k1), node(_, v41, "keyword_argument", _, _), field(v41, "name", v42), node(_, v42, "identifier", _, _), text(v42, v43), v43 = "after_refs", field(v41, "value", v44), m70(v44).
 violation("data-layer-readthrough-authority-architecture", "closed-dependency", "RTA005", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v39), node(_, v39, "identifier", _, _), text(v39, v40), v40 = "_local_overlay_record_steps", !m71(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m81(n) :- node(_, n, "import_statement", _, _).
 m81(n) :- node(_, n, "import_from_statement", _, _).
-m82(n) :- inside(n, v80, k2), m81(v80).
+m82(n) :- inside(n, v80, k3), m81(v80).
 m84(n) :- field(v83, "name", n), node(_, v83, "function_definition", _, _).
 m86(n) :- field(v85, "name", n), node(_, v85, "class_definition", _, _).
 m88(n) :- field(v87, "name", n), node(_, v87, "keyword_argument", _, _).
 m90(n) :- child(v89, n, _), node(_, v89, "parameters", _, _).
 m97(n) :- node(_, n, "import_statement", _, _).
 m97(n) :- node(_, n, "import_from_statement", _, _).
-m98(n) :- inside(n, v96, k2), m97(v96).
+m98(n) :- inside(n, v96, k3), m97(v96).
 m100(n) :- field(v99, "name", n), node(_, v99, "function_definition", _, _).
 m102(n) :- field(v101, "name", n), node(_, v101, "class_definition", _, _).
 m104(n) :- field(v103, "name", n), node(_, v103, "keyword_argument", _, _).
@@ -157,23 +161,23 @@ m127(n) :- node(_, n, "concatenated_string", _, _).
 m134(n) :- field(n, "type", v133).
 m139(n) :- node(_, n, "import_statement", _, _).
 m139(n) :- node(_, n, "import_from_statement", _, _).
-m140(n) :- inside(n, v138, k2), m139(v138).
+m140(n) :- inside(n, v138, k3), m139(v138).
 m142(n) :- field(v141, "name", n), node(_, v141, "function_definition", _, _).
 m144(n) :- field(v143, "name", n), node(_, v143, "class_definition", _, _).
 m146(n) :- field(v145, "name", n), node(_, v145, "keyword_argument", _, _).
 m148(n) :- child(v147, n, _), node(_, v147, "parameters", _, _).
 m152(n) :- node(_, n, "import_statement", _, _).
 m152(n) :- node(_, n, "import_from_statement", _, _).
-m153(n) :- inside(n, v151, k2), m152(v151).
+m153(n) :- inside(n, v151, k3), m152(v151).
 m155(n) :- field(v154, "name", n), node(_, v154, "function_definition", _, _).
 m157(n) :- field(v156, "name", n), node(_, v156, "class_definition", _, _).
 m159(n) :- field(v158, "name", n), node(_, v158, "keyword_argument", _, _).
 m161(n) :- child(v160, n, _), node(_, v160, "parameters", _, _).
-m162(n) :- inside(v149, n, k1), node(_, v149, "identifier", _, _), text(v149, v150), v150 = "established_at", !m153(v149), !m155(v149), !m157(v149), !m159(v149), !m161(v149).
-m163(n) :- inside(v130, n, k5), node(_, v130, "assignment", _, _), field(v130, "left", v131), node(_, v131, "identifier", _, _), text(v131, v132), v132 = "lease_conflict_update", !m134(v130), field(v130, "right", v135), node(_, v135, "dictionary", _, _), inside(v136, v135, k1), node(_, v136, "identifier", _, _), text(v136, v137), v137 = "last_authenticated", !m140(v136), !m142(v136), !m144(v136), !m146(v136), !m148(v136), !m162(v135).
+m162(n) :- within(v149, n), node(_, v149, "identifier", _, _), text(v149, v150), v150 = "established_at", !m153(v149), !m155(v149), !m157(v149), !m159(v149), !m161(v149).
+m163(n) :- inside(v130, n, k1), node(_, v130, "assignment", _, _), field(v130, "left", v131), node(_, v131, "identifier", _, _), text(v131, v132), v132 = "lease_conflict_update", !m134(v130), field(v130, "right", v135), node(_, v135, "dictionary", _, _), inside(v136, v135, k7), node(_, v136, "identifier", _, _), text(v136, v137), v137 = "last_authenticated", !m140(v136), !m142(v136), !m144(v136), !m146(v136), !m148(v136), !m162(v135).
 violation("data-layer-readthrough-authority-architecture", "preserve-establishment", "RTA009", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v128), node(_, v128, "identifier", _, _), text(v128, v129), v129 = "_remote_authority_lease_steps", !m163(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m171(n) :- node(_, n, "identifier", _, _), text(n, v168), v168 = "require_publication_precondition".
 m171(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v169), node(_, v169, "identifier", _, _), text(v169, v170), v170 = "require_publication_precondition".
-m172(n) :- inside(v166, n, k0), node(_, v166, "call", _, _), field(v166, "function", v167), m171(v167).
+m172(n) :- inside(v166, n, k1), node(_, v166, "call", _, _), field(v166, "function", v167), m171(v167).
 violation("data-layer-readthrough-authority-architecture", "publication-precondition", "RTA007", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v164), node(_, v164, "identifier", _, _), text(v164, v165), (v165 = "_lower_generic_cache_first_object" ; v165 = "_lower_generic_rowset_merge"), !m172(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 .output violation

@@ -7,7 +7,6 @@ use super::{
     StoreError, StoreResult, StoredDocument, StoredPathObjects, StoredSourceObjects, TapeId,
     TapePayload, compress,
 };
-#[cfg(test)]
 use rusqlite::Connection;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeSet, HashMap};
@@ -128,7 +127,6 @@ impl ContentStore {
         })
     }
 
-    #[cfg(test)]
     pub fn source_by_hash(&self, hash: HashKey) -> StoreResult<Option<SourceId>> {
         let connection = self
             .connection
@@ -1112,7 +1110,6 @@ fn put_tape_prepared_tx(
     Ok(TapeId(tape_id))
 }
 
-#[cfg(test)]
 fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreResult<Option<SourceId>> {
     connection
         .query_row(

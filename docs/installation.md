@@ -375,9 +375,9 @@ Policy evaluation caches parsed files and results in a content store. Which
 one a Rerail uses depends on where its package lives, not on a flag: the
 managed installation (a package under `~/.rerail/versions/<version>/`, or
 `$RERAIL_HOME/versions/`, normally loaded through `current`) owns the
-machine-wide `~/.cache/rerail/content-v2.sqlite`. Any build running from a
+machine-wide `~/.cache/rerail/content-v3.sqlite`. Any build running from a
 Git checkout — source, `dist/`, tests, benchmarks, every worktree — uses
-`<checkout>/.rerail/content-v2.sqlite` instead (`.rerail/` is gitignored), so a
+`<checkout>/.rerail/content-v3.sqlite` instead (`.rerail/` is gitignored), so a
 checkout on a newer store schema never changes the store the installed version
 reads. The file name follows the store's compatibility floor (`v2` today) and
 changes whenever the floor rises. `RERAIL_CONTENT_STORE_PATH` overrides the

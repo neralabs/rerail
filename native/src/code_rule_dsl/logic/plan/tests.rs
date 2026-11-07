@@ -502,12 +502,12 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let cache = dir.join("cache");
 
     let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
-    let r = run_typed(&src, &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
+    let r = run_typed(&[&src], &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
     assert_eq!(r.typing.summaries, 2, "{:?}", r.typing);
     assert_eq!(r.typing.conflicts, vec![("vendor.core.make".to_owned(), "int".to_owned(), "str".to_owned())]);
 
     let app = Typing { declarations: vec![dir.join("decl/other.pyi")], site: Some((dir.join("site"), cache.clone())), ..Default::default() };
-    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
+    let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
     println!("{:?}", r.typing);
     assert!(r.typing.pending.is_empty(), "{:?}", r.typing);
     assert_eq!(r.typing.declared, 4, "version: str, make: int, thing: bytes | None");
@@ -523,7 +523,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     assert_eq!(unions, vec![2, 2]);
 
     let cold = Typing { site: Some((dir.join("site"), dir.join("empty-cache"))), ..Default::default() };
-    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
+    let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
     assert_eq!(r.typing.pending, vec!["vendor".to_owned(), "vendor.core".to_owned()]);
     assert_eq!(std::fs::read_to_string(dir.join("out-cold/type_of.csv")).unwrap(), "");
     let _ = std::fs::remove_dir_all(&dir);

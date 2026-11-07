@@ -76,6 +76,13 @@ impl Projection {
     }
 }
 
+mod within;
+
+/// The language's `within(n, a)`, `n` strictly below `a` (`within::Within`, tree mode).
+pub(crate) const WITHIN: &str = "within";
+/// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
+pub(crate) const SPAN_WITHIN: &str = "span_within";
+
 /// One document of a batch.
 #[derive(Clone)]
 pub(crate) struct Document {
@@ -560,7 +567,9 @@ impl Batch {
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
             (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
         });
+        let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
+        drop(intern);
         let atom = |i: i64| i64::from(atoms[i as usize]);
         let py = vocabulary.zip(python).map(|((contexts, spreads), tag)| Py {
             grammar: py::Grammar::new(tag, &dialects[&tag].catalog),
@@ -1121,12 +1130,18 @@ pub(crate) fn with_nearest(
         }
         out.push((name.clone(), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
     }
+    // Containment (decision 0050): made per looked-up node, so a program that never reads it pays nothing.
+    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree))));
+    out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Span))));
     Ok(out)
 }
 
 /// The planner's statistics of `source` (`stat_col`'s rows, ndv, sq and sqd per column, `sqd` by
 /// document `d = id >> 32`), for a relation made at bind time rather than at ingestion.
 pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
+    if let Some(known) = source.statistics() {
+        return known;
+    }
     let rows = source.len();
     // Postings by sorting (no map per value): a run of equal values is one value's postings.
     let moments = |mut values: Vec<(i64, i64)>| -> (i64, i64) {
@@ -1140,13 +1155,21 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
         }
         (ndv, sq)
     };
+    // Each row's document (the first column's high half), read once for every column.
+    let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();
     source
         .columns()
         .into_iter()
         .enumerate()
         .map(|(c, name)| {
-            let (ndv, sq) = moments((0..rows).map(|row| (0, source.value(row, c))).collect());
-            let (_, sqd) = moments((0..rows).map(|row| (source.value(row, 0) >> 32, source.value(row, c))).collect());
+            let values: Vec<i64> = (0..rows).map(|row| source.value(row, c)).collect();
+            // A key column (strictly increasing, as a node column of a relation in node order): every value once,
+            // and so every (document, value) once. No sort.
+            if values.windows(2).all(|pair| pair[0] < pair[1]) {
+                return (name, rows as i64, rows as i64, rows as i64, rows as i64);
+            }
+            let (ndv, sq) = moments(values.iter().map(|&v| (0, v)).collect());
+            let (_, sqd) = moments(docs.iter().zip(&values).map(|(&d, &v)| (d, v)).collect());
             (name, rows as i64, ndv, sq, sqd)
         })
         .collect()

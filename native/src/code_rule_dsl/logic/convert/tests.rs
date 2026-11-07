@@ -536,6 +536,47 @@ fn converted_rules_give_the_recorded_findings() {
     }
 }
 
+/// The rules `rules` (comma-separated ids, or `*`) in one corpus run: each file parsed and batched once, every rule
+/// over each chunk. Prints the run as `measure_converted_rules` does, and the violations per rule.
+fn measure_all(corpus: &Path, rules: &str) {
+    let ids: Vec<String> = if rules == "*" {
+        let mut ids: Vec<String> = std::fs::read_dir(pack().join("datalog")).unwrap().filter_map(|e| {
+            let p = e.unwrap().path();
+            (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
+        }).collect();
+        ids.sort();
+        ids
+    } else {
+        rules.split(',').map(str::to_owned).collect()
+    };
+    let texts: Vec<String> = ids.iter().map(|id| std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap()).collect();
+    let programs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("measure-all");
+    if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
+        crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join("all"));
+    }
+    let r = super::super::plan::corpus::run_all(&programs, corpus, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
+    let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
+    println!(
+        "MEASURE all {} rules: {} files, {} nodes, {} chunks, violations {}, CPU {cpu:.2} s, peak RSS {rss:.0} MB; text tests {} relations, {} strings, {:.3} s CPU",
+        ids.len(), r.files, r.nodes, r.chunks, r.rows.get("violation").copied().unwrap_or(0), r.text.0, r.text.1, r.text.2
+    );
+    for (name, user, sys, rss, statements) in &r.phases {
+        println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
+    }
+    // Violations per rule: the first column of `violation.csv` is the rule's id.
+    let mut per: BTreeMap<String, usize> = BTreeMap::new();
+    for line in std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines() {
+        let id = line.split('\t').next().unwrap_or("").trim_matches('"').to_owned();
+        *per.entry(id).or_default() += 1;
+    }
+    for (id, n) in &per {
+        println!("VIOLATIONS {id} {n}");
+    }
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A measurement, not a check: converted rules (`RERAIL_MEASURE_RULES`, comma-separated rule ids) run over a corpus
 /// on disk (`RERAIL_MEASURE_CORPUS`), one run each. Prints each run's CPU (user + system) by phase, peak RSS, the
 /// violations, and the text tests' work (decision 0037): relations, distinct strings tested, their CPU.
@@ -544,6 +585,10 @@ fn converted_rules_give_the_recorded_findings() {
 fn measure_converted_rules() {
     let corpus = PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
     let rules = std::env::var("RERAIL_MEASURE_RULES").expect("RERAIL_MEASURE_RULES");
+    // `RERAIL_MEASURE_ALL=1`: the rules in one run (`corpus::run_all`), `*` for every rule of the pack.
+    if std::env::var_os("RERAIL_MEASURE_ALL").is_some() {
+        return measure_all(&corpus, &rules);
+    }
     for id in rules.split(',') {
         let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap();
         // The relations the cross-file part derives, and the base relations it reads.

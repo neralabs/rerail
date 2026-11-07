@@ -89,7 +89,7 @@ impl ContentStore {
             .expect("content store mutex poisoned");
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         Self::put_search_indexes_transaction(&transaction, indexes)?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 

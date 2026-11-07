@@ -68,6 +68,54 @@ pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
     let Some((doc, lines)) = tape else {
         return Ok(Built::Unparsed);
     };
+    let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
+    from_tape(&doc, lines).map(Built::Facts)
+}
+
+/// [`build`], with the file's tape kept in `cache` (a content store, keyed by the source's content,
+/// the grammar's version and the tape format): read from it where it has one, else parsed and stored.
+/// The corpus runner's parse cache: a file parsed once is not parsed again by a later run.
+pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::ContentStore) -> Result<Built, String> {
+    use crate::code_rule_dsl::lines::Terminators;
+    use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeImage};
+    use crate::code_rule_dsl::workspace::grammar_version;
+    use crate::content_store::HashKey;
+    let language = eval::file_language(file).ok_or_else(|| format!("{} has no grammar", file.language))?;
+    let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);
+    let (gv, fv) = (grammar_version(), i64::from(TAPE_FORMAT_VERSION));
+    let e = |e: crate::content_store::StoreError| e.to_string();
+    let bytes = file.source.as_bytes();
+    let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
+    let source_id = match cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)? {
+        Some(id) => id,
+        None => cache.put_source(bytes, &[]).map_err(e)?,
+    };
+    let stored = cache.tape_by_source(source_id, tag, gv, fv).map_err(e)?;
+    drop(lookup);
+    let grammar = tape::Grammar::new(language)?;
+    let primary = match stored.and_then(|id| cache.get_tapes_bulk(&[id]).ok()?.remove(&id)) {
+        Some((stored, _)) => {
+            let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
+            TapeImage::from_bytes(&stored, &grammar)?
+        }
+        None => {
+            let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
+            let Some(image) = TapeImage::parse(&grammar, &file.source, &|| false) else {
+                return Ok(Built::Unparsed);
+            };
+            let image = image?;
+            drop(parse);
+            let _store = crate::code_rule_dsl::logic::profile::span(|| "tape store".into());
+            cache.put_tape(source_id, tag, gv, fv, &image.primary.to_bytes()?).map_err(e)?;
+            image.primary
+        }
+    };
+    let image = FileImage { primary, derived: Vec::new() };
+    let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
+    let restore = crate::code_rule_dsl::logic::profile::span(|| "tape restore".into());
+    let doc = TapeDoc::restore_with_lines(Arc::clone(&file.source), grammar, &image, Arc::clone(&lines), &|| false)?;
+    drop(restore);
+    let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     from_tape(&doc, lines).map(Built::Facts)
 }
 
@@ -222,18 +270,44 @@ pub(crate) fn digest(f: &Facts) -> [u8; 32] {
     hash.update((f.source.len() as u64).to_le_bytes());
     hash.update(f.source.as_bytes());
     hash.update((f.len() as u64).to_le_bytes());
+    // Each column as one run of little-endian bytes (what one `update` per value fed, at a fraction of the calls).
     for column in [&f.kind, &f.parent, &f.start, &f.end, &f.class_keys, &f.class_offsets, &f.class_nodes] {
         hash.update((column.len() as u64).to_le_bytes());
-        for value in column.iter() {
-            hash.update(value.to_le_bytes());
-        }
+        update_le(&mut hash, column);
     }
     hash.update(&f.flags);
-    for field in &f.field {
-        hash.update(field.to_le_bytes());
-    }
+    update_le(&mut hash, &f.field);
     hash.update([u8::from(f.syntax_errors)]);
     hash.finalize().into()
+}
+
+/// Feeds `values` to `hash` as their little-endian bytes, in order.
+fn update_le<T: Copy + LeBytes>(hash: &mut sha2::Sha256, values: &[T]) {
+    use sha2::Digest as _;
+    if cfg!(target_endian = "little") {
+        // SAFETY: `T` is a primitive integer (`LeBytes`), so `values` is `size_of_val(values)` initialized bytes with
+        // no padding, in memory order, which is little-endian here.
+        hash.update(unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values)) });
+    } else {
+        for value in values {
+            value.feed(hash);
+        }
+    }
+}
+
+/// An integer type with no padding whose bytes `update_le` may read in place.
+trait LeBytes {
+    fn feed(&self, hash: &mut sha2::Sha256);
+}
+impl LeBytes for u32 {
+    fn feed(&self, hash: &mut sha2::Sha256) {
+        sha2::Digest::update(hash, self.to_le_bytes());
+    }
+}
+impl LeBytes for u16 {
+    fn feed(&self, hash: &mut sha2::Sha256) {
+        sha2::Digest::update(hash, self.to_le_bytes());
+    }
 }
 
 #[cfg(test)]

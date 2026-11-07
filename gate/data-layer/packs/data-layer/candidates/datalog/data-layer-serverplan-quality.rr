@@ -14,9 +14,17 @@ k0("module").
 .decl k1(kind: symbol)
 k1("import_from_statement"). k1("import_statement").
 .decl k10(kind: symbol)
-k10("call"). k10("subscript").
+k10("continue_statement").
 .decl k11(kind: symbol)
-k11("class_definition"). k11("function_definition").
+k11("class_definition"). k11("function_definition"). k11("lambda").
+.decl k12(kind: symbol)
+k12("call"). k12("subscript").
+.decl k13(kind: symbol)
+k13("if_statement").
+.decl k14(kind: symbol)
+k14("elif_clause").
+.decl k15(kind: symbol)
+k15("class_definition"). k15("function_definition").
 .decl k2(kind: symbol)
 k2("function_definition").
 .decl k3(kind: symbol)
@@ -30,12 +38,11 @@ k6("identifier").
 .decl k7(kind: symbol)
 k7("class_definition").
 .decl k8(kind: symbol)
-k8("continue_statement").
+k8("assignment").
 .decl k9(kind: symbol)
-k9("class_definition"). k9("function_definition"). k9("lambda").
-.decl blocked1179(low: node, high: node)
-.decl blocked1192(low: node, high: node)
-.decl blocked1543(low: node, high: node)
+k9("augmented_assignment").
+.decl blocked1178(low: node, high: node)
+.decl blocked1186(low: node, high: node)
 .decl in_scope(d: number)
 .decl m10(n: node)
 .decl m1003(n: node)
@@ -57,115 +64,112 @@ k9("class_definition"). k9("function_definition"). k9("lambda").
 .decl m1142(n: node)
 .decl m1148(n: node)
 .decl m1158(n: node)
-.decl m1178(n: node)
-.decl m1186(n: node)
-.decl m1187(n: node)
-.decl m1189(n: node)
+.decl m1181(n: node)
+.decl m1182(n: node)
+.decl m1184(n: node)
 .decl m1191(n: node)
+.decl m1195(n: node)
+.decl m1199(n: node)
 .decl m12(n: node)
-.decl m1201(n: node)
-.decl m1205(n: node)
+.decl m1203(n: node)
+.decl m1204(n: node)
+.decl m1206(n: node)
+.decl m1208(n: node)
 .decl m1209(n: node)
-.decl m1213(n: node)
-.decl m1214(n: node)
-.decl m1216(n: node)
-.decl m1218(n: node)
-.decl m1219(n: node)
-.decl m1235(n: node)
-.decl m1237(n: node)
-.decl m1249(n: node)
-.decl m1254(n: node)
-.decl m1260(n: node)
-.decl m1265(n: node)
-.decl m1271(n: node)
-.decl m1278(n: node)
-.decl m1284(n: node)
-.decl m1295(n: node)
+.decl m1225(n: node)
+.decl m1227(n: node)
+.decl m1239(n: node)
+.decl m1244(n: node)
+.decl m1250(n: node)
+.decl m1255(n: node)
+.decl m1261(n: node)
+.decl m1268(n: node)
+.decl m1274(n: node)
+.decl m1285(n: node)
 .decl m13(n: node)
-.decl m1310(n: node)
-.decl m1323(n: node)
+.decl m1300(n: node)
+.decl m1313(n: node)
+.decl m1317(n: node)
+.decl m1324(n: node)
+.decl m1325(n: node)
 .decl m1327(n: node)
-.decl m1334(n: node)
-.decl m1335(n: node)
+.decl m1329(n: node)
+.decl m1330(n: node)
+.decl m1331(n: node)
 .decl m1337(n: node)
+.decl m1338(n: node)
 .decl m1339(n: node)
-.decl m1340(n: node)
-.decl m1341(n: node)
-.decl m1347(n: node)
 .decl m1348(n: node)
 .decl m1349(n: node)
-.decl m1358(n: node)
-.decl m1359(n: node)
-.decl m1370(n: node)
+.decl m1360(n: node)
+.decl m1366(n: node)
+.decl m1367(n: node)
+.decl m1369(n: node)
+.decl m1371(n: node)
+.decl m1372(n: node)
 .decl m1376(n: node)
 .decl m1377(n: node)
 .decl m1379(n: node)
 .decl m1381(n: node)
 .decl m1382(n: node)
-.decl m1386(n: node)
-.decl m1387(n: node)
-.decl m1389(n: node)
-.decl m1391(n: node)
-.decl m1392(n: node)
-.decl m1393(n: node)
-.decl m1404(n: node)
+.decl m1383(n: node)
+.decl m1394(n: node)
+.decl m1400(n: node)
+.decl m1401(n: node)
+.decl m1403(n: node)
+.decl m1405(n: node)
+.decl m1406(n: node)
 .decl m1410(n: node)
 .decl m1411(n: node)
 .decl m1413(n: node)
 .decl m1415(n: node)
 .decl m1416(n: node)
-.decl m1420(n: node)
-.decl m1421(n: node)
-.decl m1423(n: node)
+.decl m1417(n: node)
+.decl m1424(n: node)
 .decl m1425(n: node)
-.decl m1426(n: node)
-.decl m1427(n: node)
-.decl m1434(n: node)
-.decl m1435(n: node)
-.decl m1446(n: node)
+.decl m1436(n: node)
+.decl m1442(n: node)
+.decl m1443(n: node)
+.decl m1445(n: node)
+.decl m1447(n: node)
+.decl m1448(n: node)
 .decl m145(n: node)
 .decl m1452(n: node)
 .decl m1453(n: node)
 .decl m1455(n: node)
 .decl m1457(n: node)
 .decl m1458(n: node)
-.decl m1462(n: node)
-.decl m1463(n: node)
-.decl m1465(n: node)
-.decl m1467(n: node)
-.decl m1468(n: node)
-.decl m1469(n: node)
-.decl m1480(n: node)
+.decl m1459(n: node)
+.decl m1470(n: node)
+.decl m1476(n: node)
+.decl m1477(n: node)
+.decl m1479(n: node)
+.decl m1481(n: node)
+.decl m1482(n: node)
 .decl m1486(n: node)
 .decl m1487(n: node)
 .decl m1489(n: node)
 .decl m1491(n: node)
 .decl m1492(n: node)
-.decl m1496(n: node)
-.decl m1497(n: node)
-.decl m1499(n: node)
+.decl m1493(n: node)
+.decl m1500(n: node)
 .decl m1501(n: node)
-.decl m1502(n: node)
-.decl m1503(n: node)
-.decl m1510(n: node)
-.decl m1511(n: node)
-.decl m1522(n: node)
-.decl m1528(n: node)
-.decl m1529(n: node)
+.decl m1512(n: node)
+.decl m1518(n: node)
+.decl m1519(n: node)
+.decl m1532(n: node)
+.decl m1540(n: node)
 .decl m1542(n: node)
-.decl m1544(n: node)
-.decl m1552(n: node)
-.decl m1554(n: node)
+.decl m1560(n: node)
 .decl m157(n: node)
-.decl m1572(n: node)
-.decl m1585(n: node)
-.decl m1598(n: node)
-.decl m1611(n: node)
-.decl m1624(n: node)
-.decl m1637(n: node)
-.decl m1650(n: node)
-.decl m1663(n: node)
-.decl m1676(n: node)
+.decl m1573(n: node)
+.decl m1586(n: node)
+.decl m1599(n: node)
+.decl m1612(n: node)
+.decl m1625(n: node)
+.decl m1638(n: node)
+.decl m1651(n: node)
+.decl m1664(n: node)
 .decl m184(n: node)
 .decl m201(n: node)
 .decl m202(n: node)
@@ -281,57 +285,57 @@ k9("class_definition"). k9("function_definition"). k9("lambda").
 .decl t1153(s: symbol)
 .decl t1163(s: symbol)
 .decl t1174(s: symbol)
-.decl t1210(s: symbol)
-.decl t1222(s: symbol)
-.decl t1225(s: symbol)
-.decl t1226(s: symbol)
+.decl t1200(s: symbol)
+.decl t1212(s: symbol)
+.decl t1215(s: symbol)
+.decl t1216(s: symbol)
 .decl t123(s: symbol)
-.decl t1240(s: symbol)
-.decl t1243(s: symbol)
-.decl t1244(s: symbol)
-.decl t1255(s: symbol)
+.decl t1230(s: symbol)
+.decl t1233(s: symbol)
+.decl t1234(s: symbol)
+.decl t1245(s: symbol)
 .decl t127(s: symbol)
-.decl t1287(s: symbol)
-.decl t1296(s: symbol)
+.decl t1277(s: symbol)
+.decl t1286(s: symbol)
+.decl t1318(s: symbol)
 .decl t132(s: symbol)
-.decl t1328(s: symbol)
+.decl t1340(s: symbol)
 .decl t135(s: symbol)
 .decl t1350(s: symbol)
-.decl t1360(s: symbol)
-.decl t1394(s: symbol)
-.decl t1436(s: symbol)
-.decl t1470(s: symbol)
-.decl t1512(s: symbol)
-.decl t1530(s: symbol)
+.decl t1384(s: symbol)
+.decl t1426(s: symbol)
+.decl t1460(s: symbol)
+.decl t1502(s: symbol)
+.decl t1520(s: symbol)
+.decl t1526(s: symbol)
+.decl t1527(s: symbol)
+.decl t1535(s: symbol)
 .decl t1536(s: symbol)
-.decl t1537(s: symbol)
-.decl t1547(s: symbol)
 .decl t1548(s: symbol)
-.decl t1560(s: symbol)
-.decl t1561(s: symbol)
-.decl t1566(s: symbol)
+.decl t1549(s: symbol)
+.decl t1554(s: symbol)
+.decl t1555(s: symbol)
 .decl t1567(s: symbol)
-.decl t1579(s: symbol)
+.decl t1568(s: symbol)
 .decl t158(s: symbol)
 .decl t1580(s: symbol)
-.decl t1592(s: symbol)
+.decl t1581(s: symbol)
 .decl t1593(s: symbol)
+.decl t1594(s: symbol)
 .decl t16(s: symbol)
-.decl t1605(s: symbol)
 .decl t1606(s: symbol)
-.decl t1618(s: symbol)
+.decl t1607(s: symbol)
 .decl t1619(s: symbol)
+.decl t1620(s: symbol)
 .decl t163(s: symbol)
-.decl t1631(s: symbol)
 .decl t1632(s: symbol)
-.decl t1644(s: symbol)
+.decl t1633(s: symbol)
 .decl t1645(s: symbol)
-.decl t1657(s: symbol)
+.decl t1646(s: symbol)
 .decl t1658(s: symbol)
-.decl t1670(s: symbol)
+.decl t1659(s: symbol)
 .decl t1671(s: symbol)
-.decl t1683(s: symbol)
-.decl t1684(s: symbol)
+.decl t1672(s: symbol)
 .decl t17(s: symbol)
 .decl t203(s: symbol)
 .decl t221(s: symbol)
@@ -440,7 +444,7 @@ t123(s) :- doc(_, s, _), glob("**/_compile_helpers.py", s).
 t123(s) :- doc(_, _, s), glob("**/_compile_helpers.py", s).
 t127(s) :- doc(_, s, _), glob("**/__init__.py", s).
 t127(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-postop-hydration", "SPQ-003", p, l) :- node(_, n, "function_definition", _, _), node(v117, n, _, _, _), doc(v117, v118, _), (prefix("impl/common/l2070_server_plan/steps/", v118) ; prefix("impl/common/l7300_sql_versioned_transactions/steps/", v118) ; prefix("impl/common/l9700_sql_graph_query/steps/", v118)), field(n, "name", v119), node(_, v119, "identifier", _, _), text(v119, v120), v120 = "post_op", node(v121, n, _, _, _), doc(v121, v122, _), !t123(v122), inside(v124, n, k4), node(_, v124, "call", _, _), field(v124, "function", v125), node(_, v125, "identifier", _, _), text(v125, v126), v126 = "convert_row_db_to_python", doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t127(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-quality", "spq-postop-hydration", "SPQ-003", p, l) :- node(_, n, "function_definition", _, _), node(v117, n, _, _, _), doc(v117, v118, _), (prefix("impl/common/l2070_server_plan/steps/", v118) ; prefix("impl/common/l7300_sql_versioned_transactions/steps/", v118) ; prefix("impl/common/l9700_sql_graph_query/steps/", v118)), field(n, "name", v119), node(_, v119, "identifier", _, _), text(v119, v120), v120 = "post_op", node(v121, n, _, _, _), doc(v121, v122, _), !t123(v122), inside(v124, n, k2), node(_, v124, "call", _, _), field(v124, "function", v125), node(_, v125, "identifier", _, _), text(v125, v126), v126 = "convert_row_db_to_python", doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t127(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 t132(s) :- doc(_, s, _), s = "l2070_batching/conditional_step.py".
 t132(s) :- doc(_, _, s), s = "l2070_batching/conditional_step.py".
 t135(s) :- doc(_, s, _), glob("**/__init__.py", s).
@@ -452,18 +456,18 @@ m157(n) :- child(v146, n, _), node(_, v146, "block", _, _), field(v147, "body", 
 m157(n) :- child(v151, n, _), node(_, v151, "decorated_definition", _, _), child(v152, v151, _), node(_, v152, "block", _, _), field(v153, "body", v152), node(_, v153, "class_definition", _, _), field(v153, "superclasses", v154), child(v154, v155, _), !node(_, v155, "keyword_argument", _, _), name(v155, v156), (glob("*.ServerPlanStep", v156) ; glob("*.ServerPlanStep\\[*\\]", v156) ; glob("ServerPlanStep", v156) ; glob("ServerPlanStep\\[*\\]", v156)).
 t158(s) :- doc(_, s, _), glob("**/__init__.py", s).
 t158(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-versioned-forking", "SPQ-005", p, l) :- node(_, n, "function_definition", _, _), node(v136, n, _, _, _), doc(v136, v137, _), (prefix("impl/common/l2070_server_plan/steps/", v137) ; prefix("impl/common/l7300_sql_versioned_transactions/steps/", v137) ; prefix("impl/common/l9700_sql_graph_query/steps/", v137)), field(n, "name", v138), node(_, v138, "identifier", _, _), text(v138, v139), v139 = "lower", inside(v140, n, k4), node(_, v140, "call", _, _), field(v140, "function", v141), m145(v141), m157(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t158(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-quality", "spq-versioned-forking", "SPQ-005", p, l) :- node(_, n, "function_definition", _, _), node(v136, n, _, _, _), doc(v136, v137, _), (prefix("impl/common/l2070_server_plan/steps/", v137) ; prefix("impl/common/l7300_sql_versioned_transactions/steps/", v137) ; prefix("impl/common/l9700_sql_graph_query/steps/", v137)), field(n, "name", v138), node(_, v138, "identifier", _, _), text(v138, v139), v139 = "lower", inside(v140, n, k2), node(_, v140, "call", _, _), field(v140, "function", v141), m145(v141), m157(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t158(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 t163(s) :- doc(_, s, _), s = "l2070_batching/conditional_step.py".
 t163(s) :- doc(_, _, s), s = "l2070_batching/conditional_step.py".
-m184(n) :- node(_, n, "function_definition", _, _), field(n, "name", v173), node(_, v173, "identifier", _, _), text(v173, v174), v174 = "_execute_new_pipeline", inside(v175, n, k5), node(_, v175, "attribute", _, _), field(v175, "attribute", v176), node(_, v176, "identifier", _, _), text(v176, v177), v177 = "_returns".
-m184(n) :- node(_, n, "decorated_definition", _, _), child(n, v178, _), node(_, v178, "function_definition", _, _), field(v178, "name", v179), node(_, v179, "identifier", _, _), text(v179, v180), v180 = "_execute_new_pipeline", inside(v181, v178, k5), node(_, v181, "attribute", _, _), field(v181, "attribute", v182), node(_, v182, "identifier", _, _), text(v182, v183), v183 = "_returns".
-m201(n) :- node(_, n, "function_definition", _, _), field(n, "name", v190), node(_, v190, "identifier", _, _), text(v190, v191), v191 = "_execute_new_pipeline", inside(v192, n, k5), node(_, v192, "attribute", _, _), field(v192, "attribute", v193), node(_, v193, "identifier", _, _), text(v193, v194), v194 = "_returns".
-m201(n) :- node(_, n, "decorated_definition", _, _), child(n, v195, _), node(_, v195, "function_definition", _, _), field(v195, "name", v196), node(_, v196, "identifier", _, _), text(v196, v197), v197 = "_execute_new_pipeline", inside(v198, v195, k5), node(_, v198, "attribute", _, _), field(v198, "attribute", v199), node(_, v199, "identifier", _, _), text(v199, v200), v200 = "_returns".
+m184(n) :- node(_, n, "function_definition", _, _), field(n, "name", v173), node(_, v173, "identifier", _, _), text(v173, v174), v174 = "_execute_new_pipeline", inside(v175, n, k2), node(_, v175, "attribute", _, _), field(v175, "attribute", v176), node(_, v176, "identifier", _, _), text(v176, v177), v177 = "_returns".
+m184(n) :- node(_, n, "decorated_definition", _, _), child(n, v178, _), node(_, v178, "function_definition", _, _), field(v178, "name", v179), node(_, v179, "identifier", _, _), text(v179, v180), v180 = "_execute_new_pipeline", inside(v181, v178, k2), node(_, v181, "attribute", _, _), field(v181, "attribute", v182), node(_, v182, "identifier", _, _), text(v182, v183), v183 = "_returns".
+m201(n) :- node(_, n, "function_definition", _, _), field(n, "name", v190), node(_, v190, "identifier", _, _), text(v190, v191), v191 = "_execute_new_pipeline", inside(v192, n, k2), node(_, v192, "attribute", _, _), field(v192, "attribute", v193), node(_, v193, "identifier", _, _), text(v193, v194), v194 = "_returns".
+m201(n) :- node(_, n, "decorated_definition", _, _), child(n, v195, _), node(_, v195, "function_definition", _, _), field(v195, "name", v196), node(_, v196, "identifier", _, _), text(v196, v197), v197 = "_execute_new_pipeline", inside(v198, v195, k2), node(_, v198, "attribute", _, _), field(v198, "attribute", v199), node(_, v199, "identifier", _, _), text(v199, v200), v200 = "_returns".
 m202(n) :- child(v169, n, _), node(_, v169, "block", _, _), field(v170, "body", v169), node(_, v170, "class_definition", _, _), field(v170, "body", v171), child(v171, v172, _), m184(v172).
 m202(n) :- child(v185, n, _), node(_, v185, "decorated_definition", _, _), child(v186, v185, _), node(_, v186, "block", _, _), field(v187, "body", v186), node(_, v187, "class_definition", _, _), field(v187, "body", v188), child(v188, v189, _), m201(v189).
 t203(s) :- doc(_, s, _), glob("**/__init__.py", s).
 t203(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-result-resolution", "SPQ-006", p, l) :- node(_, n, "function_definition", _, _), node(v159, n, _, _, _), doc(v159, v160, _), (v160 = "api/l2070_batching/executor.py" ; v160 = "impl/common/l2070_server_plan/base_server_plan.py" ; v160 = "impl/common/l2070_server_plan/plan_helpers.py" ; v160 = "impl/common/l2070_server_plan/sql_backend_executor.py" ; v160 = "l2070_batching/conditional_step.py"), node(v161, n, _, _, _), doc(v161, v162, _), !t163(v162), field(n, "name", v164), node(_, v164, "identifier", _, _), text(v164, v165), v165 = "_execute_new_pipeline_async", inside(v166, n, k5), node(_, v166, "attribute", _, _), field(v166, "attribute", v167), node(_, v167, "identifier", _, _), text(v167, v168), v168 = "_returns", m202(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t203(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-quality", "spq-result-resolution", "SPQ-006", p, l) :- node(_, n, "function_definition", _, _), node(v159, n, _, _, _), doc(v159, v160, _), (v160 = "api/l2070_batching/executor.py" ; v160 = "impl/common/l2070_server_plan/base_server_plan.py" ; v160 = "impl/common/l2070_server_plan/plan_helpers.py" ; v160 = "impl/common/l2070_server_plan/sql_backend_executor.py" ; v160 = "l2070_batching/conditional_step.py"), node(v161, n, _, _, _), doc(v161, v162, _), !t163(v162), field(n, "name", v164), node(_, v164, "identifier", _, _), text(v164, v165), v165 = "_execute_new_pipeline_async", inside(v166, n, k2), node(_, v166, "attribute", _, _), field(v166, "attribute", v167), node(_, v167, "identifier", _, _), text(v167, v168), v168 = "_returns", m202(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t203(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m207(n) :- field(n, "type", v206).
 m214(n) :- field(n, "name", v212), node(_, v212, "identifier", _, _), text(v212, v213), v213 = "__init__".
 m220(n) :- child(v215, n, _), node(_, v215, "block", _, _), field(v216, "body", v215), node(_, v216, "class_definition", _, _).
@@ -512,13 +516,13 @@ m338(n) :- field(v337, "name", n), node(_, v337, "keyword_argument", _, _).
 m343(n) :- name(n, v342), v342 = "SqlStepIR".
 m345(n) :- field(v344, "name", n), node(_, v344, "keyword_argument", _, _).
 m346(n) :- node(_, n, "identifier", _, _), text(n, v333), isuffix("ir", v333), !m336(n), !m338(n).
-m346(n) :- inside(v339, n, k6), node(_, v339, "identifier", _, _), text(v339, v340), isuffix("ir", v340), !m343(v339), !m345(v339).
+m346(n) :- inside(v339, n, k4), node(_, v339, "identifier", _, _), text(v339, v340), isuffix("ir", v340), !m343(v339), !m345(v339).
 m358(n) :- name(n, v357), v357 = "SqlStepIR".
 m360(n) :- field(v359, "name", n), node(_, v359, "keyword_argument", _, _).
 m365(n) :- name(n, v364), v364 = "SqlStepIR".
 m367(n) :- field(v366, "name", n), node(_, v366, "keyword_argument", _, _).
 m368(n) :- node(_, n, "identifier", _, _), text(n, v355), isuffix("ir", v355), !m358(n), !m360(n).
-m368(n) :- inside(v361, n, k6), node(_, v361, "identifier", _, _), text(v361, v362), isuffix("ir", v362), !m365(v361), !m367(v361).
+m368(n) :- inside(v361, n, k4), node(_, v361, "identifier", _, _), text(v361, v362), isuffix("ir", v362), !m365(v361), !m367(v361).
 t380(s) :- doc(_, s, _), s = "l2070_batching/executor.py".
 t380(s) :- doc(_, _, s), s = "l2070_batching/executor.py".
 m391(n) :- child(v382, n, _), node(_, v382, "block", _, _), field(v383, "body", v382), node(_, v383, "class_definition", _, _), field(v383, "name", v384), node(_, v384, "identifier", _, _), text(v384, v385), (v385 = "PlanExecutor" ; v385 = "SqlBackendExecutor").
@@ -557,7 +561,7 @@ m504(n) :- child(v493, n, _), node(_, v493, "block", _, _), field(v494, "body", 
 m504(n) :- child(v498, n, _), node(_, v498, "decorated_definition", _, _), child(v499, v498, _), node(_, v499, "block", _, _), field(v500, "body", v499), node(_, v500, "class_definition", _, _), field(v500, "superclasses", v501), child(v501, v502, _), !node(_, v502, "keyword_argument", _, _), name(v502, v503), (glob("*.PhysicalRegionCodegen", v503) ; glob("*.PhysicalRegionCodegen\\[*\\]", v503) ; glob("PhysicalRegionCodegen", v503) ; glob("PhysicalRegionCodegen\\[*\\]", v503)).
 t505(s) :- doc(_, s, _), glob("**/__init__.py", s).
 t505(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-strategy-unimplemented", "SPQ-014", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v483), node(_, v483, "identifier", _, _), text(v483, v484), (v484 = "compile_batch" ; v484 = "split_results"), node(v485, n, _, _, _), doc(v485, v486, _), prefix("impl/common/l2070_server_plan/strategies/", v486), inside(v487, n, k4), node(_, v487, "call", _, _), field(v487, "function", v488), m492(v488), m504(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t505(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-quality", "spq-strategy-unimplemented", "SPQ-014", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v483), node(_, v483, "identifier", _, _), text(v483, v484), (v484 = "compile_batch" ; v484 = "split_results"), node(v485, n, _, _, _), doc(v485, v486, _), prefix("impl/common/l2070_server_plan/strategies/", v486), inside(v487, n, k2), node(_, v487, "call", _, _), field(v487, "function", v488), m492(v488), m504(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t505(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m515(n) :- name(n, v514), v514 = "SqlStepIR".
 m520(n) :- name(n, v519), v519 = "SqlStepIR".
 m521(n) :- node(_, n, "identifier", _, _), text(n, v512), isuffix("ir", v512), !m515(n).
@@ -598,7 +602,7 @@ m638(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v636), node(_, v
 m644(n) :- node(_, n, "identifier", _, _), text(n, v641), (v641 = "_execute_compound_async" ; v641 = "_execute_compound_sync" ; v641 = "_run_sync" ; v641 = "async_pre_op" ; v641 = "build_sql_fts_components" ; v641 = "build_sql_fts_components_async" ; v641 = "execute_async" ; v641 = "execute_ir" ; v641 = "execute_ir_async" ; v641 = "execute_sync" ; v641 = "get_sql_fts_components" ; v641 = "get_sql_fts_components_async" ; v641 = "materialize_ir" ; v641 = "pre_op" ; v641 = "search_unversioned_scores" ; v641 = "search_unversioned_scores_async").
 m644(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v642), node(_, v642, "identifier", _, _), text(v642, v643), (v643 = "_execute_compound_async" ; v643 = "_execute_compound_sync" ; v643 = "_run_sync" ; v643 = "async_pre_op" ; v643 = "build_sql_fts_components" ; v643 = "build_sql_fts_components_async" ; v643 = "execute_async" ; v643 = "execute_ir" ; v643 = "execute_ir_async" ; v643 = "execute_sync" ; v643 = "get_sql_fts_components" ; v643 = "get_sql_fts_components_async" ; v643 = "materialize_ir" ; v643 = "pre_op" ; v643 = "search_unversioned_scores" ; v643 = "search_unversioned_scores_async").
 m645(n) :- node(_, n, "call", _, _), field(n, "function", v634), m638(v634).
-m645(n) :- inside(v639, n, k4), node(_, v639, "call", _, _), field(v639, "function", v640), m644(v640).
+m645(n) :- within(v639, n), node(_, v639, "call", _, _), field(v639, "function", v640), m644(v640).
 t648(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
 t648(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
 t649(s) :- doc(_, s, _), glob("**/__init__.py", s).
@@ -676,7 +680,7 @@ m795(n) :- field(n, "object", v790), node(_, v790, "identifier", _, _), text(v79
 m806(n) :- field(n, "object", v799), node(_, v799, "identifier", _, _), text(v799, v800), v800 = "analysis".
 m806(n) :- field(n, "object", v801), node(_, v801, "identifier", _, _), text(v801, v802), v802 = "self", inside(n, v803, k7), node(_, v803, "class_definition", _, _), field(v803, "name", v804), node(_, v804, "identifier", _, _), text(v804, v805), v805 = "PlanAnalysis".
 m807(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v786), node(_, v786, "identifier", _, _), text(v786, v787), (v787 = "ordered_steps" ; v787 = "step_facts" ; v787 = "steps"), m795(n).
-m807(n) :- inside(v796, n, k5), node(_, v796, "attribute", _, _), field(v796, "attribute", v797), node(_, v797, "identifier", _, _), text(v797, v798), (v798 = "ordered_steps" ; v798 = "step_facts" ; v798 = "steps"), m806(v796).
+m807(n) :- inside(v796, n, k8), node(_, v796, "attribute", _, _), field(v796, "attribute", v797), node(_, v797, "identifier", _, _), text(v797, v798), (v798 = "ordered_steps" ; v798 = "step_facts" ; v798 = "steps"), m806(v796).
 m814(n) :- nearest(n, v808, k2), node(_, v808, "function_definition", _, _), field(v808, "name", v809), node(_, v809, "identifier", _, _), text(v809, v810), (v810 = "__init__" ; v810 = "build"), inside(n, v811, k7), node(_, v811, "class_definition", _, _), field(v811, "name", v812), node(_, v812, "identifier", _, _), text(v812, v813), v813 = "PlanAnalysis".
 t815(s) :- doc(_, s, _), glob("**/__init__.py", s).
 t815(s) :- doc(_, _, s), glob("**/__init__.py", s).
@@ -686,7 +690,7 @@ m830(n) :- field(n, "object", v825), node(_, v825, "identifier", _, _), text(v82
 m841(n) :- field(n, "object", v834), node(_, v834, "identifier", _, _), text(v834, v835), v835 = "analysis".
 m841(n) :- field(n, "object", v836), node(_, v836, "identifier", _, _), text(v836, v837), v837 = "self", inside(n, v838, k7), node(_, v838, "class_definition", _, _), field(v838, "name", v839), node(_, v839, "identifier", _, _), text(v839, v840), v840 = "PlanAnalysis".
 m842(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v821), node(_, v821, "identifier", _, _), text(v821, v822), (v822 = "ordered_steps" ; v822 = "step_facts" ; v822 = "steps"), m830(n).
-m842(n) :- inside(v831, n, k5), node(_, v831, "attribute", _, _), field(v831, "attribute", v832), node(_, v832, "identifier", _, _), text(v832, v833), (v833 = "ordered_steps" ; v833 = "step_facts" ; v833 = "steps"), m841(v831).
+m842(n) :- inside(v831, n, k9), node(_, v831, "attribute", _, _), field(v831, "attribute", v832), node(_, v832, "identifier", _, _), text(v832, v833), (v833 = "ordered_steps" ; v833 = "step_facts" ; v833 = "steps"), m841(v831).
 m849(n) :- nearest(n, v843, k2), node(_, v843, "function_definition", _, _), field(v843, "name", v844), node(_, v844, "identifier", _, _), text(v844, v845), (v845 = "__init__" ; v845 = "build"), inside(n, v846, k7), node(_, v846, "class_definition", _, _), field(v846, "name", v847), node(_, v847, "identifier", _, _), text(v847, v848), v848 = "PlanAnalysis".
 t850(s) :- doc(_, s, _), glob("**/__init__.py", s).
 t850(s) :- doc(_, _, s), glob("**/__init__.py", s).
@@ -833,108 +837,110 @@ t1163(s) :- doc(_, _, s), glob("**/__init__.py", s).
 violation("data-layer-serverplan-quality", "spq-embedded-object-calls", "SPQ-041", p, l) :- node(_, n, "call", _, _), field(n, "function", v1154), m1158(v1154), node(v1159, n, _, _, _), doc(v1159, v1160, _), glob("**/l9750_graphql/**", v1160), node(v1161, n, _, _, _), doc(v1161, v1162, _), glob("**/executor.py", v1162), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2060_query_builder/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p) ; glob("l2080_lazy_orm/**", p) ; glob("l9750_graphql/**", p) ; glob("l9900_auto_api/**", p)), !t1163(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 t1174(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
 t1174(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-m1178(n) :- node(_, n, "function_definition", _, _).
-m1178(n) :- node(_, n, "class_definition", _, _).
-m1178(n) :- node(_, n, "lambda", _, _).
-blocked1179(low, high) :- inside(low, high, k6), inside(low, s, k9), m1178(s), node(_, s, _, v1180, v1181), node(_, high, _, v1182, v1183), v1182 <= v1180, v1181 <= v1183, s != high.
-m1186(n) :- node(_, n, "function_definition", _, _).
-m1186(n) :- node(_, n, "class_definition", _, _).
-m1186(n) :- node(_, n, "keyword_argument", _, _).
-m1187(n) :- field(v1185, "name", n), m1186(v1185).
-m1189(n) :- field(v1188, "attribute", n), node(_, v1188, "attribute", _, _).
-m1191(n) :- node(_, n, "function_definition", _, _).
-m1191(n) :- node(_, n, "class_definition", _, _).
-m1191(n) :- node(_, n, "lambda", _, _).
-blocked1192(low, high) :- inside(low, high, k10), inside(low, s, k9), m1191(s), node(_, s, _, v1193, v1194), node(_, high, _, v1195, v1196), v1195 <= v1193, v1194 <= v1196, s != high.
-m1201(n) :- node(_, n, "identifier", _, _), text(n, v1198), (v1198 = "_apply_orderby_to_dict_rows" ; v1198 = "_parse_orderby_clauses" ; v1198 = "_stable_sort_with_nulls_last" ; v1198 = "parse_filter_for_fields" ; v1198 = "parse_odata_filter_expression").
-m1201(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1199), node(_, v1199, "identifier", _, _), text(v1199, v1200), (v1200 = "_apply_orderby_to_dict_rows" ; v1200 = "_parse_orderby_clauses" ; v1200 = "_stable_sort_with_nulls_last" ; v1200 = "parse_filter_for_fields" ; v1200 = "parse_odata_filter_expression").
-m1205(n) :- field(n, "function", v1197), m1201(v1197).
-m1205(n) :- field(n, "function", v1202), node(_, v1202, "attribute", _, _), field(v1202, "attribute", v1203), node(_, v1203, "identifier", _, _), text(v1203, v1204), v1204 = "evaluate".
-m1209(n) :- node(_, n, "call", _, _), m1205(n).
-m1209(n) :- node(_, n, "subscript", _, _), field(n, "value", v1206), node(_, v1206, "identifier", _, _), text(v1206, v1207), (v1207 = "all_rows" ; v1207 = "candidates" ; v1207 = "group_rows" ; v1207 = "items" ; v1207 = "ordered_rows" ; v1207 = "out" ; v1207 = "page" ; v1207 = "page_rows" ; v1207 = "rows" ; v1207 = "source_rows"), child(n, v1208, _), node(_, v1208, "slice", _, _).
-t1210(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1210(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-materialized-row-semantics", "SPQ-044", p, l) :- node(_, n, "function_definition", _, _), inside(n, v1168, k0), node(_, v1168, "module", _, _), node(v1169, v1168, _, _, _), node(v1169, v1170, _, _, _), name(v1170, v1171), (contains("_apply_orderby_to_dict_rows", v1171) ; contains("_parse_orderby_clauses", v1171) ; contains("_stable_sort_with_nulls_last", v1171) ; contains("all_rows", v1171) ; contains("candidates", v1171) ; contains("group_rows", v1171) ; contains("items", v1171) ; contains("ordered_rows", v1171) ; contains("out", v1171) ; contains("page", v1171) ; contains("page_rows", v1171) ; contains("parse_filter_for_fields", v1171) ; contains("parse_odata_filter_expression", v1171) ; contains("rows", v1171) ; contains("source_rows", v1171)), node(v1172, n, _, _, _), doc(v1172, v1173, _), !t1174(v1173), node(v1175, n, _, _, _), doc(v1175, v1176, _), prefix("l9900_auto_api/", v1176), inside(v1177, n, k6), !blocked1179(v1177, n), node(_, v1177, "identifier", _, _), text(v1177, v1184), (v1184 = "all_rows" ; v1184 = "candidates" ; v1184 = "group_rows" ; v1184 = "items" ; v1184 = "ordered_rows" ; v1184 = "out" ; v1184 = "page" ; v1184 = "page_rows" ; v1184 = "rows" ; v1184 = "source_rows"), !m1187(v1177), !m1189(v1177), inside(v1190, n, k10), !blocked1192(v1190, n), m1209(v1190), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2060_query_builder/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p) ; glob("l2080_lazy_orm/**", p) ; glob("l9750_graphql/**", p) ; glob("l9900_auto_api/**", p)), !t1210(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1213(n) :- node(_, n, "function_definition", _, _).
-m1213(n) :- node(_, n, "class_definition", _, _).
-m1213(n) :- node(_, n, "keyword_argument", _, _).
-m1214(n) :- field(v1212, "name", n), m1213(v1212).
-m1216(n) :- field(v1215, "attribute", n), node(_, v1215, "attribute", _, _).
-m1218(n) :- node(_, n, "import_statement", _, _).
-m1218(n) :- node(_, n, "import_from_statement", _, _).
-m1219(n) :- inside(n, v1217, k1), m1218(v1217).
-t1222(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1222(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1225(s) :- doc(_, s, _), glob("**/stmt_compound_write.py", s).
-t1225(s) :- doc(_, _, s), glob("**/stmt_compound_write.py", s).
-t1226(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1226(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-sqlcompoundwrite-names", "SPQ-045", p, l) :- node(_, n, "identifier", _, _), text(n, v1211), v1211 = "SqlCompoundWrite", !m1214(n), !m1216(n), !m1219(n), node(v1220, n, _, _, _), doc(v1220, v1221, _), !t1222(v1221), node(v1223, n, _, _, _), doc(v1223, v1224, _), !t1225(v1224), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1226(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1235(n) :- node(_, n, "dotted_name", _, _), text(n, v1231), v1231 = "SqlCompoundWrite".
-m1235(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v1232), name(v1232, v1234), v1234 = "SqlCompoundWrite".
-m1237(n) :- field(v1236, "module_name", n), node(_, v1236, "import_from_statement", _, _).
-t1240(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1240(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1243(s) :- doc(_, s, _), glob("**/stmt_compound_write.py", s).
-t1243(s) :- doc(_, _, s), glob("**/stmt_compound_write.py", s).
-t1244(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1244(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-sqlcompoundwrite-imports", "SPQ-045", p, l) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", v1227), name(v1227, v1229), v1229 = "impl.common.l2100_sql_grammar.domain.infra.stmt_compound_write", child(n, v1230, _), m1235(v1230), !m1237(v1230), node(v1238, n, _, _, _), doc(v1238, v1239, _), !t1240(v1239), node(v1241, n, _, _, _), doc(v1241, v1242, _), !t1243(v1242), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1244(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1249(n) :- node(_, n, "identifier", _, _), text(n, v1246), v1246 = "SqlStatementBatch".
-m1249(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1247), node(_, v1247, "identifier", _, _), text(v1247, v1248), v1248 = "SqlStatementBatch".
-m1254(n) :- field(n, "arguments", v1250), child(v1250, v1251, _), node(_, v1251, "keyword_argument", _, _), field(v1251, "name", v1252), node(_, v1252, "identifier", _, _), text(v1252, v1253), v1253 = "category".
-t1255(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1255(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-statement-batch-category", "SPQ-046", p, l) :- node(_, n, "call", _, _), field(n, "function", v1245), m1249(v1245), !m1254(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1255(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1260(n) :- node(_, n, "identifier", _, _), text(n, v1257), v1257 = "SqlStatementBatch".
-m1260(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1258), node(_, v1258, "identifier", _, _), text(v1258, v1259), v1259 = "SqlStatementBatch".
-m1265(n) :- field(n, "arguments", v1261), child(v1261, v1262, _), node(_, v1262, "keyword_argument", _, _), field(v1262, "name", v1263), node(_, v1263, "identifier", _, _), text(v1263, v1264), v1264 = "statement_kinds_per_stmt".
-m1271(n) :- node(_, n, "list", _, _).
-m1271(n) :- node(_, n, "tuple", _, _).
-m1278(n) :- node(_, n, "list", _, _).
-m1278(n) :- node(_, n, "tuple", _, _).
-m1284(n) :- name(n, v1283), prefix("async", v1283).
-t1287(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1287(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-replay-fuse-terminal", "SPQ-047", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v1280), node(_, v1280, "identifier", _, _), text(v1280, v1281), v1281 = "_can_fuse_replay_terminal_steps", !m1284(n), node(v1285, n, _, _, _), doc(v1285, v1286, _), glob("**/sql_backend_executor.py", v1286), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1287(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1295(n) :- node(_, n, "identifier", _, _), text(n, v1292), v1292 = "sql_visible_dependencies".
-m1295(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1293), node(_, v1293, "identifier", _, _), text(v1293, v1294), v1294 = "sql_visible_dependencies".
-t1296(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1296(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-replay-batch-transport", "SPQ-047", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v1288), node(_, v1288, "identifier", _, _), text(v1288, v1289), v1289 = "supports_sql_batch_transport", inside(v1290, n, k4), node(_, v1290, "call", _, _), field(v1290, "function", v1291), m1295(v1291), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1296(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1310(n) :- node(_, n, "identifier", _, _), text(n, v1307), v1307 = "getattr".
-m1310(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1308), node(_, v1308, "identifier", _, _), text(v1308, v1309), v1309 = "getattr".
-m1323(n) :- node(_, n, "identifier", _, _), text(n, v1320), v1320 = "_query_spec_has_json_function_filter".
-m1323(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1321), node(_, v1321, "identifier", _, _), text(v1321, v1322), v1322 = "_query_spec_has_json_function_filter".
-m1327(n) :- inside(v1318, n, k4), node(_, v1318, "call", _, _), field(v1318, "function", v1319), m1323(v1319).
-m1327(n) :- inside(v1324, n, k5), node(_, v1324, "attribute", _, _), field(v1324, "attribute", v1325), node(_, v1325, "identifier", _, _), text(v1325, v1326), v1326 = "_after_refs".
-t1328(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1328(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-replay-prior-boundary", "SPQ-047", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v1314), node(_, v1314, "identifier", _, _), text(v1314, v1315), v1315 = "requires_prior_step_boundary", node(v1316, n, _, _, _), doc(v1316, v1317, _), glob("**/versioned_query_steps.py", v1317), m1327(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1328(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1334(n) :- node(_, n, "function_definition", _, _).
-m1334(n) :- node(_, n, "class_definition", _, _).
-m1334(n) :- node(_, n, "keyword_argument", _, _).
-m1335(n) :- field(v1333, "name", n), m1334(v1333).
-m1337(n) :- field(v1336, "attribute", n), node(_, v1336, "attribute", _, _).
-m1339(n) :- node(_, n, "import_statement", _, _).
-m1339(n) :- node(_, n, "import_from_statement", _, _).
-m1340(n) :- inside(n, v1338, k1), m1339(v1338).
-m1341(n) :- inside(v1331, n, k6), node(_, v1331, "identifier", _, _), text(v1331, v1332), v1332 = "_BATCH_ROW_ORDINAL", !m1335(v1331), !m1337(v1331), !m1340(v1331).
-m1347(n) :- node(_, n, "identifier", _, _), text(n, v1344), v1344 = "with_order_by".
-m1347(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1345), node(_, v1345, "identifier", _, _), text(v1345, v1346), v1346 = "with_order_by".
-m1348(n) :- inside(v1342, n, k4), node(_, v1342, "call", _, _), field(v1342, "function", v1343), m1347(v1343).
-m1349(n) :- node(_, n, _, _, _), !m1341(n).
-m1349(n) :- node(_, n, _, _, _), !m1348(n).
+blocked1178(low, high) :- nearest(low, s, k11), inside(s, high, k2).
+m1181(n) :- node(_, n, "function_definition", _, _).
+m1181(n) :- node(_, n, "class_definition", _, _).
+m1181(n) :- node(_, n, "keyword_argument", _, _).
+m1182(n) :- field(v1180, "name", n), m1181(v1180).
+m1184(n) :- field(v1183, "attribute", n), node(_, v1183, "attribute", _, _).
+blocked1186(low, high) :- nearest(low, s, k11), inside(s, high, k2).
+m1191(n) :- node(_, n, "identifier", _, _), text(n, v1188), (v1188 = "_apply_orderby_to_dict_rows" ; v1188 = "_parse_orderby_clauses" ; v1188 = "_stable_sort_with_nulls_last" ; v1188 = "parse_filter_for_fields" ; v1188 = "parse_odata_filter_expression").
+m1191(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1189), node(_, v1189, "identifier", _, _), text(v1189, v1190), (v1190 = "_apply_orderby_to_dict_rows" ; v1190 = "_parse_orderby_clauses" ; v1190 = "_stable_sort_with_nulls_last" ; v1190 = "parse_filter_for_fields" ; v1190 = "parse_odata_filter_expression").
+m1195(n) :- field(n, "function", v1187), m1191(v1187).
+m1195(n) :- field(n, "function", v1192), node(_, v1192, "attribute", _, _), field(v1192, "attribute", v1193), node(_, v1193, "identifier", _, _), text(v1193, v1194), v1194 = "evaluate".
+m1199(n) :- node(_, n, "call", _, _), m1195(n).
+m1199(n) :- node(_, n, "subscript", _, _), field(n, "value", v1196), node(_, v1196, "identifier", _, _), text(v1196, v1197), (v1197 = "all_rows" ; v1197 = "candidates" ; v1197 = "group_rows" ; v1197 = "items" ; v1197 = "ordered_rows" ; v1197 = "out" ; v1197 = "page" ; v1197 = "page_rows" ; v1197 = "rows" ; v1197 = "source_rows"), child(n, v1198, _), node(_, v1198, "slice", _, _).
+t1200(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1200(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-materialized-row-semantics", "SPQ-044", p, l) :- node(_, n, "function_definition", _, _), inside(n, v1168, k0), node(_, v1168, "module", _, _), node(v1169, v1168, _, _, _), node(v1169, v1170, _, _, _), name(v1170, v1171), (contains("_apply_orderby_to_dict_rows", v1171) ; contains("_parse_orderby_clauses", v1171) ; contains("_stable_sort_with_nulls_last", v1171) ; contains("all_rows", v1171) ; contains("candidates", v1171) ; contains("group_rows", v1171) ; contains("items", v1171) ; contains("ordered_rows", v1171) ; contains("out", v1171) ; contains("page", v1171) ; contains("page_rows", v1171) ; contains("parse_filter_for_fields", v1171) ; contains("parse_odata_filter_expression", v1171) ; contains("rows", v1171) ; contains("source_rows", v1171)), node(v1172, n, _, _, _), doc(v1172, v1173, _), !t1174(v1173), node(v1175, n, _, _, _), doc(v1175, v1176, _), prefix("l9900_auto_api/", v1176), inside(v1177, n, k2), !blocked1178(v1177, n), node(_, v1177, "identifier", _, _), text(v1177, v1179), (v1179 = "all_rows" ; v1179 = "candidates" ; v1179 = "group_rows" ; v1179 = "items" ; v1179 = "ordered_rows" ; v1179 = "out" ; v1179 = "page" ; v1179 = "page_rows" ; v1179 = "rows" ; v1179 = "source_rows"), !m1182(v1177), !m1184(v1177), inside(v1185, n, k2), !blocked1186(v1185, n), m1199(v1185), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2060_query_builder/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p) ; glob("l2080_lazy_orm/**", p) ; glob("l9750_graphql/**", p) ; glob("l9900_auto_api/**", p)), !t1200(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1203(n) :- node(_, n, "function_definition", _, _).
+m1203(n) :- node(_, n, "class_definition", _, _).
+m1203(n) :- node(_, n, "keyword_argument", _, _).
+m1204(n) :- field(v1202, "name", n), m1203(v1202).
+m1206(n) :- field(v1205, "attribute", n), node(_, v1205, "attribute", _, _).
+m1208(n) :- node(_, n, "import_statement", _, _).
+m1208(n) :- node(_, n, "import_from_statement", _, _).
+m1209(n) :- inside(n, v1207, k1), m1208(v1207).
+t1212(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1212(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1215(s) :- doc(_, s, _), glob("**/stmt_compound_write.py", s).
+t1215(s) :- doc(_, _, s), glob("**/stmt_compound_write.py", s).
+t1216(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1216(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-sqlcompoundwrite-names", "SPQ-045", p, l) :- node(_, n, "identifier", _, _), text(n, v1201), v1201 = "SqlCompoundWrite", !m1204(n), !m1206(n), !m1209(n), node(v1210, n, _, _, _), doc(v1210, v1211, _), !t1212(v1211), node(v1213, n, _, _, _), doc(v1213, v1214, _), !t1215(v1214), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1216(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1225(n) :- node(_, n, "dotted_name", _, _), text(n, v1221), v1221 = "SqlCompoundWrite".
+m1225(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v1222), name(v1222, v1224), v1224 = "SqlCompoundWrite".
+m1227(n) :- field(v1226, "module_name", n), node(_, v1226, "import_from_statement", _, _).
+t1230(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1230(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1233(s) :- doc(_, s, _), glob("**/stmt_compound_write.py", s).
+t1233(s) :- doc(_, _, s), glob("**/stmt_compound_write.py", s).
+t1234(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1234(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-sqlcompoundwrite-imports", "SPQ-045", p, l) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", v1217), name(v1217, v1219), v1219 = "impl.common.l2100_sql_grammar.domain.infra.stmt_compound_write", child(n, v1220, _), m1225(v1220), !m1227(v1220), node(v1228, n, _, _, _), doc(v1228, v1229, _), !t1230(v1229), node(v1231, n, _, _, _), doc(v1231, v1232, _), !t1233(v1232), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1234(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1239(n) :- node(_, n, "identifier", _, _), text(n, v1236), v1236 = "SqlStatementBatch".
+m1239(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1237), node(_, v1237, "identifier", _, _), text(v1237, v1238), v1238 = "SqlStatementBatch".
+m1244(n) :- field(n, "arguments", v1240), child(v1240, v1241, _), node(_, v1241, "keyword_argument", _, _), field(v1241, "name", v1242), node(_, v1242, "identifier", _, _), text(v1242, v1243), v1243 = "category".
+t1245(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1245(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-statement-batch-category", "SPQ-046", p, l) :- node(_, n, "call", _, _), field(n, "function", v1235), m1239(v1235), !m1244(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1245(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1250(n) :- node(_, n, "identifier", _, _), text(n, v1247), v1247 = "SqlStatementBatch".
+m1250(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1248), node(_, v1248, "identifier", _, _), text(v1248, v1249), v1249 = "SqlStatementBatch".
+m1255(n) :- field(n, "arguments", v1251), child(v1251, v1252, _), node(_, v1252, "keyword_argument", _, _), field(v1252, "name", v1253), node(_, v1253, "identifier", _, _), text(v1253, v1254), v1254 = "statement_kinds_per_stmt".
+m1261(n) :- node(_, n, "list", _, _).
+m1261(n) :- node(_, n, "tuple", _, _).
+m1268(n) :- node(_, n, "list", _, _).
+m1268(n) :- node(_, n, "tuple", _, _).
+m1274(n) :- name(n, v1273), prefix("async", v1273).
+t1277(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1277(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-replay-fuse-terminal", "SPQ-047", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v1270), node(_, v1270, "identifier", _, _), text(v1270, v1271), v1271 = "_can_fuse_replay_terminal_steps", !m1274(n), node(v1275, n, _, _, _), doc(v1275, v1276, _), glob("**/sql_backend_executor.py", v1276), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1277(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1285(n) :- node(_, n, "identifier", _, _), text(n, v1282), v1282 = "sql_visible_dependencies".
+m1285(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1283), node(_, v1283, "identifier", _, _), text(v1283, v1284), v1284 = "sql_visible_dependencies".
+t1286(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1286(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-replay-batch-transport", "SPQ-047", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v1278), node(_, v1278, "identifier", _, _), text(v1278, v1279), v1279 = "supports_sql_batch_transport", inside(v1280, n, k2), node(_, v1280, "call", _, _), field(v1280, "function", v1281), m1285(v1281), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1286(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1300(n) :- node(_, n, "identifier", _, _), text(n, v1297), v1297 = "getattr".
+m1300(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1298), node(_, v1298, "identifier", _, _), text(v1298, v1299), v1299 = "getattr".
+m1313(n) :- node(_, n, "identifier", _, _), text(n, v1310), v1310 = "_query_spec_has_json_function_filter".
+m1313(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1311), node(_, v1311, "identifier", _, _), text(v1311, v1312), v1312 = "_query_spec_has_json_function_filter".
+m1317(n) :- inside(v1308, n, k2), node(_, v1308, "call", _, _), field(v1308, "function", v1309), m1313(v1309).
+m1317(n) :- inside(v1314, n, k2), node(_, v1314, "attribute", _, _), field(v1314, "attribute", v1315), node(_, v1315, "identifier", _, _), text(v1315, v1316), v1316 = "_after_refs".
+t1318(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1318(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-replay-prior-boundary", "SPQ-047", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v1304), node(_, v1304, "identifier", _, _), text(v1304, v1305), v1305 = "requires_prior_step_boundary", node(v1306, n, _, _, _), doc(v1306, v1307, _), glob("**/versioned_query_steps.py", v1307), m1317(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1318(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1324(n) :- node(_, n, "function_definition", _, _).
+m1324(n) :- node(_, n, "class_definition", _, _).
+m1324(n) :- node(_, n, "keyword_argument", _, _).
+m1325(n) :- field(v1323, "name", n), m1324(v1323).
+m1327(n) :- field(v1326, "attribute", n), node(_, v1326, "attribute", _, _).
+m1329(n) :- node(_, n, "import_statement", _, _).
+m1329(n) :- node(_, n, "import_from_statement", _, _).
+m1330(n) :- inside(n, v1328, k1), m1329(v1328).
+m1331(n) :- inside(v1321, n, k0), node(_, v1321, "identifier", _, _), text(v1321, v1322), v1322 = "_BATCH_ROW_ORDINAL", !m1325(v1321), !m1327(v1321), !m1330(v1321).
+m1337(n) :- node(_, n, "identifier", _, _), text(n, v1334), v1334 = "with_order_by".
+m1337(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1335), node(_, v1335, "identifier", _, _), text(v1335, v1336), v1336 = "with_order_by".
+m1338(n) :- inside(v1332, n, k0), node(_, v1332, "call", _, _), field(v1332, "function", v1333), m1337(v1333).
+m1339(n) :- node(_, n, _, _, _), !m1331(n).
+m1339(n) :- node(_, n, _, _, _), !m1338(n).
+t1340(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1340(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-replay-dependent-order", "SPQ-047", p, 1) :- node(_, n, "module", _, _), node(v1319, n, _, _, _), doc(v1319, v1320, _), glob("**/dependent_read_cte.py", v1320), m1339(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1340(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+m1348(n) :- node(_, n, "identifier", _, _), text(n, v1345), v1345 = "exports_child_bindings".
+m1348(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1346), node(_, v1346, "identifier", _, _), text(v1346, v1347), v1347 = "exports_child_bindings".
+m1349(n) :- inside(v1343, n, k0), node(_, v1343, "call", _, _), field(v1343, "function", v1344), m1348(v1344).
 t1350(s) :- doc(_, s, _), glob("**/__init__.py", s).
 t1350(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-replay-dependent-order", "SPQ-047", p, 1) :- node(_, n, "module", _, _), node(v1329, n, _, _, _), doc(v1329, v1330, _), glob("**/dependent_read_cte.py", v1330), m1349(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1350(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
-m1358(n) :- node(_, n, "identifier", _, _), text(n, v1355), v1355 = "exports_child_bindings".
-m1358(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1356), node(_, v1356, "identifier", _, _), text(v1356, v1357), v1357 = "exports_child_bindings".
-m1359(n) :- inside(v1353, n, k4), node(_, v1353, "call", _, _), field(v1353, "function", v1354), m1358(v1354).
-t1360(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1360(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-replay-child-exports", "SPQ-047", p, 1) :- node(_, n, "module", _, _), node(v1351, n, _, _, _), doc(v1351, v1352, _), glob("**/compound_sequence.py", v1352), !m1359(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1360(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
-m1370(n) :- field(n, "type", v1369).
+violation("data-layer-serverplan-quality", "spq-replay-child-exports", "SPQ-047", p, 1) :- node(_, n, "module", _, _), node(v1341, n, _, _, _), doc(v1341, v1342, _), glob("**/compound_sequence.py", v1342), !m1349(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1350(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+m1360(n) :- field(n, "type", v1359).
+m1366(n) :- node(_, n, "function_definition", _, _).
+m1366(n) :- node(_, n, "class_definition", _, _).
+m1366(n) :- node(_, n, "keyword_argument", _, _).
+m1367(n) :- field(v1365, "name", n), m1366(v1365).
+m1369(n) :- field(v1368, "attribute", n), node(_, v1368, "attribute", _, _).
+m1371(n) :- node(_, n, "import_statement", _, _).
+m1371(n) :- node(_, n, "import_from_statement", _, _).
+m1372(n) :- inside(n, v1370, k1), m1371(v1370).
 m1376(n) :- node(_, n, "function_definition", _, _).
 m1376(n) :- node(_, n, "class_definition", _, _).
 m1376(n) :- node(_, n, "keyword_argument", _, _).
@@ -943,20 +949,20 @@ m1379(n) :- field(v1378, "attribute", n), node(_, v1378, "attribute", _, _).
 m1381(n) :- node(_, n, "import_statement", _, _).
 m1381(n) :- node(_, n, "import_from_statement", _, _).
 m1382(n) :- inside(n, v1380, k1), m1381(v1380).
-m1386(n) :- node(_, n, "function_definition", _, _).
-m1386(n) :- node(_, n, "class_definition", _, _).
-m1386(n) :- node(_, n, "keyword_argument", _, _).
-m1387(n) :- field(v1385, "name", n), m1386(v1385).
-m1389(n) :- field(v1388, "attribute", n), node(_, v1388, "attribute", _, _).
-m1391(n) :- node(_, n, "import_statement", _, _).
-m1391(n) :- node(_, n, "import_from_statement", _, _).
-m1392(n) :- inside(n, v1390, k1), m1391(v1390).
-m1393(n) :- node(_, n, "identifier", _, _), text(n, v1374), v1374 = "empty_result_allowed", !m1377(n), !m1379(n), !m1382(n).
-m1393(n) :- inside(v1383, n, k6), node(_, v1383, "identifier", _, _), text(v1383, v1384), v1384 = "empty_result_allowed", !m1387(v1383), !m1389(v1383), !m1392(v1383).
-t1394(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1394(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-replay-empty-result-if_statement", "SPQ-047", p, l) :- node(_, n, "if_statement", _, _), node(v1361, n, _, _, _), doc(v1361, v1362, _), (glob("**/l2070_batching/*/**/*/executor.py", v1362) ; glob("**/l2070_batching/*/executor.py", v1362) ; glob("**/l2070_batching/executor.py", v1362)), inside(n, v1363, k2), node(_, v1363, "function_definition", _, _), field(v1363, "name", v1364), node(_, v1364, "identifier", _, _), text(v1364, v1365), v1365 = "_finish_batched_step", field(n, "consequence", v1366), child(v1366, v1367, _), node(_, v1367, "expression_statement", _, _), child(v1367, v1368, _), node(_, v1368, "assignment", _, _), !m1370(v1368), field(v1368, "right", v1371), node(_, v1371, "none", _, _), field(v1368, "left", v1372), node(_, v1372, "subscript", _, _), field(n, "condition", v1373), m1393(v1373), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1394(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1404(n) :- field(n, "type", v1403).
+m1383(n) :- node(_, n, "identifier", _, _), text(n, v1364), v1364 = "empty_result_allowed", !m1367(n), !m1369(n), !m1372(n).
+m1383(n) :- inside(v1373, n, k13), node(_, v1373, "identifier", _, _), text(v1373, v1374), v1374 = "empty_result_allowed", !m1377(v1373), !m1379(v1373), !m1382(v1373).
+t1384(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1384(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-replay-empty-result-if_statement", "SPQ-047", p, l) :- node(_, n, "if_statement", _, _), node(v1351, n, _, _, _), doc(v1351, v1352, _), (glob("**/l2070_batching/*/**/*/executor.py", v1352) ; glob("**/l2070_batching/*/executor.py", v1352) ; glob("**/l2070_batching/executor.py", v1352)), inside(n, v1353, k2), node(_, v1353, "function_definition", _, _), field(v1353, "name", v1354), node(_, v1354, "identifier", _, _), text(v1354, v1355), v1355 = "_finish_batched_step", field(n, "consequence", v1356), child(v1356, v1357, _), node(_, v1357, "expression_statement", _, _), child(v1357, v1358, _), node(_, v1358, "assignment", _, _), !m1360(v1358), field(v1358, "right", v1361), node(_, v1361, "none", _, _), field(v1358, "left", v1362), node(_, v1362, "subscript", _, _), field(n, "condition", v1363), m1383(v1363), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1384(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1394(n) :- field(n, "type", v1393).
+m1400(n) :- node(_, n, "function_definition", _, _).
+m1400(n) :- node(_, n, "class_definition", _, _).
+m1400(n) :- node(_, n, "keyword_argument", _, _).
+m1401(n) :- field(v1399, "name", n), m1400(v1399).
+m1403(n) :- field(v1402, "attribute", n), node(_, v1402, "attribute", _, _).
+m1405(n) :- node(_, n, "import_statement", _, _).
+m1405(n) :- node(_, n, "import_from_statement", _, _).
+m1406(n) :- inside(n, v1404, k1), m1405(v1404).
 m1410(n) :- node(_, n, "function_definition", _, _).
 m1410(n) :- node(_, n, "class_definition", _, _).
 m1410(n) :- node(_, n, "keyword_argument", _, _).
@@ -965,23 +971,23 @@ m1413(n) :- field(v1412, "attribute", n), node(_, v1412, "attribute", _, _).
 m1415(n) :- node(_, n, "import_statement", _, _).
 m1415(n) :- node(_, n, "import_from_statement", _, _).
 m1416(n) :- inside(n, v1414, k1), m1415(v1414).
-m1420(n) :- node(_, n, "function_definition", _, _).
-m1420(n) :- node(_, n, "class_definition", _, _).
-m1420(n) :- node(_, n, "keyword_argument", _, _).
-m1421(n) :- field(v1419, "name", n), m1420(v1419).
-m1423(n) :- field(v1422, "attribute", n), node(_, v1422, "attribute", _, _).
-m1425(n) :- node(_, n, "import_statement", _, _).
-m1425(n) :- node(_, n, "import_from_statement", _, _).
-m1426(n) :- inside(n, v1424, k1), m1425(v1424).
-m1427(n) :- node(_, n, "identifier", _, _), text(n, v1408), v1408 = "omitted_projection_indices", !m1411(n), !m1413(n), !m1416(n).
-m1427(n) :- inside(v1417, n, k6), node(_, v1417, "identifier", _, _), text(v1417, v1418), v1418 = "omitted_projection_indices", !m1421(v1417), !m1423(v1417), !m1426(v1417).
-m1434(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1429), node(_, v1429, "identifier", _, _), text(v1429, v1430), v1430 = "closed_post_op".
-m1434(n) :- inside(v1431, n, k5), node(_, v1431, "attribute", _, _), field(v1431, "attribute", v1432), node(_, v1432, "identifier", _, _), text(v1432, v1433), v1433 = "closed_post_op".
-m1435(n) :- field(n, "condition", v1428), m1434(v1428).
-t1436(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1436(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-replay-omitted-projection-if_statement", "SPQ-047", p, l) :- node(_, n, "if_statement", _, _), node(v1395, n, _, _, _), doc(v1395, v1396, _), (glob("**/l2070_batching/*/**/*/executor.py", v1396) ; glob("**/l2070_batching/*/executor.py", v1396) ; glob("**/l2070_batching/executor.py", v1396)), inside(n, v1397, k2), node(_, v1397, "function_definition", _, _), field(v1397, "name", v1398), node(_, v1398, "identifier", _, _), text(v1398, v1399), v1399 = "_finish_batched_step", field(n, "consequence", v1400), child(v1400, v1401, _), node(_, v1401, "expression_statement", _, _), child(v1401, v1402, _), node(_, v1402, "assignment", _, _), !m1404(v1402), field(v1402, "right", v1405), node(_, v1405, "none", _, _), field(v1402, "left", v1406), node(_, v1406, "subscript", _, _), field(n, "condition", v1407), m1427(v1407), !m1435(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1436(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1446(n) :- field(n, "type", v1445).
+m1417(n) :- node(_, n, "identifier", _, _), text(n, v1398), v1398 = "omitted_projection_indices", !m1401(n), !m1403(n), !m1406(n).
+m1417(n) :- inside(v1407, n, k13), node(_, v1407, "identifier", _, _), text(v1407, v1408), v1408 = "omitted_projection_indices", !m1411(v1407), !m1413(v1407), !m1416(v1407).
+m1424(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1419), node(_, v1419, "identifier", _, _), text(v1419, v1420), v1420 = "closed_post_op".
+m1424(n) :- inside(v1421, n, k13), node(_, v1421, "attribute", _, _), field(v1421, "attribute", v1422), node(_, v1422, "identifier", _, _), text(v1422, v1423), v1423 = "closed_post_op".
+m1425(n) :- field(n, "condition", v1418), m1424(v1418).
+t1426(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1426(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-replay-omitted-projection-if_statement", "SPQ-047", p, l) :- node(_, n, "if_statement", _, _), node(v1385, n, _, _, _), doc(v1385, v1386, _), (glob("**/l2070_batching/*/**/*/executor.py", v1386) ; glob("**/l2070_batching/*/executor.py", v1386) ; glob("**/l2070_batching/executor.py", v1386)), inside(n, v1387, k2), node(_, v1387, "function_definition", _, _), field(v1387, "name", v1388), node(_, v1388, "identifier", _, _), text(v1388, v1389), v1389 = "_finish_batched_step", field(n, "consequence", v1390), child(v1390, v1391, _), node(_, v1391, "expression_statement", _, _), child(v1391, v1392, _), node(_, v1392, "assignment", _, _), !m1394(v1392), field(v1392, "right", v1395), node(_, v1395, "none", _, _), field(v1392, "left", v1396), node(_, v1396, "subscript", _, _), field(n, "condition", v1397), m1417(v1397), !m1425(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1426(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1436(n) :- field(n, "type", v1435).
+m1442(n) :- node(_, n, "function_definition", _, _).
+m1442(n) :- node(_, n, "class_definition", _, _).
+m1442(n) :- node(_, n, "keyword_argument", _, _).
+m1443(n) :- field(v1441, "name", n), m1442(v1441).
+m1445(n) :- field(v1444, "attribute", n), node(_, v1444, "attribute", _, _).
+m1447(n) :- node(_, n, "import_statement", _, _).
+m1447(n) :- node(_, n, "import_from_statement", _, _).
+m1448(n) :- inside(n, v1446, k1), m1447(v1446).
 m1452(n) :- node(_, n, "function_definition", _, _).
 m1452(n) :- node(_, n, "class_definition", _, _).
 m1452(n) :- node(_, n, "keyword_argument", _, _).
@@ -990,20 +996,20 @@ m1455(n) :- field(v1454, "attribute", n), node(_, v1454, "attribute", _, _).
 m1457(n) :- node(_, n, "import_statement", _, _).
 m1457(n) :- node(_, n, "import_from_statement", _, _).
 m1458(n) :- inside(n, v1456, k1), m1457(v1456).
-m1462(n) :- node(_, n, "function_definition", _, _).
-m1462(n) :- node(_, n, "class_definition", _, _).
-m1462(n) :- node(_, n, "keyword_argument", _, _).
-m1463(n) :- field(v1461, "name", n), m1462(v1461).
-m1465(n) :- field(v1464, "attribute", n), node(_, v1464, "attribute", _, _).
-m1467(n) :- node(_, n, "import_statement", _, _).
-m1467(n) :- node(_, n, "import_from_statement", _, _).
-m1468(n) :- inside(n, v1466, k1), m1467(v1466).
-m1469(n) :- node(_, n, "identifier", _, _), text(n, v1450), v1450 = "empty_result_allowed", !m1453(n), !m1455(n), !m1458(n).
-m1469(n) :- inside(v1459, n, k6), node(_, v1459, "identifier", _, _), text(v1459, v1460), v1460 = "empty_result_allowed", !m1463(v1459), !m1465(v1459), !m1468(v1459).
-t1470(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1470(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-replay-empty-result-elif_clause", "SPQ-047", p, l) :- node(_, n, "elif_clause", _, _), node(v1437, n, _, _, _), doc(v1437, v1438, _), (glob("**/l2070_batching/*/**/*/executor.py", v1438) ; glob("**/l2070_batching/*/executor.py", v1438) ; glob("**/l2070_batching/executor.py", v1438)), inside(n, v1439, k2), node(_, v1439, "function_definition", _, _), field(v1439, "name", v1440), node(_, v1440, "identifier", _, _), text(v1440, v1441), v1441 = "_finish_batched_step", field(n, "consequence", v1442), child(v1442, v1443, _), node(_, v1443, "expression_statement", _, _), child(v1443, v1444, _), node(_, v1444, "assignment", _, _), !m1446(v1444), field(v1444, "right", v1447), node(_, v1447, "none", _, _), field(v1444, "left", v1448), node(_, v1448, "subscript", _, _), field(n, "condition", v1449), m1469(v1449), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1470(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1480(n) :- field(n, "type", v1479).
+m1459(n) :- node(_, n, "identifier", _, _), text(n, v1440), v1440 = "empty_result_allowed", !m1443(n), !m1445(n), !m1448(n).
+m1459(n) :- inside(v1449, n, k14), node(_, v1449, "identifier", _, _), text(v1449, v1450), v1450 = "empty_result_allowed", !m1453(v1449), !m1455(v1449), !m1458(v1449).
+t1460(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1460(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-replay-empty-result-elif_clause", "SPQ-047", p, l) :- node(_, n, "elif_clause", _, _), node(v1427, n, _, _, _), doc(v1427, v1428, _), (glob("**/l2070_batching/*/**/*/executor.py", v1428) ; glob("**/l2070_batching/*/executor.py", v1428) ; glob("**/l2070_batching/executor.py", v1428)), inside(n, v1429, k2), node(_, v1429, "function_definition", _, _), field(v1429, "name", v1430), node(_, v1430, "identifier", _, _), text(v1430, v1431), v1431 = "_finish_batched_step", field(n, "consequence", v1432), child(v1432, v1433, _), node(_, v1433, "expression_statement", _, _), child(v1433, v1434, _), node(_, v1434, "assignment", _, _), !m1436(v1434), field(v1434, "right", v1437), node(_, v1437, "none", _, _), field(v1434, "left", v1438), node(_, v1438, "subscript", _, _), field(n, "condition", v1439), m1459(v1439), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1460(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1470(n) :- field(n, "type", v1469).
+m1476(n) :- node(_, n, "function_definition", _, _).
+m1476(n) :- node(_, n, "class_definition", _, _).
+m1476(n) :- node(_, n, "keyword_argument", _, _).
+m1477(n) :- field(v1475, "name", n), m1476(v1475).
+m1479(n) :- field(v1478, "attribute", n), node(_, v1478, "attribute", _, _).
+m1481(n) :- node(_, n, "import_statement", _, _).
+m1481(n) :- node(_, n, "import_from_statement", _, _).
+m1482(n) :- inside(n, v1480, k1), m1481(v1480).
 m1486(n) :- node(_, n, "function_definition", _, _).
 m1486(n) :- node(_, n, "class_definition", _, _).
 m1486(n) :- node(_, n, "keyword_argument", _, _).
@@ -1012,119 +1018,108 @@ m1489(n) :- field(v1488, "attribute", n), node(_, v1488, "attribute", _, _).
 m1491(n) :- node(_, n, "import_statement", _, _).
 m1491(n) :- node(_, n, "import_from_statement", _, _).
 m1492(n) :- inside(n, v1490, k1), m1491(v1490).
-m1496(n) :- node(_, n, "function_definition", _, _).
-m1496(n) :- node(_, n, "class_definition", _, _).
-m1496(n) :- node(_, n, "keyword_argument", _, _).
-m1497(n) :- field(v1495, "name", n), m1496(v1495).
-m1499(n) :- field(v1498, "attribute", n), node(_, v1498, "attribute", _, _).
-m1501(n) :- node(_, n, "import_statement", _, _).
-m1501(n) :- node(_, n, "import_from_statement", _, _).
-m1502(n) :- inside(n, v1500, k1), m1501(v1500).
-m1503(n) :- node(_, n, "identifier", _, _), text(n, v1484), v1484 = "omitted_projection_indices", !m1487(n), !m1489(n), !m1492(n).
-m1503(n) :- inside(v1493, n, k6), node(_, v1493, "identifier", _, _), text(v1493, v1494), v1494 = "omitted_projection_indices", !m1497(v1493), !m1499(v1493), !m1502(v1493).
-m1510(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1505), node(_, v1505, "identifier", _, _), text(v1505, v1506), v1506 = "closed_post_op".
-m1510(n) :- inside(v1507, n, k5), node(_, v1507, "attribute", _, _), field(v1507, "attribute", v1508), node(_, v1508, "identifier", _, _), text(v1508, v1509), v1509 = "closed_post_op".
-m1511(n) :- field(n, "condition", v1504), m1510(v1504).
-t1512(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1512(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-replay-omitted-projection-elif_clause", "SPQ-047", p, l) :- node(_, n, "elif_clause", _, _), node(v1471, n, _, _, _), doc(v1471, v1472, _), (glob("**/l2070_batching/*/**/*/executor.py", v1472) ; glob("**/l2070_batching/*/executor.py", v1472) ; glob("**/l2070_batching/executor.py", v1472)), inside(n, v1473, k2), node(_, v1473, "function_definition", _, _), field(v1473, "name", v1474), node(_, v1474, "identifier", _, _), text(v1474, v1475), v1475 = "_finish_batched_step", field(n, "consequence", v1476), child(v1476, v1477, _), node(_, v1477, "expression_statement", _, _), child(v1477, v1478, _), node(_, v1478, "assignment", _, _), !m1480(v1478), field(v1478, "right", v1481), node(_, v1481, "none", _, _), field(v1478, "left", v1482), node(_, v1482, "subscript", _, _), field(n, "condition", v1483), m1503(v1483), !m1511(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1512(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1522(n) :- node(_, n, "identifier", _, _), text(n, v1519), v1519 = "PhysicalStatementGroup".
-m1522(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1520), node(_, v1520, "identifier", _, _), text(v1520, v1521), v1521 = "PhysicalStatementGroup".
-m1528(n) :- node(_, n, "identifier", _, _), text(n, v1525), v1525 = "_set_batching_metrics_hint".
-m1528(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1526), node(_, v1526, "identifier", _, _), text(v1526, v1527), v1527 = "_set_batching_metrics_hint".
-m1529(n) :- inside(v1523, n, k4), node(_, v1523, "call", _, _), field(v1523, "function", v1524), m1528(v1524).
-t1530(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1530(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-batched-step-hint", "SPQ-048", p, l) :- node(_, n, "function_definition", _, _), node(v1515, n, _, _, _), doc(v1515, v1516, _), glob("**/batch_fusion.py", v1516), inside(v1517, n, k4), node(_, v1517, "call", _, _), field(v1517, "function", v1518), m1522(v1518), !m1529(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1530(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-t1536(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1536(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1537(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1537(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-owner-fields", "SPQ-050", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v1531), node(_, v1531, "identifier", _, _), text(v1531, v1532), (v1532 = "_active_plan" ; v1532 = "_base_txn" ; v1532 = "_conn" ; v1532 = "_connection" ; v1532 = "_cursor" ; v1532 = "_session" ; v1532 = "_txn" ; v1532 = "executor_transaction" ; v1532 = "session_validation_cache_target" ; v1532 = "session_validation_txn_state_target" ; v1532 = "sql_connection"), field(n, "type", v1533), node(v1534, n, _, _, _), doc(v1534, v1535, _), !t1536(v1535), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1537(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1542(n) :- node(_, n, "function_definition", _, _).
-m1542(n) :- node(_, n, "class_definition", _, _).
-blocked1543(low, high) :- inside(low, s, k11), m1542(s), inside(s, high, k2).
-m1544(n) :- inside(n, v1541, k2), !blocked1543(n, v1541), node(_, v1541, "function_definition", _, _).
-t1547(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1547(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1548(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1548(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-service-fields", "SPQ-050", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v1538), node(_, v1538, "identifier", _, _), text(v1538, v1539), (contains("AsyncCapabilityTokenService", v1539) ; contains("BackendExecutor", v1539) ; contains("CapabilityTokenService", v1539) ; contains("CapabilityTokenStore", v1539) ; contains("Connection", v1539) ; contains("Cursor", v1539) ; contains("Hydrator", v1539) ; contains("RuntimeBundle", v1539) ; contains("SyncDatabaseConnection", v1539) ; contains("TokenStore", v1539) ; contains("Transaction", v1539) ; contains("bundle", v1539) ; contains("runtime", v1539)), field(n, "type", v1540), !m1544(n), node(v1545, n, _, _, _), doc(v1545, v1546, _), !t1547(v1546), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1548(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1552(n) :- field(n, "type", v1551).
-m1554(n) :- node(_, n, "tuple", _, _).
-m1554(n) :- node(_, n, "list", _, _).
-m1554(n) :- node(_, n, "set", _, _).
-t1560(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1560(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1561(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1561(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-unwrap-lists", "SPQ-050", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v1549), node(_, v1549, "identifier", _, _), text(v1549, v1550), (contains("OWNER", v1550) ; contains("UNWRAP", v1550)), !m1552(n), field(n, "right", v1553), m1554(v1553), child(v1553, v1555, _), node(_, v1555, "string", _, _), strprefix(v1555, v1556), !contains("b", v1556), !contains("f", v1556), str(v1555, v1557), (v1557 = "_active_plan" ; v1557 = "_base_txn" ; v1557 = "_conn" ; v1557 = "_connection" ; v1557 = "_cursor" ; v1557 = "_session" ; v1557 = "_txn" ; v1557 = "executor_transaction" ; v1557 = "session_validation_cache_target" ; v1557 = "session_validation_txn_state_target" ; v1557 = "sql_connection"), node(v1558, n, _, _, _), doc(v1558, v1559, _), !t1560(v1559), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1561(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-t1566(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1566(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1567(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1567(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-bundle-members", "SPQ-050", p, l) :- node(_, n, "attribute", _, _), field(n, "attribute", v1562), node(_, v1562, "identifier", _, _), text(v1562, v1563), v1563 = "renewable_capability_bundle", node(v1564, n, _, _, _), doc(v1564, v1565, _), !t1566(v1565), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1567(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1572(n) :- node(_, n, "identifier", _, _), text(n, v1569), v1569 = "runtime_builder_post_op".
-m1572(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1570), node(_, v1570, "identifier", _, _), text(v1570, v1571), v1571 = "runtime_builder_post_op".
-t1579(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1579(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1580(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1580(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-builder-async_capability", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1568), m1572(v1568), field(n, "arguments", v1573), child(v1573, v1574, _), node(_, v1574, "keyword_argument", _, _), field(v1574, "name", v1575), node(_, v1575, "identifier", _, _), text(v1575, v1576), v1576 = "async_capability", node(v1577, n, _, _, _), doc(v1577, v1578, _), !t1579(v1578), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1580(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1585(n) :- node(_, n, "identifier", _, _), text(n, v1582), v1582 = "runtime_builder_post_op".
-m1585(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1583), node(_, v1583, "identifier", _, _), text(v1583, v1584), v1584 = "runtime_builder_post_op".
-t1592(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1592(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1593(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1593(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-builder-bundle", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1581), m1585(v1581), field(n, "arguments", v1586), child(v1586, v1587, _), node(_, v1587, "keyword_argument", _, _), field(v1587, "name", v1588), node(_, v1588, "identifier", _, _), text(v1588, v1589), v1589 = "bundle", node(v1590, n, _, _, _), doc(v1590, v1591, _), !t1592(v1591), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1593(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1598(n) :- node(_, n, "identifier", _, _), text(n, v1595), v1595 = "runtime_builder_post_op".
-m1598(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1596), node(_, v1596, "identifier", _, _), text(v1596, v1597), v1597 = "runtime_builder_post_op".
-t1605(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1605(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1606(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1606(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-builder-callback", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1594), m1598(v1594), field(n, "arguments", v1599), child(v1599, v1600, _), node(_, v1600, "keyword_argument", _, _), field(v1600, "name", v1601), node(_, v1601, "identifier", _, _), text(v1601, v1602), v1602 = "callback", node(v1603, n, _, _, _), doc(v1603, v1604, _), !t1605(v1604), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1606(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1611(n) :- node(_, n, "identifier", _, _), text(n, v1608), v1608 = "runtime_builder_post_op".
-m1611(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1609), node(_, v1609, "identifier", _, _), text(v1609, v1610), v1610 = "runtime_builder_post_op".
-t1618(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1618(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1619(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1619(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-builder-capability", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1607), m1611(v1607), field(n, "arguments", v1612), child(v1612, v1613, _), node(_, v1613, "keyword_argument", _, _), field(v1613, "name", v1614), node(_, v1614, "identifier", _, _), text(v1614, v1615), v1615 = "capability", node(v1616, n, _, _, _), doc(v1616, v1617, _), !t1618(v1617), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1619(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1624(n) :- node(_, n, "identifier", _, _), text(n, v1621), v1621 = "runtime_builder_post_op".
-m1624(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1622), node(_, v1622, "identifier", _, _), text(v1622, v1623), v1623 = "runtime_builder_post_op".
-t1631(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1631(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1632(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1632(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-builder-fn", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1620), m1624(v1620), field(n, "arguments", v1625), child(v1625, v1626, _), node(_, v1626, "keyword_argument", _, _), field(v1626, "name", v1627), node(_, v1627, "identifier", _, _), text(v1627, v1628), v1628 = "fn", node(v1629, n, _, _, _), doc(v1629, v1630, _), !t1631(v1630), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1632(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1637(n) :- node(_, n, "identifier", _, _), text(n, v1634), v1634 = "runtime_builder_post_op".
-m1637(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1635), node(_, v1635, "identifier", _, _), text(v1635, v1636), v1636 = "runtime_builder_post_op".
-t1644(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1644(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1645(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1645(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-builder-handler", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1633), m1637(v1633), field(n, "arguments", v1638), child(v1638, v1639, _), node(_, v1639, "keyword_argument", _, _), field(v1639, "name", v1640), node(_, v1640, "identifier", _, _), text(v1640, v1641), v1641 = "handler", node(v1642, n, _, _, _), doc(v1642, v1643, _), !t1644(v1643), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1645(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1650(n) :- node(_, n, "identifier", _, _), text(n, v1647), v1647 = "runtime_builder_post_op".
-m1650(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1648), node(_, v1648, "identifier", _, _), text(v1648, v1649), v1649 = "runtime_builder_post_op".
-t1657(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1657(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1658(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1658(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-builder-parse_fn", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1646), m1650(v1646), field(n, "arguments", v1651), child(v1651, v1652, _), node(_, v1652, "keyword_argument", _, _), field(v1652, "name", v1653), node(_, v1653, "identifier", _, _), text(v1653, v1654), v1654 = "parse_fn", node(v1655, n, _, _, _), doc(v1655, v1656, _), !t1657(v1656), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1658(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1663(n) :- node(_, n, "identifier", _, _), text(n, v1660), v1660 = "runtime_builder_post_op".
-m1663(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1661), node(_, v1661, "identifier", _, _), text(v1661, v1662), v1662 = "runtime_builder_post_op".
-t1670(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1670(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1671(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1671(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-builder-service", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1659), m1663(v1659), field(n, "arguments", v1664), child(v1664, v1665, _), node(_, v1665, "keyword_argument", _, _), field(v1665, "name", v1666), node(_, v1666, "identifier", _, _), text(v1666, v1667), v1667 = "service", node(v1668, n, _, _, _), doc(v1668, v1669, _), !t1670(v1669), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1671(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m1676(n) :- node(_, n, "identifier", _, _), text(n, v1673), v1673 = "runtime_builder_post_op".
-m1676(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1674), node(_, v1674, "identifier", _, _), text(v1674, v1675), v1675 = "runtime_builder_post_op".
-t1683(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1683(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
-t1684(s) :- doc(_, s, _), glob("**/__init__.py", s).
-t1684(s) :- doc(_, _, s), glob("**/__init__.py", s).
-violation("data-layer-serverplan-quality", "spq-ingress-builder-store", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1672), m1676(v1672), field(n, "arguments", v1677), child(v1677, v1678, _), node(_, v1678, "keyword_argument", _, _), field(v1678, "name", v1679), node(_, v1679, "identifier", _, _), text(v1679, v1680), v1680 = "store", node(v1681, n, _, _, _), doc(v1681, v1682, _), !t1683(v1682), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1684(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1493(n) :- node(_, n, "identifier", _, _), text(n, v1474), v1474 = "omitted_projection_indices", !m1477(n), !m1479(n), !m1482(n).
+m1493(n) :- inside(v1483, n, k14), node(_, v1483, "identifier", _, _), text(v1483, v1484), v1484 = "omitted_projection_indices", !m1487(v1483), !m1489(v1483), !m1492(v1483).
+m1500(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1495), node(_, v1495, "identifier", _, _), text(v1495, v1496), v1496 = "closed_post_op".
+m1500(n) :- inside(v1497, n, k14), node(_, v1497, "attribute", _, _), field(v1497, "attribute", v1498), node(_, v1498, "identifier", _, _), text(v1498, v1499), v1499 = "closed_post_op".
+m1501(n) :- field(n, "condition", v1494), m1500(v1494).
+t1502(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1502(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-replay-omitted-projection-elif_clause", "SPQ-047", p, l) :- node(_, n, "elif_clause", _, _), node(v1461, n, _, _, _), doc(v1461, v1462, _), (glob("**/l2070_batching/*/**/*/executor.py", v1462) ; glob("**/l2070_batching/*/executor.py", v1462) ; glob("**/l2070_batching/executor.py", v1462)), inside(n, v1463, k2), node(_, v1463, "function_definition", _, _), field(v1463, "name", v1464), node(_, v1464, "identifier", _, _), text(v1464, v1465), v1465 = "_finish_batched_step", field(n, "consequence", v1466), child(v1466, v1467, _), node(_, v1467, "expression_statement", _, _), child(v1467, v1468, _), node(_, v1468, "assignment", _, _), !m1470(v1468), field(v1468, "right", v1471), node(_, v1471, "none", _, _), field(v1468, "left", v1472), node(_, v1472, "subscript", _, _), field(n, "condition", v1473), m1493(v1473), !m1501(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1502(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1512(n) :- node(_, n, "identifier", _, _), text(n, v1509), v1509 = "PhysicalStatementGroup".
+m1512(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1510), node(_, v1510, "identifier", _, _), text(v1510, v1511), v1511 = "PhysicalStatementGroup".
+m1518(n) :- node(_, n, "identifier", _, _), text(n, v1515), v1515 = "_set_batching_metrics_hint".
+m1518(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1516), node(_, v1516, "identifier", _, _), text(v1516, v1517), v1517 = "_set_batching_metrics_hint".
+m1519(n) :- inside(v1513, n, k2), node(_, v1513, "call", _, _), field(v1513, "function", v1514), m1518(v1514).
+t1520(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1520(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-batched-step-hint", "SPQ-048", p, l) :- node(_, n, "function_definition", _, _), node(v1505, n, _, _, _), doc(v1505, v1506, _), glob("**/batch_fusion.py", v1506), inside(v1507, n, k2), node(_, v1507, "call", _, _), field(v1507, "function", v1508), m1512(v1508), !m1519(n), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1520(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t1526(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1526(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1527(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1527(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-owner-fields", "SPQ-050", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v1521), node(_, v1521, "identifier", _, _), text(v1521, v1522), (v1522 = "_active_plan" ; v1522 = "_base_txn" ; v1522 = "_conn" ; v1522 = "_connection" ; v1522 = "_cursor" ; v1522 = "_session" ; v1522 = "_txn" ; v1522 = "executor_transaction" ; v1522 = "session_validation_cache_target" ; v1522 = "session_validation_txn_state_target" ; v1522 = "sql_connection"), field(n, "type", v1523), node(v1524, n, _, _, _), doc(v1524, v1525, _), !t1526(v1525), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1527(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1532(n) :- nearest(n, v1531, k15), node(_, v1531, "function_definition", _, _).
+t1535(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1535(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1536(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1536(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-service-fields", "SPQ-050", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v1528), node(_, v1528, "identifier", _, _), text(v1528, v1529), (contains("AsyncCapabilityTokenService", v1529) ; contains("BackendExecutor", v1529) ; contains("CapabilityTokenService", v1529) ; contains("CapabilityTokenStore", v1529) ; contains("Connection", v1529) ; contains("Cursor", v1529) ; contains("Hydrator", v1529) ; contains("RuntimeBundle", v1529) ; contains("SyncDatabaseConnection", v1529) ; contains("TokenStore", v1529) ; contains("Transaction", v1529) ; contains("bundle", v1529) ; contains("runtime", v1529)), field(n, "type", v1530), !m1532(n), node(v1533, n, _, _, _), doc(v1533, v1534, _), !t1535(v1534), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1536(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1540(n) :- field(n, "type", v1539).
+m1542(n) :- node(_, n, "tuple", _, _).
+m1542(n) :- node(_, n, "list", _, _).
+m1542(n) :- node(_, n, "set", _, _).
+t1548(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1548(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1549(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1549(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-unwrap-lists", "SPQ-050", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v1537), node(_, v1537, "identifier", _, _), text(v1537, v1538), (contains("OWNER", v1538) ; contains("UNWRAP", v1538)), !m1540(n), field(n, "right", v1541), m1542(v1541), child(v1541, v1543, _), node(_, v1543, "string", _, _), strprefix(v1543, v1544), !contains("b", v1544), !contains("f", v1544), str(v1543, v1545), (v1545 = "_active_plan" ; v1545 = "_base_txn" ; v1545 = "_conn" ; v1545 = "_connection" ; v1545 = "_cursor" ; v1545 = "_session" ; v1545 = "_txn" ; v1545 = "executor_transaction" ; v1545 = "session_validation_cache_target" ; v1545 = "session_validation_txn_state_target" ; v1545 = "sql_connection"), node(v1546, n, _, _, _), doc(v1546, v1547, _), !t1548(v1547), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1549(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t1554(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1554(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1555(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1555(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-bundle-members", "SPQ-050", p, l) :- node(_, n, "attribute", _, _), field(n, "attribute", v1550), node(_, v1550, "identifier", _, _), text(v1550, v1551), v1551 = "renewable_capability_bundle", node(v1552, n, _, _, _), doc(v1552, v1553, _), !t1554(v1553), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1555(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1560(n) :- node(_, n, "identifier", _, _), text(n, v1557), v1557 = "runtime_builder_post_op".
+m1560(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1558), node(_, v1558, "identifier", _, _), text(v1558, v1559), v1559 = "runtime_builder_post_op".
+t1567(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1567(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1568(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1568(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-builder-async_capability", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1556), m1560(v1556), field(n, "arguments", v1561), child(v1561, v1562, _), node(_, v1562, "keyword_argument", _, _), field(v1562, "name", v1563), node(_, v1563, "identifier", _, _), text(v1563, v1564), v1564 = "async_capability", node(v1565, n, _, _, _), doc(v1565, v1566, _), !t1567(v1566), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1568(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1573(n) :- node(_, n, "identifier", _, _), text(n, v1570), v1570 = "runtime_builder_post_op".
+m1573(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1571), node(_, v1571, "identifier", _, _), text(v1571, v1572), v1572 = "runtime_builder_post_op".
+t1580(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1580(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1581(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1581(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-builder-bundle", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1569), m1573(v1569), field(n, "arguments", v1574), child(v1574, v1575, _), node(_, v1575, "keyword_argument", _, _), field(v1575, "name", v1576), node(_, v1576, "identifier", _, _), text(v1576, v1577), v1577 = "bundle", node(v1578, n, _, _, _), doc(v1578, v1579, _), !t1580(v1579), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1581(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1586(n) :- node(_, n, "identifier", _, _), text(n, v1583), v1583 = "runtime_builder_post_op".
+m1586(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1584), node(_, v1584, "identifier", _, _), text(v1584, v1585), v1585 = "runtime_builder_post_op".
+t1593(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1593(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1594(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1594(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-builder-callback", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1582), m1586(v1582), field(n, "arguments", v1587), child(v1587, v1588, _), node(_, v1588, "keyword_argument", _, _), field(v1588, "name", v1589), node(_, v1589, "identifier", _, _), text(v1589, v1590), v1590 = "callback", node(v1591, n, _, _, _), doc(v1591, v1592, _), !t1593(v1592), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1594(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1599(n) :- node(_, n, "identifier", _, _), text(n, v1596), v1596 = "runtime_builder_post_op".
+m1599(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1597), node(_, v1597, "identifier", _, _), text(v1597, v1598), v1598 = "runtime_builder_post_op".
+t1606(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1606(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1607(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1607(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-builder-capability", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1595), m1599(v1595), field(n, "arguments", v1600), child(v1600, v1601, _), node(_, v1601, "keyword_argument", _, _), field(v1601, "name", v1602), node(_, v1602, "identifier", _, _), text(v1602, v1603), v1603 = "capability", node(v1604, n, _, _, _), doc(v1604, v1605, _), !t1606(v1605), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1607(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1612(n) :- node(_, n, "identifier", _, _), text(n, v1609), v1609 = "runtime_builder_post_op".
+m1612(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1610), node(_, v1610, "identifier", _, _), text(v1610, v1611), v1611 = "runtime_builder_post_op".
+t1619(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1619(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1620(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1620(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-builder-fn", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1608), m1612(v1608), field(n, "arguments", v1613), child(v1613, v1614, _), node(_, v1614, "keyword_argument", _, _), field(v1614, "name", v1615), node(_, v1615, "identifier", _, _), text(v1615, v1616), v1616 = "fn", node(v1617, n, _, _, _), doc(v1617, v1618, _), !t1619(v1618), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1620(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1625(n) :- node(_, n, "identifier", _, _), text(n, v1622), v1622 = "runtime_builder_post_op".
+m1625(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1623), node(_, v1623, "identifier", _, _), text(v1623, v1624), v1624 = "runtime_builder_post_op".
+t1632(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1632(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1633(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1633(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-builder-handler", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1621), m1625(v1621), field(n, "arguments", v1626), child(v1626, v1627, _), node(_, v1627, "keyword_argument", _, _), field(v1627, "name", v1628), node(_, v1628, "identifier", _, _), text(v1628, v1629), v1629 = "handler", node(v1630, n, _, _, _), doc(v1630, v1631, _), !t1632(v1631), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1633(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1638(n) :- node(_, n, "identifier", _, _), text(n, v1635), v1635 = "runtime_builder_post_op".
+m1638(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1636), node(_, v1636, "identifier", _, _), text(v1636, v1637), v1637 = "runtime_builder_post_op".
+t1645(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1645(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1646(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1646(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-builder-parse_fn", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1634), m1638(v1634), field(n, "arguments", v1639), child(v1639, v1640, _), node(_, v1640, "keyword_argument", _, _), field(v1640, "name", v1641), node(_, v1641, "identifier", _, _), text(v1641, v1642), v1642 = "parse_fn", node(v1643, n, _, _, _), doc(v1643, v1644, _), !t1645(v1644), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1646(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1651(n) :- node(_, n, "identifier", _, _), text(n, v1648), v1648 = "runtime_builder_post_op".
+m1651(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1649), node(_, v1649, "identifier", _, _), text(v1649, v1650), v1650 = "runtime_builder_post_op".
+t1658(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1658(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1659(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1659(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-builder-service", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1647), m1651(v1647), field(n, "arguments", v1652), child(v1652, v1653, _), node(_, v1653, "keyword_argument", _, _), field(v1653, "name", v1654), node(_, v1654, "identifier", _, _), text(v1654, v1655), v1655 = "service", node(v1656, n, _, _, _), doc(v1656, v1657, _), !t1658(v1657), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1659(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m1664(n) :- node(_, n, "identifier", _, _), text(n, v1661), v1661 = "runtime_builder_post_op".
+m1664(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v1662), node(_, v1662, "identifier", _, _), text(v1662, v1663), v1663 = "runtime_builder_post_op".
+t1671(s) :- doc(_, s, _), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1671(s) :- doc(_, _, s), (glob("**/tests", s) ; glob("**/tests/**", s)).
+t1672(s) :- doc(_, s, _), glob("**/__init__.py", s).
+t1672(s) :- doc(_, _, s), glob("**/__init__.py", s).
+violation("data-layer-serverplan-quality", "spq-ingress-builder-store", "SPQ-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v1660), m1664(v1660), field(n, "arguments", v1665), child(v1665, v1666, _), node(_, v1666, "keyword_argument", _, _), field(v1666, "name", v1667), node(_, v1667, "identifier", _, _), text(v1667, v1668), v1668 = "store", node(v1669, n, _, _, _), doc(v1669, v1670, _), !t1671(v1670), doc(d, p, m), (glob("api/l2070_batching/executor.py", p) ; glob("impl/common/l2070_server_plan/?*", p) ; glob("impl/common/l2070_server_plan/base_server_plan.py", p) ; glob("impl/common/l2070_server_plan/plan_helpers.py", p) ; glob("impl/common/l2070_server_plan/sql_backend_executor.py", p) ; glob("impl/common/l2070_server_plan/steps/**", p) ; glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p) ; glob("impl/common/l2070_server_plan/strategies/**", p) ; glob("impl/common/l7300_sql_versioned_transactions/steps/**", p) ; glob("impl/common/l9700_sql_graph_query/steps/**", p) ; glob("l2070_batching/compilation.py", p) ; glob("l2070_batching/conditional_step.py", p) ; glob("l2070_batching/optimizer.py", p) ; glob("l2070_batching/plan_prerequisites.py", p)), !t1672(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 .output violation

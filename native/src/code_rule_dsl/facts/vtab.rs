@@ -60,6 +60,16 @@ pub(crate) trait Source: Send + Sync {
     fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {
         None
     }
+    /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
+    /// makes every one: a join probes such a source through `lookup`, whatever its match estimate.
+    fn made_on_lookup(&self) -> bool {
+        false
+    }
+    /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
+    /// reading every row: a source whose rows are made on lookup.
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        None
+    }
 }
 
 #[derive(Default)]

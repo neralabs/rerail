@@ -126,6 +126,9 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],
+        // Containment read off the tree (`facts::vtab::syntax::within`, decision 0050).
+        "within" => &["n", "a"],
+        "span_within" => &["inner", "outer"],
         // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &["n", "a"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],

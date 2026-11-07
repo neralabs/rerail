@@ -67,6 +67,7 @@ impl From<super::front::Error> for Error {
 type Result<T> = std::result::Result<T, Error>;
 
 pub(in crate::code_rule_dsl) mod corpus;
+mod demand;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -564,7 +565,15 @@ pub(in crate::code_rule_dsl) type Plan = (Vec<Step>, f64, f64);
 impl Model {
     fn card(&self, rel: &str) -> f64 {
         // `node` is the corpus's nodes, except where a batch binds it: then its estimate is the batch's.
-        if rel == "node" && !self.inputs.batch.contains_key(rel) { self.stats.nodes } else { self.stats.card.get(rel).copied().unwrap_or(1000.0) }
+        if rel == "node" && !self.inputs.batch.contains_key(rel) {
+            self.stats.nodes
+        } else if rel.starts_with(super::strings::RELATION) {
+            // A text test empty in the chunk that plans is not empty in the chunks that reuse its plans (decision
+            // 0038): at least one string.
+            self.stats.card.get(rel).copied().unwrap_or(1000.0).max(1.0)
+        } else {
+            self.stats.card.get(rel).copied().unwrap_or(1000.0)
+        }
     }
 
     fn ndv_or_1(&self, rel: &str, c: usize) -> f64 {
@@ -718,6 +727,25 @@ impl Model {
             // Every column bound: a membership test, at most one row of a set.
             if cols.len() == a.args.len() && !prog.lattice.contains_key(&a.rel) {
                 rows = rows.min(1.0);
+                // A text test (decision 0037) probed by a string an input binds keeps the share of that column's
+                // distinct strings it holds: both are measured per chunk. Priced at 1, a test of every identifier's
+                // text looked free after the scan, and the planner never started from the test (notes T10, P6).
+                if a.rel.starts_with(super::strings::RELATION)
+                    && let [Term::Var(v)] = a.args.as_slice()
+                {
+                    let domain = body
+                        .iter()
+                        .filter_map(|l| match l {
+                            Literal::Atom(b) if !b.neg && b.rel != a.rel && prog.inputs.contains(&b.rel) => {
+                                b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).map(|c| self.ndv_or_1(&b.rel, c))
+                            }
+                            _ => None,
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    if domain.is_finite() {
+                        rows = rows.min(self.card(&a.rel) / domain);
+                    }
+                }
             }
             rows.max(0.01)
         };
@@ -1306,6 +1334,9 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "source" | "src_line" | "line_count" => &[&["d"]],
         "str_part" => &[&["lit"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
+        // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
+        "within" => &[&["n"], &["a"]],
+        "span_within" => &[&["inner"], &["outer"]],
         "doc" | "pkg" | "syntax_error" => &[&["d"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
@@ -2424,7 +2455,12 @@ impl Run<'_> {
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
         self.model.stats.solving = if reads { scc.clone() } else { BTreeSet::new() };
-        let out = self.native_stratum_(scc, rules);
+        // The relations run natively so far, lent to the stratum (it reads them, and adds its own only at the end):
+        // cloning them per stratum was quadratic in strata (3% of a combined run's main thread).
+        let native_rels = std::mem::take(&mut self.native_rels);
+        let out = self.native_stratum_(scc, rules, &native_rels);
+        let added = std::mem::replace(&mut self.native_rels, native_rels);
+        self.native_rels.extend(added);
         self.model.stats.solving.clear();
         out
     }
@@ -2434,7 +2470,7 @@ impl Run<'_> {
     /// replanned from live counts between chunks of waves (T's `native_stratum_`). Lower strata it reads natively
     /// come from the native store (`r:`), others from their tables or the facts. Nothing is written back: the
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
-    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
+    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule], native_rels: &BTreeSet<String>) -> Result<bool> {
         let prog = self.prog;
         self.why_not = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
@@ -2453,7 +2489,6 @@ impl Run<'_> {
         // A stratum's relations were made empty by `run` unless the program states facts of them.
         lines.extend(rels.iter().map(|r| format!("rel {r} {}{}", types(r), if prog.facts.get(*r).is_none_or(|f| f.is_empty()) { " empty" } else { "" })));
         lines.push("nowrite".to_owned());
-        let native_rels = self.native_rels.clone();
         let mut est: HashMap<&str, f64> = HashMap::new();
         let mut orders = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
@@ -3028,8 +3063,8 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
 /// with the planner's statistics in the attached schema `stats`. `db` is a connection to the content store: the
-/// symbols the run makes are appended to its `atoms`, and derived relations are `temp` tables, dropped by the next
-/// run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
+/// symbols the run makes are the store's atoms (pending until a flush, decision 0049), and derived relations are
+/// `temp` tables, dropped by the next run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register_symbols(db)?;
@@ -3084,12 +3119,10 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     super::native::register(db)?;
     super::native::register_symbols(db)?;
     super::native::forget_inputs(db);
-    super::native::hold_symbols(db, true)?;
     let out = run(&lowered.program, db, inputs, Some(lowered));
-    // Flushed while still held: the run's symbols are the table's next rows.
-    let flushed = super::native::flush_symbols(db);
-    super::native::hold_symbols(db, false)?;
-    flushed?;
+    // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
+    // write transaction (decision 0049).
+    super::native::flush_symbols(db)?;
     out
 }
 
@@ -3188,6 +3221,20 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(setup);
     let planning = super::profile::span(|| "statistics and plan".into());
     let model = make_plan(prog, db, inputs)?;
+    // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
+    // 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
+    let split;
+    let corpus = PLANS.with(|p| p.borrow().is_some());
+    let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
+        Some((p, demanded)) => {
+            super::profile::decision("demand (decision 0048)", || {
+                format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
+            });
+            split = p;
+            &split
+        }
+        None => prog,
+    };
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {

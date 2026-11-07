@@ -936,12 +936,16 @@ pub(in crate::code_rule_dsl) fn file_tape(
     }
     use crate::code_rule_dsl::tape;
     let never = || false;
+    let grammar_span = crate::code_rule_dsl::logic::profile::span(|| "tape grammar".into());
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
+    drop(grammar_span);
     let Some(image) = tape::TapeImage::parse(&tape_grammar, &file.source, &never) else {
         return Ok(None);
     };
     let image = image.map_err(invalid)?;
+    let restore = crate::code_rule_dsl::logic::profile::span(|| "tape restore".into());
     let (doc, lines) = restore_file_tape(language, file, &image)?;
+    drop(restore);
     cache_tape(language, file, &doc, &lines);
     Ok(Some((doc, lines)))
 }
