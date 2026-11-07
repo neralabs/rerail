@@ -36,10 +36,16 @@ pub(in crate::code_rule_dsl) enum Unit {
     /// A row entered in an engine index or set when a component opens: a row loaded from SQLite into a component
     /// relation, or a row of an input or derived relation entered in a hash index for a join's lookup.
     IndexEntry,
+    /// A literal of a rule (a body literal or a head) read by a transformation of the whole program: the demand
+    /// split, the strata.
+    Literal,
+    /// A file's metadata read from the file system (the stat index's check).
+    FileStat,
 }
 
 impl Unit {
-    pub(super) const ALL: [Unit; 9] = [Unit::VmStep, Unit::JoinRow, Unit::SourceByte, Unit::Node, Unit::Value, Unit::Cell, Unit::Byte, Unit::IndexEntry, Unit::Candidate];
+    pub(super) const ALL: [Unit; 11] =
+        [Unit::VmStep, Unit::JoinRow, Unit::SourceByte, Unit::Node, Unit::Value, Unit::Cell, Unit::Byte, Unit::IndexEntry, Unit::Candidate, Unit::Literal, Unit::FileStat];
 
     pub(super) fn name(self) -> &'static str {
         match self {
@@ -52,6 +58,8 @@ impl Unit {
             Unit::Candidate => "candidate",
             Unit::Byte => "byte",
             Unit::IndexEntry => "index entry",
+            Unit::Literal => "literal",
+            Unit::FileStat => "file stat",
         }
     }
 
@@ -67,6 +75,8 @@ impl Unit {
             Unit::Candidate => "none: the planner's own rate is shown, with no roof",
             Unit::Byte => "SHA-256 of 64 MB in memory (the content key every stored byte needs)",
             Unit::IndexEntry => "entering 1M row ids of 2-column rows in a hash table (foldhash), not presized",
+            Unit::Literal => "cloning a program of 1M body literals (atoms of 3 variables), as a transformation that rebuilds it does",
+            Unit::FileStat => "reading one file's metadata 20k times (the file system's cached path)",
         }
     }
 }
@@ -207,6 +217,29 @@ fn roof(u: Unit) -> Option<f64> {
             }))
         }
         Unit::Candidate => None,
+        Unit::Literal => {
+            use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
+            let var = |i: usize| Term::Var(format!("v{}", i % 7));
+            let body: Vec<Literal> = (0..1usize << 20)
+                .map(|i| Literal::Atom(Atom { rel: format!("r{}", i % 97), args: vec![var(i), var(i + 1), var(i + 2)], neg: false, gated: false }))
+                .collect();
+            Some(best(3, || {
+                let t = Instant::now();
+                std::hint::black_box(body.clone());
+                (t.elapsed().as_secs_f64(), body.len() as u64)
+            }))
+        }
+        Unit::FileStat => {
+            let path = std::env::current_exe().ok()?;
+            let n = 20_000u64;
+            Some(best(3, || {
+                let t = Instant::now();
+                for _ in 0..n {
+                    std::hint::black_box(std::fs::metadata(&path).ok());
+                }
+                (t.elapsed().as_secs_f64(), n)
+            }))
+        }
     }
 }
 

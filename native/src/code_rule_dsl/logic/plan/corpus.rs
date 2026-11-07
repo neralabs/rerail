@@ -705,6 +705,7 @@ pub(crate) fn run_with_options(
             // source, and on a memo hit is neither read nor hashed.
             let stat = if memoised || recording {
                 let _stat = crate::code_rule_dsl::logic::profile::span(|| "stat".into());
+                crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::FileStat, 1);
                 std::fs::metadata(root.join(path)).ok().map(|m| crate::content_store::FileStat::of(&m))
             } else {
                 None
@@ -738,6 +739,8 @@ pub(crate) fn run_with_options(
                 }
             }
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
+            // Its own work: the file's input made from its source (the build's parts charge their own).
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
             let built = match &tapes {
                 Some(cache) => core::build_cached_as(&file, cache, source_id),

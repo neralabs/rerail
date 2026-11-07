@@ -114,6 +114,8 @@ pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::Co
         }
         None => {
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
+            // Its own work: the source prepared for the parser (tree-sitter and the encoding charge their own).
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source.len() as u64);
             let Some(image) = TapeImage::parse(&grammar, &file.source, &|| false) else {
                 return Ok(Built::Unparsed);
             };

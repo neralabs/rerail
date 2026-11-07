@@ -3517,6 +3517,10 @@ fn run_named(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&l
         make_plan(prog, db, inputs)?
     };
     let demand_span = super::profile::span(|| "demand".into());
+    // The literals a whole-program transformation reads, charged to it (here the demand split, then the strata).
+    if super::profile::on() {
+        super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
+    }
     // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
     // 0046); in a corpus run only (kept plans), so T's golden plans are unchanged.
     let split;
@@ -3533,6 +3537,9 @@ fn run_named(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&l
     };
     drop(demand_span);
     let strata_span = super::profile::span(|| "strata".into());
+    if super::profile::on() {
+        super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
+    }
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {
