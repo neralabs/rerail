@@ -57,6 +57,39 @@ pv(n, v) :- base(n, b), pv(b, v).
     assert_eq!(b.program.rules.len(), 1 + 1 + 2);
 }
 
+/// The rounds run the hops' cone (`found` and what it reads); `reach`, which no hop reads, runs once after them and
+/// reads `found`'s final rows as `found__done`.
+#[test]
+fn the_rest_reads_the_cone_once() {
+    let prog = crate::code_rule_dsl::logic::rr::parse(
+        r#"
+.decl base(c: node, b: node)
+.decl bound_in(c: node, a: symbol)
+.input base, bound_in
+.decl found(c: node, a: symbol, at: node)
+found(c, a, c) :- bound_in(c, a).
+found(c, a, x) :- base(c, b), !bound_in(c, a), found(b, a, x).
+.decl names(c: node, a: symbol)
+names(c, a) :- found(c, a, _).
+.output found, names
+"#,
+    )
+    .unwrap();
+    let b = bound(&prog, &BTreeMap::new()).unwrap();
+    let split = cone_split(&b.program, &b.hops).expect("names is outside the cone");
+    assert!(split.cone.rules.iter().all(|r| r.head.rel == "found"));
+    assert_eq!(split.cone.outputs, vec!["found".to_owned()]);
+    assert_eq!(split.reads, BTreeSet::from(["found".to_owned()]));
+    let rules: Vec<String> = split.rest.rules.iter().map(ToString::to_string).collect();
+    assert_eq!(rules, vec!["names($c, $a) :- found__done($c, $a, _)".to_owned()]);
+    assert!(split.rest.inputs.contains(&"found__done".to_owned()));
+    assert_eq!(split.rest.outputs, vec!["names".to_owned()]);
+    // A program that is all cone is not split.
+    let only = crate::code_rule_dsl::logic::rr::parse(PROGRAM).unwrap();
+    let b = bound(&only, &BTreeMap::new()).unwrap();
+    assert!(cone_split(&b.program, &b.hops).is_none());
+}
+
 #[test]
 fn the_digest_ignores_row_order() {
     let a = BTreeMap::from([("r".to_owned(), vec![vec![1, 2], vec![3, 4]])]);

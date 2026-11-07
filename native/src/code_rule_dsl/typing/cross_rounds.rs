@@ -182,6 +182,74 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
     Ok(Bounded { program: out, hops, split, unbounded })
 }
 
+/// The suffix of a cone relation's final rows, read by the rest of the part (`cone_split`).
+pub(crate) const DONE: &str = "__done";
+
+/// A bounded program split at its hops' cone: `cone` derives the hop relations and every relation they read, and
+/// runs in rounds; `rest` derives the others, once, after the last round, reading the cone's rows of `reads` as
+/// inputs named `<rel>__done`. `None` when the cone is the whole program.
+pub(crate) struct Split {
+    pub(crate) cone: Program,
+    pub(crate) rest: Program,
+    pub(crate) reads: BTreeSet<String>,
+}
+
+pub(crate) fn cone_split(prog: &Program, hops: &BTreeSet<String>) -> Option<Split> {
+    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let mut cone: BTreeSet<&str> = hops.iter().map(String::as_str).filter(|r| derived.contains(r)).collect();
+    let mut work: Vec<&str> = cone.iter().copied().collect();
+    while let Some(rel) = work.pop() {
+        for r in prog.rules.iter().filter(|r| r.head.rel == rel) {
+            for a in r.body.iter().filter_map(Literal::atom) {
+                if derived.contains(a.rel.as_str()) && cone.insert(a.rel.as_str()) {
+                    work.push(a.rel.as_str());
+                }
+            }
+        }
+    }
+    let in_cone = |rel: &str| cone.contains(rel);
+    // Gates (whose sources and quiet sets may lie on both sides) are not split, nor is the whole program.
+    if !prog.gates.is_empty() || prog.rules.iter().all(|r| in_cone(&r.head.rel)) {
+        return None;
+    }
+    let reads: BTreeSet<String> = prog
+        .rules
+        .iter()
+        .filter(|r| !in_cone(&r.head.rel))
+        .flat_map(|r| r.body.iter().filter_map(Literal::atom))
+        .filter(|a| in_cone(&a.rel))
+        .map(|a| a.rel.clone())
+        .collect();
+    // A lattice relation's rows are its cells, not a set: the rest does not read one as an input.
+    if reads.iter().any(|r| prog.lattice.contains_key(r)) {
+        return None;
+    }
+    let mut c = prog.clone();
+    c.rules.retain(|r| in_cone(&r.head.rel));
+    c.outputs.retain(|o| in_cone(o));
+    c.lattice.retain(|rel, _| in_cone(rel));
+    c.gates.retain(|(rel, _)| in_cone(rel));
+    let mut rest = prog.clone();
+    rest.rules.retain(|r| !in_cone(&r.head.rel));
+    for r in &mut rest.rules {
+        for l in &mut r.body {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                && reads.contains(&a.rel)
+            {
+                a.rel = format!("{}{DONE}", a.rel);
+            }
+        }
+    }
+    rest.outputs.retain(|o| !in_cone(o));
+    rest.lattice.retain(|rel, _| !in_cone(rel));
+    rest.gates.retain(|(rel, _)| !in_cone(rel));
+    for rel in &reads {
+        rest.decls.insert(format!("{rel}{DONE}"), prog.decls[rel].clone());
+        rest.inputs.push(format!("{rel}{DONE}"));
+    }
+    Some(Split { cone: c, rest, reads })
+}
+
 /// The digest of one round's rows of the hop relations: the early cutoff compares consecutive rounds'.
 pub(crate) fn digest(rows: &BTreeMap<String, Vec<Vec<i64>>>) -> u64 {
     use std::hash::{DefaultHasher, Hash, Hasher};
