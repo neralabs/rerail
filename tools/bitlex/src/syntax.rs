@@ -78,6 +78,10 @@ pub enum Stmt {
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
     Error(String, Expr),
+    /// `variant NAME { … } [unless E]`: one way to compute a set of names. Of consecutive
+    /// variants, the first whose `unless` mask is empty (or that has none) is kept; the others'
+    /// names are discarded. Bodies only define names: classes, masks, machines, counts.
+    Variant { name: String, body: Vec<Stmt>, unless: Option<Expr> },
     /// `tree NAME { … }`: the statements that say where each node starts and ends
     /// (docs/parser-generators/13-tape-on-the-gpu.md).
     Tree { name: String, body: Vec<Stmt> },
@@ -100,7 +104,9 @@ impl Stmt {
         match self {
             Stmt::Class(n, _) | Stmt::Mask(n, _) | Stmt::Machine(n, _) | Stmt::Carry(n, _) => out.push(n.clone()),
             Stmt::Reflect { name, .. } | Stmt::Count { name, .. } => out.push(name.clone()),
-            Stmt::Rounds { body, .. } | Stmt::Hyp { body, .. } => body.iter().for_each(|s| s.defines(out)),
+            Stmt::Rounds { body, .. } | Stmt::Hyp { body, .. } | Stmt::Variant { body, .. } => {
+                body.iter().for_each(|s| s.defines(out))
+            }
             Stmt::Ucode { classes, .. } => classes.iter().for_each(|c| out.push(c.0.clone())),
             _ => {}
         }
@@ -592,6 +598,12 @@ impl P {
                 Stmt::Error(m, self.expr()?)
             }
             "skip" => Stmt::Skip(self.expr()?),
+            "variant" => {
+                let name = self.ident()?;
+                let body = self.block()?;
+                let unless = if self.eat_kw("unless") { Some(self.expr()?) } else { None };
+                Stmt::Variant { name, body, unless }
+            }
             "tree" => {
                 let name = self.ident()?;
                 Stmt::Tree { name, body: self.block()? }

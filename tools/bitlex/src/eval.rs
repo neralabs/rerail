@@ -57,6 +57,8 @@ pub struct Output {
     pub rounds: Vec<(String, usize)>,
     /// Every named value at the end, for checks against the oracles.
     pub vars: HashMap<String, Val>,
+    /// The variants kept, in order.
+    pub variants: Vec<String>,
 }
 
 /// Segments of a `hypotheses` block, and the lane being evaluated.
@@ -90,6 +92,7 @@ pub struct Ev<'a> {
     skip: Mask,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
     tree: Option<TreeDecl>,
+    variants: Vec<String>,
 }
 
 type R<T> = Result<T, String>;
@@ -150,10 +153,11 @@ impl<'a> Ev<'a> {
             skip: Mask::zeros(n),
             tables,
             tree: None,
+            variants: vec![],
         };
         ev.exec(prog)?;
         let tokens = ev.finish()?;
-        Ok(Output { tree: ev.tree, tokens, errors: ev.errors, rounds: ev.rounds, vars: ev.vars })
+        Ok(Output { tree: ev.tree, tokens, errors: ev.errors, rounds: ev.rounds, vars: ev.vars, variants: ev.variants })
     }
 
     pub fn get_mask(&self, name: &str) -> Option<&Mask> {
@@ -164,10 +168,41 @@ impl<'a> Ev<'a> {
     }
 
     fn exec(&mut self, prog: &[Stmt]) -> R<()> {
+        // Within a run of consecutive variants, whether one has been kept.
+        let mut kept = false;
         for s in prog {
-            self.stmt(s)?;
+            match s {
+                Stmt::Variant { name, body, unless } => {
+                    if !kept {
+                        kept = self.variant(name, body, unless.as_ref())?;
+                    }
+                }
+                _ => {
+                    kept = false;
+                    self.stmt(s)?;
+                }
+            }
         }
         Ok(())
+    }
+
+    /// Run a variant's body; keep its names unless its `unless` mask has a bit set.
+    fn variant(&mut self, name: &str, body: &[Stmt], unless: Option<&Expr>) -> R<bool> {
+        if let Some(s) = body.iter().find(|s| !matches!(s, Stmt::Class(..) | Stmt::Mask(..) | Stmt::Machine(..) | Stmt::Count { .. })) {
+            return Err(format!("variant {name}: only classes, masks, machines and counts, not {s:?}"));
+        }
+        let saved = self.vars.clone();
+        self.exec(body)?;
+        let rejected = match unless {
+            Some(e) => self.mask(e)?.any(),
+            None => false,
+        };
+        if rejected {
+            self.vars = saved;
+        } else {
+            self.variants.push(name.to_owned());
+        }
+        Ok(!rejected)
     }
 
     fn err(&mut self, msg: &str, m: &Mask) {
@@ -322,6 +357,10 @@ impl<'a> Ev<'a> {
             Stmt::Skip(e) => {
                 let m = self.mask(e)?;
                 self.skip = self.skip.or(&m);
+            }
+            // A lone variant (`exec` takes runs of them).
+            Stmt::Variant { name, body, unless } => {
+                self.variant(name, body, unless.as_ref())?;
             }
             Stmt::Tree { body, .. } => {
                 self.tree.get_or_insert_with(TreeDecl::default);

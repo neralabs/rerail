@@ -83,6 +83,7 @@ directed acyclic graph of mask operations.
 | `scan NAME = count(UP, DOWN) [reset R] max D` | A count that never goes below 0 and is bounded by `D` (§2.7). |
 | `hypotheses NAME split E lanes L … { … }` | Statements evaluated once per lane on every segment; the segment ends pick the lane (§2.7). |
 | `rounds N [until settled] { carry X = E … next X = E … }` | A fixed point, unrolled at most `N` times (§2.7). |
+| `variant NAME { … } [unless E]` | One way to compute a set of names. Of consecutive variants, the first whose `unless` mask is empty is kept, once per file (§2.5). |
 | `block NAME(P, …) { … }`, `block NAME = TEMPLATE(E, …)` | A family of statements with mask parameters, and an instance of it (§2.5). |
 | `machine NAME(P, …) { … }`, `machine NAME = TEMPLATE(EXPR, …)` | A machine with mask parameters, and an instance of it (§2.5). |
 | `ucode over EXPR { class NAME = … }` | Classes of Unicode characters, decoded only where `EXPR` is set (§2.6). |
@@ -202,9 +203,29 @@ mask s_open = opened | fstrings*.iq_open
   `machine NAME = TEMPLATE(…)`). The reference evaluator runs only machines without them.
 
 **Per-file variants.** A lexer may describe two ways to compute the same masks, and choose one
-per file by a test that is exact for that file. `lexers/json.bitlex` does this: a file with no
-`/` outside `toggle(q)`'s strings has no comments, so its strings are `toggle(q)` and the `lex`
-machine does not run. The choice is one decision per file, like fallback.
+per file by a test that is exact for that file:
+
+```text
+variant plain {                    # strings by toggle, as in simdjson; no comments
+  mask inside = toggle(quote & ~escaped)
+  mask in_cmt = empty
+} unless (slash | star) & ~inside  # a '/' or '*' outside the strings: comments may start there
+variant general {                  # the `lex` machine
+  mask inside = lex.in(str)
+  mask in_cmt = lex.in(cmt) | lex.on(bend -> code)
+}
+```
+
+- **The choice.** Each body runs in order. The first whose `unless` mask is empty, or that has no
+  `unless`, is kept; the others' names are discarded. The choice is one decision per file, like
+  fallback.
+- **Bodies.** A body only defines names (classes, masks, machines, counts), and every variant of a
+  run defines the same ones. Tokens, errors and the tree come after, and read the kept names.
+- **Compiling.** A compiler may compile only some variants. A file whose test rejects every
+  compiled variant goes to tree-sitter; the reference evaluator runs them all.
+
+`lexers/json.bitlex` uses this: a file with no `/` or `*` outside `toggle(q)`'s strings has no
+comments, so the `lex` machine does not run.
 
 ### 2.6 Unicode classes
 

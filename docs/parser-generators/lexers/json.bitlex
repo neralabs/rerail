@@ -55,39 +55,58 @@ mask escaped    = after_odd_run(backslash)
 #   states    .ssssss.....bbbbbe.          s = str, b = blk or bend, e = the comment's last byte
 #
 # Its events are 8.9% of bytes on the data-layer JSON (quotes 8.4%, '/' 0.41%, newlines 0.13%,
-# '*' almost none), and none of those files has a comment. So a file runs one of two variants,
-# chosen once per file as fallback is:
-#   - no '/' outside toggle(q)'s strings: strings are toggle(q), as in simdjson, and there are no
-#     comments. `lex` does not run. The choice is exact: toggle(q) is right up to the first
-#     comment, and a file with none has no such byte.
-#   - otherwise: `lex` runs over all its events.
-# The masks below are written for the second variant; in the first, lex.in(str) is toggle(q).
+# '*' almost none), and none of those files has a comment. So the file has two variants; the
+# first whose `unless` mask is empty is kept, once per file, as fallback is chosen:
+#   - `plain`: strings are toggle(q), as in simdjson, and there are no comments. The choice is
+#     exact: toggle(q) is right up to the first comment, and a file with no '/' or '*' outside
+#     its strings has none.
+#   - `general`: the `lex` machine over all its events.
+# Both define the same names. The errors that depend on the variant are masks here too.
 
-machine lex {
-  events {
-    q   = quote & ~escaped
-    sc  = star & next(slash)          # listed before star: a '*' that may close a block comment
-    st  = star
-    sl  = slash
-    eol = lf
+variant plain {
+  mask q          = quote & ~escaped
+  mask inside     = toggle(q)                    # the opening quote, not the closing one
+  mask opening    = q & inside
+  mask closing    = q & ~inside
+  mask cmt_start  = empty
+  mask in_cmt     = empty
+  mask open_str   = inside & lasts(~empty)       # the last byte, inside a string
+  mask lone       = empty
+  mask open_end   = open_str
+} unless (slash | star) & ~inside
+
+variant general {
+  machine lex {
+    events {
+      q   = quote & ~escaped
+      sc  = star & next(slash)        # listed before star: a '*' that may close a block comment
+      st  = star
+      sl  = slash
+      eol = lf
+    }
+    states code str s1 line blk bend error
+    group cmt = s1 line blk bend
+    start code
+    final code line
+
+    code  on q -> str,  on sl -> s1,  on st -> error,  on sc -> error
+    str   on q -> code                           # '/', '*' and newlines in a string are text
+    s1    on sl -> line,  on st -> blk,  on sc -> blk # `/*/`: the '*' of the opener is not a closer
+    line  on eol -> code
+    blk   on sc -> bend
+    bend  on sl -> code                          # the '/' of `*/`, always the next byte
   }
-  states code str s1 line blk bend error
-  group cmt = s1 line blk bend
-  start code
-  final code line
-
-  code  on q -> str,  on sl -> s1,  on st -> error,  on sc -> error
-  str   on q -> code                             # '/', '*' and newlines in a string are text
-  s1    on sl -> line,  on st -> blk,  on sc -> blk   # `/*/`: the '*' of the opener is not a closer
-  line  on eol -> code
-  blk   on sc -> bend
-  bend  on sl -> code                            # the '/' of `*/`, always the next byte
+  mask q          = lex.on(code -> str) | lex.on(str -> code)
+  mask inside     = lex.in(str)
+  mask opening    = lex.on(code -> str)
+  mask closing    = lex.on(str -> code)
+  mask cmt_start  = lex.on(code -> s1)
+  mask in_cmt     = lex.in(cmt) | lex.on(bend -> code)
+  mask open_str   = lex.final(str)
+  mask lone       = lex.reached(error)
+  mask open_end   = ~lex.final(code | line)
 }
 
-mask q          = lex.on(code -> str) | lex.on(str -> code)
-mask inside     = lex.in(str)                    # the opening quote, not the closing one
-mask opening    = lex.on(code -> str)
-mask closing    = lex.on(str -> code)
 mask body       = inside & ~opening              # between the quotes
 
 # An escape is a backslash at an even offset in its run of backslashes, and the byte after it.
@@ -97,8 +116,6 @@ mask content    = body & ~esc_bytes
 
 # --- Outside strings -----------------------------------------------------------------------------
 
-mask cmt_start  = lex.on(code -> s1)
-mask in_cmt     = lex.in(cmt) | lex.on(bend -> code)
 mask code       = ~inside & ~closing & ~in_cmt
 mask word       = code & scalar
 
@@ -129,11 +146,11 @@ skip code & ws
 
 # --- Errors: the file goes to tree-sitter --------------------------------------------------------
 
-error "unterminated string"        when lex.final(str)
+error "unterminated string"        when open_str
 error "newline in a string"        when body & lf
 error "invalid escape"             when prev(esc) & ~escapable
-error "a lone '/' or '*'"           when lex.reached(error) | (cmt_start & ~next(slash | star))
-error "unterminated comment"       when ~lex.final(code | line)
+error "a lone '/' or '*'"           when lone | (cmt_start & ~next(slash | star))
+error "unterminated comment"       when open_end
 error "non-ASCII outside a string" when code & high
 
 # --- Numbers: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? as masks -----------------------------
