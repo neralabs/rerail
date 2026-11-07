@@ -150,6 +150,7 @@ def main():
     from data_layer_rr_grammar_surface import serverplan_grammar_surface
     from data_layer_rr_unresolved import unresolved_forward_refs
     from data_layer_rr_conn_union import conn_or_txn_union
+    from data_layer_rr_async_patterns import async_patterns
     from data_layer_rr_aliases import data_layer_compat_aliases
     generators = [('removed_compat_surfaces', removed), ('versioned_lifecycle_legacy_surfaces', lifecycle),
                   ('permission_error', permission_error),
@@ -174,6 +175,7 @@ def main():
                   ('serverplan_grammar_surface', lambda s, t: serverplan_grammar_surface(s, t, header)),
                   ('unresolved_forward_refs', lambda s, t: unresolved_forward_refs(s, t, header)),
                   ('conn_or_txn_union', lambda s, t: conn_or_txn_union(s, t, header)),
+                  ('async_patterns', lambda s, t: async_patterns(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     for check, generate in generators:
         entry = by_check[check]

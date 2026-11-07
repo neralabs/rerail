@@ -3,3 +3,8 @@
 // This relation describes annotations, not arbitrary source statements or signature hashes.
 .decl annotation_text(n: node, s: symbol)
 .input annotation_text
+
+// Canonical receiver of a Call whose function is an Attribute. The key is the actual Call node.
+// All call receivers in a demanded prepared file batch are formatted; this is not a per-node scalar callback.
+.decl call_receiver_text(n: node, s: symbol)
+.input call_receiver_text

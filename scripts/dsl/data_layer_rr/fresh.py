@@ -52,6 +52,9 @@ def invoke(call, root):
         if isinstance(error, UnicodeError):
             return dict(error=dict(type=type(error).__module__ + '.' + type(error).__qualname__,
                                    args=canonical(error.args, root)))
+        if isinstance(error, ValueError):
+            return dict(error=dict(type=type(error).__module__ + '.' + type(error).__qualname__,
+                                   args=canonical(error.args, root)))
         raise
 
 

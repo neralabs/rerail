@@ -42,6 +42,7 @@ ENTRIES = {
     'data_layer_facade_purity': ['lint_file', 'lint_targets'],
     'sync_async_signatures': ['analyze_file'],
     'conn_or_txn_union': ['analyze_file'],
+    'async_patterns': ['lint_file', 'analyze_source', 'should_exclude'],
     'backend_coupling': ['BackendCouplingChecker.check_file', 'BackendCouplingChecker.should_check_file'],
     'connection_caches': ['find_violations', 'scan_file_content', '_is_allowed'],
     'no_api_root_imports': ['check_file', 'check_file_content'],
@@ -132,6 +133,11 @@ class Suite:
         if index >= len(records):
             raise AssertionError('The original detector call count changed')
         original = records[index]
+        if check == 'async_patterns' and entry == 'analyze_source':
+            from ast_transport import syntax_columns
+            values = inspect.signature(getattr(module, entry)).bind(*args, **kwargs).arguments
+            tree = values.get('tree')
+            compare(original['suppliedAst'], syntax_columns(tree) if tree is not None else None)
         observation = dict(test=key[0], check=check, entry=entry, ordinal=index,
                            originalRetainedReason=original.get('retained_reason'))
         self.observations.append(observation)
@@ -215,7 +221,7 @@ class Suite:
             from replay import result as diagnostic_result
             actual = diagnostic_result(dict(check=check), self.calls[-1]['diagnostics'])
         else:
-            actual = (normalize_two(check, result, root, files) if check in {'admin_async_purity', 'async_executor', 'dynamic_module_loading', 'classvar_check', 'type_safety_patterns', 'forwardref', 'unresolved_forward_refs', 'conn_or_txn_union'}
+            actual = (normalize_two(check, result, root, files) if check in {'admin_async_purity', 'async_executor', 'dynamic_module_loading', 'classvar_check', 'type_safety_patterns', 'forwardref', 'unresolved_forward_refs', 'conn_or_txn_union', 'async_patterns'}
                       else normalize(check, entry, result, root, files))
         observation.update(expected=original['findings'], actual=actual, status='passed')
         compare(original['findings'], actual)
@@ -233,6 +239,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'async_patterns':
+            from async_patterns_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'conn_or_txn_union':
             from conn_union_port import scan
             return scan(self, entry, module, arguments)

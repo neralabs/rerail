@@ -496,13 +496,14 @@ pub(super) struct CoreRows {
     token_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
     annotation_text: Vec<[i64; 2]>,
+    call_receiver_text: Vec<[i64; 2]>,
     rx_span: Vec<[i64; 5]>,
 }
 
 impl CoreRows {
     /// One native pass per demanded Python file. Type wrappers retain their own lookup keys.
-    pub(super) fn annotations(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) -> Result<(), String> {
-        let rows = super::python_print::annotations(&p.facts.source)?;
+    pub(super) fn printed_expressions(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, annotations: bool, receivers: bool) -> Result<(), String> {
+        let rows = super::python_print::texts(&p.facts.source, annotations, receivers)?;
         for (local, &original) in p.core.iter().enumerate() {
             let mut id = original;
             while matches!(dialect.name(&p.facts, id), "type" | "parenthesized_expression") {
@@ -512,8 +513,14 @@ impl CoreRows {
                 id = child;
             }
             let span = (p.facts.start[id as usize], p.facts.end[id as usize]);
-            if let Some(text) = rows.get(&span) {
+            if let Some(text) = rows.annotations.get(&span) {
                 self.annotation_text.push([p.global(local as u32), string(text) as i64]);
+            }
+            if dialect.name(&p.facts, original) == "call" {
+                let span = (p.facts.start[original as usize], p.facts.end[original as usize]);
+                if let Some(text) = rows.receivers.get(&span) {
+                    self.call_receiver_text.push([p.global(local as u32), string(text) as i64]);
+                }
             }
         }
         Ok(())
@@ -840,6 +847,7 @@ impl CoreRows {
             ("token_after", pair(&["x", "t"], &self.token_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
             ("annotation_text", node_sym(&self.annotation_text)),
+            ("call_receiver_text", node_sym(&self.call_receiver_text)),
             ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
         ]
     }

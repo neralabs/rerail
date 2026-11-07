@@ -1,0 +1,1305 @@
+{
+  "format": "rerail.rr-plugin-reporter-cases/v1",
+  "cases": [
+    {
+      "id": "transaction-commit",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-commit_branch",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.commit_branch()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-count",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.count()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-delete_by_id",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.delete_by_id()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-delete_by_key_many",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.delete_by_key_many()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-delete_many",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.delete_many()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-delete_many_returning",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.delete_many_returning()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-delete_returning",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.delete_returning()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-execute",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-execute_one",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.execute_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-execute_raw",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.execute_raw()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-exists",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.exists()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-fetchall_raw",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.fetchall_raw()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-fetchone_raw",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.fetchone_raw()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-first",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.first()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-get_branch_tip",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.get_branch_tip()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-get_history",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.get_history()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-insert",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.insert()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-insert_many",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.insert_many()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-rollback",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.rollback()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-search",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.search()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-select_at_revision",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.select_at_revision()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-select_one",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-update",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.update()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-update_many",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.update_many()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-upsert",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.upsert()\n"
+        }
+      ]
+    },
+    {
+      "id": "transaction-upsert_many",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.upsert_many()\n"
+        }
+      ]
+    },
+    {
+      "id": "internal-_execute_sql",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work():\n    return self._execute_sql()\n"
+        }
+      ]
+    },
+    {
+      "id": "internal-_execute_template_with_params",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work():\n    return self._execute_template_with_params()\n"
+        }
+      ]
+    },
+    {
+      "id": "internal-_fetchall",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work():\n    return self._fetchall()\n"
+        }
+      ]
+    },
+    {
+      "id": "internal-_fetchone",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work():\n    return self._fetchone()\n"
+        }
+      ]
+    },
+    {
+      "id": "internal-nonportably_execute_sql",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work():\n    return self.nonportably_execute_sql()\n"
+        }
+      ]
+    },
+    {
+      "id": "internal-raw_execute",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work():\n    return self.raw_execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "metadata-ensure_dynamic_polymorphic_metadata",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(manager):\n    return manager.ensure_dynamic_polymorphic_metadata()\n"
+        }
+      ]
+    },
+    {
+      "id": "metadata-register_polymorphic_metadata_for_schema_update",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(manager):\n    return manager.register_polymorphic_metadata_for_schema_update()\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-read",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work():\n    return self._conn.read()\n"
+        }
+      ]
+    },
+    {
+      "id": "connection-write",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work():\n    return self._conn.write()\n"
+        }
+      ]
+    },
+    {
+      "id": "query-chain",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return txn.query(Model).filter(name=\"x\").execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "query-parentheses",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return (((txn.query(Model)))).filter(name=\"x\").execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "wrapped-call-function",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return (txn.select_one)(Model)\n"
+        }
+      ]
+    },
+    {
+      "id": "query-alias",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    query = txn.query(Model).filter(active=True)\n    return query.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "query-alias-copy",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    q = txn.query(Model)\n    r = q\n    return r.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-before-seed",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    r = q\n    q = txn.query(Model)\n    return r.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "query-reassigned",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    q = txn.query(Model)\n    q = []\n    return q.count()\n"
+        }
+      ]
+    },
+    {
+      "id": "session",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    s = conn.session(key)\n    return s.read(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "session-copy",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    s = conn.session(key)\n    r = s\n    return r.write(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "session-annassign",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    s: Session = conn.session(key)\n    return s.read(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "query-annassign",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    q: Query = txn.query(Model)\n    return q.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "session-tuple-target",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    s, other = conn.session(key)\n    return s.read(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "session-chained-target",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    s = other = conn.session(key)\n    return other.read(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "attribute-target",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    self.s = conn.session(key)\n    return self.s.read(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "session-before-seed",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    s.read(callback)\n    s = conn.session(key)\n"
+        }
+      ]
+    },
+    {
+      "id": "non-query-list",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    rows = list(txn.query(Model).execute())\n    return rows.count(x)\n"
+        }
+      ]
+    },
+    {
+      "id": "non-query-subscript",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    q = txn.query(Model)[0]\n    return q.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "non-query-attribute",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    q = txn.query(Model).part\n    return q.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "txn-not-aliased",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    copy = txn\n    return copy.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "self-direct",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return self.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "self-attribute",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return self.other.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "session-attribute",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    s = conn.session(key)\n    return s.other.read(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "query-attribute",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    q = txn.query(Model)\n    return q.other.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "branch-alias",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    if False:\n        s = conn.session(key)\n    return s.read(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "loop-alias",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    for x in xs:\n        q = txn.query(Model)\n    return q.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "class-keeps-async",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    class Inner:\n        x = txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "class-keeps-aliases",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    class Inner:\n        s = conn.session(key)\n    return s.read(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "lambda-clears-state",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return lambda txn: txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "sync-clears-state",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    def nested():\n        return txn.select_one()\n    return nested\n"
+        }
+      ]
+    },
+    {
+      "id": "async-clears-aliases",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    s = conn.session(key)\n    async def nested():\n        return s.read(callback)\n    return nested\n"
+        }
+      ]
+    },
+    {
+      "id": "async-new-params",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    async def nested(other: ReadTransaction):\n        return other.select_one()\n    return nested\n"
+        }
+      ]
+    },
+    {
+      "id": "async-outer-txn-not-carried",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    async def nested():\n        return txn.select_one()\n    return nested\n"
+        }
+      ]
+    },
+    {
+      "id": "receiver-attributes",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return txn.member[\"a\"].select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "receiver-precedence",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return (txn if ok else other).ensure_dynamic_polymorphic_metadata(conn)\n"
+        }
+      ]
+    },
+    {
+      "id": "receiver-lambda",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return (lambda: None).ensure_dynamic_polymorphic_metadata(conn)\n"
+        }
+      ]
+    },
+    {
+      "id": "receiver-fstring",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return f\"{manager=}\".ensure_dynamic_polymorphic_metadata(conn)\n"
+        }
+      ]
+    },
+    {
+      "id": "receiver-subscript-quotes",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return txn[\"a\"].select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "bare-sync-method",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "bare-to-thread",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return to_thread(work)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-variants",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    s = conn.session(key)\n    await s.read_async(callback)\n    return await txn.select_one_async()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-ReadTransaction",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: ReadTransaction):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-db.WriteTransaction",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: db.WriteTransaction):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-Optional[ReadTransaction]",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: Optional[ReadTransaction]):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-tuple[ReadTransaction, None]",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: tuple[ReadTransaction, None]):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-ReadTransaction | None",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: ReadTransaction | None):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-'ReadTransaction | None'",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: 'ReadTransaction | None'):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-AsyncReadTransaction",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: AsyncReadTransaction):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-'AsyncReadTransaction'",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: 'AsyncReadTransaction'):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-list[Other]",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: list[Other]):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-'prefixReadTransactionSuffix'",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: 'prefixReadTransactionSuffix'):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-ReadTransaction + None",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: ReadTransaction + None):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-'\\ud800ReadTransaction'",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(custom: '\\ud800ReadTransaction'):\n    return custom.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "module-to-thread",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "asyncio.to_thread(work)\n"
+        }
+      ]
+    },
+    {
+      "id": "module-executor",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "loop.run_in_executor(None, work)\n"
+        }
+      ]
+    },
+    {
+      "id": "other-to-thread",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "other.to_thread(work)\n"
+        }
+      ]
+    },
+    {
+      "id": "sync-to-thread",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "def f():\n    return x.to_thread(work)\n"
+        }
+      ]
+    },
+    {
+      "id": "write-decorated",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "@session.write_async()\nasync def f(other):\n    other.insert(x)\n    other.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "read-decorated",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "@session.read_async()\nasync def f(other):\n    other.insert(x)\n    other.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "bare-decorator-ignored",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "@write_async()\nasync def f(txn):\n    txn.insert(x)\n"
+        }
+      ]
+    },
+    {
+      "id": "uncalled-decorator-ignored",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "@session.write_async\nasync def f(txn):\n    txn.insert(x)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-inherits-decorator",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "@session.write_async()\nasync def f():\n    async def inner():\n        other.insert(x)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-overrides-decorator",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "@session.write_async()\nasync def f():\n    @s.read_async()\n    async def inner():\n        other.insert(x)\n        other.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-entered-before-traversal",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "@dec(self.select_one())\nasync def f():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "default-entered-before-traversal",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def f(x=self.select_one()):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "api-abstract-name",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "class MyQuery:\n    async def f(self):\n        return x.to_thread(work)\n"
+        }
+      ]
+    },
+    {
+      "id": "api-abc",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "class Owner(ABC):\n    async def f(self):\n        return self.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "api-abc-attribute",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "class Owner(pkg.ABC):\n    async def f(self):\n        return self._fetchall()\n"
+        }
+      ]
+    },
+    {
+      "id": "api-abc-call-not-base",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "class Owner(ABC()):\n    async def f(self):\n        return self.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-class-resets-abstract",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "class MyQuery:\n    class Inner:\n        async def f(self):\n            return x.to_thread(work)\n"
+        }
+      ]
+    },
+    {
+      "id": "api-class-decorator",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "@dec(x.to_thread(work))\nclass MyQuery:\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "fallback-marker",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def f(self):\n    # ASYNC_FALLBACK:\n    return self.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "todo-marker",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def f(self):\n    # TODO: Implement\n    # native async\n    return self._fetchall()\n"
+        }
+      ]
+    },
+    {
+      "id": "literal-marker",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def f(self):\n    label = \"ASYNC_FALLBACK:\"\n    return self.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "marker-outside-radius",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "# ASYNC_FALLBACK:\n\n\n\n\n\n\nasync def f(self):\n    return self.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "executor-wrapper",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "# _wrap_for_executor\nloop.run_in_executor(None, work)\n"
+        }
+      ]
+    },
+    {
+      "id": "impl-explicit-marker",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "impl/common/input.py",
+          "source": "# ASYNC_FALLBACK:\nx.to_thread(work)\n"
+        }
+      ]
+    },
+    {
+      "id": "always-actionable-connection",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "# ASYNC_FALLBACK:\nasync def f(self):\n    return self._conn.read(callback)\n"
+        }
+      ]
+    },
+    {
+      "id": "always-actionable-metadata",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "# ASYNC_FALLBACK:\nasync def f(manager):\n    return manager.ensure_dynamic_polymorphic_metadata(conn)\n"
+        }
+      ]
+    },
+    {
+      "id": "nfkc-function",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def \ud835\udea0ork(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-splitlines",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "# heading\u001c\nasync def f(self):\n    return self.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "no-trigger",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "# source has no prefilter token\nx = 1\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-api/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/common/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "impl/common/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/sqlite/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "impl/sqlite/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/other/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "impl/other/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-conform/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l2050_transaction/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "l2050_transaction/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-api/test_input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/test_input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-api/test/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/test/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-api/tests/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/tests/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-api/tmp/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/tmp/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-api/venv/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/venv/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-myapi/input.py",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "myapi/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    }
+  ]
+}

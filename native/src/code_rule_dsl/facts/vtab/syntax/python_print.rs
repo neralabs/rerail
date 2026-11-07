@@ -569,40 +569,70 @@ fn float(f: f64) -> String {
         .replace("nan", "(1e309-1e309)")
 }
 
-/// Canonical text, keyed by each annotation expression's semantic source span.
-/// No rows are constructed when the caller does not demand annotation_text.
-pub(super) fn annotations(source: &str) -> Result<HashMap<(u32, u32), String>> {
+/// Canonical text requested by relation, keyed by semantic source span.
+#[derive(Default)]
+pub(super) struct Texts {
+    pub annotations: HashMap<(u32, u32), String>,
+    pub receivers: HashMap<(u32, u32), String>,
+}
+
+/// One parse for both demanded text columns. Receiver text is keyed by its Call, never by wrapper nodes.
+pub(super) fn texts(source: &str, annotations: bool, receivers: bool) -> Result<Texts> {
     let parsed = parse_unchecked(
         source,
         ParseOptions::from(Mode::Module).with_target_version(ast::PythonVersion::PY313),
     );
     if !parsed.errors().is_empty() || !parsed.unsupported_syntax_errors().is_empty() {
-        return Ok(HashMap::new());
+        return Ok(Texts::default());
     }
-    struct Annotations<'a> {
+    struct Collect<'a> {
         printer: Printer<'a>,
-        rows: HashMap<(u32, u32), String>,
+        rows: Texts,
+        annotations: bool,
+        receivers: bool,
         error: Option<String>,
     }
-    impl<'a> Visitor<'a> for Annotations<'a> {
+    impl<'a> Visitor<'a> for Collect<'a> {
         fn visit_annotation(&mut self, e: &'a Expr) {
-            match self.printer.expr(e, TEST) {
-                Ok(s) => {
-                    let r = e.range();
-                    self.rows
-                        .insert((u32::from(r.start()), u32::from(r.end())), s);
+            if self.annotations {
+                match self.printer.expr(e, TEST) {
+                    Ok(s) => {
+                        let r = e.range();
+                        self.rows
+                            .annotations
+                            .insert((u32::from(r.start()), u32::from(r.end())), s);
+                    }
+                    Err(e) => self.error = Some(e),
                 }
-                Err(e) => self.error = Some(e),
             }
             visitor::walk_annotation(self, e);
         }
+        fn visit_expr(&mut self, e: &'a Expr) {
+            if self.receivers
+                && let Expr::Call(call) = e
+                && let Expr::Attribute(attribute) = &*call.func
+            {
+                match self.printer.expr(&attribute.value, TEST) {
+                    Ok(s) => {
+                        let r = e.range();
+                        self.rows
+                            .receivers
+                            .insert((u32::from(r.start()), u32::from(r.end())), s);
+                    }
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            visitor::walk_expr(self, e);
+        }
     }
-    let mut a = Annotations {
+    let mut c = Collect {
         printer: Printer { source },
-        rows: HashMap::new(),
+        rows: Texts::default(),
+        annotations,
+        receivers,
         error: None,
     };
-    a.visit_body(
+    c.visit_body(
         parsed
             .syntax()
             .as_module()
@@ -610,9 +640,9 @@ pub(super) fn annotations(source: &str) -> Result<HashMap<(u32, u32), String>> {
             .body
             .as_slice(),
     );
-    match a.error {
+    match c.error {
         Some(e) => Err(e),
-        None => Ok(a.rows),
+        None => Ok(c.rows),
     }
 }
 
@@ -624,7 +654,7 @@ mod tests {
             serde_json::from_str(include_str!("python_print/expressions.json")).unwrap();
         for row in rows.as_array().unwrap() {
             let source = row["source"].as_str().unwrap();
-            let values = super::annotations(source).unwrap();
+            let values = super::texts(source, true, false).unwrap().annotations;
             let expected: Vec<_> = row["annotations"]
                 .as_array()
                 .unwrap()

@@ -923,9 +923,9 @@ impl Batch {
                     c.digests(&p, dialect, &mut string);
                 }
                 if !withheld && dialect.family == Family::Python
-                    && projection.reads.as_ref().is_some_and(|r| r.contains("annotation_text"))
+                    && projection.reads.as_ref().is_some_and(|r| r.contains("annotation_text") || r.contains("call_receiver_text"))
                 {
-                    c.annotations(&p, dialect, &mut string).map_err(StoreError::Invalid)?;
+                    c.printed_expressions(&p, dialect, &mut string, projection.wants("annotation_text"), projection.wants("call_receiver_text")).map_err(StoreError::Invalid)?;
                 }
             }
             docs.push(p);

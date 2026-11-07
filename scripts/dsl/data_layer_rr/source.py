@@ -94,6 +94,12 @@ def main():
                         if (event['check'], event['entry']) != (check, recorded_entry):
                             raise AssertionError('Original call identity changed during lossless capture')
                         event['sourceResult'] = canonical(result, root)
+                        if check == 'async_patterns' and entry == 'analyze_source':
+                            import inspect
+                            from ast_transport import syntax_columns
+                            values = inspect.signature(wrapped).bind(*args, **kwargs).arguments
+                            tree = values.get('tree')
+                            event['suppliedAst'] = syntax_columns(tree) if tree is not None else None
                         if kind == 'backend_helper':
                             event['observationKind'] = 'helper-value'
                             if event.get('retained_reason') == 'No readable source files (file discovery or I/O contract)':

@@ -3,7 +3,7 @@
   "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "syntaxSource": {
     "branch": "jeremybarnes/final-rerail-shape",
-    "commit": "cbf255bb130afb7580bbae7b67b2d4a5f79b5ba2",
+    "commit": "8ac817ae6ada74769c5eb5f1fc836659a053fa80",
     "uncommitted": []
   },
   "legacyBaseline": "ce3669ddba89d09acec1094e006446a16a7b296d",
@@ -1175,8 +1175,16 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/print.rr",
-      "sha256": "395307606b43e4813b85859a31fb85e950d4a3829611865311765fd0c78ce31f",
-      "origin": "authored"
+      "sha256": "bad2b3dc1aeb2a53576900478bf02369fb85ea101d4c7bd94fc43c6b85ba0b57",
+      "origin": "authored",
+      "importedSha256": "395307606b43e4813b85859a31fb85e950d4a3829611865311765fd0c78ce31f",
+      "repairs": [
+        {
+          "before": "395307606b43e4813b85859a31fb85e950d4a3829611865311765fd0c78ce31f",
+          "after": "bad2b3dc1aeb2a53576900478bf02369fb85ea101d4c7bd94fc43c6b85ba0b57",
+          "reason": "Expose canonical call-receiver rows through the same native Python printer for async diagnostics"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
@@ -1370,6 +1378,13 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
+      "sha256": "368e37102266736753bbdd9f27bf4f58badf9dfda9c9712ac0c32cf192846a34",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_async_patterns.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
@@ -1536,8 +1551,9 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-async-patterns.json",
       "legacySha256": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
+      "ruleSha256": "368e37102266736753bbdd9f27bf4f58badf9dfda9c9712ac0c32cf192846a34"
     },
     {
       "check": "async_sync_boundary",
@@ -2330,11 +2346,16 @@
       "branch": "jeremybarnes/final-rerail-shape",
       "commit": "31d3d15dc2882f3dc81eb79f24729f32d723656b",
       "uncommitted": []
+    },
+    {
+      "branch": "jeremybarnes/final-rerail-shape",
+      "commit": "cbf255bb130afb7580bbae7b67b2d4a5f79b5ba2",
+      "uncommitted": []
     }
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "cbf255bb130afb7580bbae7b67b2d4a5f79b5ba2",
+    "upstreamCommit": "8ac817ae6ada74769c5eb5f1fc836659a053fa80",
     "status": "Root Final shape engine with generic Boolean, Python AST, and canonical annotation text repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
