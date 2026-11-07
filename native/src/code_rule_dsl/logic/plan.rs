@@ -1367,8 +1367,8 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
         "next_sibling" => &[&["a"], &["b"]],
-        "source" | "src_line" | "line_count" => &[&["d"]],
-        "str_part" => &[&["lit"]],
+        "source" | "src_line" | "split_line" | "lf_line" | "line_count" => &[&["d"]],
+        "str_part" | "str_part_start" | "str_part_word" => &[&["lit"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
         "within" => &[&["n"], &["a"]],
@@ -2291,17 +2291,21 @@ impl Run<'_> {
             let rows = st.query_map([], |row| Ok((row.get::<_, SqlValue>(0)?, row.get::<_, Option<String>>(1)?)))?;
             rows.filter_map(|r| r.map(|(v, t)| t.map(|t| (v, t))).transpose()).collect::<rusqlite::Result<_>>()?
         };
-        let hole = if atoms { "sym_atom(?)" } else { "?" };
-        let holes: Vec<&str> = std::iter::once("?").chain(groups.iter().map(|_| hole)).collect();
-        let mut st = self.db.prepare(&format!("INSERT OR IGNORE INTO {rel} VALUES ({})", holes.join(", ")))?;
-        let mut n = 0;
-        for (v, t) in &texts {
-            for row in crate::code_rule_dsl::logic::native::match_all::rows(&re, groups, t) {
-                let params: Vec<SqlValue> = std::iter::once(v.clone()).chain(row.into_iter().map(|g| SqlValue::Text(g.to_owned()))).collect();
-                n += st.execute(rusqlite::params_from_iter(params))?;
-            }
-        }
-        Ok(n)
+        let captures: Vec<_> = texts.iter().flat_map(|(v, t)| {
+            crate::code_rule_dsl::logic::native::match_all::rows(&re, groups, t).into_iter().map(move |row| (v, row))
+        }).collect();
+        let mut ids = if atoms {
+            super::native::intern_batch(self.db, captures.iter().flat_map(|(_, row)| row.iter().copied()))?.into_iter()
+        } else { Vec::new().into_iter() };
+        let rows = captures.into_iter().map(|(v, row)| {
+            std::iter::once(v.clone()).chain(row.into_iter().map(|g| {
+                if atoms { SqlValue::Integer(ids.next().expect("one atom per capture")) }
+                else { SqlValue::Text(g.to_owned()) }
+            })).collect()
+        }).collect();
+        let before = self.db.total_changes();
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;
+        Ok((self.db.total_changes() - before) as usize)
     }
 
     fn refresh(&mut self, r: &str, at_least_one: bool) -> Result<()> {
@@ -3587,7 +3591,9 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         }
         let order = vec![Step { at: 0, lit: b[0].clone(), mode: None }];
         let mut query = model.checked_query(prog, h, &order, None, None)?;
-        query.body.distinct = false;
+        // A Boolean relation lowered to a unit (or any constant head) has at most one row,
+        // even when its input has many. Aggregates must not count its witnesses instead.
+        query.body.distinct = h.args.iter().all(|term| matches!(term, Term::Int(_) | Term::Str(_)));
         views.push((rel.to_owned(), query));
         model.view_stats(rel, h, a);
         let src = first_columns(a);

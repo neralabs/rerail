@@ -119,6 +119,14 @@
 // whitespace inside a line (str.splitlines() would split there, and disagree with every tool).
 // A Datalog version over match_all would be exact for \n only, so it is native.
 .decl src_line(d: number, l: number, sp: span)
+// split_line follows Python str.splitlines(), for text scanners: CRLF is one boundary;
+// LF, CR, VT, FF, FS, GS, RS, NEL, U+2028 and U+2029 also split. Empty input has no rows.
+// A terminal boundary adds no extra row. Text is complete, including lines longer than 256 bytes.
+// These logical line numbers are separate from AST coordinates. Prepared only when demanded.
+.decl split_line(d: number, l: number, t: symbol)
+// LF-only lines, as Python str.split('\n'): preserve CR and other Unicode separators.
+// Empty input and a terminal LF each retain an empty line. Made only when demanded.
+.decl lf_line(d: number, l: number, t: symbol)
 .decl line_count(d: number, k: number)                   // number of physical lines, as src_line counts them
 .decl end_line(n: loc, l: number)                        // 1-based line of the last character
 .decl col(n: loc, c: number)                             // 0-based column of the start, for keys that need one
@@ -135,7 +143,7 @@
 // tree-sitter's ERROR and MISSING nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
-.input source, src_line, line_count, end_line, col, op_at, syntax_error
+.input source, src_line, split_line, lf_line, line_count, end_line, col, op_at, syntax_error
 // Tokens: the leaves of the parse tree, named or anonymous, in source order. Comments are not tokens, as in
 // ESLint's token store (getTokenBefore, getFirstToken, …), so rules that reason about tokens port directly.
 // A token is a span, as a regex capture is: text, line, end_line and col apply to it, a finding can sit on it,
@@ -372,13 +380,12 @@
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
 // layout, and verifies it: lib/data-layer/signing.rr does this for the data layer's two layouts.
 .functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
-// @tree_digest(n): a hash of n's subtree (kinds, fields, token text; no positions), as Python's ast.dump compares.
+// @tree_digest(n): a structural tree digest. It does not reproduce CPython AST identity or dump bytes.
 .functor tree_digest(n: node): symbol
-// There is no @ast_dump: a repository that stores hashes of ast.dump text (cached_pure_lazy_allowlist) is
-// re-signed once with @tree_digest, which compares the same way without reproducing CPython's text.
+// Existing hashes of CPython ast.dump text require exact native serialization and field defaults.
+// A structural digest is a different input contract. Do not re-sign repository inputs to replace those hashes.
 // @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for
-// message previews such as "{@unparse(call)}". Not for keys or comparisons: compare trees with @tree_digest, and
-// parts of trees with relations.
+// message previews such as "{@unparse(call)}". Keys and signatures must use their specified canonical format.
 .functor unparse(n: node): symbol
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
@@ -431,9 +438,15 @@
 // at is the source piece it starts in. Bytes literals give no row. Decoded natively, by the language reference's
 // literal rules (escapes, raw prefixes, `{{`/`}}`), checked once against CPython's own decoder offline.
 .decl str_part(lit: node, i: number, v: symbol, at: node, spec: number)
+// Exact start of each Constant: physical line from 1, UTF-8 byte column from 0.
+// Keep `at` above for owner traversal; it is not the fragment's exact coordinate.
+// Maximal decoded Python Unicode 15.1 word runs (isalnum or underscore), per Constant.
+// Surrogates delimit runs. This projection does not replace full decoded string values.
+.decl str_part_word(lit: node, i: number, w: symbol, at: node, spec: number)
+.decl str_part_start(lit: node, i: number, l: number, c: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
-.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part
+.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part, str_part_word, str_part_start
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
 // format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no

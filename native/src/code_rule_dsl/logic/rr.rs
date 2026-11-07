@@ -25,7 +25,6 @@ pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
 pub(in crate::code_rule_dsl) use print::print;
 pub(in crate::code_rule_dsl) use syntax::quote;
-#[cfg(test)]
 pub(in crate::code_rule_dsl) use translate::translate;
 
 /// The relations `core.rr` declares: the engine's names (decision 0047). Empty when `core.rr` does not read.
@@ -45,6 +44,24 @@ pub(in crate::code_rule_dsl) fn library() -> PathBuf {
 pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
     let statements = syntax::Parser::new(src)?.statements()?;
     lower::lower(statements)
+}
+
+/// The compiler's named policy headers and settings, without reparsing rule source in a host adapter.
+pub(in crate::code_rule_dsl) fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
+    use syntax::Tok;
+    let mut policies = program.policies.clone();
+    for (_, text) in program.settings.iter().filter(|(key, _)| key == "policy") {
+        let tokens = syntax::tokens(text)?;
+        let Some((Tok::Str(id), _, _)) = tokens.first() else {
+            return Err(Error::Syntax("policy metadata requires a quoted identifier".to_owned()));
+        };
+        let revision = tokens.windows(2).find_map(|pair| match (&pair[0].0, &pair[1].0) {
+            (Tok::Id(key), Tok::Num(n)) if key == "revision" => Some(*n),
+            _ => None,
+        });
+        policies.push(serde_json::json!({"id": id, "revision": revision}));
+    }
+    Ok(serde_json::json!({"policies": policies, "settings": program.settings}))
 }
 
 /// A program's `.rr` file, with what it includes.

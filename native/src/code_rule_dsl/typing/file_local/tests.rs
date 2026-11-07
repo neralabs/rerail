@@ -1,5 +1,26 @@
 use super::*;
 
+/// Source spans are locations but are not tree nodes. Their explicit document column must
+/// survive the local split, so locating their rows never adds `node(d, span, ...)`.
+#[test]
+fn source_relations_keep_their_document_location() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    for (relation, columns, arguments) in [
+        ("source", "d: number, sp: loc", "d, sp"),
+        ("src_line", "d: number, l: number, sp: loc", "d, l, sp"),
+        ("line_count", "d: number, k: number", "d, k"),
+        ("docof", "sp: loc, d: number", "sp, d"),
+    ] {
+        let text = format!(".decl {relation}({columns})\n.input {relation}\n.decl selected(d: number)\nselected(d) :- {relation}({arguments}).\n.output selected\n");
+        let program = parse(&text).unwrap();
+        let (_, locations, _) = split_located(&program);
+        assert_eq!(locations["selected"], [0], "{relation}: {locations:?}");
+        let mut located = program;
+        locate(&mut located).unwrap();
+        assert!(!located.rules.iter().any(|rule| rule.body.iter().filter_map(|lit| lit.atom()).any(|atom| atom.rel == "node")), "{relation}: a span acquired a tree-node constraint");
+    }
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text
@@ -217,4 +238,32 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     // Its rows are attributable to their file: the node column is a location.
     let (_, locations, _) = split_located(&prog);
     assert_eq!(locations[&made[0]], [0], "{locations:?}");
+}
+
+/// Position comparisons must retain the semantic candidate filters. Document equality alone
+/// does not make their Cartesian product a bounded per-file producer.
+#[test]
+fn cross_file_filters_keep_independent_node_positions_out_of_local_products() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.decl visit_index(n: node, i: number)
+.input node, field, text, docof, visit_index
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text(c, s).
+.decl chosen(n: node)
+chosen(n) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), !defined(s).
+.decl triangle(a: node, b: node, c: node)
+triangle(a, b, c) :- chosen(a), chosen(b), chosen(c),
+    docof(a, d), docof(b, d), docof(c, d), visit_index(a, ai), visit_index(b, bi), visit_index(c, ci), ai < bi, bi < ci.
+.output triangle
+"#;
+    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    assert!(!split(&program).contains("chosen"));
+    let original = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap().clone();
+    push_local_joins(&mut program);
+    let actual = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap();
+    assert_eq!(actual, &original, "do not materialize all document-local node triples before chosen() filters them");
 }

@@ -27,6 +27,7 @@ use crate::code_rule_dsl::typing::cross_rounds;
 mod guests;
 pub(in crate::code_rule_dsl) mod memo;
 mod bridge;
+mod inputs;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -184,40 +185,9 @@ use std::collections::{BTreeMap, BTreeSet};
 /// the base columns the cross-file part names are appended in memory, and the chunk is dropped. The cross-file part
 /// runs once, over the base relations held in memory and the exports read once from `x`, all bound in `main`. Memory
 /// is two chunks', the held base columns, and the cross-file part's own.
-/// The inputs read from a file in the repository (`.input r(IO=json, filename="…")`, rr's `input` setting): with
-/// no such file the relation is empty, so it is no input but a relation without rules. Reading the files
-/// themselves is not written yet (open item O76), so a file that exists is an error, not an empty relation.
+/// Repository readers publish typed rows once, before file-local partitioning.
 fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
-    let params: Vec<(String, String)> = prog
-        .settings
-        .iter()
-        .filter(|(k, _)| k == "input")
-        .filter_map(|(_, t)| t.split_once('(').map(|(r, p)| (r.trim().to_owned(), p.to_owned())))
-        .collect();
-    // `core.rr`'s `input_error(path, kind, detail)`: a file a `.input` names that is missing gives no rows and one
-    // `missing` row (an artifact's path is `artifact:NAME`). A file that exists stops the run (O76), so `missing` is
-    // the one kind made.
-    let mut missing: BTreeSet<String> = BTreeSet::new();
-    for (rel, params) in params {
-        let quoted = |key: &str| params.split(key).nth(1).and_then(|f| f.split('"').nth(1)).map(str::to_owned);
-        let file = quoted("filename=");
-        if let Some(f) = &file
-            && root.join(f).exists()
-        {
-            return Err(Error::Plan(format!("{rel}: reading {f} is not written yet (O76)")));
-        }
-        match (&file, quoted("artifact=")) {
-            (Some(f), _) => missing.insert(f.clone()),
-            (None, Some(a)) => missing.insert(format!("artifact:{a}")),
-            (None, None) => continue,
-        };
-        prog.inputs.retain(|i| *i != rel);
-    }
-    if prog.inputs.iter().any(|i| i == "input_error") {
-        prog.inputs.retain(|i| i != "input_error");
-        let rows = prog.facts.entry("input_error".to_owned()).or_default();
-        rows.extend(missing.into_iter().map(|p| vec![front::Value::Str(p), front::Value::Str("missing".to_owned()), front::Value::Str(String::new())]));
-    }
+    inputs::populate(prog, root)?;
     // `core.rr` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
     for (rel, what) in NOT_MADE {
         if prog.inputs.iter().any(|i| i == rel) {
@@ -311,14 +281,19 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             all.kindsets.insert(shared.clone(), kinds);
             set_of.insert(name, shared);
         }
-        let shared_outputs = ["violation"];
+        let shared_outputs = ["violation", "rr_diagnostic"];
+        // Named repository readers belong to their policy. Equal bytes may share a reader later;
+        // equal relation names alone do not mean equal input files or selectors.
+        let file_inputs: BTreeSet<_> = prog.settings.iter().filter(|(key, _)| key == "input")
+            .filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect();
         let own: BTreeSet<String> = prog
             .decls
             .keys()
             .chain(prog.facts.keys())
             .chain(prog.rules.iter().map(|r| &r.head.rel))
-            // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047).
-            .filter(|r| !prog.inputs.contains(r) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r))
+            // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047);
+            // a repository file a policy reads (`.input r(IO=…)`) is its own.
+            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r))
             .cloned()
             .collect();
         let rename = |rel: &str| -> String {
@@ -370,7 +345,10 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             }
         }
         all.policies.extend(prog.policies);
-        for setting in prog.settings {
+        for mut setting in prog.settings {
+            if matches!(setting.0.as_str(), "input" | "output") && let Some((rel, params)) = setting.1.split_once('(') {
+                setting.1 = format!("{}({params}", rename(rel));
+            }
             if !all.settings.contains(&setting) {
                 all.settings.push(setting);
             }
@@ -444,8 +422,6 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
     run_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &serde_json::Value::Null)
 }
 
-/// `run_typed` with the policy's options (`rerail.policy/v1` `options`), which `core.rr`'s `option` and `option_item`
-/// give the rules (`facts::repository`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_with_options(
     programs: &[&str],
@@ -507,16 +483,34 @@ pub(crate) fn run_with_options(
             (docs, first, rust)
         }
         None => {
-            let (python, rs) = corpus_files(root)?;
-            let rust = typing.rust.unwrap_or(rs.len() > python.len());
-            let files = if rust { rs } else { python };
+            let (files, rust) = if let Some(supplied) = options.get("inputFiles") {
+                let supplied = supplied.as_array().ok_or_else(|| Error::Plan("inputFiles must be a list of relative document paths".to_owned()))?;
+                let files = supplied.iter().map(|value| {
+                    let path = value.as_str().ok_or_else(|| Error::Plan("inputFiles must contain strings".to_owned()))?;
+                    if path.is_empty() || Path::new(path).components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                        return Err(Error::Plan(format!("inputFiles: invalid relative path {path:?}")));
+                    }
+                    Ok(path.to_owned())
+                }).collect::<Result<Vec<_>>>()?;
+                let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"'));
+                let rust = match language {
+                    Some("python") => false,
+                    Some("rust") => true,
+                    Some(other) => return Err(Error::Plan(format!("explicit input batch: unsupported corpus language {other:?}"))),
+                    None => files.iter().filter(|p| p.ends_with(".rs")).count() > files.len() / 2,
+                };
+                (files, rust)
+            } else {
+                let (python, rs) = corpus_files(root)?;
+                let rust = typing.rust.unwrap_or(rs.len() > python.len());
+                (if rust { rs } else { python }, rust)
+            };
             // A document's key is a function of its path (decision 0052), so a memoised row's node ids stay valid.
             let keys = memo::doc_keys(&files);
             (keys.into_iter().zip(files).collect(), HashMap::new(), rust)
         }
     };
     let paths: HashMap<i64, String> = docs.iter().cloned().collect();
-    external_inputs(&mut prog, root)?;
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
@@ -529,6 +523,8 @@ pub(crate) fn run_with_options(
         }
         declared = d;
     }
+    // Typing may rebuild the combined program. Publish external facts after that rebuild.
+    external_inputs(&mut prog, root)?;
     // Guest requests (decision 0055) are outputs, so the file-local part keeps the rules that make them.
     for rel in guests::LIBRARY.iter().copied().chain([guests::DEMAND]) {
         if prog.rules.iter().any(|r| r.head.rel == rel) && !prog.outputs.iter().any(|o| o == rel) {
@@ -1155,6 +1151,20 @@ pub(crate) fn run_with_options(
     }
     totals.apply(&mut cross_stats);
     repository_stats(&mut cross_stats);
+    // With no documents there was no batch to bind or measure base relations.
+    // They are known empty, but global rules (including absence checks) still execute.
+    if docs.is_empty() {
+        for rel in &split.base {
+            if repository.iter().any(|(name, _, _)| name == rel) {
+                continue;
+            }
+            let columns = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
+            let empty = crate::code_rule_dsl::logic::native::component::columns_source(
+                columns.iter().map(|name| (*name).to_owned()).collect(), vec![Some(Vec::new()); columns.len()]);
+            cross_stats.measured(rel, columns.iter().map(|name| ((*name).to_owned(), [0, 0, 0, 0])), []);
+            modules.bind(&db, rel, empty)?;
+        }
+    }
 
     // The cross-file part reads every input in place from `main`: the base relations held in memory, and the
     // exports, read from `x` once each.

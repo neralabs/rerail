@@ -36,7 +36,16 @@ use crate::code_rule_dsl::logic::front::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
+mod within;
+
+/// The language's `within(n, a)`, `n` strictly below `a` (`within::Within`, tree mode).
+pub(crate) const WITHIN: &str = "within";
+/// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
+pub(crate) const SPAN_WITHIN: &str = "span_within";
 mod core_rr;
+mod python_order;
+mod python_syntax;
+mod python_parts;
 use core_rr::Family;
 mod guests;
 use guests::GuestRows;
@@ -60,6 +69,9 @@ pub(crate) struct Projection {
     /// The regexes the program runs over `source` or `src_line` spans (`front::Program::rx_spans`): their matches'
     /// groups are spans, rows of `rx_span`.
     pub(crate) rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, String)>,
+    /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
+    /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.
+    text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::SpanIn>>,
     /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
     /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
     pub(crate) partial: BTreeSet<String>,
@@ -67,7 +79,7 @@ pub(crate) struct Projection {
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), partial: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), text_spans: None, partial: BTreeSet::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -85,16 +97,69 @@ impl Projection {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
         });
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), partial: partial.collect() }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect() }
+    }
+
+    fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
+        use crate::code_rule_dsl::logic::front::SpanIn;
+        self.wants("text") && self.text_spans.as_ref().map_or_else(
+            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line" }),
+            |spans| spans.contains(&within),
+        )
     }
 }
 
-mod within;
-
-/// The language's `within(n, a)`, `n` strictly below `a` (`within::Within`, tree mode).
-pub(crate) const WITHIN: &str = "within";
-/// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
-pub(crate) const SPAN_WITHIN: &str = "span_within";
+/// Plan-time provenance, not a per-file scan. Only copying a span (including variable equality)
+/// carries its origin. Regex captures have their own bounded ranges and do not demand the container text.
+fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BTreeSet<crate::code_rule_dsl::logic::front::SpanIn> {
+    use crate::code_rule_dsl::logic::front::{Literal, SpanIn, Term};
+    let mut columns: HashMap<(String, usize), u8> = [( ("source".to_owned(), 1), 1), (("src_line".to_owned(), 2), 2)].into();
+    let mut requested = 0;
+    loop {
+        let mut changed = false;
+        for rule in &program.rules {
+            let mut vars: HashMap<String, u8> = HashMap::new();
+            for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| !atom.neg) {
+                for (column, term) in atom.args.iter().enumerate() {
+                    if let Term::Var(value) = term {
+                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.clone(), column)).copied().unwrap_or(0);
+                    }
+                }
+            }
+            loop {
+                let mut aliases_changed = false;
+                for literal in &rule.body {
+                    if let Literal::Cmp { l: Term::Var(left), op: "=", r: Term::Var(right) } = literal {
+                        let mask = vars.get(left).copied().unwrap_or(0) | vars.get(right).copied().unwrap_or(0);
+                        for value in [left, right] {
+                            let entry = vars.entry(value.clone()).or_default();
+                            aliases_changed |= *entry != (*entry | mask);
+                            *entry |= mask;
+                        }
+                    }
+                }
+                if !aliases_changed { break; }
+            }
+            for (column, term) in rule.head.args.iter().enumerate() {
+                if let Term::Var(value) = term {
+                    let mask = vars.get(value).copied().unwrap_or(0);
+                    if mask != 0 {
+                        let entry = columns.entry((rule.head.rel.clone(), column)).or_default();
+                        changed |= *entry != (*entry | mask);
+                        *entry |= mask;
+                    }
+                }
+            }
+            for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| atom.rel == "text") {
+                if let Some(Term::Var(value)) = atom.args.first() {
+                    requested |= vars.get(value).copied().unwrap_or(0);
+                }
+            }
+        }
+        if !changed { break; }
+    }
+    [(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect()
+}
 
 /// The relation a program's guest settings are facts of (`.guests`, `.on guest_error`; decision 0055):
 /// `guest_policy("library", "on" | "off")`, `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
@@ -324,6 +389,8 @@ struct Projected {
     fielded: Vec<u32>,
     /// `core.rr`'s lines and spans; `None` in T's shape.
     extra: Option<Box<Extra>>,
+    /// A demanded semantic visit column, shared by every consumer in this document batch.
+    python_visit: std::sync::OnceLock<Vec<u32>>,
 }
 
 /// A document's lines, and its spans past its nodes: from local id `len()`, its anonymous tokens (`tokens` of them,
@@ -375,6 +442,7 @@ impl Projected {
             depth: Vec::new(),
             fielded: Vec::new(),
             extra: None,
+            python_visit: Default::default(),
             facts: Arc::clone(&facts),
         };
         let mut next_idx: Vec<u32> = Vec::new();
@@ -429,7 +497,8 @@ impl Projected {
                 }
             }
             let tokens = spans.len() as u32;
-            if !withheld && guest.is_none() {
+            // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
+            if guest.is_none() {
                 spans.push([0, f.source.len() as u32]);
                 spans.extend((1..=lines.count()).map(|l| lines.span(l)));
             }
@@ -510,7 +579,7 @@ enum View {
     /// `core_node(d, t, n)`: document `d`'s tape node `t` (the matcher's preorder id over every
     /// node) is node `n`. The wave's matches are tape nodes; this joins them to the rows above.
     Core,
-    /// `visit_index(n, i)`: the node's preorder index in its document, from 0 (`core.rr`).
+    /// `visit_index(n, i)`: semantic field order in core Python, preorder elsewhere.
     Visit,
     /// `ast_depth(n, k)`: the node's depth, the root's 0.
     Depth,
@@ -579,6 +648,10 @@ impl Batch {
         // `core.rr`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
         let wants_text = core && projection.wants("text");
+        let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
+        let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
+        let wants_split_lines = core && projection.wants("split_line");
+        let wants_lf_lines = core && projection.wants("lf_line");
         let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
         // Only a program that reads it: every node's hash is a symbol.
         let wants_digests = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
@@ -619,12 +692,12 @@ impl Batch {
             // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
             // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
             // A guest that does not parse is withheld too, unless the policy keeps its partial tree (decision 0055 §6).
-            let error = if core { core_rr::verdict(&d.facts, dialect) } else { None };
             let guest = d.guest.as_deref().filter(|_| core);
+            let error = if core && (projection.wants("syntax_error") || guest.is_some()) { core_rr::verdict(&d.facts, dialect) } else { None };
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
-            if !rx_spans.is_empty() && !withheld && guest.is_none() {
+            if !rx_spans.is_empty() && guest.is_none() {
                 c.matches(&mut p, &rx_spans, &mut string);
             }
             if core && guest.is_none() && let Some(x) = &p.extra {
@@ -720,16 +793,16 @@ impl Batch {
                     _ => {}
                 }
                 if core {
-                    c.node(&p, dialect, local as u32, &mut string, wants_text);
+                    c.node(&p, dialect, local as u32, &mut string, wants_text, projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
                 }
             }
             if let Some((line, msg)) = &error {
                 let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
                 c.withheld(&p, &(line, msg.clone()), &mut string);
             }
-            if core && !withheld {
-                c.document(&p, dialect, &mut string, wants_text, wants_tokens, guest.is_none());
-                if wants_digests {
+            if core && (!withheld || guest.is_none()) {
+                c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none());
+                if wants_digests && !withheld {
                     c.digests(&p, dialect, &mut string);
                 }
             }
@@ -1070,7 +1143,14 @@ impl Viewed {
             (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field[id])),
             (View::Tape, 2) => i64::from(p.size[l]),
             (View::Tape, 3) => i64::from(p.depth[l]),
-            (View::Visit, 1) => i64::from(local),
+            (View::Visit, 1) => {
+                let dialect = &self.batch.dialects[&p.tag];
+                if self.batch.shape == Shape::Core && dialect.family == Family::Python {
+                    i64::from(p.python_visit.get_or_init(|| python_order::ranks(p, dialect))[local as usize])
+                } else {
+                    i64::from(local)
+                }
+            },
             (View::Depth, 1) => i64::from(p.depth[l]),
             _ => p.global(local),
         }

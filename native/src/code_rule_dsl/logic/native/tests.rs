@@ -10,6 +10,30 @@ fn connection() -> Connection {
     db
 }
 
+/// SQL views may decode or intern symbols while a component loads its input batch.
+#[test]
+fn computed_sql_inputs_do_not_reenter_a_held_symbol_lock() {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let db = connection();
+        super::register_symbols(&db).unwrap();
+        let atom: i64 = db.query_row("SELECT sym_atom('kept')", [], |r| r.get(0)).unwrap();
+        db.execute_batch(&format!("CREATE TEMP VIEW computed AS SELECT sym_atom(sym_text({atom})) AS c0;
+            CREATE TEMP VIEW recomputed AS SELECT sym_atom(sym_text({atom})) AS c0;
+            CREATE TEMP TABLE result(c0 INTEGER PRIMARY KEY);")).unwrap();
+        let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        let join = |name: &str| format!("pos t:b:{}:{}:i v0\nhead v0", hex(name), hex("c0"));
+        super::setfix::open(&db, &format!("name reentrant\nrel result i empty\nseed 0 {}", hex(&join("computed")))).unwrap();
+        super::setfix::reprobe(&db, "reentrant", 0, "join", &hex(&join("recomputed"))).unwrap();
+        super::setfix::run(&db, "reentrant", 0).unwrap();
+        let actual: i64 = db.query_row("SELECT c0 FROM result", [], |r| r.get(0)).unwrap();
+        assert_eq!(actual, atom);
+        super::setfix::close(&db, "reentrant").unwrap();
+        send.send(()).unwrap();
+    });
+    receive.recv_timeout(std::time::Duration::from_secs(5)).expect("computed SQL input did not finish; see the worker panic or timeout");
+}
+
 fn pairs(db: &Connection, sql: &str) -> Vec<(i64, i64)> {
     let mut statement = db.prepare(sql).unwrap();
     statement.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap()

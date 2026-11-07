@@ -545,3 +545,69 @@ fn lookups_with_a_bound_document_read_that_document_only() {
     assert_eq!(count(&format!("SELECT count(*) FROM core_node WHERE d = 3 AND t = {t}")), 1);
     assert_eq!(core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed) - before, 1);
 }
+
+
+#[test]
+fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
+    let store = ContentStore::open(&temp("python-verdict")).unwrap();
+    let doc = document(0, "a.py", "python", "print \"legacy\"\n");
+    let source_only = Projection { reads: Some(["source".into(), "text".into()].into()), ..Projection::core() };
+    shaped(&store, vec![doc.clone()], &source_only).unwrap();
+    assert!(doc.facts.python_syntax.get().is_none(), "raw text must not request grammar validation");
+    let ast = Projection { reads: Some(["syntax_error".into()].into()), ..Projection::core() };
+    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    let verdict = doc.facts.python_syntax.get().expect("demanded verdict");
+    assert!(verdict.is_some());
+    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    assert!(std::ptr::eq(verdict, doc.facts.python_syntax.get().unwrap()), "the tape owns one shared verdict");
+}
+
+/// Literal values and positions are one demanded producer; a names-only rule must not build either table.
+#[test]
+fn unread_python_literal_columns_are_not_materialized() {
+    let store = ContentStore::open(&temp("literal-demand")).unwrap();
+    let doc = document(0, "a.py", "python", "x = 'plain'\ny = f'left{x}right'\n");
+    let names = Projection { reads: Some(["name".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc.clone()], &names).unwrap();
+    for rel in ["str_part", "str_part_start", "str_part_word"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
+    }
+    let literals = Projection { reads: Some(["str_part".into(), "str_part_start".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc.clone()], &literals).unwrap();
+    for rel in ["str_part", "str_part_start"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 3, "{rel}");
+    }
+    assert_eq!(rows.iter().find(|(name, _)| *name == "str_part_word").unwrap().1.len(), 0);
+    let words = Projection { reads: Some(["str_part_word".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc], &words).unwrap();
+    assert_eq!(rows.iter().find(|(name, _)| *name == "str_part_word").unwrap().1.len(), 3);
+    for rel in ["str_part", "str_part_start"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
+    }
+}
+
+
+#[test]
+fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
+    let store = ContentStore::open(&temp("container-text-demand")).unwrap();
+    let source = format!("items = [{}]\n", "1,".repeat(1000));
+    let doc = document(0, "a.py", "python", &source);
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    for (body, source_needed, line_needed) in [
+        ("out(t) :- source(_, sp), kind(n, \"identifier\"), text(n, t).", false, false),
+        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\nout(t) :- copied(s), alias = s, text(alias, t).", true, false),
+        (".decl copied(sp: span)\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", false, true),
+        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", true, true),
+        ("out(\"missing\") :- source(_, sp), !text(sp, _).", true, false),
+        ("out(t) :- source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let projection = Projection::of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
+        let rows = shaped(&store, vec![doc.clone()], &projection).unwrap();
+        let relation = |name| &rows.iter().find(|(n, _)| *n == name).unwrap().1;
+        let text = relation("text");
+        let has_text = |loc| (0..text.len()).any(|row| text.value(row, 0) == loc);
+        assert_eq!(has_text(relation("source").value(0, 1)), source_needed, "source: {body}");
+        assert_eq!(has_text(relation("src_line").value(0, 2)), line_needed, "line: {body}");
+    }
+}

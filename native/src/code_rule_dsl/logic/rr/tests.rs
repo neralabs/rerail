@@ -5,6 +5,171 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
+fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-contract");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), source).unwrap();
+    let rule = root.join("rule.rr");
+    std::fs::write(&rule, program).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap().clone();
+    std::fs::remove_dir_all(root).unwrap();
+    rows
+}
+
+#[test]
+fn invalid_or_unsupported_boolean_regex_fails_at_compilation() {
+    for pattern in ["[", "(?<![A-Za-z_é])str"] {
+        let rule = format!(".decl sample(s: symbol)\nsample(\"str\").\n.decl found(s: symbol)\nfound(s) :- sample(s), match({}, s).", serde_json::to_string(pattern).unwrap());
+        let error = parse(&rule).err().expect("unsupported regex must fail, never report a clean source").to_string();
+        assert!(error.contains("regex"), "{error}");
+        assert!(!error.contains("named groups"), "lookbehind is not a capture: {error}");
+    }
+}
+
+#[test]
+fn python_visit_order_follows_ast_fields_instead_of_source_offsets() {
+    let mut rows = finding_contract(r#"
+@decor()
+def f(a: ann() = default(), *v: varann(), k: kwann() = kwdefault(), **kw: kwargsann()) -> result():
+    body()
+x = {key1(): value1(), key2(): value2()}
+box(k=keyword(), *(positional(),))
+"#, r#"
+.policy "contract:python-visit-order" revision 1
+.language python
+#include "python/ast.rr"
+.violation Visitation(at: node, callee: symbol, ordinal: number) "{callee}"
+Visitation(c, name, i) :- call_name(c, name), visit_index(c, i).
+.violation Before(at: node) code "BEFORE" "body before decorator"
+Before(a) :- call_name(a, "body"), call_name(b, "decor"), earlier(a, b).
+"#);
+    assert_eq!(rows.iter().filter(|r| r["code"] == "BEFORE").count(), 1);
+    rows.retain(|r| r["clause"] == "Visitation");
+    rows.sort_by_key(|r| r["parameters"]["ordinal"].as_i64().unwrap());
+    let names: Vec<_> = rows.iter().map(|r| r["parameters"]["callee"].as_str().unwrap()).collect();
+    assert_eq!(names, ["ann", "varann", "kwann", "kwdefault", "kwargsann", "default", "body", "decor", "result",
+        "key1", "key2", "value1", "value2", "box", "positional", "keyword"]);
+}
+
+#[test]
+fn decoded_constant_positions_are_public_typed_rows() {
+    let mut rows = finding_contract("x = f\"\"\"json\n{a}\njson\"\"\"\n", r#"
+.language python
+.violation Piece(at: span, ordinal: number, column: number) "{ordinal}:{column}"
+Piece(@place(p, l), i, c) :- str_part_start(n, i, l, c), docof(n, d), doc(d, p, _).
+"#);
+    rows.sort_by_key(|r| r["parameters"]["ordinal"].as_i64().unwrap());
+    assert_eq!(rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["column"].as_i64().unwrap())).collect::<Vec<_>>(), [(1, 8), (2, 3)]);
+}
+
+/// Word runs are decoded code points, including non-scalar delimiters and adjacent literals.
+#[test]
+fn python_constant_word_runs_preserve_surrogate_boundaries() {
+    let rows = finding_contract(r#"x = "\ud800json" "_ok\udfffroute_partition"
+y = f"json{x}json"
+z = "notjson \N{LATIN SMALL LETTER J}son"
+"#, r#"
+.language python
+.violation Word(at: node, ordinal: number, word: symbol) "{word}"
+Word(at, i, w) :- str_part_word(_, i, w, at, _).
+"#);
+    let mut words: Vec<_> = rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["ordinal"].as_i64().unwrap(), r["parameters"]["word"].as_str().unwrap())).collect();
+    words.sort();
+    assert_eq!(words, [(1, 0, "json_ok"), (1, 0, "route_partition"), (2, 0, "json"), (2, 1, "json"), (3, 0, "json"), (3, 0, "notjson")]);
+}
+
+#[test]
+fn python_constant_words_use_parsed_interpolation_boundaries() {
+    let rows = finding_contract("x = f\"{a:{b:json}}\"\ny = f\"\"\"{a # } : ignored\n}json\"\"\"\nz = \"js\\\r\non\"\r\n", r#"
+.language python
+.violation Word(at: span, ordinal: number, word: symbol) "{word}"
+Word(@place(p, l), i, w) :- str_part_word(n, i, w, _, _), str_part_start(n, i, l, _), docof(n, d), doc(d, p, _).
+"#);
+    let mut words: Vec<_> = rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["word"].as_str().unwrap())).collect();
+    words.sort();
+    assert_eq!(words, [(1, "json"), (3, "json"), (4, "json")]);
+}
+
+/// Python-only grammar failures must gate AST rules while raw-text rules retain their input.
+#[test]
+fn native_python_syntax_verdict_keeps_raw_source_available() {
+    for source in ["marker = 1\nprint \"legacy\"\n", "marker = 1\n\"\\x\"\n", "marker = t\"future\"\n", "\u{feff}marker = 1\n"] {
+        let rows = finding_contract(source, r#"
+.language python
+.violation ParseFailure(at: span) code "PARSE" "invalid Python"
+ParseFailure(@place(p, l)) :- doc(d, p, _), syntax_error(d, l, _).
+.violation RawText(at: span) code "RAW" "raw input survives"
+RawText(@place(p, 1)) :- doc(d, p, _), source(d, sp), text(sp, t), contains("marker", t).
+"#);
+        assert_eq!(rows.iter().filter(|r| r["code"] == "RAW").count(), 1, "{source}");
+        assert_eq!(rows.iter().filter(|r| r["code"] == "PARSE").count(), 1, "{source}");
+    }
+}
+
+#[test]
+fn public_rr_report_preserves_compiled_policy_metadata() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-metadata");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("rule.rr");
+    std::fs::write(&rule, r#"
+.policy "contract:metadata" revision 7
+.mode block
+.scope include "impl/**/*.py"
+.violation MetadataProbe(at: span) "nothing"
+MetadataProbe(@place("input.py", 1)) :- 0 = 1.
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(report["metadata"]["policies"][0]["id"], "contract:metadata");
+    assert_eq!(report["metadata"]["policies"][0]["revision"], 7);
+    let settings = report["metadata"]["settings"].as_array().expect("compiled settings");
+    assert!(settings.contains(&serde_json::json!(["mode", "block"])));
+    assert!(settings.contains(&serde_json::json!(["scope", "include \"impl/**/*.py\""])));
+}
+
+/// A public rule's full diagnostic survives the production planner and transport. Distinct witnesses
+/// and tags at the same line do not collapse into the old five-column finding index.
+#[test]
+fn findings_keep_messages_tags_parameters_and_witnesses() {
+    let rows = finding_contract("x = y\n", r#"
+.policy "contract:diagnostics" revision 1
+.language python
+.violation Bad(at: node, why: symbol, count: number) code "BAD001" tag {why}
+    "{why}:{count}:{at.line}"
+Bad(n, "first\n\t\"", 7) :- kind(n, "identifier").
+Bad(n, "second", 8) :- kind(n, "identifier").
+"#);
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.iter().map(|row| row["at"].as_i64().unwrap()).collect::<BTreeSet<_>>().len(), 2);
+    for row in rows {
+        assert_eq!(row["policy"], "contract:diagnostics");
+        assert_eq!(row["clause"], "Bad");
+        assert_eq!(row["code"], "BAD001");
+        assert_eq!(row["path"], "a.py");
+        assert_eq!(row["line"], 1);
+        assert_eq!(row["tag"], row["parameters"]["why"]);
+        assert_eq!(row["message"], format!("{}:{}:1", row["tag"].as_str().unwrap(), row["parameters"]["count"].as_i64().unwrap()));
+    }
+}
+
+/// This producer binds a source span, not a tree node. Per-file memoization must use its document key.
+#[test]
+fn source_span_producers_retain_rows_through_local_planning() {
+    let rows = finding_contract("# marker\nx = y\n", r#"
+.policy "contract:source" revision 1
+.language python
+#include "python/ast.rr"
+#include "python/calls.rr"
+.decl selected(d: number, t: symbol)
+selected(d, t) :- source(d, sp), text(sp, t), contains("marker", t).
+.violation Seen(at: node, source_text: symbol) "{source_text}"
+Seen(n, t) :- selected(d, t), kind(n, "identifier"), docof(n, d).
+"#);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row["message"] == "# marker\nx = y\n"));
+}
+
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
@@ -652,6 +817,190 @@ given(x) :- node(_, n, "call", x, _), !unset(n).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Source scanners use str.splitlines(), while AST positions use physical lines.
+/// Keep both contracts, including long lines, empty lines and CRLF as one separator.
+#[test]
+fn python_split_lines_are_lossless_and_document_local() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("splitlines");
+    std::fs::create_dir_all(&dir).unwrap();
+    let long = "x".repeat(400);
+    let src = format!("{long}\u{000b}two\u{000c}\u{001c}four\u{001d}five\u{001e}six\u{0085}seven\u{2028}eight\u{2029}nine\r\nten\releven\n");
+    std::fs::write(dir.join("a.py"), src).unwrap();
+    std::fs::write(dir.join("b.py"), "short").unwrap();
+    std::fs::write(dir.join("empty.py"), "").unwrap();
+    let program = r#"
+.decl seen(p: symbol, l: number, t: symbol)
+seen(p, l, t) :- doc(d, p, _), split_line(d, l, t).
+.output seen
+"#;
+    let policy = dir.join("lines.rr");
+    std::fs::write(&policy, program).unwrap();
+    let program = crate::code_rule_dsl::tools::read_rr(&policy).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let actual = std::fs::read_to_string(out.join("seen.csv")).unwrap();
+    let lines = [&long, "two", "", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
+    let mut expected: Vec<String> = lines.iter().enumerate().map(|(i, t)| format!("a.py\t{}\t{t}", i + 1)).collect();
+    expected.push("b.py\t1\tshort".to_owned());
+    let mut rows: Vec<&str> = actual.lines().collect();
+    rows.sort();
+    expected.sort();
+    assert_eq!(rows, expected);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Empty scopes still run global absence checks; they must not become a planning error or an early return.
+#[test]
+fn empty_corpora_run_global_absence_findings() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("emptyrr");
+    let corpus = dir.join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, r#"
+.policy "empty-contract" revision 1
+.violation Missing(at: span) code "MISSING" "required file is absent"
+Missing(@place("required.py", 1)) :- !doc(_, "required.py", _).
+"#).unwrap();
+    let result = crate::code_rule_dsl::tools::run_rr(&policy, &corpus, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    assert_eq!(result["files"], 0);
+    assert_eq!(result["diagnostics"].as_array().unwrap().len(), 1);
+    assert_eq!(result["diagnostics"][0]["code"], "MISSING");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Direct scanner APIs select buffers, including hidden paths and nonstandard extensions.
+#[test]
+fn explicit_input_files_preserve_the_callers_document_batch() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrinputs");
+    let root = dir.join("corpus");
+    std::fs::create_dir_all(root.join(".hidden")).unwrap();
+    std::fs::write(root.join(".hidden/a.txt"), "hidden text").unwrap();
+    std::fs::write(root.join("included.py"), "included text").unwrap();
+    std::fs::write(root.join("ignored.py"), "ignored text").unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, r#"
+.policy "explicit-inputs" revision 1
+.language python
+.violation Seen(at: span, t: symbol) "{t}"
+Seen(@place(p, l), t) :- doc(d, p, _), split_line(d, l, t).
+"#).unwrap();
+    let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join("out"),
+        &serde_json::json!({"inputFiles": [".hidden/a.txt", "included.py"]})).unwrap();
+    let mut paths: Vec<&str> = result["diagnostics"].as_array().unwrap().iter().map(|r| r["path"].as_str().unwrap()).collect();
+    paths.sort();
+    assert_eq!(paths, [".hidden/a.txt", "included.py"]);
+    assert_eq!(result["files"], 2);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// async_executor uses str.split('\n'), not physical lines or Python splitlines.
+#[test]
+fn lf_lines_keep_other_separators_and_the_trailing_empty_line() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrlf");
+    let root = dir.join("corpus");
+    std::fs::create_dir_all(&root).unwrap();
+    let first = format!("{}\rtwo\u{2028}three\u{b}four", "x".repeat(400));
+    std::fs::write(root.join("a.py"), format!("{first}\nfive\n")).unwrap();
+    std::fs::write(root.join("empty.py"), "").unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, r#"
+.policy "lf-lines" revision 1
+.language python
+.violation Seen(at: span, text: symbol) "{text}"
+Seen(@place(p, l), t) :- doc(d, p, _), lf_line(d, l, t).
+"#).unwrap();
+    let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut actual: Vec<(String, u64, String)> = result["diagnostics"].as_array().unwrap().iter()
+        .map(|r| (r["path"].as_str().unwrap().to_owned(), r["line"].as_u64().unwrap(), r["parameters"]["text"].as_str().unwrap().to_owned())).collect();
+    actual.sort();
+    assert_eq!(actual, vec![("a.py".into(),1,first), ("a.py".into(),2,"five".into()),
+                           ("a.py".into(),3,"".into()), ("empty.py".into(),1,"".into())]);
+}
+
+/// Existing allowlist bytes must verify through the public reader and relational execution path.
+#[test]
+fn signed_allowlist_functor_runs_through_public_rules() {
+    let rows = finding_contract("", r#"
+.policy "contract:signature" revision 1
+.decl candidate(name: symbol, message: symbol)
+candidate("original", "{\"allowlist\":[],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+candidate("tampered", "{\"allowlist\":[\"added.py\"],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+.violation Verified(at: span, name: symbol) "{name}"
+Verified(@place("allowlist.json", 1), name) :- candidate(name, message),
+    @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", message,
+    "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==") = 1.
+"#);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["parameters"]["name"], "original");
+}
+
+/// One repository document can feed several typed selectors without rebuilding per rule or source file.
+#[test]
+fn repository_json_selectors_preserve_typed_rows_and_wildcard_keys() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrjson");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("policy.json"), r#"{"counts":{"a":2,"b":3},"groups":{"g":{"entries":[{"name":"one","limit":4},{"name":"two","limit":5}]}},"title":"kept"}"#).unwrap();
+    let rule = dir.join("rule.rr");
+    std::fs::write(&rule, r#"
+.policy "contract:json" revision 1
+.decl counts(k: symbol, n: number)
+.input counts(IO=json, filename = "policy.json", path="/counts")
+.decl entries(group: symbol, name: symbol, limit: number)
+.input entries(IO=json, filename="policy.json", path="/groups/*/entries", records=true)
+.decl title(t: symbol)
+.input title(IO=json, filename="policy.json", path="/title")
+.violation Row(at: span, family: symbol, value: symbol, n: number) "{family}:{value}:{n}"
+Row(@place("policy.json", 1), "count", k, n) :- counts(k, n).
+Row(@place("policy.json", 1), g, name, n) :- entries(g, name, n).
+Row(@place("policy.json", 1), "title", t, 0) :- title(t).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| r["message"].as_str().unwrap()).collect();
+    actual.sort();
+    assert_eq!(actual, ["count:a:2", "count:b:3", "g:one:4", "g:two:5", "title:kept:0"]);
+}
+
+/// A malformed row must not leak an earlier prefix of a policy input into rule execution.
+#[test]
+fn repository_inputs_report_missing_and_malformed_without_partial_rows() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrinputerrors");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("bad.json"), r#"[1,"wrong type"]"#).unwrap();
+    let rule = dir.join("rule.rr");
+    std::fs::write(&rule, r#"
+.policy "contract:input-errors" revision 1
+.decl bad(n: number)
+.input bad(IO=json, filename="bad.json")
+.decl missing(t: symbol)
+.input missing(IO=lines, filename="missing.txt")
+.violation Error(at: span, kind: symbol) "{kind}"
+Error(@place(p, 1), kind) :- input_error(p, kind, _).
+.violation Leaked(at: span) "partial row leaked"
+Leaked(@place("bad.json", 1)) :- bad(_).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| (r["path"].as_str().unwrap(), r["message"].as_str().unwrap())).collect();
+    actual.sort();
+    assert_eq!(actual, [("bad.json", "malformed"), ("missing.txt", "missing")]);
+}
+
+#[test]
+fn shared_signing_library_verifies_an_existing_empty_allowlist() {
+    let rows = finding_contract("", r#"
+.policy "contract:shared-signature" revision 1
+#include "data-layer/signing.rr"
+allow_sig("original", "lint_admin_async_purity", "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==").
+allow_sig("tampered", "lint_admin_async_purity", "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==").
+allow_entry("tampered", "added.py").
+allow_sig("unsigned", "lint_admin_async_purity", "UNSIGNED").
+.violation Status(at: span, name: symbol, status: symbol) "{name}:{status}"
+Status(@place("allowlist.json", 1), name, status) :- allow_status(name, status).
+"#);
+    let mut actual: Vec<_> = rows.iter().map(|r| r["message"].as_str().unwrap()).collect();
+    actual.sort();
+    assert_eq!(actual, ["original:valid", "tampered:invalid", "unsigned:unsigned"]);
+}
+
 /// `@ed25519_ok` through a rule: an existing signature verifies, a tampered message does not.
 #[test]
 fn signatures_verify_through_rules() {
@@ -674,7 +1023,7 @@ verified(name) :- candidate(name, message),
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `@tree_digest(n)` compares trees as Python's `ast.dump` does: no positions, comments or punctuation, a
+/// `@tree_digest(n)` compares structural trees: no positions, comments or punctuation, a
 /// parenthesized expression as what it holds, literals by value. Equal right-hand sides pair up; others do not.
 #[test]
 fn tree_digests_compare_subtrees_without_positions() {
@@ -764,10 +1113,9 @@ fn noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `core.rr`: a document that does not parse is withheld (no facts but its `doc`, path and `syntax_error` rows), and
-/// `.on syntax_error report CODE at line 1` reports it.
+/// Error directives report rejected syntax while raw-source consumers keep their document views.
 #[test]
-fn documents_that_do_not_parse_are_withheld_and_reported() {
+fn syntax_error_directives_preserve_raw_source_relations() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("withheld");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("good.py"), "x = 1\n").unwrap();
@@ -777,7 +1125,7 @@ fn documents_that_do_not_parse_are_withheld_and_reported() {
 .policy "t:withheld" revision 1
 .on syntax_error report BAD000 at line 1
 .violation ASSIGN(at: node) "an assignment"
-ASSIGN(n) :- kind(n, "assignment").
+ASSIGN(n) :- kind(n, "assignment"), docof(n, d), !syntax_error(d, _, _).
 .decl lines(d: number, k: number)
 lines(d, k) :- line_count(d, k).
 .decl err(d: number)
@@ -791,7 +1139,7 @@ err(d) :- syntax_error(d, _, _).
     let mut v: Vec<String> = read("violation").lines().map(str::to_owned).collect();
     v.sort();
     assert_eq!(v, ["t:withheld\tASSIGN\tASSIGN\tgood.py\t1", "t:withheld\tsyntax_error\tBAD000\tbad.py\t1"]);
-    assert_eq!(read("lines").lines().count(), 1, "the withheld document has no lines");
+    assert_eq!(read("lines").lines().count(), 2, "raw-text policies retain both documents");
     assert_eq!(read("err").lines().count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -879,6 +1227,114 @@ none(r) :- e(r, _, _), !dfs_first(r, _, _, e, t).
     assert_eq!(read("hm"), "10\t30\t1\n40\t30\t2\n");
     assert_eq!(read("none"), "50\n");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+
+#[test]
+fn error_directives_survive_public_report_transport() {
+    let rows = finding_contract("def (:\n", r#"
+.policy "contract:error-transport" revision 1
+.language python
+.on syntax_error report BAD000 at line 1
+"#);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["code"], "BAD000");
+    assert_eq!(rows[0]["path"], "a.py");
+    assert_eq!(rows[0]["line"], 1);
+}
+
+
+#[test]
+fn input_error_directives_survive_public_report_transport() {
+    let rows = finding_contract("", r#"
+.policy "contract:input-error-transport" revision 1
+.decl items(s: symbol)
+.input items(IO=lines, filename="missing.txt")
+.on input_error report NEED
+"#);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["code"], "NEED");
+    assert_eq!(rows[0]["path"], "missing.txt");
+    assert_eq!(rows[0]["line"], 1);
+}
+
+#[test]
+fn nullary_relations_preserve_boolean_set_semantics() {
+    let rows = finding_contract("import example\n", r#"
+.language python
+.decl enabled()
+enabled() :- doc(_, _, _).
+.decl absent()
+absent() :- kind(_, "not_a_real_kind").
+.decl always()
+always().
+.decl marker(x: number)
+marker(1).
+marker(2).
+.decl many()
+many() :- marker(_).
+.violation Boolean(at: span) code "BOOLEAN" "true"
+Boolean(@place(p, 1)) :- doc(_, p, _), enabled(), !absent(), always(), many().
+.violation Bad(at: span) code "BAD" "false"
+Bad(@place(p, 1)) :- doc(_, p, _), absent().
+.violation Count(at: span, n: number) code "COUNT" "{n}"
+Count(@place("a.py", 1), n) :- n = count : { many() }.
+"#);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows.iter().filter(|row| row["code"] == "BOOLEAN").count(), 1);
+    assert_eq!(rows.iter().find(|row| row["code"] == "COUNT").unwrap()["parameters"]["n"], 1);
+}
+
+#[test]
+fn dynamic_regex_patterns_preserve_whole_string_matching_and_roundtrip() {
+    let rule = r#"
+.language python
+.decl pattern(id: number, re: symbol)
+pattern(0, "cache").
+pattern(1, "(?i)cache").
+.decl sample(id: number, s: symbol)
+sample(0, "cache").
+sample(1, "notcache").
+sample(2, "CACHE").
+.violation Found(at: span, pattern_id: number, sample_id: number) code "MATCH" "found"
+Found(@place("a.py", 1), p, i) :- pattern(p, re), sample(i, s), match(re, s).
+.violation Missing(at: span, pattern_id: number, sample_id: number) code "MISS" "missing"
+Missing(@place("a.py", 1), p, i) :- pattern(p, re), sample(i, s), !match(re, s).
+"#;
+    let parsed = parse(rule).unwrap();
+    let printed = print(&parsed).unwrap();
+    let roundtrip = parse(&printed).unwrap();
+    assert_eq!(roundtrip.rules, parsed.rules, "{printed}");
+    assert_eq!(roundtrip.facts, parsed.facts, "{printed}");
+    let rows = finding_contract("", rule);
+    let mut matches: Vec<_> = rows.iter().filter(|row| row["code"] == "MATCH")
+        .map(|row| (row["parameters"]["pattern_id"].as_i64().unwrap(), row["parameters"]["sample_id"].as_i64().unwrap())).collect();
+    matches.sort();
+    assert_eq!(matches, [(0, 0), (1, 0), (1, 2)]);
+    assert_eq!(rows.iter().filter(|row| row["code"] == "MISS").count(), 3);
+}
+
+#[test]
+fn requested_source_and_line_text_remain_exact_without_copying_large_subtrees() {
+    let source = format!("marker = 1 # {}\npass\n", "é".repeat(5000));
+    let rows = finding_contract(&source, r#"
+.language python
+.decl source_copy(sp: span)
+source_copy(sp) :- source(_, sp).
+.violation Whole(at: span, body: symbol) code "SOURCE" "source"
+Whole(sp, body) :- source_copy(sp), text(sp, body).
+.violation Physical(at: span, body: symbol) code "LINE" "line"
+Physical(sp, body) :- src_line(_, _, sp), text(sp, body).
+.violation Subtree(at: node) code "TREE" "whole AST text"
+Subtree(n) :- kind(n, "module"), text(n, _).
+"#);
+    assert_eq!(rows.iter().filter(|row| row["code"] == "SOURCE").count(), 1);
+    assert_eq!(rows.iter().find(|row| row["code"] == "SOURCE").unwrap()["parameters"]["body"], source);
+    let mut lines: Vec<_> = rows.iter().filter(|row| row["code"] == "LINE")
+        .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
+    lines.sort();
+    assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
+    assert!(!rows.iter().any(|row| row["code"] == "TREE"), "a requested source span must not enable all large AST texts");
 }
 
 /// Decision 0055's guests: a run of `rule` over `files`, each output's sorted rows.

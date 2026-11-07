@@ -19,5 +19,4 @@ pub(in crate::code_rule_dsl) mod rr;
 pub(in crate::code_rule_dsl) mod sql;
 pub(in crate::code_rule_dsl) mod simplify;
 pub(in crate::code_rule_dsl) mod strings;
-#[cfg(test)]
 pub(in crate::code_rule_dsl) mod convert;
