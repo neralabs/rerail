@@ -1,0 +1,1228 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-plan-scope-side-effects",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer plan_scope_side_effects at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py",
+      "data_layer/**/*.py",
+      "_internal/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/test_*.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "language": "python",
+        "utils": {
+          "plan": {
+            "all": [
+              {
+                "kind": "with_statement"
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "with_clause"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "with_item"
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)$"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "attribute"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)$"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "as_pattern"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "call"
+                                          },
+                                          {
+                                            "has": {
+                                              "any": [
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)$"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "attribute"
+                                                    },
+                                                    {
+                                                      "has": {
+                                                        "all": [
+                                                          {
+                                                            "kind": "identifier"
+                                                          },
+                                                          {
+                                                            "regex": "^(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)$"
+                                                          }
+                                                        ],
+                                                        "stopBy": "neighbor",
+                                                        "field": "attribute"
+                                                      }
+                                                    }
+                                                  ]
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "value"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "write-plan": {
+            "all": [
+              {
+                "kind": "with_statement"
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "with_clause"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "with_item"
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:open_provider_versioned_write_plan|open_provider_write_plan|open_write_plan)$"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "attribute"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:open_provider_versioned_write_plan|open_provider_write_plan|open_write_plan)$"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "as_pattern"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "call"
+                                          },
+                                          {
+                                            "has": {
+                                              "any": [
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:open_provider_versioned_write_plan|open_provider_write_plan|open_write_plan)$"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "attribute"
+                                                    },
+                                                    {
+                                                      "has": {
+                                                        "all": [
+                                                          {
+                                                            "kind": "identifier"
+                                                          },
+                                                          {
+                                                            "regex": "^(?:open_provider_versioned_write_plan|open_provider_write_plan|open_write_plan)$"
+                                                          }
+                                                        ],
+                                                        "stopBy": "neighbor",
+                                                        "field": "attribute"
+                                                      }
+                                                    }
+                                                  ]
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "value"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "side-receiver": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "regex": "(?i)^(?:asyncio|httpx|os|requests|shutil|socket|subprocess|time)$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "attribute"
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "regex": "(?i)^(?:asyncio|httpx|os|requests|shutil|socket|subprocess|time)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "side-receiver",
+                          "stopBy": "neighbor",
+                          "field": "object"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "matches": "side-receiver",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "has": {
+                      "matches": "side-receiver",
+                      "stopBy": "neighbor",
+                      "field": "value"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "typed-read": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:count|count_async|execute|execute_async|execute_one|execute_one_async|first|first_async|select_one|select_one_async)$"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:count|count_async|execute|execute_async|execute_one|execute_one_async|first|first_async|select_one|select_one_async)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "direct-read": {
+            "any": [
+              {
+                "matches": "typed-read"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "has": {
+                      "matches": "direct-read",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "assigned-read-name": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "pattern": "$READ_NAME"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "pattern_list"
+                      },
+                      {
+                        "kind": "tuple_pattern"
+                      },
+                      {
+                        "kind": "list_pattern"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "list"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "assigned-read-name",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "read-test": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "attribute",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "keyword_argument",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "$READ_NAME"
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "assignment"
+                              },
+                              {
+                                "has": {
+                                  "matches": "assigned-read-name",
+                                  "stopBy": "neighbor",
+                                  "field": "left"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "matches": "typed-read",
+                                  "stopBy": "neighbor",
+                                  "field": "right"
+                                }
+                              },
+                              {
+                                "layout": {
+                                  "after": {
+                                    "to": "capture.IF",
+                                    "breaks": {
+                                      "min": 0
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "matches": "write-plan"
+                                    },
+                                    {
+                                      "pattern": "$ASSIGN_PLAN"
+                                    },
+                                    {
+                                      "compare": {
+                                        "left": "PLAN",
+                                        "right": "ASSIGN_PLAN",
+                                        "op": "eq",
+                                        "text": "node"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": {
+                                    "matches": "plan"
+                                  }
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "matches": "read-test",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "eager-value",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "attribute"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:resolved_value)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "attribute"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "matches": "plan",
+                      "stopBy": {
+                        "matches": "plan"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSE-010",
+        "anchor": "witness.span",
+        "message": "PSE-010: eager value"
+      }
+    },
+    {
+      "id": "eager-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:resolve|resolve_async)$"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:resolve|resolve_async)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "matches": "plan",
+                      "stopBy": {
+                        "matches": "plan"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSE-020",
+        "anchor": "witness.span",
+        "message": "PSE-020: eager call"
+      }
+    },
+    {
+      "id": "raw-database",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:execute_raw|fetchall_raw|fetchone_raw|nonportably_execute_sql)$"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:execute_raw|fetchall_raw|fetchone_raw|nonportably_execute_sql)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "matches": "plan",
+                      "stopBy": {
+                        "matches": "plan"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSE-030",
+        "anchor": "witness.span",
+        "message": "PSE-030: raw database"
+      }
+    },
+    {
+      "id": "legacy-callback",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:read|read_async|write|write_async)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "matches": "plan",
+                      "stopBy": {
+                        "matches": "plan"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSE-040",
+        "anchor": "witness.span",
+        "message": "PSE-040: legacy callback"
+      }
+    },
+    {
+      "id": "python-side-effect",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:open)$"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:Popen|delete|get|open|patch|post|put|request|run|sleep)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            },
+                            {
+                              "has": {
+                                "matches": "side-receiver",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "matches": "plan",
+                      "stopBy": {
+                        "matches": "plan"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSE-050",
+        "anchor": "witness.span",
+        "message": "PSE-050: python side effect"
+      }
+    },
+    {
+      "id": "branch-audit",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "if_statement"
+                  },
+                  {
+                    "pattern": "$IF"
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "matches": "write-plan"
+                        },
+                        {
+                          "pattern": "$PLAN"
+                        }
+                      ],
+                      "stopBy": {
+                        "matches": "plan"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "matches": "direct-read"
+                        },
+                        {
+                          "matches": "read-test"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "condition"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "PSE-AUDIT-010",
+        "anchor": "witness.span",
+        "message": "PSE-AUDIT-010: branch audit"
+      }
+    }
+  ]
+}

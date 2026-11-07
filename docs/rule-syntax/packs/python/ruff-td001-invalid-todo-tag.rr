@@ -1,0 +1,18 @@
+.policy "ruff-td001-invalid-todo-tag" revision 2
+.description "Label open-work comments with the TODO tag rather than FIXME or XXX; a single tag keeps outstanding work easy to find."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TD001 (flake8-todos): a comment's directive tag is FIXME or XXX, in any case. HACK is not checked.
+// The tag is the first word of a `#`-section of the comment (python/misc2-todo).
+//   # FIXME: this          ← TD001
+//   # foo # xxx            ← TD001: the second section starts with the tag
+//   # TODO: this           not reported
+//   # HACK: this           not reported
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
+
+.violation TD001(at: span, tag: symbol) code "TD001"
+    "Replace the `{tag}` tag with `TODO` so this note is found with the other open work; leave it if the project gives this tag a separate meaning."
+    suppress ruff "TD001"
+TD001(t, D) :- todo_item(c, D, _), !match("[tT][oO][dD][oO]", D), todo_at(c, t).

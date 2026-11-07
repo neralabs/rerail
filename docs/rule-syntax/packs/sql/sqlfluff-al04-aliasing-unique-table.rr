@@ -1,0 +1,24 @@
+.policy "sqlfluff-al04-aliasing-unique-table" revision 2
+.description "Give every table in a SQL FROM clause a unique alias; a repeated alias makes column references ambiguous."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's AL04 (aliasing.unique.table). The tables of one FROM clause (with its joins) must go by different
+// names: the alias, else the table name. A later one that repeats a name is reported at that name:
+//   select 1 from table_1 as a join table_2 as a using (pk)         the second a
+// A table of the outer query also clashes with a name used in a subquery of the same query (sqlfluff reports
+// the outer one): SELECT * FROM tbl WHERE x IN (SELECT y FROM tbl) reports the first tbl. A subquery that is
+// itself the table (FROM (SELECT …) AS t) does not count against t.
+// UNNEST and generate_series calls take no part. Names compare as written, "x" and x alike.
+
+#include "sql/syntax.rr"
+
+.violation AL04(at: node, x: symbol) code "AL04" "Duplicate table alias '{x}'. Table aliases should be unique."
+    suppress sqlfluff "AL04", "L020", "aliasing", "aliasing.unique", "aliasing.unique.table", "all", "core"
+AL04(a, x) :- named(f, r, a, x), named(f, s, _, x), earlier(s, r).
+AL04(a, x) :- named(f, r, a, x), child(b, f, _), within_stop(q, b, "subquery"), kind(q, "subquery"),
+    !child(r, q, _), child(q, g, _), named(g, _, _, x).
+
+// named(f, r, a, x): table r of FROM clause f goes by name a, which reads x without its quotes.
+.decl named(f: node, r: node, a: node, x: symbol)
+named(f, r, a, x) :- from_item(f, r), ref_name(r, a), !table_function(r), ident_name(a, x).

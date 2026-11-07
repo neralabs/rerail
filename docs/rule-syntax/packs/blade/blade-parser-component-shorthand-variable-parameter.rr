@@ -1,0 +1,22 @@
+.policy "blade-parser-component-shorthand-variable-parameter" revision 3
+.description "Fix malformed shorthand variable attributes on Blade components: a $: prefix that should be :$, or a :$ shorthand that is also given a value."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/syntax.rr"
+//   (core) the Blade tree: component, slot, element_name, attribute (fields name, value)
+
+// stillat/blade-parser's ComponentShorthandVariableParameterValidator: a component's shorthand variable attribute
+// written wrong. `:$name` passes $name as the `name` attribute, and takes no value:
+//   <x-alert $:message />              reported: `$:` for `:$`
+//   <x-alert :$message="$other" />     reported: a shorthand with a value
+//   <x-alert :$message />   <x-alert :message="$other" />      not reported
+// Only on components and slots (<x-…>); on an HTML element the attribute is text.
+.violation shorthand(at: node) code "ComponentShorthandVariableParameterValidator"
+    "Write this shorthand attribute as :$name with no value, or bind a value with a regular :name=\"...\" attribute."
+shorthand(a) :- component_attribute(a, n), prefix("$:", n).
+shorthand(a) :- component_attribute(a, n), prefix(":$", n), field(a, "value", _).
+.decl component_attribute(a: node, n: node)  // attribute a of an <x-…> component or slot, named n
+component_attribute(a, n) :- kind(a, "attribute"), field(a, "name", n), child(c, a, _),
+    (kind(c, "component") ; kind(c, "slot")), field(c, "name", e), prefix("x-", e).

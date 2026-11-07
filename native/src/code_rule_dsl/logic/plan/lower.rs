@@ -253,7 +253,6 @@ pub(in crate::code_rule_dsl) fn lower(
     dialect: GrammarDialect,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Lowered> {
-    let prog = &*super::private_derived_inputs(prog)?;
     let domains = domains(prog)?;
     let tag = tape_tag(dialect).ok_or_else(|| Error::Plan("the dialect has no tape tag".to_owned()))?;
     // Every string a name could be, interned in one call: interning a kind's name too costs one atom.

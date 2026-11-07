@@ -8,7 +8,7 @@
 // `crate`, `self`, `super` and `Self`. Associated items come from `impl` blocks, trait impls with the trait's default
 // methods, and enum variants. A call's answer is three-valued: `call_open`, else the definitions `call_target` names
 // (none: no edge, such as `std::mem::swap` or a method of `Vec`).
-// A typing program: its cross-file recursion runs in bounded rounds over the previous round's rows (decision 0052).
+// A typing program: its cross-file recursion runs in bounded rounds over the previous round's rows (decision 0056).
 .pragma "cross-rounds" "4"
 
 .decl doc(d: int, path: sym, module: sym)

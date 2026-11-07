@@ -57,7 +57,7 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) unread: Vec<String>,
     /// Parts of bodies that meet the rest only at a document, made relations of documents (`exists_k`).
     pub(in crate::code_rule_dsl) existentials: Vec<String>,
-    /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0048).
+    /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0050).
     pub(in crate::code_rule_dsl) within: usize,
     /// Recursive components that climb or descend the tree one `child` edge at a time, made `within` (the axis).
     pub(in crate::code_rule_dsl) climbs: Vec<String>,
@@ -289,7 +289,8 @@ fn fold_constants(rule: &mut Rule) -> usize {
     // Variables the head names, or a literal other than as a term (an aggregate's result, `nearest`, `ast`), stay
     // variables. A head column the rule fills from a text column is what keeps its relation a string filter, run per
     // chunk (`typing::file_local::split`); `t($s) :- doc(_, $s, _), $s = "a.py"` stays as it is.
-    let mut named = rule.head.vars();
+    let mut named = BTreeSet::new();
+    rule.head.args.iter().for_each(|t| t.vars(&mut named));
     for l in &rule.body {
         match l {
             Literal::Agg { var, over, .. } => {
@@ -356,6 +357,7 @@ fn kept(prog: &Program, rel: &str) -> bool {
     prog.outputs.iter().any(|o| o == rel)
         || prog.inputs.iter().any(|i| i == rel)
         || prog.lattice.contains_key(rel)
+        || prog.natives.contains_key(rel)
         || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
         || prog.demand.iter().any(|d| d == rel)
         || prog.gates.iter().any(|(g, _)| g == rel)
@@ -882,7 +884,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
 /// and steps along one `child` edge, all one way (`R(x) :- S(y), child(x, y, _)`: up; `child(y, x, _)`: down),
 /// is a closure along the tree: each member holds its bases' nodes that a path of copies reaches with no step, and
 /// their strict ancestors (descendants) that paths of every length from one step reach. That is `within` (decision
-/// 0048: read off the tree per node looked up), with no fixpoint: one wave a level of nesting otherwise.
+/// 0050: read off the tree per node looked up), with no fixpoint: one wave a level of nesting otherwise.
 /// Rewritten so; the components rewritten, by their members.
 fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
     let Ok((sccs, _)) = super::front::strata(prog) else { return Vec::new() };

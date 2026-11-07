@@ -1,0 +1,17 @@
+.policy "bandit-b301-pickle" revision 2
+.description "Avoid deserializing with pickle, dill, shelve, jsonpickle, or pandas.read_pickle; loading untrusted data this way can execute arbitrary code."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B301 (blacklist "pickle"): a call to one of pickle's loaders, or to a module that wraps them.
+//   import pickle as p; p.loads(data)       B301: qualified name pickle.loads
+//   from dill import load; load(f)          B301: dill.load
+//   json.loads(data)                        not reported
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B301(at: node) code "B301"
+    "Load this data with json or another data-only format instead; unpickling untrusted input can run arbitrary code."
+    suppress nosec "B301"
+B301(c) :- blacklisted(c, "B301").

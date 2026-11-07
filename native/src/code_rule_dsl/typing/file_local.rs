@@ -224,7 +224,7 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
 
 /// [`split`], with each derived relation's location columns: those every rule fills from a location (a node, or a
 /// document of `node`, `doc`, …), and the same-document columns of each file-local or base relation: its location
-/// columns, whose values in one row are all of one document. A row's document is read off any of them (decision 0050).
+/// columns, whose values in one row are all of one document. A row's document is read off any of them (decision 0052).
 pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>) {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
@@ -307,7 +307,8 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
         }
         filters = kept;
     }
-    let mut local: BTreeSet<String> = derived.iter().map(|r| (*r).to_owned()).collect();
+    // A relation made natively (`dfs_first`) reads the whole program's rows: never file-local.
+    let mut local: BTreeSet<String> = derived.iter().filter(|r| !prog.natives.contains_key(**r)).map(|r| (*r).to_owned()).collect();
     loop {
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> bool {
             // Each read relation's location variables; the rule's locations must form one component.
@@ -497,7 +498,9 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
                         lits.insert(j);
                     }
                 }
-                let mut outside: BTreeSet<String> = rule.head.vars();
+                // The head's variables, those inside a call (`@cat(p, s)`) too.
+                let mut outside: BTreeSet<String> = BTreeSet::new();
+                rule.head.args.iter().for_each(|t| t.vars(&mut outside));
                 for (j, l) in rule.body.iter().enumerate() {
                     if !lits.contains(&j) {
                         outside.extend(l.vars());
@@ -563,7 +566,7 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
 }
 
 /// Gives every relation the chunks hand on (an export, or a file-local output) a location column, so each of its
-/// rows names its document (decision 0050): a relation without one, `r(p, l)`, is derived by the chunks as
+/// rows names its document (decision 0052): a relation without one, `r(p, l)`, is derived by the chunks as
 /// `r_at(d, p, l)`, `d` a document its rules bind (from `node`, `doc`, …, or a node through `node(d, n, …)`), and
 /// the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
 /// one whose rule binds no location is left; its name is returned in the `Err`: its rows are not attributable.
@@ -579,7 +582,9 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
         .filter(|r| local.contains(r.as_str()) && split.locations.get(*r).is_none_or(Vec::is_empty))
         .cloned()
         .collect();
-    let doc_column = |rel: &str| matches!(rel, "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error");
+    let doc_column = |rel: &str| matches!(rel, "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" | "source" | "src_line" | "line_count");
+    // `core.rr`'s `docof(x, d)`, an input over nodes and spans alike, locates a span too; `node` only a node.
+    let docof = prog.inputs.iter().any(|r| r == "docof");
     let decls = prog.decls.clone();
     let node_typed = |rel: &str, c: usize| decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "node");
     let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "number".to_owned());
@@ -613,7 +618,11 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
                         break;
                     };
                     let d = "__located_d".to_owned();
-                    body.push(Literal::Atom(Atom { rel: "node".into(), args: vec![Term::Var(d.clone()), Term::Var(node), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false }));
+                    body.push(Literal::Atom(if docof {
+                        Atom { rel: "docof".into(), args: vec![Term::Var(node), Term::Var(d.clone())], neg: false, gated: false }
+                    } else {
+                        Atom { rel: "node".into(), args: vec![Term::Var(d.clone()), Term::Var(node), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false }
+                    }));
                     d
                 }
             };

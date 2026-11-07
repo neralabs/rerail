@@ -1,0 +1,23 @@
+.policy "ruff-ret501-unnecessary-return-none" revision 2
+.description "Use a bare return instead of return None in Python functions that never return anything else."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RET501 (flake8-return): `return None` in a function that never returns anything else. A bare `return`
+// says the same. Not in a def whose return annotation is something other than `None`, nor in a property
+// (whose None is a value), nor in a generator or a def that is a lone return. Each `return None` is reported.
+//   def f(x):
+//       if x:
+//           return None        ← RET501
+//       print()
+//   def g(x) -> int | None: … return None   not reported: annotated
+#include "python/flow-return.rr"
+
+.violation RET501(at: node) code "RET501"
+    "Do not explicitly `return None` in function if it is the only possible return value"
+    suppress ruff "RET501"
+RET501(r) :- ret_function(f), !returns_value(f), !typed_not_none(f), !property_def(f), fn_return(f, r),
+    none_return(r).
+.decl typed_not_none(f: node)
+typed_not_none(f) :- field(f, "return_type", t), child(t, n, 0), unparen(n, m), !kind(m, "none").  // t: a `type`

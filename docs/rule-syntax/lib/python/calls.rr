@@ -1,61 +1,343 @@
-// python/calls: call targets, call chains and expression types, from the Python typing program.
+// python/calls: call targets and call chains (adapted from an earlier Datalog prototype of call resolution; name parts are in python/names).
+// Points-to relation pv(n, kind, v): n may evaluate to a function, class, instance, module or super().
+// Three-valued: call_target is what a call may run; call_open marks calls whose target is unknown.
 //
-// The engine resolves Python calls and types once, in one program: native/src/code_rule_dsl/typing/programs/calls.rr
-// (decision 0047). It runs that program over the repository, file by file and then in bounded cross-file rounds,
-// and gives this library its answers as facts keyed by file and span (`typing_calls__*`, one row per answer; each
-// node is its path, kind, start byte and end byte). The rules below join those spans back to this program's nodes.
-// The program is run only when a rule reaching an output reads one of these relations.
+// The model
+//   pv(n, k, v): expression n may evaluate to v, where k says what v is:
+//     "fn"    v is a function_definition (calling n runs v)
+//     "cls"   v is a class_definition (n is the class object itself)
+//     "inst"  v is a class_definition (n is an instance of v or of a workspace subclass)
+//     "mod"   v is a module node
+//     "super" v is a class_definition (n is `super()` inside a method of v)
+//   vopen(n): n may also evaluate to something no static name denotes (a parameter, a dict lookup, an external
+//   library's return). pv is the "known" side and vopen the "unknown" side of one three-valued answer:
+//     call_target(c, f) rows and no call_open(c)  -> c calls exactly those f (definite)
+//     call_open(c)                                -> c may call anything else too (unknown)
+//     neither                                     -> c calls no workspace function (e.g. `len(x)`)
+//   Rules must not treat a missing call_target as "calls nothing" when call_open holds.
 //
-// Three-valued, as the program answers:
-//   call_target(c, f) rows and no call_open(c)  -> c calls exactly those f (definite)
-//   call_open(c)                                -> c may call something else too (unknown)
-//   neither                                     -> c calls no workspace function (e.g. `len(x)`)
-// Rules must not treat a missing call_target as "calls nothing" when call_open holds.
+// Python semantics covered: LEGB lookup and imports (python/names), later unconditional bindings shadowing
+// earlier ones, decorators (transparent, workspace decorators through their returns, others unknown), classes and
+// inheritance (attribute lookup through bases, constructors to `__init__`, instances to `__call__`), late-bound
+// self/cls (the class and every workspace subclass), `super()`, and functions flowing through assignments,
+// returns and a function's returned parameter. Not covered: data flow through containers, attributes set outside
+// classes, getattr/setattr, metaclasses; those surface as vopen/call_open rather than as wrong targets.
 //
-// Types, at the positions whose value the program models (callees and receivers, assigned, returned and
-// decorating values, arguments and bases):
-//   type_of(n, t)        n may hold a value whose class is t: a workspace class's qualified name ("pkg.models.Base"),
-//                        or a builtin's name ("str", "None", "module", "type")
-//   type_open(n)         n may also hold a value of a class not listed
-//   proven_type(n, t)    `isinstance(n, t)` is true
-//   possible_type(n, t)  `isinstance(n, t)` may be true, for a listed class
-//   possible_open(n)     possible_type is incomplete
-// `possible: t` is possible_type(n, t) or possible_open(n).
-//
-// Interface: call_target, call_open, calls, calls_open, reach, the type relations above, and the syntax helpers
-// call, callee, call_arg, posarg, owner, awaited.
+// Layering: names (look, live_def, live_asg, qn, attr_of, param, bound_in, miss, builtin_ref, ...) and imports
+// (via names: ibind, ifrom). Internal: everything up to "==== interface", except call_target/call_open/calls,
+// which rules also use. Interface: call, call_arg, reach, awaited.
+// Recursion: pv, bv, qv, found, need_attr are mutually recursive (values flow through bindings, calls and
+// attributes). vopen/bopen/attr_open are mutually recursive and sit above pv (they negate pv, never the reverse).
 #include "python/names.rr"
+#include "python/imports.rr"
 // fdef (a def node) comes from python/names.
 
-// ---- the program's answers ----------------------------------------------------------------------------------------
-.decl typing_calls__call_target(c_path: symbol, c_kind: symbol, c_start: number, c_end: number,
-    f_path: symbol, f_kind: symbol, f_start: number, f_end: number)
-.decl typing_calls__call_open(c_path: symbol, c_kind: symbol, c_start: number, c_end: number)
-.decl typing_calls__type_of(n_path: symbol, n_kind: symbol, n_start: number, n_end: number, t: symbol)
-.decl typing_calls__type_open(n_path: symbol, n_kind: symbol, n_start: number, n_end: number)
-.decl typing_calls__proven_type(n_path: symbol, n_kind: symbol, n_start: number, n_end: number, t: symbol)
-.decl typing_calls__possible_type(n_path: symbol, n_kind: symbol, n_start: number, n_end: number, t: symbol)
-.decl typing_calls__possible_open(n_path: symbol, n_kind: symbol, n_start: number, n_end: number)
+// ---- decorators ---------------------------------------------------------------------------------------------------
+// dexpr(f, e): e is a decorator expression on definition f (`@cache` gives the name node, `@route("/")` the call).
+.decl dexpr(f: node, e: node)
+dexpr(f, e) :- kind(dd, "decorated_definition"), field(dd, "definition", f), child(dd, dc, _), kind(dc, "decorator"), child(dc, e, 0).
+// transparent_q(q): decorators known to return the function (or class) they wrap, so the name keeps pointing at
+// the definition itself.
+.decl transparent_q(q: symbol)
+transparent_q("abc.abstractmethod"). transparent_q("typing.final"). transparent_q("typing.override").
+transparent_q("typing.no_type_check"). transparent_q("typing_extensions.final"). transparent_q("typing_extensions.override").
+transparent_q("functools.wraps"). transparent_q("functools.total_ordering"). transparent_q("dataclasses.dataclass").
+// transparent(e): decorator e is one of those, written bare (`@final`) or called (`@dataclass(frozen=True)`).
+// staticmethod/classmethod are transparent for call resolution; their effect on self/cls is handled in bv.
+.decl transparent(e: node)
+transparent(e) :- qn(e, q), transparent_q(q).
+transparent(e) :- kind(e, "call"), field(e, "function", g), qn(g, q), transparent_q(q).
+transparent(e) :- builtin_ref(e, "staticmethod").
+transparent(e) :- builtin_ref(e, "classmethod").
+// opaque_dec(f, e): decorator e may replace f with something else (e.g. `@functools.cache`, `@app.route`).
+.decl opaque_dec(f: node, e: node)
+opaque_dec(f, e) :- dexpr(f, e), !transparent(e).
+.decl isstatic(f: node)
+isstatic(f) :- dexpr(f, e), builtin_ref(e, "staticmethod").
+.decl classmeth(f: node)
+classmeth(f) :- dexpr(f, e), builtin_ref(e, "classmethod").
+// nopaque(f, k): f has k opaque decorators (k >= 1).
+.decl nopaque(f: node, k: number)
+nopaque(f, k) :- opaque_dec(f, _), k = count : { opaque_dec(f, _) }.
+// The one decorator that replaces the definition, when there is exactly one.
+// With one opaque decorator d, `@d def f` is `f = d(f)`; if d is a workspace function, we can follow its return.
+// With two or more, f's value is left unknown (bopen).
+.decl dec1(f: node, e: node)
+dec1(f, e) :- nopaque(f, 1), opaque_dec(f, e).
 
+// ---- functions: returns, returned parameters ----------------------------------------------------------------------
+// isasync / isgen: calling an async function or generator returns a coroutine / generator, not its return value.
+// (fscope comes from python/names: a `yield` in a nested lambda does not make the outer def a generator, but a
+// nested def stops the search there, since nearest stops at the first fscope.)
+.decl isasync(f: node)
+isasync(f) :- op(f, "async").
+.decl isgen(f: node)
+isgen(f) :- kind(y, "yield"), nearest(y, f, fscope), kind(f, "function_definition").
+// retval(f, r): `return r` in function f (not in a nested function).
+.decl retval(f: node, r: node)
+retval(f, r) :- kind(rs, "return_statement"), nearest(rs, f, fscope), kind(f, "function_definition"), child(rs, r, 0).
+// A return of the function's own parameter i (`return func`): the call's value is its i-th argument's.
+// This is what lets a decorator `def deco(fn): ...; return fn` be followed: `@deco def g` still points at g.
+.decl retparam(f: node, i: number, r: node)
+retparam(f, i, r) :- retval(f, r), look(r, x, f), param(f, x, i).
+// posarg(c, i, a): a is the argument at index i of call c, when it is positional (not `k=v`, `*xs`, `**kw`).
+// The index counts all argument children but comments, so it matches param's index only while no keyword or splat
+// comes first. `f(  # why\n x, y)` gives (c, 0, x) and (c, 1, y). security.rr's pos_arg is CPython's call.args.
+.decl posarg(c: node, i: number, a: node)
+posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, k), !kind(a, "keyword_argument"),
+    !kind(a, "list_splat"), !kind(a, "dictionary_splat"), !kind(a, "comment"),
+    i = count : { arg_child_at(al, j), j < k }.
+// arg_child_at(l, k): child k of argument list l is not a comment (posarg counts these).
+.decl arg_child_at(l: node, k: number)
+arg_child_at(l, k) :- kind(l, "argument_list"), child(l, b, k), !kind(b, "comment").
+// method_of(f, c): f is defined directly in the body of class c.
+.decl method_of(f: node, c: node)
+method_of(f, c) :- kind(f, "function_definition"), nearest(f, c, scope), kind(c, "class_definition").
+
+// ---- classes ------------------------------------------------------------------------------------------------------
+// basex(c, e): e is a base-class expression of c (keyword arguments like `metaclass=M` excluded).
+.decl basex(c: node, e: node)
+basex(c, e) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument").
+// base(c, b): c's base expression points to workspace class b. Node-level, unlike names' class_base (by name).
+.decl base(c: node, b: node)
+base(c, b) :- basex(c, e), pv(e, "cls", b).
+// The class and every workspace subclass: what a late-bound `self` or `cls` may be.
+// sub(c, s): s is c or a (transitive) subclass of c. `self.run()` in Base.m may run Child.run if Child overrides it.
+.decl sub(c: node, s: node)
+sub(c, c) :- kind(c, "class_definition").
+sub(c, s) :- sub(c, m), base(s, m).
+// Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance), on demand.
+// need_attr(c, a): someone looks up attribute a on class c (or an instance of it), so we search c's hierarchy for
+// a. This keeps found small: it is only computed for (class, attribute) pairs actually used.
+// Sources: `C.a`, `obj.a` where obj is an instance, `super().a` (search starts at the bases), `C()` (needs
+// `__init__`), `obj()` (needs `__call__`); then the search climbs to bases while the class does not bind a.
+.decl need_attr(c: node, a: symbol)
+need_attr(c, a) :- attr_of(n, o, a), pv(o, "cls", c).
+need_attr(c, a) :- attr_of(n, o, a), pv(o, "inst", c).
+need_attr(b, a) :- attr_of(n, o, a), pv(o, "super", c), base(c, b).
+need_attr(c, "__init__") :- callee(k, e), pv(e, "cls", c).
+need_attr(c, "__call__") :- callee(k, e), pv(e, "inst", c).
+need_attr(b, a) :- need_attr(c, a), !bound_in(c, a), base(c, b).
+// found(c, a, at): looking up a on c finds it bound in the class body of `at` (c itself or the nearest ancestor that
+// binds a, on each base path). With multiple inheritance every base path's hit is kept: a may-approximation of
+// the MRO rather than C3 linearisation.
+.decl found(c: node, a: symbol, at: node)
+found(c, a, c) :- need_attr(c, a), bound_in(c, a).
+found(c, a, x) :- need_attr(c, a), !bound_in(c, a), base(c, b), found(b, a, x).
+// anc(c, b): b is c or a workspace ancestor of c.
+.decl anc(c: node, b: node)
+anc(c, c) :- kind(c, "class_definition").
+anc(c, b) :- anc(c, m), base(m, b).
+
+// ---- values ---------------------------------------------------------------------------------------------------
+// callee(c, e): e is the function expression of call c (`f` in `f(x)`, `obj.m` in `obj.m()`).
+.decl callee(c: node, e: node)
+callee(c, e) :- kind(c, "call"), field(c, "function", e).
+// What a workspace qualified name denotes: a module, or a module-level binding of one.
+// qv(q, k, v): "pkg.mod" is the module; "pkg.mod.f" is whatever mod's top-level f holds. This is how values cross
+// files: `from pkg.mod import f` gives ibind "pkg.mod.f", and qv looks f up in that module.
+.decl qv(q: symbol, k: symbol, v: node)
+qv(q, "mod", m) :- modname(m, q).
+qv(@dot(q, x), k, v) :- modname(m, q), bv(m, x, k, v).
+// isqmod(q): q names a workspace module.
+.decl isqmod(q: symbol)
+isqmod(q) :- modname(_, q).
+
+// Binding values: what name x of scope s may hold.
+// bv(s, x, k, v): the union of the live bindings of x in s (shadowed top-level bindings were dropped by live_*).
+.decl bv(s: node, x: symbol, k: symbol, v: node)
+bv(s, x, "fn", f) :- live_def(s, x, f), kind(f, "function_definition"), !opaque_dec(f, _).   // plain def
+bv(s, x, "cls", c) :- live_def(s, x, c), kind(c, "class_definition").
+// One workspace decorator d: if d returns its first parameter (`return fn`), x still holds f itself ...
+bv(s, x, "fn", f) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), retparam(g, 0, _).
+// ... and in any case x holds whatever d's returns may hold (e.g. an inner `wrapper` function).
+bv(s, x, k, v) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), retval(g, r), pv(r, k, v).
+bv(s, x, k, v) :- live_asg(s, x, r), pv(r, k, v).                     // `x = expr`
+bv(s, x, k, v) :- ibind(s, x, q), qv(q, k, v).                        // `from m import x`, `import m`
+// `self` (the first parameter of a method that is not static) and `cls` (of a class method) are late bound.
+// Late bound: in `class A: def m(self): self.n()`, self may be an A or any workspace subclass of A.
+bv(f, x, "inst", s) :- method_of(f, c), param(f, x, 0), !isstatic(f), !classmeth(f), sub(c, s).
+bv(f, x, "cls", s) :- method_of(f, c), param(f, x, 0), classmeth(f), sub(c, s).
+
+// pv(n, k, v): the points-to relation (see the header). One rule per expression form.
+.decl pv(n: node, k: symbol, v: node)
+pv(n, k, v) :- look(n, x, s), bv(s, x, k, v).            // a name: its binding's values (LEGB)
+pv(n, k, v) :- qn(n, q), qv(q, k, v).                      // `pkg.mod.f` through an imported module
+// `o.a` on a class, an instance, or super(): find a in the hierarchy, then take the value bound there.
+pv(n, k, v) :- attr_of(n, o, a), pv(o, "cls", c), found(c, a, at), bv(at, a, k, v).
+pv(n, k, v) :- attr_of(n, o, a), pv(o, "inst", c), found(c, a, at), bv(at, a, k, v).
+pv(n, k, v) :- attr_of(n, o, a), pv(o, "super", c), base(c, b), found(b, a, at), bv(at, a, k, v).
+// Expressions that pass a value through: `(e)`, `a if c else b` (children 0 and 2; 1 is the condition),
+// `a or b` / `a and b` (either side), `x = e` and `(x := e)` used as expressions.
+pv(n, k, v) :- kind(n, "parenthesized_expression"), child(n, c, 0), pv(c, k, v).
+pv(n, k, v) :- kind(n, "conditional_expression"), child(n, c, 0), pv(c, k, v).
+pv(n, k, v) :- kind(n, "conditional_expression"), child(n, c, 2), pv(c, k, v).
+pv(n, k, v) :- kind(n, "boolean_operator"), field(n, "left", c), pv(c, k, v).
+pv(n, k, v) :- kind(n, "boolean_operator"), field(n, "right", c), pv(c, k, v).
+pv(n, k, v) :- kind(n, "assignment"), field(n, "right", c), pv(c, k, v).
+pv(n, k, v) :- kind(n, "named_expression"), field(n, "value", c), pv(c, k, v).
+// Calls: a class makes an instance; a function returns what its returns hold, or the argument it returns.
+pv(c, "inst", k) :- callee(c, e), pv(e, "cls", k).
+pv(c, k, v) :- callee(c, e), pv(e, "fn", f), !isasync(f), !isgen(f), retval(f, r), pv(r, k, v).
+// Returned-parameter flow is only followed for plain functions: for a method, self shifts argument positions.
+pv(c, k, v) :- callee(c, e), pv(e, "fn", f), !method_of(f, _), retparam(f, i, _), posarg(c, i, a), pv(a, k, v).
+// `super()` (zero-argument form) inside a method of class k.
+pv(c, "super", k) :- callee(c, e), builtin_ref(e, "super"), nearest(c, f, fdef), method_of(f, k).
+
+// ---- unknown values -------------------------------------------------------------------------------------------
+// Positions whose value is read: what `vopen` is asked about.
+// vpos limits vopen to expressions whose value matters (callees, receivers, assigned and returned values,
+// decorators, bases, arguments) and the sub-expressions their value flows through, instead of every node.
+.decl vpos(n: node)
+vpos(e) :- callee(_, e).
+vpos(o) :- attr_of(_, o, _).
+vpos(r) :- asg(_, _, r, _).
+vpos(r) :- retval(_, r).
+vpos(e) :- dexpr(_, e).
+vpos(e) :- basex(_, e).
+vpos(a) :- posarg(_, _, a).
+vpos(c) :- vpos(n), kind(n, "parenthesized_expression"), child(n, c, 0).
+vpos(c) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 0).
+vpos(c) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 2).
+vpos(c) :- vpos(n), kind(n, "boolean_operator"), child(n, c, _).
+vpos(c) :- vpos(n), kind(n, "assignment"), field(n, "right", c).
+vpos(c) :- vpos(n), kind(n, "named_expression"), field(n, "value", c).
+// tracked(k): expression kinds whose value pv/vopen fully account for. Any other kind (subscript, binary operator,
+// lambda, await, ...) is unknown by the first vopen rule.
+.decl tracked(k: symbol)
+tracked("identifier"). tracked("attribute"). tracked("call"). tracked("parenthesized_expression"). tracked("conditional_expression").
+tracked("boolean_operator"). tracked("assignment"). tracked("named_expression").
+// Values that are no workspace callable and whose methods are no workspace definition: literals and operators on them.
+// (Calling `"x".join(...)` or `[].append(...)` can never run workspace code, so these are "known: nothing".)
+tracked("integer"). tracked("float"). tracked("string"). tracked("concatenated_string"). tracked("true"). tracked("false").
+tracked("none"). tracked("list"). tracked("dictionary"). tracked("set"). tracked("tuple"). tracked("list_comprehension").
+tracked("dictionary_comprehension"). tracked("set_comprehension"). tracked("comparison_operator"). tracked("not_operator").
+// iattr(c, a): somewhere `obj.a = ...` is assigned with obj an instance or the class c, e.g. `self.handler = h`.
+// Such attributes are set outside the class body, so their values are not tracked (attr_open).
+.decl iattr(c: node, a: symbol)
+iattr(c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "inst", c).
+iattr(c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "cls", c).
+// A base that is an external class (a qualified name the workspace does not define, or a builtin): what it holds is
+// no workspace definition. Any other base that is not a workspace class is unknown.
+// extb(e): base expression e is external, e.g. `class V(django.views.View)` or `class E(Exception)`.
+.decl extb(e: node)
+extb(e) :- basex(_, e), qn(e, q), !qknown(q).
+extb(e) :- basex(_, e), builtin_ref(e, _).
+// base_open(c): some base of c is unknown, e.g. `class C(make_base())` or a base from an unresolved import.
+.decl base_open(c: node)
+base_open(c) :- basex(c, e), vopen(e).
+base_open(c) :- basex(c, e), !pv(e, "cls", _), !extb(e).
+// attr_open(c, a): looking up a on c may give something we do not know.
+// Rule 1: it is found, but bound openly there (e.g. `handler = make()` in the class body).
+// Rule 2: some ancestor has an unknown base, which might define a.
+// Rule 3: some ancestor's instances get a assigned dynamically (iattr).
+.decl attr_open(c: node, a: symbol)
+attr_open(c, a) :- found(c, a, at), bopen(at, a).
+attr_open(c, a) :- need_attr(c, a), anc(c, b), base_open(b).
+attr_open(c, a) :- need_attr(c, a), anc(c, b), iattr(b, a).
+// Neither bound by a workspace class nor reachable through an external base: set dynamically, or an AttributeError.
+// `__init__`/`__call__` are exempt: a class without them falls back to object's, which runs no workspace code.
+attr_open(c, a) :- need_attr(c, a), !found(c, a, _), !ext_base_up(c), a != "__init__", a != "__call__".
+// An attribute an external base supplies: calling it runs no workspace definition, but as a value (a receiver, an
+// assigned value) it may be anything, a workspace class included (`cls.__class__`).
+// ext_attr(n): `o.a` where a is not found in workspace classes and some ancestor has an external base.
+.decl ext_attr(n: node)
+ext_attr(n) :- attr_of(n, o, a), pv(o, "cls", c), need_attr(c, a), !found(c, a, _), ext_base_up(c).
+ext_attr(n) :- attr_of(n, o, a), pv(o, "inst", c), need_attr(c, a), !found(c, a, _), ext_base_up(c).
+ext_attr(n) :- attr_of(n, o, a), pv(o, "super", k), base(k, c), need_attr(c, a), !found(c, a, _), ext_base_up(c).
+// ext_base_up(c): c or one of its workspace ancestors lists an external base.
+.decl ext_base_up(c: node)
+ext_base_up(c) :- anc(c, b), basex(b, e), extb(e).
+// bopen(s, x): name x of scope s may hold an unknown value. One rule per reason:
+.decl bopen(s: node, x: symbol)
+bopen(s, x) :- otgt(s, x).                                     // loop/with/except/pattern/augmented targets
+bopen(f, x) :- param(f, x, i), !selfparam(f, i).            // parameters (except self/cls) take any argument
+bopen(s, x) :- live_asg(s, x, r), vopen(r).                  // `x = <unknown>`
+// `from m import x` where m is a workspace module whose x is open, or which binds no x we can see (e.g. via a
+// star import or a submodule).
+bopen(s, x) :- ifrom(s, x, m, _), isqmod(m), ibind(s, x, q), qopen(q).
+bopen(s, x) :- ifrom(s, x, m, _), isqmod(m), ibind(s, x, q), !qknown(q).
+// Decorated definitions: two or more opaque decorators; or one that is not a workspace function; or one that is,
+// but whose return is unknown (and is not just its parameter), or that has no return at all.
+bopen(s, x) :- live_def(s, x, f), opaque_dec(f, _), !dec1(f, _).
+bopen(s, x) :- live_def(s, x, f), dec1(f, e), !pv(e, "fn", _).
+bopen(s, x) :- live_def(s, x, f), dec1(f, e), vopen(e).
+bopen(s, x) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), retval(g, r), !retparam(g, 0, r), vopen(r).
+bopen(s, x) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), !retval(g, _).
+// A property's value is what its getter returns.
+// The getter's return is not followed, so a property attribute is open.
+bopen(s, x) :- live_def(s, x, f), dexpr(f, e), builtin_ref(e, "property").
+// selfparam(f, i): parameter i of f is the late-bound self/cls, whose values bv supplies.
+.decl selfparam(f: node, i: number)
+selfparam(f, 0) :- method_of(f, _), !isstatic(f).
+// A workspace module's qualified name that it binds to nothing static (a star import may bind it), or binds openly.
+// qopen(q): "m.x" where workspace module m binds x openly.
+.decl qopen(q: symbol)
+qopen(@dot(q, x)) :- modname(m, q), bopen(m, x).
+// qknown(q): q has at least one known value (a workspace module, or a module-level binding with a known value).
+.decl qknown(q: symbol)
+qknown(q) :- qv(q, _, _).
+
+// vopen(n): expression n (at a vpos) may evaluate to an unknown value. Mirrors pv rule for rule.
+.decl vopen(n: node)
+vopen(n) :- vpos(n), kind(n, k), !tracked(k).                       // an untracked expression kind
+vopen(n) :- vpos(n), look(n, x, s), bopen(s, x).                  // a name bound openly
+vopen(n) :- vpos(n), miss(n, x), !builtin_ref(n, x).               // a name bound nowhere we can see
+vopen(n) :- vpos(n), qn(n, q), qopen(q).                            // a qualified name bound openly
+// `m.x` with m a workspace module that binds no known x (e.g. a submodule attribute or a star-imported name).
+vopen(n) :- vpos(n), attr_of(n, o, _), qn(o, q), isqmod(q), qn(n, q2), !qknown(q2).
+vopen(n) :- vpos(n), attr_of(n, o, _), vopen(o).                    // attribute of an unknown object
+vopen(n) :- vpos(n), attr_of(n, o, _), kind(o, k), !tracked(k).   // attribute of an untracked expression
+// Attribute lookups that attr_open says are unknown, on a class, instance or super().
+vopen(n) :- vpos(n), attr_of(n, o, a), pv(o, "cls", c), attr_open(c, a).
+vopen(n) :- vpos(n), attr_of(n, o, a), pv(o, "inst", c), attr_open(c, a).
+vopen(n) :- vpos(n), attr_of(n, o, a), pv(o, "super", c), base(c, b), attr_open(b, a).
+vopen(n) :- vpos(n), attr_of(n, o, a), pv(o, "super", c), base_open(c).
+vopen(n) :- vpos(n), attr_of(n, o, _), pv(o, "fn", _).              // function attributes (`f.cache_clear`)
+vopen(n) :- vpos(n), ext_attr(n), !callee(_, n).                     // external attribute used as a value
+// Pass-through expressions: unknown if the sub-expression is (same shapes as pv above).
+vopen(n) :- vpos(n), kind(n, "parenthesized_expression"), child(n, c, 0), vopen(c).
+vopen(n) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 0), vopen(c).
+vopen(n) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 2), vopen(c).
+vopen(n) :- vpos(n), kind(n, "boolean_operator"), child(n, c, _), vopen(c).
+vopen(n) :- vpos(n), kind(n, "assignment"), field(n, "right", c), vopen(c).
+vopen(n) :- vpos(n), kind(n, "named_expression"), field(n, "value", c), vopen(c).
+// A call's value: unknown when the callee is, when no workspace definition is called (an external or builtin
+// callable), when a workspace function's return is, and for coroutines and generators.
+vopen(c) :- vpos(c), callee(c, e), vopen(e).
+vopen(c) :- vpos(c), callee(c, e), !pv(e, _, _), !pv(c, "super", _).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), isasync(f).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), isgen(f).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), retval(f, r), !retparam(f, _, r), vopen(r).
+// The function returns its parameter i: unknown if the call passes no positional argument i, or an unknown one.
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), retparam(f, i, _), !posarg(c, i, _).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), retparam(f, i, _), posarg(c, i, a), vopen(a).
+// Methods returning a parameter: pv does not follow these (argument shift), so the value is unknown.
+vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), method_of(f, _), retparam(f, _, _).
+vopen(c) :- vpos(c), callee(c, e), pv(e, "inst", _).                // `obj()`: __call__'s return not followed
+vopen(c) :- vpos(c), callee(c, e), pv(e, "mod", _).                 // calling a module (an error, or dynamic)
+
+// ---- call targets ---------------------------------------------------------------------------------------------
+// call_target(c, f): call c may run workspace function f.
+// `f()` runs f; `C()` runs the `__init__` found on C's hierarchy; `obj()` runs its class's `__call__`.
 .decl call_target(c: node, f: node)
-call_target(c, f) :- typing_calls__call_target(p, k, s, e, q, j, t, u), doc(d, p, _), node(d, c, k, s, e), doc(g, q, _),
-    node(g, f, j, t, u).
+call_target(c, f) :- callee(c, e), pv(e, "fn", f).
+call_target(c, f) :- callee(c, e), pv(e, "cls", k), found(k, "__init__", at), bv(at, "__init__", "fn", f).
+call_target(c, f) :- callee(c, e), pv(e, "inst", k), found(k, "__call__", at), bv(at, "__call__", "fn", f).
+// call_open(c): c may also run something not in call_target (the unknown side). Note an external callee that is
+// known to be external (e.g. `len`, `os.path.join`) is not open: it is known to run no workspace code.
 .decl call_open(c: node)
-call_open(c) :- typing_calls__call_open(p, k, s, e), doc(d, p, _), node(d, c, k, s, e).
-.decl type_of(n: node, t: symbol)
-type_of(n, t) :- typing_calls__type_of(p, k, s, e, t), doc(d, p, _), node(d, n, k, s, e).
-.decl type_open(n: node)
-type_open(n) :- typing_calls__type_open(p, k, s, e), doc(d, p, _), node(d, n, k, s, e).
-.decl proven_type(n: node, t: symbol)
-proven_type(n, t) :- typing_calls__proven_type(p, k, s, e, t), doc(d, p, _), node(d, n, k, s, e).
-.decl possible_type(n: node, t: symbol)
-possible_type(n, t) :- typing_calls__possible_type(p, k, s, e, t), doc(d, p, _), node(d, n, k, s, e).
-.decl possible_open(n: node)
-possible_open(n) :- typing_calls__possible_open(p, k, s, e), doc(d, p, _), node(d, n, k, s, e).
+call_open(c) :- callee(c, e), vopen(e).
+call_open(c) :- callee(c, e), pv(e, "cls", k), attr_open(k, "__init__").
+call_open(c) :- callee(c, e), pv(e, "inst", k), attr_open(k, "__call__").
+call_open(c) :- callee(c, e), pv(e, "mod", _).
+call_open(c) :- callee(c, e), pv(e, "super", _).
+// Published as metrics (not findings), for measuring resolution coverage.
+.output call_target, call_open, base
 
 // ---- call chains ----------------------------------------------------------------------------------------------
-// owner(c, f): f is the nearest enclosing def of call c (a lambda's or a nested class body's calls are the
-// enclosing function's).
+// The function whose body holds a call (a lambda's or a nested class body's calls are the enclosing function's).
+// owner(c, f): f is the nearest enclosing def of call c (fdef here is function_definition only).
 .decl owner(c: node, f: node)
 owner(c, f) :- kind(c, "call"), nearest(c, f, fdef).
 // calls(f, g): the call graph edge "f may call g".
@@ -64,24 +346,13 @@ calls(f, g) :- owner(c, f), call_target(c, g).
 // calls_open(f): f makes at least one call whose target is unknown, so its out-edges are incomplete.
 .decl calls_open(f: node)
 calls_open(f) :- owner(c, f), call_open(c).
-// reach(f, g): f may call g, directly or through a chain of calls. Only the known side: a chain through a
-// calls_open function may reach more.
-.decl reach(f: node, g: node)
-reach(f, g) :- calls(f, g).
-reach(f, h) :- reach(f, g), calls(g, h).
+// `ASYNC_BLOCKING`: an async function's call, outside `await`, of a sync function that reaches a blocking call
+// through sync functions only (the native `calls` term with `through: sync`).
 
-// ---- syntax --------------------------------------------------------------------------------------------------------
+// ==== interface ===================================================================================================
 // call(c): c is a call expression.
 .decl call(c: node)
 call(c) :- kind(c, "call").
-// callee(c, e): e is the function expression of call c (`f` in `f(x)`, `obj.m` in `obj.m()`).
-.decl callee(c: node, e: node)
-callee(c, e) :- kind(c, "call"), field(c, "function", e).
-// posarg(c, i, a): a is the argument at child index i of call c, when it is positional (not `k=v`, `*xs`, `**kw`).
-// The index counts all argument children, so it matches a parameter's index only while no keyword or splat comes first.
-.decl posarg(c: node, i: number, a: node)
-posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, i), !kind(a, "keyword_argument"),
-    !kind(a, "list_splat"), !kind(a, "dictionary_splat").
 // call_arg(c, i, keyword, v): an argument of call c. Positional: i is its index and keyword is "".
 // Keyword `k=v`: i is -1 and keyword is "k". Splats (`*xs`, `**kw`) have no row.
 // e.g. `open(p, mode="w")` gives (c, 0, "", <p>) and (c, -1, "mode", <"w">).
@@ -89,6 +360,11 @@ posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argumen
 call_arg(c, i, "", a) :- posarg(c, i, a).
 call_arg(c, -1, k, v) :- kind(c, "call"), field(c, "arguments", al), child(al, ka, _),
     kind(ka, "keyword_argument"), field(ka, "name", n), text(n, k), field(ka, "value", v).
+// reach(f, g): f may call g, directly or through a chain of calls (transitive closure of calls; recursive).
+// Only the known side: a chain through a calls_open function may reach more.
+.decl reach(f: node, g: node)
+reach(f, g) :- calls(f, g).
+reach(f, h) :- reach(f, g), calls(g, h).
 // awaited(c): call c is the operand of `await` (`await fetch()`), so a coroutine it returns is consumed.
 .decl awaited(c: node)
 awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").

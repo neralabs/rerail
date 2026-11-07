@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The number of rounds after round 0 the typing programs declare (I11 adopted k = 2; 4 since 2026-11-06, decision
 /// 0047: the CPython runtime oracle's package re-export needs a third file crossing, and its rounds converge after
-/// round 4). Since decision 0052 a program states it (`PRAGMA`); this is the value they state.
+/// round 4). Since decision 0056 a program states it (`PRAGMA`); this is the value they state.
 pub(crate) const K: usize = 4;
 
 /// A program's flag for the pending round (O41, decision 0047): a program that declares the fact `unconverged(0)`
@@ -42,7 +42,7 @@ pub(crate) const K: usize = 4;
 /// that read `unconverged(1)` make unknown what a missing row would otherwise decide.
 pub(crate) const UNCONVERGED: &str = "unconverged";
 
-/// The pragma by which a program asks for bounded rounds (decision 0052): `.pragma "cross-rounds" "4"`. A typing
+/// The pragma by which a program asks for bounded rounds (decision 0056): `.pragma "cross-rounds" "4"`. A typing
 /// program declares it: its cross-file recursion is over interface summaries, cut at `k` file crossings, with the
 /// pending round when it also declares `unconverged`. A program that does not declare it (a rule) has its
 /// cross-file part run as one fixpoint, which no chain length cuts.

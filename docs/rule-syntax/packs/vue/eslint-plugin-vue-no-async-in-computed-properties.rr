@@ -1,0 +1,82 @@
+.policy "eslint-plugin-vue-no-async-in-computed-properties" revision 2
+.description "Keep Vue computed properties synchronous, with no async getter, await, promises, nextTick or timers; a computed must return its value right away."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+//   vcomputed(o, x, f), vcomputed_fn(c, f), vcomp(o), vscript(p, setup), static_prop(n, o, x), call_arg(c, a, i)
+
+// eslint-plugin-vue's no-async-in-computed-properties: in a computed getter's own code (not a nested function's),
+//   async getters         computed: { async a() {} }              computed(async () => 1)
+//   await                 await load()
+//   new Promise(…)
+//   promise chains        p.then(f), x.catch(f), x.finally(f), Promise.all / race / resolve / … (option
+//                         ignoredObjectNames: chains whose root name is listed are left alone)
+//   nextTick              this.$nextTick(f), Vue.nextTick(f)
+//   timers                setTimeout(f), window.setInterval(f), setImmediate(f), requestAnimationFrame(f)
+// Options API getters are checked in a component; computed() getters (imported from Vue) in <script setup>, or in a
+// component when the file has none.
+.violation async_computed(at: node, msg: symbol) code "vue/no-async-in-computed-properties" "{msg}"
+    suppress eslint "vue/no-async-in-computed-properties"
+async_computed(at, m) :- getter(f, x), op(f, "async"), report_at(f, at), says("async", x, m).
+async_computed(n, m) :- getter(f, x), action(n, w), nearest(n, f, vfn_kind), says(w, x, m).
+
+// getter(f, x): x is the computed's name, "" for a computed() getter.
+.decl getter(f: node, x: symbol)
+getter(f, x) :- vcomputed(_, x, f), docof(f, d), !vsetup_doc(d).
+getter(g, "") :- vcomputed_fn(_, g), vin_setup(g).
+getter(g, "") :- vcomputed_fn(_, g), docof(g, d), !vsetup_doc(d), vcomp(o), within(g, o).
+.decl report_at(f: node, at: node)  // a method's FunctionExpression starts at its parameters
+report_at(f, f) :- getter(f, _), !kind(f, "method_definition").
+report_at(f, p) :- getter(f, _), kind(f, "method_definition"), field(f, "parameters", p).
+
+// action(n, w): n is an asynchronous action of kind w.
+.decl action(n: node, w: symbol)
+action(n, "await") :- kind(n, "await_expression").
+action(n, "new") :- kind(n, "new_expression"), field(n, "constructor", c), kind(c, "identifier"), text(c, "Promise").
+action(c, "promise") :- callee_member(c, m, x), (chain_method(x) ; static_prop(m, o, x), kind(o, "identifier"),
+    text(o, "Promise"), promise_method(x)), !ignored_root(m).
+action(c, "promise") :- callee_member(c, m, x), next_tick(m, x).
+action(c, "timed") :- kind(c, "call_expression"), field(c, "function", w), deparen(w, f), timer(f), call_arg(c, _, 0).
+.decl callee_member(c: node, m: node, x: symbol)
+callee_member(c, m, x) :- kind(c, "call_expression"), field(c, "function", w), deparen(w, m), static_prop(m, _, x).
+.decl chain_method(x: symbol)
+chain_method("then"). chain_method("catch"). chain_method("finally").
+.decl promise_method(x: symbol)
+promise_method("all"). promise_method("allSettled"). promise_method("any"). promise_method("race").
+promise_method("reject"). promise_method("resolve"). promise_method("try"). promise_method("withResolvers").
+.decl next_tick(m: node, x: symbol)
+next_tick(m, "$nextTick") :- static_prop(m, o, "$nextTick"), kind(o, "this").
+next_tick(m, "nextTick") :- static_prop(m, o, "nextTick"), kind(o, "identifier"), text(o, "Vue").
+.decl timer(f: node)
+timer(f) :- kind(f, "identifier"), text(f, x), timed(x).
+timer(f) :- static_prop(f, o, x), kind(o, "identifier"), text(o, "window"), timed(x).
+.decl timed(x: symbol)
+timed("setTimeout"). timed("setInterval"). timed("setImmediate"). timed("requestAnimationFrame").
+// The root name of a chain: a.b().c.then → a; f().then → f.
+.decl ignored_root(m: node)
+ignored_root(m) :- option_item("ignoredObjectNames", _, y), root(m, r), text(r, y).
+.decl root(e: node, r: node)
+root(m, r) :- callee_member(_, m, _), field(m, "object", w), deparen(w, o), root_step(o, r).
+.decl root_step(e: node, r: node)
+root_step(e, e) :- kind(e, "identifier").
+root_step(e, r) :- (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", w),
+    deparen(w, o), root_step(o, r).
+root_step(e, r) :- kind(e, "call_expression"), field(e, "function", w), deparen(w, f), root_step(f, r).
+
+// says(w, x, m): the message for kind w in computed x ("" for a computed() getter).
+.decl says(w: symbol, x: symbol, m: symbol)
+says(w, x, cat(a, x, b)) :- getter(_, x), x != "", named(w, a, b).
+says(w, "", m) :- composition(w, m).
+.decl named(w: symbol, pre: symbol, post: symbol)
+named("async", "Make the \"", "\" computed getter synchronous and move the async work into a watcher or method.").
+named("await", "Remove this await from the \"", "\" computed and load the value in a watcher or method instead.").
+named("new", "Remove this Promise from the \"", "\" computed and resolve the value in a watcher or method instead.").
+named("promise", "Move the async work out of the \"", "\" computed into a watcher or method, and have the computed return a value synchronously.").
+named("timed", "Move this timer out of the \"", "\" computed into a watcher or method; the computed must return its value right away.").
+.decl composition(w: symbol, m: symbol)
+composition("async", "Make this computed getter synchronous and move the async work into a watcher or function.").
+composition("await", "Remove this await from the computed getter and load the value in a watcher or function instead.").
+composition("new", "Remove this Promise from the computed getter and resolve the value in a watcher or function instead.").
+composition("promise", "Move the async work out of this computed into a watcher or function, and have the getter return a value synchronously.").
+composition("timed", "Move this timer out of the computed getter into a watcher or function; the computed must return its value right away.").

@@ -150,7 +150,7 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 
   Every departure of the program is one the native resolver also has. The program departs nowhere the native
   resolver agrees. That is decision 0047's condition for the switch. The Jedi corpus comparison is a broader
-  accuracy check beside it, not a gate (O83).
+  accuracy check beside it, not a gate (O88).
 
 - **Rule-facing type relations, Python** (decision 0047, point 3; step 1). `calls.rr` exports them beside
   `call_target`/`call_open`. They are three-valued, as calls are, and read the program's points-to values:
@@ -199,7 +199,7 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 
   A bytes literal is told from a str by `strprefix`, which T's shape of the syntax facts already makes.
   The receiver fixture is small and written for this, so 44 of 44 says the relations are sound where they
-  answer, not how often they answer on a real corpus. What they leave out is O84.
+  answer, not how often they answer on a real corpus. What they leave out is O89.
 
   **For More-ergonomic-rule-syntax (information).** The relations above, with their columns, are what
   `core.rr` would declare for Python's `proven:`/`possible:`. They are in
@@ -244,9 +244,9 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   At the end: 75 files take 3.9 s, 172 files 37 s and 393 files (django without `contrib` and `conf`) 51.5 s,
   with a peak RSS of 552 MB. Before, 172 files did not finish in 110 s.
 
-  The program-side fixes work around engine costs, which are listed in O85.
+  The program-side fixes work around engine costs, which are listed in O90.
 
-- **`calls.rr` against Jedi on django** (O83; `typing::oracle_tests::benchmark_python_calls_program_corpus`,
+- **`calls.rr` against Jedi on django** (O88; `typing::oracle_tests::benchmark_python_calls_program_corpus`,
   ignored). Jedi 0.19.2 `goto` recorded over django's 907 files. The run took 112 s of CPU (debug, the test with
   its scoring) and a peak RSS of 815 MB.
 

@@ -1,0 +1,28 @@
+.policy "eslint-no-alert" revision 2
+.description "Avoid the browser's alert, confirm and prompt dialogs; they block the page and make for poor UI."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-globals.rr"
+//   free_ref(r, x), callee(c, f), static_prop(m, o, x), global_var(d, x), in_global_scope(n)
+
+// ESLint's no-alert: a call of alert, confirm or prompt, bare or through the global object. No options.
+//   alert("hi");              window.confirm("ok?");      globalThis["prompt"]("name");     → reported
+//   this.alert("hi");         only directly in a script's global scope
+//   function f(alert) { alert(1); }                        not reported: alert is a parameter here
+.decl dialog(x: symbol)
+dialog("alert"). dialog("confirm"). dialog("prompt").
+
+.violation no_alert(at: node, name: symbol) code "no-alert"
+    "Replace this {name}() call with an in-page dialog or message; browser dialogs block the page."
+    suppress eslint "no-alert"
+    suppress oxlint "no-alert"
+    suppress biome "lint/suspicious/noAlert"
+// A bare call that nothing in the file declares (ESLint's isShadowed: a variable with definitions).
+no_alert(c, x) :- callee(c, f), free_ref(f, x), dialog(x).
+// Through window (any unshadowed `window`), globalThis (a built-in), or a script's top-level this.
+no_alert(c, x) :- callee(c, m), static_prop(m, o, x), dialog(x), the_global(o, c).
+.decl the_global(o: node, c: node)
+the_global(o, c) :- callee(c, m), static_prop(m, o, _), free_ref(o, "window").
+the_global(o, c) :- callee(c, m), static_prop(m, o, _), free_ref(o, "globalThis"), docof(o, d), global_var(d, "globalThis").
+the_global(o, c) :- callee(c, m), static_prop(m, o, _), kind(o, "this"), in_global_scope(c).

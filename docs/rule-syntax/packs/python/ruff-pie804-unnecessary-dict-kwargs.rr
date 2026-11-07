@@ -1,0 +1,26 @@
+.policy "ruff-pie804-unnecessary-dict-kwargs" revision 2
+.description "Pass keyword arguments directly instead of unpacking a dict literal into a Python call."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PIE804 (flake8-pie): `f(**{…})` where the dict literal could be written as keywords: every key is a str
+// literal that is an identifier (not a keyword), or the dict is empty, or it is a single `**x` (pass `**x`).
+// Reported at the `**` argument.
+//   foo(**{"bar": True})       ← PIE804
+//   foo(**{})                  ← PIE804
+//   foo(**{**bar})             ← PIE804
+//   foo(**{"bar-foo": True})   not reported: not an identifier
+//   foo(**{**data, "a": 1})    not reported
+#include "python/bugbear.rr"
+
+.violation PIE804(at: node) code "PIE804" "Unnecessary `dict` kwargs"
+    suppress ruff "PIE804"
+PIE804(s) :- kw_dict(s, d), count : { child(d, e, _), !kind(e, "comment"), !kwarg_pair(e) } = 0.
+PIE804(s) :- kw_dict(s, d), count : { child(d, o, _), !kind(o, "comment") } = 1, child(d, e, _),
+    kind(e, "dictionary_splat").
+// kw_dict(s, d): argument s of a call is `**d`, d a dict display.
+.decl kw_dict(s: node, d: node)
+kw_dict(s, d) :- bb_arg(_, s), kind(s, "dictionary_splat"), child(s, v, 0), unparen(v, d), kind(d, "dictionary").
+.decl kwarg_pair(e: node)
+kwarg_pair(e) :- kind(e, "pair"), field(e, "key", k), plain_str(k, v), identifier(v).

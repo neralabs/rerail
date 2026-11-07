@@ -1,0 +1,46 @@
+.policy "sqlfluff-rf01-references-from" revision 2
+.description "Qualify SQL columns only with a table or alias named in the FROM clause of the query or an enclosing query."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's RF01 (references.from). In a SELECT, a qualified column whose qualifier is no table the query can
+// see: one of its own FROM clause or an enclosing query's (a correlated subquery, or a DELETE's table); the
+// finding is at the qualifier:
+//   SELECT * FROM my_tbl WHERE foo.bar > 0                            reported at foo
+//   SELECT t.a FROM my_tbl AS t,  SELECT my_tbl.a FROM my_tbl AS t    fine: alias or table name
+//   SELECT a FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.k = t.k)    fine: t is the outer query's
+//   select * from schema1.agent1 where schema2.agent1.x <> 'abc'      reported: another schema
+// sqlfluff matches names as written, without their quotes: b.bar does not find the alias B. Only SELECT queries
+// are checked: UPDATE … SET, ON CONFLICT … EXCLUDED.x and policies are not; nor are SQLite triggers' old and new,
+// SELECT … INTO, or a row value's field ((x).key).
+
+#include "sql/syntax.rr"
+
+.violation RF01(at: node, q: node) code "RF01" "Reference '{q}' refers to table/view not found in the FROM clause or found in ancestor statement."
+    suppress sqlfluff "RF01", "L026", "all", "core", "references", "references.from"
+RF01(q, q) :- qualified_ref(c, s, q), block_of(c, _), !op(c, "("), !select_into(c), !trigger_row(q),
+    ident_name(q, x), count : { visible(c, s, x) } = 0.
+
+// qualified_ref(c, s, q): c is q.col, or s.q.col with schema s (else s is unset()).
+.decl qualified_ref(c: node, s: node, q: node)
+qualified_ref(c, s, q) :- column_ref(c, q, _), kind(q, "identifier"), child(c, o, _), kind(o, "object_reference"),
+    (field(o, "schema", s) ; !field(o, "schema", _), unset(s)).
+qualified_ref(c, s, q) :- kind(c, "all_fields"), child(c, o, _), kind(o, "object_reference"), field(o, "name", q),
+    (field(o, "schema", s) ; !field(o, "schema", _), unset(s)).      // q.*
+// visible(c, s, x): a table in a query around c goes by x, in schema s when s is set.
+.decl visible(c: node, s: node, x: symbol)
+visible(c, s, x) :- qualified_ref(c, s, _), table_ref(t, o, n), ident_name(n, x), nearest(t, b, scope), within(c, b),
+    (unset(s) ; !field(o, "schema", _) ; field(o, "schema", ts), text(ts, y), text(s, y)).
+// table_ref(t, o, n): t brings a table into its query, under name n (its alias, or its table name: both work);
+// o is the object reference that names the table.
+.decl table_ref(t: node, o: node, n: node)
+table_ref(r, o, n) :- kind(r, "relation"), child(r, o, _), kind(o, "object_reference"), field(o, "name", n).
+table_ref(r, o, a) :- kind(r, "relation"), table_alias(r, a), (child(r, o, _), kind(o, "object_reference") ; unset(o)).
+table_ref(o, o, n) :- kind(o, "object_reference"), child(p, o, _), (kind(p, "from") ; kind(p, "create_policy")),
+    field(o, "name", n).                                     // DELETE FROM t, CREATE POLICY p ON t
+.decl scope(k: symbol)
+scope("statement"). scope("subquery"). scope("cte").
+.decl select_into(c: node)  // SELECT a.x INTO …
+select_into(c) :- inside(c, e, "select_expression"), next_sibling(e, k), kind(k, "keyword_into").
+.decl trigger_row(q: node)  // NEW.x and OLD.x in a trigger body
+trigger_row(q) :- inside(q, _, "create_trigger"), iglob("{new,old}", q).

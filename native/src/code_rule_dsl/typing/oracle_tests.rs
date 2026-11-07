@@ -491,7 +491,7 @@ rr_jedi_at(k, s, e) :- rr_jedi_cls(_, k), node(_, k, _, s, e).
 ";
 
 /// `calls.rr` against Jedi 0.19.2's `goto` over a Python corpus (`RERAIL_PYTHON_CALLS`, written by
-/// `fixtures/python/calls/generate_corpus.py`; O83). The program runs over `RERAIL_PYTHON_CALLS_ROOT`, a directory
+/// `fixtures/python/calls/generate_corpus.py`; O88). The program runs over `RERAIL_PYTHON_CALLS_ROOT`, a directory
 /// whose tree holds the corpus's paths as the recording names them (`django/...`). Where both decide, the program
 /// agrees when Jedi's definition is among those it names, its class among the classes a class call makes, or, for
 /// an external target, it names no workspace definition.

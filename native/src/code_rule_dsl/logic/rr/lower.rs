@@ -20,7 +20,7 @@
 //! - a rule ending in `=> edits` defines a fix, and fixes are not run: it is left out;
 //! - `.input r(IO=…, filename="…")` is an input, its parameters kept as the setting `input`;
 //! - `within(n, a)` is the engine's relation read off the tree, and `within_stop(n, a, stop)` that less a stop
-//!   between (`Lowerer::within`, decision 0048);
+//!   between (`Lowerer::within`, decision 0050);
 //! - `match("(?<x>…)", s)` binds x to the named group (`Lowerer::captures`); `+ - * /` and Soufflé's `cat`,
 //!   `strlen`, `to_string`, `substr` are functors.
 //!
@@ -31,7 +31,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::syntax::{Code, Head, Item, Lit, Statement, Suppress, Term as STerm};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Program, Rule, Term, Value};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
 use crate::code_rule_dsl::logic::strings::SET;
 
 /// The text tests: their `.rr` names and the engine's.
@@ -156,7 +156,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 [magic, relations] if magic == "magic-transform" => {
                     l.prog.demand.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned));
                 }
-                // `.pragma "cross-rounds" "k"` (decision 0052): kept as written, for the corpus runner.
+                // `.pragma "cross-rounds" "k"` (decision 0056): kept as written, for the corpus runner.
                 [key, k] if key == crate::code_rule_dsl::typing::cross_rounds::PRAGMA && k.parse::<usize>().is_ok() => {
                     l.prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(k));
                 }
@@ -189,9 +189,10 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.three_valued();
     l.findings();
     l.projections();
+    l.span_patterns()?;
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
-    // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0048).
+    // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
     let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
     for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).filter(|b| !(reads_within && *b == "within")) {
         l.prog.decls.remove(b);
@@ -221,9 +222,16 @@ fn facts(heads: &[Head]) -> Option<Vec<(String, Vec<Value>)>> {
 }
 
 impl Lowerer {
+    /// A new name, none the program declares: a printed program (`rr::print`) declares the helpers it was lowered
+    /// with, and lowering it again makes more.
     fn fresh(&mut self, stem: &str) -> String {
-        self.next += 1;
-        format!("rr_{stem}{}", self.next)
+        loop {
+            self.next += 1;
+            let name = format!("rr_{stem}{}", self.next);
+            if !self.prog.decls.contains_key(&name) {
+                return name;
+            }
+        }
     }
 
     fn decl(&mut self, name: String, cols: Vec<(String, String)>, tail: &[String]) -> Result<(), Error> {
@@ -396,7 +404,21 @@ impl Lowerer {
     /// `node`'s column; a span's is `docof` (`core.rr`), and so is its line. A `@place(path, line)` row is read from
     /// V's place relation.
     fn findings(&mut self) {
-        if self.violations.is_empty() {
+        // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rr`).
+        let on: Vec<(String, String, bool)> = self
+            .prog
+            .settings
+            .iter()
+            .filter(|(k, _)| k == "on")
+            .filter_map(|(_, text)| {
+                let words: Vec<&str> = text.split_whitespace().collect();
+                match words.as_slice() {
+                    [what @ ("syntax_error" | "input_error"), "report", code, rest @ ..] => Some(((*what).to_owned(), (*code).to_owned(), rest == ["at", "line", "1"])),
+                    _ => None,
+                }
+            })
+            .collect();
+        if self.violations.is_empty() && on.is_empty() {
             return;
         }
         let policy = self
@@ -435,6 +457,26 @@ impl Lowerer {
                 args.extend(cols.into_iter().skip(1));
                 self.prog.rules.push(Rule { head, body: vec![atom(&place_relation(&f.name), args)] });
             }
+        }
+        // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
+        for (what, code, line_one) in on {
+            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(what.clone()), Term::Str(code), v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let body = if what == "syntax_error" {
+                let line = if line_one { Term::Wild } else { v("rr_l") };
+                let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
+                if line_one {
+                    body.push(Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(1) });
+                }
+                body
+            } else {
+                vec![atom("input_error", vec![v("rr_p"), Term::Wild, Term::Wild]), Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(1) }]
+            };
+            for rel in [what.as_str(), "doc"] {
+                if !self.prog.inputs.iter().any(|i| i == rel) && self.prog.decls.contains_key(rel) {
+                    self.prog.inputs.push(rel.to_owned());
+                }
+            }
+            self.prog.rules.push(Rule { head, body });
         }
     }
 
@@ -535,6 +577,18 @@ impl Lowerer {
                 let agg = std::mem::replace(t, v.clone());
                 out.push(Lit::Cmp { l: v, op: "=", r: agg });
             }
+            // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`.
+            STerm::Call { name, functor: true, args } if name == "tree_digest" && args.len() == 1 => {
+                self.hoist(&mut args[0], out, true);
+                let n = args[0].clone();
+                let v = STerm::Var(self.fresh("digest"));
+                *t = v.clone();
+                out.push(Lit::Atom { rel: "tree_digest".to_owned(), args: vec![n, v], neg: false });
+                if !self.prog.inputs.iter().any(|i| i == "tree_digest") {
+                    self.prog.inputs.push("tree_digest".to_owned());
+                    self.prog.decls.insert("tree_digest".to_owned(), vec![("n".to_owned(), "node".to_owned()), ("s".to_owned(), "sym".to_owned())]);
+                }
+            }
             STerm::Call { args, .. } => args.iter_mut().for_each(|a| self.hoist(a, out, true)),
             STerm::Bin { l, r, .. } => {
                 self.hoist(l, out, true);
@@ -571,7 +625,22 @@ impl Lowerer {
             }
             Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "within" | "within_stop") => self.within(rel, args, *neg)?,
             Lit::Atom { rel, args, neg } if rel == "earlier" => self.earlier(args, *neg)?,
-            Lit::Atom { rel, args, neg: false } if rel == "match" && matches!(args.as_slice(), [STerm::Str(re), _] if !groups(re).is_empty()) => self.captures(args)?,
+            Lit::Atom { rel, args, neg: false }
+                if rel == "match_all" || rel == "match" && matches!(args.as_slice(), [STerm::Str(re), _] if !groups(re).is_empty()) =>
+            {
+                self.text_matches(rel, args)?
+            }
+            // A text test on a node or span tests its text (`core.rr`).
+            Lit::Atom { rel, args, neg }
+                if test_of(rel).is_some() && matches!(args.as_slice(), [_, STerm::Var(v)] if self.span_container(v).is_some() || self.node_typed(v)) =>
+            {
+                self.text_test(rel, args, *neg)?
+            }
+            // `!match_all("re", s)`: no match anywhere in s, a search (captures bind nothing outside the `!`).
+            Lit::Atom { rel, args, neg: true } if rel == "match_all" => {
+                let [STerm::Str(re), s] = args.as_slice() else { return Err(Error::Syntax("match_all takes a regex and a text".to_owned())) };
+                vec![vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![self.term(s)?, Term::Str(re.clone())]), op: "=", r: Term::Int(0) }]]
+            }
             Lit::Atom { rel, args, neg } => {
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
                 // variables (`front::finish`'s computed-term check).
@@ -781,7 +850,7 @@ impl Lowerer {
         Ok(vec![vec![self.negate(positive, &shared)?]])
     }
 
-    /// `within(n, a)`: n is strictly below a, the engine's relation read off the tree (decision 0048): a's
+    /// `within(n, a)`: n is strictly below a, the engine's relation read off the tree (decision 0050): a's
     /// subtree for a bound `a`, n's ancestors for a bound `n`, made per node looked up. No range over ids and no
     /// climb through `child` (`core.rr`: tape arithmetic, never Datalog recursion). `within_stop(n, a, stop)`: also
     /// no node of `stop` strictly between them. The ancestors of n are ordered by id, so that is: n has no
@@ -824,6 +893,162 @@ impl Lowerer {
         let d = Term::Var(self.fresh("doc"));
         let docof = |x: &Term| Literal::Atom(Atom { rel: "docof".to_owned(), args: vec![x.clone(), d.clone()], neg: false, gated: false });
         Ok(vec![vec![docof(&m), docof(&n), Literal::Cmp { l: m.clone(), op: "<", r: n.clone() }]])
+    }
+
+    /// `match_all("re", s)`, and `match` with named groups (`core.rr`).
+    ///
+    /// - Over a `source` or `src_line` span (a sibling binds s so), the captures are spans: the batch runs the regex
+    ///   over each such span and makes `rx_span(p, c, j, g, m)`, group g of match j of pattern p in span c, as span m
+    ///   (`facts::vtab::syntax::core_rr`). `match` is the pattern anchored at both ends, so at most one match.
+    /// - Over a symbol, `match`'s groups are `@rx_group` (`captures`); `match_all`'s rows are made natively from the
+    ///   texts the rule asks about, a context relation of its other literals (`front::Native::MatchAll`). Without
+    ///   groups, `match_all` is a search.
+    fn text_matches(&mut self, rel: &str, args: &[STerm]) -> Result<Vec<Vec<Literal>>, Error> {
+        let [STerm::Str(re), s] = args else { return Err(Error::Syntax(format!("{rel} takes a regex string and a text"))) };
+        let gs = groups(re);
+        let all = rel == "match_all";
+        // A span `match_all` reads through a derived relation (`t(d, sp) :- source(d, sp), …`) is a node-typed
+        // column here; `span_patterns` finds which spans it holds.
+        if let STerm::Var(v) = s
+            && (self.span_container(v).is_some() || all && self.node_typed(v))
+        {
+            let pattern = if all { re.clone() } else { format!("^(?:{re})$") };
+            self.rx_span_input();
+            let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".to_owned(), args, neg: false, gated: false });
+            let (p, c) = (Term::Str(pattern), Term::Var(v.clone()));
+            if gs.is_empty() {
+                return Ok(vec![vec![atom(vec![p, c, Term::Wild, Term::Str(String::new()), Term::Wild])]]);
+            }
+            let j = Term::Var(self.fresh("j"));
+            return Ok(vec![gs.iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone()), Term::Var(g.clone())])).collect()]);
+        }
+        if !all {
+            return self.captures(args);
+        }
+        if gs.is_empty() {
+            return Ok(vec![vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![self.term(s)?, Term::Str(re.clone())]), op: "=", r: Term::Int(1) }]]);
+        }
+        let STerm::Var(v) = s else { return not_yet(format!("match_all over a computed text, {s:?} (bind it to a variable first)")) };
+        // The texts asked about: the rule's other literals, those that read no capture (they are bound by the matches).
+        let saved = self.siblings.clone();
+        let reads_capture = |l: &Lit| body_vars(std::slice::from_ref(l)).iter().any(|x| gs.contains(x));
+        self.siblings.retain(|l| !reads_capture(l) && !matches!(l, Lit::Atom { rel, .. } if rel == "match_all"));
+        let ctx = self.context(std::slice::from_ref(v));
+        self.siblings = saved;
+        let ctx = ctx?;
+        let name = self.fresh("mall");
+        let cols = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
+        self.prog.decls.insert(name.clone(), cols);
+        // Its one rule orders it after the context; the evaluator makes its rows.
+        let x = |n: &str| Term::Var(n.to_owned());
+        let mut body = vec![Literal::Atom(Atom { rel: ctx.rel.clone(), args: vec![x("s")], neg: false, gated: false })];
+        body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
+        let head_args = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
+        self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false }, body });
+        self.prog.natives.insert(name.clone(), Native::MatchAll { input: ctx.rel, pattern: re.clone(), groups: gs.clone() });
+        let args = std::iter::once(Term::Var(v.clone())).chain(gs.iter().map(|g| Term::Var(g.clone()))).collect();
+        Ok(vec![vec![Literal::Atom(Atom { rel: name, args, neg: false, gated: false })]])
+    }
+
+    /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
+    /// the same body by `source` or `src_line`. Read off the rules, so a printed program (`rr::print`) has them too.
+    /// A derived relation's column holds `source` spans, or `src_line` spans, when every rule binds it so: directly,
+    /// or through another such column (a fixpoint).
+    fn span_patterns(&mut self) -> Result<(), Error> {
+        let mut columns: BTreeMap<(String, usize), SpanIn> = BTreeMap::new();
+        let binder = |body: &[Literal], x: &str, columns: &BTreeMap<(String, usize), SpanIn>| {
+            body.iter().filter_map(Literal::atom).filter(|b| !b.neg).find_map(|b| match (b.rel.as_str(), b.args.as_slice()) {
+                ("source", [_, Term::Var(y)]) if y == x => Some(SpanIn::Source),
+                ("src_line", [_, _, Term::Var(y)]) if y == x => Some(SpanIn::Line),
+                _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).copied()).flatten()),
+            })
+        };
+        loop {
+            let mut found = BTreeMap::new();
+            let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
+            for rel in heads {
+                let rules: Vec<&Rule> = self.prog.rules.iter().filter(|r| &r.head.rel == rel).collect();
+                for i in 0..rules[0].head.args.len() {
+                    let each: Option<Vec<SpanIn>> = rules.iter().map(|r| match r.head.args.get(i) {
+                        Some(Term::Var(x)) => binder(&r.body, x, &columns),
+                        _ => None,
+                    }).collect();
+                    if let Some(each) = each
+                        && each.windows(2).all(|w| w[0] == w[1])
+                        && !columns.contains_key(&(rel.clone(), i))
+                    {
+                        found.insert((rel.clone(), i), each[0]);
+                    }
+                }
+            }
+            if found.is_empty() {
+                break;
+            }
+            columns.extend(found);
+        }
+        for rule in &self.prog.rules {
+            for a in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "rx_span") {
+                let (Some(Term::Str(p)), Some(Term::Var(c))) = (a.args.first(), a.args.get(1)) else {
+                    return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
+                };
+                let Some(within) = binder(&rule.body, c, &columns) else {
+                    return not_yet(format!("{}: match_all over ${c}, a node or span not of `source` or `src_line` (O80: a node's matches as spans)", rule.head.rel));
+                };
+                self.prog.rx_spans.insert((within, p.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// A text test (`match`, `glob`, `contains`, …) on node or span `v`: a test of its text. `match` over a `source`
+    /// or `src_line` span is `rx_span`'s whole match of the anchored pattern, a scan of the file's bytes, so a line
+    /// past `text`'s inline bound is tested too; any other is `text(v, t)` and the test on t, so a node with no
+    /// `text` row (a long one, not token-like) passes neither the test nor its negation.
+    fn text_test(&mut self, rel: &str, args: &[STerm], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+        let [p, STerm::Var(v)] = args else { unreachable!("a test of a variable") };
+        if test_of(rel) == Some("rx")
+            && let STerm::Str(re) = p
+            && self.span_container(v).is_some()
+        {
+            self.rx_span_input();
+            let args = vec![Term::Str(format!("^(?:{re})$")), Term::Var(v.clone()), Term::Wild, Term::Str(String::new()), Term::Wild];
+            return Ok(vec![vec![Literal::Atom(Atom { rel: "rx_span".to_owned(), args, neg, gated: false })]]);
+        }
+        let t = self.fresh("text");
+        let text = Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false });
+        let test = self.atom(rel, &[p.clone(), STerm::Var(t)], neg)?;
+        Ok(vec![vec![text, test]])
+    }
+
+    /// `rx_span` as an input of the program (`core_rr::CoreRows::matches` makes it).
+    fn rx_span_input(&mut self) {
+        if !self.prog.inputs.iter().any(|i| i == "rx_span") {
+            self.prog.inputs.push("rx_span".to_owned());
+            let cols = [("p", "sym"), ("c", "node"), ("j", "int"), ("g", "sym"), ("m", "node")];
+            self.prog.decls.insert("rx_span".to_owned(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        }
+    }
+
+    /// Whether a sibling binds `v` to a `source` or `src_line` span, the spans `rx_span` runs over.
+    fn span_container(&self, v: &str) -> Option<SpanIn> {
+        self.siblings.iter().find_map(|l| match l {
+            Lit::Atom { rel, args, neg: false } => match (rel.as_str(), args.as_slice()) {
+                ("source", [_, STerm::Var(x)]) if x == v => Some(SpanIn::Source),
+                ("src_line", [_, _, STerm::Var(x)]) if x == v => Some(SpanIn::Line),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    /// Whether a sibling atom reads `v` at a column declared a node (a node or span).
+    fn node_typed(&self, v: &str) -> bool {
+        self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, args, neg: false } => self.prog.decls.get(rel).is_some_and(|cols| {
+                args.iter().zip(cols).any(|(a, (_, t))| matches!(a, STerm::Var(x) if x == v) && t == "node")
+            }),
+            _ => false,
+        })
     }
 
     /// `match("(?<x>…)", s)`: s matches, and each named group binds the variable of its name to its text:
@@ -945,6 +1170,16 @@ impl Lowerer {
                 let rel = self.precedes_stop(set);
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(a)?, self.term(b)?], neg, gated: false }));
             }
+            ("dfs_first", [r, hit, first, edge, target]) | ("dfs_first_memo", [r, hit, first, edge, target, _]) => {
+                let name = |t: &STerm| match t {
+                    STerm::Var(v) => Ok(v.clone()),
+                    _ => Err(Error::Syntax(format!("{rel}: the edge, target and roots are relations, by name"))),
+                };
+                let (edge, target) = (name(edge)?, name(target)?);
+                let roots = if rel == "dfs_first_memo" { Some(name(&args[5])?) } else { None };
+                let rel = self.dfs_first(&edge, &target, roots.as_deref());
+                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(first)?], neg, gated: false }));
+            }
             _ => {}
         }
         if let Some((_, _)) = RELATION_ARG.iter().find(|(r, _)| *r == rel) {
@@ -952,6 +1187,32 @@ impl Lowerer {
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
         Ok(Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false }))
+    }
+
+    /// `dfs_first(_, _, _, edge, target)`'s relation `rr_dfs_<edge>_<target>` (`_<roots>` for `dfs_first_memo`):
+    /// `(r, hit, first)`, made natively (`front::Native`). Its one rule reads its inputs, so it is evaluated after
+    /// them; the evaluator makes its rows (`logic::native::dfs_first`), not the rule.
+    fn dfs_first(&mut self, edge: &str, target: &str, roots: Option<&str>) -> String {
+        let rel = match roots {
+            Some(roots) => format!("rr_dfsm_{edge}_{target}_{roots}"),
+            None => format!("rr_dfs_{edge}_{target}"),
+        };
+        if self.prog.natives.contains_key(&rel) {
+            return rel;
+        }
+        let v = |n: &str| Term::Var(n.to_owned());
+        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
+        let mut body = vec![atom(edge, vec![v("r"), v("hit"), v("first")]), atom(target, vec![v("hit")])];
+        if let Some(roots) = roots {
+            body.push(atom(roots, vec![v("r"), Term::Wild]));
+        }
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("r"), v("hit"), v("first")], neg: false, gated: false }, body });
+        // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
+        let ty = |c: usize, or: &str| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.clone());
+        let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
+        self.prog.decls.insert(rel.clone(), cols);
+        self.prog.natives.insert(rel.clone(), Native::DfsFirst { edge: edge.to_owned(), target: target.to_owned(), roots: roots.map(str::to_owned) });
+        rel
     }
 
     /// `ast(d, n, { … }, NAME: v, …)`, or `ast(n, { … }, …)` with its document left unnamed.
@@ -1004,14 +1265,34 @@ impl Lowerer {
     /// A relation of `vars`' values in the rule: the literals beside the one being lowered (`siblings`; their
     /// atoms and comparisons), projected on `vars`. It binds, inside a helper rule, variables its body only tests.
     fn context(&mut self, vars: &[String]) -> Result<Atom, Error> {
-        let context: Vec<Lit> = std::mem::take(&mut self.siblings)
-            .into_iter()
-            .filter(|l| match l {
-                Lit::Atom { neg, .. } => !neg,
-                Lit::Cmp { l, r, .. } => !matches!(l, STerm::Agg { .. }) && !matches!(r, STerm::Agg { .. }),
-                _ => false,
-            })
-            .collect();
+        let siblings = std::mem::take(&mut self.siblings);
+        let context = |aggregates: bool| -> Vec<Lit> {
+            siblings
+                .iter()
+                .filter(|l| match l {
+                    Lit::Atom { neg, .. } => !neg,
+                    Lit::Cmp { l, r, .. } => aggregates || !matches!(l, STerm::Agg { .. }) && !matches!(r, STerm::Agg { .. }),
+                    _ => false,
+                })
+                .cloned()
+                .collect()
+        };
+        // Aggregates stay out unless a variable needs one: `m = cat(…, body, …)` over `body = join … : { … }`.
+        let (first, bound) = Self::bound_context(context(false));
+        let context = if vars.iter().all(|v| bound.contains(v)) { first } else { Self::bound_context(context(true)).0 };
+        let ctx = self.fresh("ctx");
+        let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
+        let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
+        self.prog.decls.insert(ctx.clone(), types);
+        let head = Atom { rel: ctx, args: vars.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
+        for b in alts {
+            self.prog.rules.push(Rule { head: head.clone(), body: b });
+        }
+        Ok(head)
+    }
+
+    /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.
+    fn bound_context(context: Vec<Lit>) -> (Vec<Lit>, BTreeSet<String>) {
         // A comparison stays only if the context binds what it reads (`k > 1` needs the count that binds k, which
         // is left out): the context may hold more rows than the rule, and the rule joins it with its own literals.
         let binds = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier");
@@ -1032,19 +1313,11 @@ impl Lowerer {
             bound.extend(body_vars(std::slice::from_ref(&c)));
             context.push(c);
         }
-        let ctx = self.fresh("ctx");
-        let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
-        let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
-        self.prog.decls.insert(ctx.clone(), types);
-        let head = Atom { rel: ctx, args: vars.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
-        for b in alts {
-            self.prog.rules.push(Rule { head: head.clone(), body: b });
-        }
-        Ok(head)
+        (context, bound)
     }
 
     /// Whether a positive atom beside the literal being lowered (not a text test or `earlier`) binds `v`. `within`
-    /// and `within_stop` bind both ends: they are the engine's relation (decision 0048).
+    /// and `within_stop` bind both ends: they are the engine's relation (decision 0050).
     fn bound_beside(&self, v: &str) -> bool {
         let atoms: Vec<Lit> = self
             .siblings

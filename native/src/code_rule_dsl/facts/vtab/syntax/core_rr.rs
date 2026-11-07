@@ -541,6 +541,29 @@ pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
 /// MISSING nodes; a Python verdict from a parser that follows CPython's grammar is not built yet (O80).
+/// `syntax_error`'s verdict on a document: its first error's line and message, or none if it parses. Python's comes
+/// from a parser that follows CPython's grammar (Ruff's, `python_error`): tree-sitter recovers from errors, so its tree
+/// cannot say whether CPython accepts the file. The other languages' come from tree-sitter's ERROR and MISSING nodes.
+pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
+    let python = dialect.family == Family::Python;
+    if python {
+        return python_error(&f.source);
+    }
+    if !f.syntax_errors {
+        return None;
+    }
+    first_error(f, &Lines::new(&f.source, python), &|id| dialect.name(f, id)).or_else(|| Some((1, "invalid syntax".to_owned())))
+}
+
+/// The first error (by position) of CPython's grammar on `src`, Ruff's parser: its line, as `src_line` counts
+/// lines, and the parser's message. Version-specific syntax (a `match` before 3.10) is accepted.
+pub(super) fn python_error(src: &str) -> Option<(u32, String)> {
+    use ruff_python_parser::{Mode, ParseOptions, parse_unchecked};
+    let parsed = parse_unchecked(src, ParseOptions::from(Mode::Module));
+    let e = parsed.errors().iter().min_by_key(|e| e.location.start())?;
+    Some((Lines::new(src, true).line(u32::from(e.location.start())), e.error.to_string()))
+}
+
 pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
     if !f.syntax_errors {
         return None;
@@ -579,6 +602,8 @@ pub(super) struct CoreRows {
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
+    tree_digest: Vec<[i64; 2]>,
+    rx_span: Vec<[i64; 5]>,
 }
 
 impl CoreRows {
@@ -668,14 +693,16 @@ impl CoreRows {
         }
     }
 
+    /// A withheld document's one row: its first error (`verdict`).
+    pub(super) fn withheld(&mut self, p: &Projected, (l, msg): &(u32, String), string: &mut dyn FnMut(&str) -> usize) {
+        self.syntax_error.push([i64::from(p.key), i64::from(*l), string(msg) as i64]);
+    }
+
     /// A document's rows: its first error, its source-text spans, and its tokens.
     pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
-        if let Some((l, msg)) = first_error(f, &x.lines, &|id| dialect.name(f, id)) {
-            self.syntax_error.push([key, i64::from(l), string(&msg) as i64]);
-        }
         let source = p.len() + x.tokens;
         self.source.push([key, p.global(source)]);
         for l in 1..=x.lines.count() {
@@ -684,7 +711,7 @@ impl CoreRows {
         self.line_count.push([key, x.lines.count() as i64]);
         if wants_text {
             for (i, &[a, b]) in x.spans.iter().enumerate() {
-                if i < x.tokens as usize || (b - a) as usize <= TEXT_INLINE {
+                if i < x.tokens as usize || i >= x.matched as usize || (b - a) as usize <= TEXT_INLINE {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }
@@ -724,6 +751,99 @@ impl CoreRows {
             if j < toks.len() && toks[j].2 != id {
                 self.token_after.push([id, toks[j].2]);
             }
+        }
+    }
+
+    /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` or
+    /// one of its lines (`src_line`), is span `m`, made here past the lines (`Extra::matched`). Group "" is the whole
+    /// match; a group that takes no part in a match has no row. Matches do not overlap, as `match_all` says; a
+    /// `match` pattern is anchored (`rr::lower`), so it has one. Each regex scans the file once (decision 0042 §3).
+    pub(super) fn matches(&mut self, p: &mut Projected, patterns: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], string: &mut dyn FnMut(&str) -> usize) {
+        use crate::code_rule_dsl::logic::front::SpanIn;
+        let facts = std::sync::Arc::clone(&p.facts);
+        let src = facts.source.as_str();
+        let base = p.len();
+        let x = p.extra.as_mut().expect("core.rr's spans");
+        let source = x.tokens;
+        for &(within, pattern, ref re) in patterns {
+            let pat = string(pattern) as i64;
+            let containers: Vec<u32> = match within {
+                SpanIn::Source => vec![source],
+                SpanIn::Line => (1..=x.lines.count() as u32).map(|l| source + l).collect(),
+            };
+            for c in containers {
+                let [a, b] = x.spans[c as usize];
+                let cid = i64::from(p.key) << 32 | i64::from(base + c);
+                for (j, caps) in re.captures_iter(&src[a as usize..b as usize]).enumerate() {
+                    for (g, name) in re.capture_names().enumerate() {
+                        let name = match (g, name) {
+                            (0, _) => "",
+                            (_, Some(name)) => name,
+                            (_, None) => continue,
+                        };
+                        let Some(m) = caps.get(g) else { continue };
+                        let id = base + x.spans.len() as u32;
+                        x.spans.push([a + m.start() as u32, a + m.end() as u32]);
+                        self.rx_span.push([pat, cid, j as i64, string(name) as i64, i64::from(p.key) << 32 | i64::from(id)]);
+                    }
+                }
+            }
+        }
+    }
+
+    /// `tree_digest(n, h)` (`@tree_digest(n)`): a hash of n's subtree as Python's `ast.dump` compares it, without
+    /// positions. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
+    /// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
+    /// the expression inside, so `(a)` and `a`, `'x'` and `"x"`, or `0x10` and `16`, hash the same. Made when a
+    /// program reads it: every node's hash is a 64-character symbol.
+    pub(super) fn digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
+        use sha2::{Digest, Sha256};
+        let f = &*p.facts;
+        // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
+        let mut hash: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+        for id in (0..f.len() as u32).rev() {
+            let kind = dialect.name(f, id);
+            let kept: Vec<u32> = f
+                .children(id)
+                .iter()
+                .copied()
+                .filter(|&c| {
+                    let k = dialect.name(f, c);
+                    !is_comment(k) && (f.named(c) || !is_punct(k))
+                })
+                .collect();
+            if kind == "parenthesized_expression" && kept.len() == 1 {
+                hash[id as usize] = hash[kept[0] as usize];
+                continue;
+            }
+            let interpolated = dialect.family == Family::Python
+                && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
+            let mut h = Sha256::new();
+            h.update(kind.as_bytes());
+            h.update([0]);
+            match literal(dialect.family, kind, f.text(id), interpolated).value {
+                Some((value, ty)) => {
+                    h.update(b"=");
+                    h.update(ty.as_bytes());
+                    h.update([0]);
+                    h.update(value.as_bytes());
+                }
+                None if kept.is_empty() => {
+                    h.update(b"'");
+                    h.update(f.text(id).as_bytes());
+                }
+                None => {
+                    for &c in &kept {
+                        h.update(f.field[c as usize].to_le_bytes());
+                        h.update(hash[c as usize]);
+                    }
+                }
+            }
+            hash[id as usize] = h.finalize().into();
+        }
+        for local in 0..p.len() {
+            let digest: String = hash[p.core[local as usize] as usize].iter().map(|b| format!("{b:02x}")).collect();
+            self.tree_digest.push([p.global(local), string(&digest) as i64]);
         }
     }
 
@@ -767,6 +887,8 @@ impl CoreRows {
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
+            ("tree_digest", node_sym(&self.tree_digest)),
+            ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
         ]
     }
 }
@@ -774,6 +896,16 @@ impl CoreRows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
+    /// `match` statement is not; the line is the first error's.
+    #[test]
+    fn python_syntax_errors_follow_cpythons_grammar() {
+        assert_eq!(python_error("x = 1\n"), None);
+        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), None);
+        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.0), Some(2));
+        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.0), Some(3), "lines as src_line counts them");
+    }
 
     #[test]
     fn lines_follow_each_languages_terminators() {

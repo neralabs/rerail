@@ -1,0 +1,99 @@
+{
+  "format": "rerail.shared-work-plan/v1",
+  "snapshot": "illustrative-evaluation-not-an-engine-export",
+  "contracts": [
+    {
+      "name": "syntax.source_spans.v1",
+      "completion": "keys",
+      "inputs": {
+        "tape": "syntax-tape"
+      },
+      "options": {},
+      "columns": [
+        {
+          "name": "fid",
+          "type": "integer",
+          "nullable": false
+        },
+        {
+          "name": "pre",
+          "type": "integer",
+          "nullable": false
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "nullable": false
+        },
+        {
+          "name": "length",
+          "type": "integer",
+          "nullable": false
+        }
+      ],
+      "key": [
+        "fid",
+        "pre"
+      ],
+      "multiplicity": "set",
+      "ordering": [],
+      "implementation": {
+        "backend": "sql",
+        "template": "SELECT fid,pre,start,len AS length FROM decoded_spans JOIN requested_keys USING(fid,pre)"
+      },
+      "origin": "illustrative contract; not yet registered in the engine"
+    }
+  ],
+  "bindings": [
+    {
+      "id": "a",
+      "contract": "syntax.source_spans.v1",
+      "inputs": {
+        "tape": {
+          "external": {
+            "name": "python-tape",
+            "generation": "file-1-generation-2"
+          }
+        }
+      },
+      "options": {},
+      "consumers": [
+        "example.a"
+      ],
+      "demand": [
+        [
+          1,
+          2
+        ]
+      ],
+      "origin": "illustrative rule consumer; not an existing policy export"
+    },
+    {
+      "id": "b",
+      "contract": "syntax.source_spans.v1",
+      "inputs": {
+        "tape": {
+          "external": {
+            "name": "python-tape",
+            "generation": "file-1-generation-2"
+          }
+        }
+      },
+      "options": {},
+      "consumers": [
+        "example.b"
+      ],
+      "demand": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "origin": "illustrative rule consumer; not an existing policy export"
+    }
+  ]
+}

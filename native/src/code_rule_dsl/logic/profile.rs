@@ -448,6 +448,15 @@ pub(in crate::code_rule_dsl) fn device_phases(kernel: &str, phases: [f64; PHASES
     t.reused += reused;
 }
 
+/// The profile is process-wide, so one profiled run (or profile test) at a time: a run that resets it holds this,
+/// and so does a test that turns it on, so a run in another thread cannot reset the records the test reads.
+static ONE_RUN: Mutex<()> = Mutex::new(());
+
+/// Holds the profile for one run (`ONE_RUN`).
+pub(in crate::code_rule_dsl) fn one_run() -> std::sync::MutexGuard<'static, ()> {
+    ONE_RUN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Forgets everything recorded (a run's start).
 pub(in crate::code_rule_dsl) fn reset() {
     *STATE.lock().unwrap() = State::default();
@@ -782,12 +791,10 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
 mod tests {
     use super::*;
 
-    /// The profile is process-wide: its tests run one at a time.
-    static SERIAL: Mutex<()> = Mutex::new(());
 
     #[test]
     fn spans_nest_and_charge_their_own_cpu() {
-        let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        let _serial = one_run();
         set(true);
         reset();
         {
@@ -812,7 +819,7 @@ mod tests {
 
     #[test]
     fn explain_shows_engines_plans_devices_and_decisions() {
-        let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        let _serial = one_run();
         set(true);
         reset();
         decision("xtopic", || "2 chunks".into());

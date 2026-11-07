@@ -1,0 +1,8 @@
+(?i)batch|coalesce|strategy|transport
+(?i)doltdb|mariadb|mongodb|mysql|neo4j|postgres|sqlite
+^(?:[A-Za-z_]\w*)?(?:Step|Intent|Strategy)(?:\s+as\s+\w+)?$
+^(?:impl\.sqlite|impl\.postgres|impl\.mariadb|l2000_connection)
+^(?:impl\.sqlite|impl\.postgres|impl\.mariadb|l2000_connection|l2050_transaction)
+^(?:impl\.|l2000_connection|l2050_transaction|l2100_sql_grammar)
+^ServerPlanStep$
+^Sql|Grammar$|Stmt$

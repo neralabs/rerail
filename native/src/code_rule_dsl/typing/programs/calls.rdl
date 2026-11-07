@@ -11,7 +11,7 @@
 // classes and inheritance (method lookup through bases, constructors to `__init__`, instances to `__call__`),
 // late-bound `self`/`cls` (the class and every workspace subclass), `super()`, and function values flowing through
 // assignments, returns and a function's returned parameter.
-// A typing program: its cross-file recursion runs in bounded rounds over the previous round's rows (decision 0052).
+// A typing program: its cross-file recursion runs in bounded rounds over the previous round's rows (decision 0056).
 .pragma "cross-rounds" "4"
 
 .decl doc(d: int, path: sym, module: sym)

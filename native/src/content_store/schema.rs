@@ -26,7 +26,7 @@ pub(super) const SCHEMA_VERSION: i64 = 3;
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
 pub const STORE_FILE_NAME: &str = "content-v3.sqlite";
 /// The floor `STORE_FILE_NAME` was introduced at. 3: atoms stored as segments of the arena
-/// (decision 0047); 2 was the prefilter vocabulary keyed by atom.
+/// (decision 0049); 2 was the prefilter vocabulary keyed by atom.
 const STORE_FILE_FLOOR: i64 = 3;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
@@ -295,7 +295,7 @@ CREATE TABLE IF NOT EXISTS facts_completions (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
--- Corpus runs' roots (decision 0051, corpus_runs.rs). Each run of a root records a manifest: the sources it read
+-- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read
 -- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose
 -- manifest matches an earlier one of its root only moves that one's `last_run`. `corpus_live` is the union of the
 -- kept manifests' (source, grammar version, tape format): collection keeps those sources and tapes. A plan in
@@ -351,7 +351,7 @@ CREATE TABLE IF NOT EXISTS corpus_stats (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
 
--- The single interner (atoms.rs, decision 0047): dense, append-only; atom 0 is the empty string.
+-- The single interner (atoms.rs, decision 0049): dense, append-only; atom 0 is the empty string.
 -- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,
 -- relative to the row's bytes) and their bytes. SQL reads atoms through the `atoms` virtual table
 -- over the process's arena; a row that names an atom commits with or after its segment.
@@ -648,7 +648,7 @@ fn compatible_version(connection: &Connection) -> StoreResult<i64> {
         )));
     }
     // A store is never upgraded (STORE_FILE_NAME): an older floor's `atoms` table would hide the
-    // `atoms` virtual table (decision 0047).
+    // `atoms` virtual table (decision 0049).
     if version != 0 && version < STORE_FILE_FLOOR {
         return Err(StoreError::Invalid(format!(
             "database schema version {version} is older than this build's floor {STORE_FILE_FLOOR}: the store is a cache; delete it"

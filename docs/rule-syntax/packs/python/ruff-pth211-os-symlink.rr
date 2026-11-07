@@ -1,0 +1,17 @@
+.policy "ruff-pth211-os-symlink" revision 2
+.description "Use Path.symlink_to() instead of os.symlink(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH211 (flake8-use-pathlib): a call of `os.symlink`, however it is imported, with any arguments,
+// unless `dir_fd` is passed and not None: pathlib has no `dir_fd`. Reported at the callee.
+//   os.symlink("usr/bin/python", "tmp/python")           ← PTH211
+//   os.symlink(src, dst, dir_fd=fd)                      not reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
+
+.violation PTH211(at: node) code "PTH211"
+    "Use `Path(dst).symlink_to(src)` instead of `os.symlink(src, dst)`, passing `target_is_directory` through; leave it where the paths are bytes."
+    suppress ruff "PTH211"
+PTH211(f) :- pth_call(c, "os.symlink", f), !kw_set(c, "dir_fd").

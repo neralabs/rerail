@@ -1,0 +1,118 @@
+# converted_rules_give_the_recorded_findings, per check: events converted exact errors
+batches 7-8 and probes | admin_async_purity | 8 8 6 0
+batches 7-8 and probes | async_executor | 8 0 0 0
+batches 7-8 and probes | async_patterns | 26 0 0 0
+batches 7-8 and probes | async_sync_boundary | 12 12 10 0
+batches 7-8 and probes | async_sync_delegation | 1 0 0 0
+batches 7-8 and probes | authentication_plan_purity | 10 0 0 0
+batches 7-8 and probes | cached_pure_lazy_allowlist | 60 0 0 0
+batches 7-8 and probes | classvar_check | 8 0 0 0
+batches 7-8 and probes | conn_or_txn_union | 10 0 0 0
+batches 7-8 and probes | connection_caches | 12 0 0 0
+batches 7-8 and probes | data_layer_compat_aliases | 4 0 0 0
+batches 7-8 and probes | data_layer_facade_purity | 5 0 0 0
+batches 7-8 and probes | declared_fact_interrogation | 42 0 0 0
+batches 7-8 and probes | dynamic_module_loading | 12 0 0 0
+batches 7-8 and probes | eager_resolve | 77 0 0 0
+batches 7-8 and probes | error_handling | 10 0 0 0
+batches 7-8 and probes | executor_publication_repairs | 5 2 2 0
+batches 7-8 and probes | forwardref | 10 0 0 0
+batches 7-8 and probes | grammar_allowlist_burndown | 8 0 0 0
+batches 7-8 and probes | grammar_callable_constructors | 24 0 0 0
+batches 7-8 and probes | grammar_fragment_usage | 44 0 0 0
+batches 7-8 and probes | grammar_mutation_invalidation | 45 0 0 0
+batches 7-8 and probes | grammar_render_methods | 30 0 0 0
+batches 7-8 and probes | grammar_str_params | 14 0 0 0
+batches 7-8 and probes | history_serverplan_projection | 12 4 4 0
+batches 7-8 and probes | imperative_private_functions | 73 0 0 0
+batches 7-8 and probes | internal_dead_code | 43 0 0 0
+batches 7-8 and probes | layer_violations | 11 11 11 0
+batches 7-8 and probes | lazy_adapter_ownership | 11 0 0 0
+batches 7-8 and probes | lazy_architecture | 205 0 0 0
+batches 7-8 and probes | lazy_result_usage | 12 0 0 0
+batches 7-8 and probes | lazy_sql_surface | 36 0 0 0
+batches 7-8 and probes | legacy_callback_quarantine | 11 0 0 0
+batches 7-8 and probes | legacy_execution_surfaces | 5 0 0 0
+batches 7-8 and probes | missing_async_pairs | 8 8 8 0
+batches 7-8 and probes | module_level_caches | 18 0 0 0
+batches 7-8 and probes | plan_helpers_allowlist | 82 0 0 0
+batches 7-8 and probes | plan_scope_ownership | 16 0 0 0
+batches 7-8 and probes | plan_scope_side_effects | 22 22 22 0
+batches 7-8 and probes | post_op_no_internal_dispatch | 18 10 10 0
+batches 7-8 and probes | post_op_side_effects | 22 0 0 0
+batches 7-8 and probes | public_api_triples | 38 37 37 0
+batches 7-8 and probes | publication_registry_writes | 24 0 0 0
+batches 7-8 and probes | pure_lazy_runtime_purity | 54 0 0 0
+batches 7-8 and probes | readthrough_authority_architecture | 12 0 0 0
+batches 7-8 and probes | regex_sql_parsing | 42 0 0 0
+batches 7-8 and probes | render_fstrings | 32 0 0 0
+batches 7-8 and probes | render_raw_strings | 48 0 0 0
+batches 7-8 and probes | revision_ancestry_invariants | 6 2 2 0
+batches 7-8 and probes | rust_sql_grammar_boundary | 14 0 0 0
+batches 7-8 and probes | serverplan_dispatch_architecture | 10 0 0 0
+batches 7-8 and probes | serverplan_quality | 8 0 0 0
+batches 7-8 and probes | serverplan_state_tripwires | 2 0 0 0
+batches 7-8 and probes | sql_grammar_escape_hatches | 111 0 0 0
+batches 7-8 and probes | swallowed_exceptions | 9 9 9 0
+batches 7-8 and probes | sync_async_signatures | 5 0 0 0
+batches 7-8 and probes | transaction_callback_wrappers | 16 0 0 0
+batches 7-8 and probes | transaction_closures | 28 0 0 0
+batches 7-8 and probes | transaction_patterns | 24 0 0 0
+batches 7-8 and probes | type_safety_patterns | 10 0 0 0
+batches 7-8 and probes | unknown_contract_defaults | 30 0 0 0
+batches 7-8 and probes | unresolved_forward_refs | 12 0 0 0
+batches 7-8 and probes | versioned_merged_identity | 13 0 0 0
+recordings 1-6 | admin_async_purity | 40 40 39 0
+recordings 1-6 | async_executor | 39 0 0 0
+recordings 1-6 | async_patterns | 12 0 0 0
+recordings 1-6 | async_sync_boundary | 5 5 5 0
+recordings 1-6 | async_sync_delegation | 36 0 0 0
+recordings 1-6 | backend_coupling | 62 0 0 0
+recordings 1-6 | backend_type_strings | 60 0 0 0
+recordings 1-6 | classvar_check | 8 0 0 0
+recordings 1-6 | conn_or_txn_union | 5 0 0 0
+recordings 1-6 | connection_caches | 38 0 0 0
+recordings 1-6 | data_layer_compat_aliases | 7 0 0 0
+recordings 1-6 | data_layer_facade_purity | 7 0 0 0
+recordings 1-6 | dynamic_module_loading | 54 0 0 0
+recordings 1-6 | error_handling | 3 0 0 0
+recordings 1-6 | execution_authority_bypass | 5 0 0 0
+recordings 1-6 | forwardref | 5 0 0 0
+recordings 1-6 | grammar_callable_constructors | 3 0 0 0
+recordings 1-6 | grammar_fragment_usage | 36 0 0 0
+recordings 1-6 | grammar_render_methods | 45 0 0 0
+recordings 1-6 | grammar_str_params | 5 0 0 0
+recordings 1-6 | hasattr_async | 33 0 0 0
+recordings 1-6 | impl_direct_execution | 68 0 0 0
+recordings 1-6 | lazy_result_usage | 5 0 0 0
+recordings 1-6 | legacy_execution_surfaces | 75 0 0 0
+recordings 1-6 | missing_async_pairs | 7 7 7 0
+recordings 1-6 | module_level_caches | 5 0 0 0
+recordings 1-6 | no_api_root_imports | 4 0 0 0
+recordings 1-6 | no_blanket_grammar_bypass | 121 89 89 0
+recordings 1-6 | no_source_inspection | 72 0 0 0
+recordings 1-6 | permission_error | 5 0 0 0
+recordings 1-6 | plan_scope_ownership | 14 0 0 0
+recordings 1-6 | plan_scope_side_effects | 7 7 7 0
+recordings 1-6 | raw_execute_regression | 4 0 0 0
+recordings 1-6 | regex_sql_parsing | 55 0 0 0
+recordings 1-6 | removed_compat_surfaces | 4 4 4 0
+recordings 1-6 | render_fstrings | 5 0 0 0
+recordings 1-6 | render_raw_strings | 5 0 0 0
+recordings 1-6 | serverplan_bypass | 6 0 0 0
+recordings 1-6 | serverplan_dispatch_architecture | 49 0 0 0
+recordings 1-6 | serverplan_grammar_surface | 7 7 7 0
+recordings 1-6 | serverplan_name_inference | 8 0 0 0
+recordings 1-6 | serverplan_quality | 192 0 0 0
+recordings 1-6 | serverplan_state_tripwires | 77 0 0 0
+recordings 1-6 | serverplan_steps | 746 0 0 0
+recordings 1-6 | serverplan_target_architecture | 12 0 0 0
+recordings 1-6 | sql_grammar_escape_hatches | 52 0 0 0
+recordings 1-6 | swallowed_exceptions | 16 16 16 0
+recordings 1-6 | sync_async_signatures | 5 0 0 0
+recordings 1-6 | transaction_callback_wrappers | 4 0 0 0
+recordings 1-6 | transaction_closures | 76 0 0 0
+recordings 1-6 | transaction_patterns | 26 0 0 0
+recordings 1-6 | type_safety_patterns | 46 0 0 0
+recordings 1-6 | unresolved_forward_refs | 61 0 0 0
+recordings 1-6 | versioned_lifecycle_legacy_surfaces | 3 3 3 0

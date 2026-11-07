@@ -1,0 +1,28 @@
+.policy "ruff-pie810-multiple-starts-ends-with" revision 2
+.description "Pass a tuple to one startswith() or endswith() call instead of or-ing several calls on the same string."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PIE810 (flake8-pie): `x.startswith(a) or x.startswith(b)`. Both methods take a tuple, so one call does
+// it: `x.startswith((a, b))`. Two or more operands of one `or` call the same method on the same plain name, with
+// one positional argument each and no keyword; an argument that is a name bound to a tuple is left out (it
+// would have to be unpacked). Reported at the `or` expression.
+//   obj.startswith("foo") or obj.startswith("bar")    ← PIE810 "Call `startswith` once …"
+//   obj.startswith("foo") or obj.endswith("bar")      not reported: different methods
+//   y = ("h", "e"); msg.startswith(y) or msg.startswith(x)   not reported: one call left
+#include "python/bugbear.rr"
+
+.violation PIE810(at: node, m: symbol) code "PIE810"
+    "Call `{m}` once with a tuple of all the prefixes or suffixes instead of or-ing several calls."
+    suppress ruff "PIE810"
+PIE810(t, m) :- affix_call(t, c, m, x), affix_call(t, d, m, x), c < d.
+// affix_call(t, c, m, x): operand c of the `or` t is `x.m(arg)`, m startswith or endswith.
+.decl affix_call(t: node, c: node, m: symbol, x: symbol)
+affix_call(t, c, m, x) :- bool_operand(t, "or", c0), unparen(c0, c), kind(c, "call"), field(c, "function", f),
+    attr_of(f, o, m), (m = "startswith" ; m = "endswith"), kind(o, "identifier"), text(o, x),
+    call_nkwargs(c, 0), call_nargs(c, 1), bb_pos(c, 0, a), !bound_to_tuple(a).
+.decl bound_to_tuple(a: node)
+bound_to_tuple(a) :- kind(a, "identifier"), ref_site(a, s), binding_value(s, v), unparen(v, t), kind(t, "tuple").
+bound_to_tuple(a) :- kind(a, "identifier"), ref_site(a, s), site_annotation(s, n), ann_head(n, h),
+    (h = "tuple" ; h = "Tuple" ; h = "typing.Tuple").

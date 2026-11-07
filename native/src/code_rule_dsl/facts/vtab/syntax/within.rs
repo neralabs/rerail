@@ -1,4 +1,4 @@
-//! Containment read off the tree, made per looked-up node (decision 0048), in two modes:
+//! Containment read off the tree, made per looked-up node (decision 0050), in two modes:
 //!
 //! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rr`): `n` is strictly below `a`. The
 //!   containers of `n` are its ancestors; the nodes `a` holds are its subtree, a preorder interval.
@@ -13,8 +13,7 @@
 //! - **The nodes it holds** (`outer` bound): its subtree, its ancestors with the same span, and the
 //!   document's nodes of zero width inside its span.
 //!
-//! - **The kind-set axes** (`Mode::Axis`, `core.rr`'s `nearest`, `inside` and `has`; decisions 0036 and 0052's
-//!   successor note in `with_nearest`): `rr_nearest_<set>(n, a)`, `a` the nearest strict ancestor of `n` of a kind in
+//! - **The kind-set axes** (`Mode::Axis`, `core.rr`'s `nearest`, `inside` and `has`; decisions 0036 and 0057): `rr_nearest_<set>(n, a)`, `a` the nearest strict ancestor of `n` of a kind in
 //!   the set; `rr_inside_<set>(n, a)`, every such ancestor; `rr_has_<set>(n, a)`, `n` of a kind in the set and `a`
 //!   each of its strict ancestors. The same climbs and subtree intervals, filtered by the set.
 //!

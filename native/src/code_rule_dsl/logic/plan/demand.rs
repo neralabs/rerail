@@ -1,4 +1,4 @@
-//! Demand for negated relations (decision 0046): a relation computed for every node that rules only negate is
+//! Demand for negated relations (decision 0048): a relation computed for every node that rules only negate is
 //! computed for the keys those rules reach, not for every node.
 //!
 //! An imperfect conversion leaves relations like
@@ -64,6 +64,7 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
         prog.outputs.iter().any(|o| o == rel)
             || prog.inputs.iter().any(|i| i == rel)
             || prog.lattice.contains_key(rel)
+            || prog.natives.contains_key(rel)
             || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
             || prog.demand.iter().any(|d| d == rel)
             || prog.gates.iter().any(|(g, _)| g == rel)
@@ -192,7 +193,7 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         }
     }
     if !refused.is_empty() {
-        super::super::profile::decision("demand (decision 0046)", || format!("not demanded: {} (read positively where no anchor binds the read, or the rest of the body is not small)", refused.iter().cloned().collect::<Vec<_>>().join(", ")));
+        super::super::profile::decision("demand (decision 0048)", || format!("not demanded: {} (read positively where no anchor binds the read, or the rest of the body is not small)", refused.iter().cloned().collect::<Vec<_>>().join(", ")));
         return Err(refused);
     }
     let mut out = prog.clone();
@@ -216,14 +217,16 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         for l in &kept {
             bound.extend(l.vars());
         }
-        let mut later = rule.head.vars();
+        // The head's variables, those inside a call (`@cat(p, s)`) too.
+        let mut later = BTreeSet::new();
+        rule.head.args.iter().for_each(|t| t.vars(&mut later));
         for l in &cut {
             later.extend(l.vars());
         }
         let vars: Vec<String> = bound.intersection(&later).cloned().collect();
         let Some(types) = vars.iter().map(|v| var_type(prog, &kept, v)).collect::<Option<Vec<String>>>() else {
             // A variable of no known type (bound by a comparison alone): nothing is split.
-            super::super::profile::decision("demand (decision 0046)", || format!("not demanded: a variable of a rule for {} has no known type", rule.head.rel));
+            super::super::profile::decision("demand (decision 0048)", || format!("not demanded: a variable of a rule for {} has no known type", rule.head.rel));
             return Err(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect());
         };
         let pre = format!("pre_{ri}");
@@ -266,7 +269,7 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
                     .collect(),
                 _ => BTreeSet::new(),
             };
-            super::super::profile::decision("demand (decision 0046)", || format!("not demanded: {} (their split closes a cycle through a negation)", failed.iter().cloned().collect::<Vec<_>>().join(", ")));
+            super::super::profile::decision("demand (decision 0048)", || format!("not demanded: {} (their split closes a cycle through a negation)", failed.iter().cloned().collect::<Vec<_>>().join(", ")));
             Err(failed)
         }
     }

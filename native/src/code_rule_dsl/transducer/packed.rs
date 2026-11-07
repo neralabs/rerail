@@ -245,6 +245,8 @@ mod native_cpu_reduction;
 mod native_cpu_regex;
 mod native_cpu_scheduler;
 mod native_cpu_value;
+// Block programs' Cranelift definer (`block`).
+mod native_cpu_block;
 mod native_ir;
 mod output;
 mod packed_arena;
@@ -259,6 +261,10 @@ pub(in crate::code_rule_dsl) mod fusion;
 // `rir`, the IR's text form: dumps and the assembler (list step 18).
 pub(in crate::code_rule_dsl) mod rir;
 mod value;
+// Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
+pub(in crate::code_rule_dsl) mod block;
+#[cfg(test)]
+mod block_tests;
 mod value_packing;
 mod value_prefix;
 
@@ -793,6 +799,9 @@ pub(in crate::code_rule_dsl) struct Program {
     /// captures are then one witness's, not every path's.
     set_mode: bool,
     ast_pattern: Option<PackedPattern>,
+    /// Block programs, the side programs over source bytes (`block`), as `value_programs` are
+    /// the side programs over a node's text.
+    block_programs: Vec<block::BlockProgram>,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
 }
@@ -1843,6 +1852,7 @@ impl Program {
             tree_sitter_query: false,
             set_mode: false,
             ast_pattern: None,
+            block_programs: Vec::new(),
             digest: DigestMemo::default(),
         };
         program.validate()?;
@@ -2069,6 +2079,16 @@ impl Program {
         for long in &self.longs {
             digest.update(long.to_le_bytes());
         }
+        // Only programs with block programs digest them, so every other digest is unchanged.
+        if !self.block_programs.is_empty() {
+            digest.update(b"block-programs");
+            digest.update((self.block_programs.len() as u64).to_le_bytes());
+            for program in &self.block_programs {
+                let bytes = program.canonical_bytes();
+                digest.update((bytes.len() as u64).to_le_bytes());
+                digest.update(bytes);
+            }
+        }
         format!("{:x}", digest.finalize())
     }
 
@@ -2144,6 +2164,21 @@ impl Program {
         Ok(self)
     }
 
+    /// This program with block programs, through the verifier.
+    pub(in crate::code_rule_dsl) fn with_block_programs(
+        mut self,
+        block_programs: Vec<block::BlockProgram>,
+    ) -> Result<Self, Error> {
+        self.block_programs = block_programs;
+        self.digest = DigestMemo::default();
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub(in crate::code_rule_dsl) fn block_programs(&self) -> &[block::BlockProgram] {
+        &self.block_programs
+    }
+
     fn with_directives(mut self, directives: Vec<Directive>) -> Result<Self, Error> {
         self.output_program = output::OutputProgram::lower(&directives, &self.strings)?;
         self.directives = directives;
@@ -2188,6 +2223,9 @@ impl Program {
             || self.output_program.instructions.len() != self.directives.len()
         {
             return Err(Error::InvalidTarget(0));
+        }
+        for program in &self.block_programs {
+            program.verify()?;
         }
         if self.predicates.iter().any(|predicate| {
             let index = usize::from(predicate.string_index());

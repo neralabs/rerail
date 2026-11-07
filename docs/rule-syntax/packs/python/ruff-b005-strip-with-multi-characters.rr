@@ -1,0 +1,26 @@
+.policy "ruff-b005-strip-with-multi-characters" revision 2
+.description "Avoid strip, lstrip or rstrip with a multi-character string that repeats a character; the argument is a set of characters, not a substring to remove."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B005 (flake8-bugbear): `.strip(s)`, `.lstrip(s)` or `.rstrip(s)` with one str literal argument of more
+// than one character, some of them repeated. The argument is a set of characters, so a repeat suggests the
+// author meant a substring (`removeprefix`/`removesuffix`). Any receiver counts: Ruff does not check the type.
+//   s.strip(".facebook.com")   ← B005: "." and "o" repeat
+//   s.rstrip(r"\n\t ")         ← B005: raw, so "\" repeats
+//   s.strip("we")              not reported: no repeat
+//   s.strip("ab", "c")         not reported: two arguments
+#include "python/bugbear.rr"
+
+.violation B005(at: node) code "B005"
+    "List each character once in this strip argument, or use `removeprefix()`/`removesuffix()` to remove a substring."
+    suppress ruff "B005"
+B005(c) :- strip_arg(c, v), b005_char(v, i, x), b005_char(v, j, x), i < j.
+.decl strip_arg(c: node, v: symbol)
+strip_arg(c, v) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
+    (m = "strip" ; m = "lstrip" ; m = "rstrip"), call_nargs(c, 1), call_nkwargs(c, 0), bb_pos(c, 0, a), plain_str(a, v).
+// b005_char(v, i, x): x is the i-th character of v (code points, not bytes), for strip arguments only.
+.decl b005_char(v: symbol, i: number, x: symbol)
+b005_char(v, 0, x) :- strip_arg(_, v), x = @slice(v, 0, 1), x != "".
+b005_char(v, j, x) :- b005_char(v, i, _), j = i + 1, x = @slice(v, j, j + 1), x != "".

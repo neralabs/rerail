@@ -589,7 +589,7 @@ pub struct ContentStore {
     local_result_cache: Mutex<LocalResultCache>,
     /// Facts plan sets by digest (immutable once written: `facts_memo`).
     facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
-    /// This process's atoms of the store (atoms.rs, decision 0047), shared with the planner's symbols.
+    /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
     working_set: working_set::WorkingSet,
@@ -602,7 +602,7 @@ pub struct ContentStore {
 }
 
 impl Drop for ContentStore {
-    /// Appends the atoms still pending (decision 0047 §4.3); another handle or the next open
+    /// Appends the atoms still pending (decision 0049 §4.3); another handle or the next open
     /// writes them if this fails, and nothing durable names them meanwhile.
     fn drop(&mut self) {
         if self.atoms.pending()

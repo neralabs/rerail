@@ -24,7 +24,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
-mod memo;
+pub(in crate::code_rule_dsl) mod memo;
 mod bridge;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
@@ -193,17 +193,29 @@ fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
         .filter(|(k, _)| k == "input")
         .filter_map(|(_, t)| t.split_once('(').map(|(r, p)| (r.trim().to_owned(), p.to_owned())))
         .collect();
+    // `core.rr`'s `input_error(path, kind, detail)`: a file a `.input` names that is missing gives no rows and one
+    // `missing` row (an artifact's path is `artifact:NAME`). A file that exists stops the run (O76), so `missing` is
+    // the one kind made.
+    let mut missing: BTreeSet<String> = BTreeSet::new();
     for (rel, params) in params {
-        let file = params.split("filename=").nth(1).and_then(|f| f.split('"').nth(1));
-        if let Some(f) = file
+        let quoted = |key: &str| params.split(key).nth(1).and_then(|f| f.split('"').nth(1)).map(str::to_owned);
+        let file = quoted("filename=");
+        if let Some(f) = &file
             && root.join(f).exists()
         {
             return Err(Error::Plan(format!("{rel}: reading {f} is not written yet (O76)")));
         }
-        if file.is_none() && !params.contains("artifact=") {
-            continue;
-        }
+        match (&file, quoted("artifact=")) {
+            (Some(f), _) => missing.insert(f.clone()),
+            (None, Some(a)) => missing.insert(format!("artifact:{a}")),
+            (None, None) => continue,
+        };
         prog.inputs.retain(|i| *i != rel);
+    }
+    if prog.inputs.iter().any(|i| i == "input_error") {
+        prog.inputs.retain(|i| i != "input_error");
+        let rows = prog.facts.entry("input_error".to_owned()).or_default();
+        rows.extend(missing.into_iter().map(|p| vec![front::Value::Str(p), front::Value::Str("missing".to_owned()), front::Value::Str(String::new())]));
     }
     // `core.rr` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
     for (rel, what) in NOT_MADE {
@@ -213,6 +225,24 @@ fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A chunk's mix, for which statistics measured on one chunk stand for another, scaled by nodes: the file types
+/// (extensions) holding a tenth of its nodes or more, in order, and its files' size, as the power of 4 of its mean
+/// nodes per file. Per-document relations (`doc`, `path_part`) grow with files, not nodes, so a chunk of many small
+/// files is not a chunk of a few large ones scaled. Documents are `(path, nodes)`.
+fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
+    let mut by: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut files = 0;
+    for (path, n) in docs {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        *by.entry(name.rsplit_once('.').map_or("", |(_, ext)| ext)).or_default() += n.max(1);
+        files += 1;
+    }
+    let total: usize = by.values().sum();
+    let size = (total / files.max(1)).max(1).ilog2() / 2;
+    let types = by.into_iter().filter(|(_, n)| n * 10 >= total).map(|(ext, _)| ext).collect::<Vec<_>>().join(",");
+    format!("{types}/{size}")
 }
 
 /// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty.
@@ -423,7 +453,10 @@ pub(crate) fn run_with_options(
         }
         last = now;
     };
-    let profiling = crate::code_rule_dsl::logic::profile::on();
+    // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
+    // profiling on may have turned it off meanwhile.
+    let _profile = crate::code_rule_dsl::logic::profile::on().then(crate::code_rule_dsl::logic::profile::one_run);
+    let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }
@@ -449,7 +482,7 @@ pub(crate) fn run_with_options(
             let (python, rs) = corpus_files(root)?;
             let rust = typing.rust.unwrap_or(rs.len() > python.len());
             let files = if rust { rs } else { python };
-            // A document's key is a function of its path (decision 0050), so a memoised row's node ids stay valid.
+            // A document's key is a function of its path (decision 0052), so a memoised row's node ids stay valid.
             let keys = memo::doc_keys(&files);
             (keys.into_iter().zip(files).collect(), HashMap::new(), rust)
         }
@@ -478,7 +511,7 @@ pub(crate) fn run_with_options(
         }
     }
     // The persistent store: tapes kept across runs, keyed by content (`RERAIL_TAPE_CACHE` names it, `off` parses
-    // every file), and the run's atoms and each file's memoised rows (decision 0050): atoms are never given out again,
+    // every file), and the run's atoms and each file's memoised rows (decision 0052): atoms are never given out again,
     // so a memoised row's symbols mean the same in every run. The run's SQL works in `store.sqlite`, on the same
     // atoms. Without the store, or reproducing T, the atoms are the run's own.
     let tapes = tape_cache().map_err(|e| Error::Plan(e.to_string()))?;
@@ -514,7 +547,7 @@ pub(crate) fn run_with_options(
     if !pushed.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("file-local joins pushed into the chunks", || format!("{} cross-file rules read a join made per chunk instead of its base relations (first: {})", pushed.len(), pushed.iter().take(6).cloned().collect::<Vec<_>>().join(", ")));
     }
-    // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0050).
+    // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
     let located = crate::code_rule_dsl::typing::file_local::locate(&mut lowered.program);
     // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again, and so
     // are the relations over them, before the program splits.
@@ -576,10 +609,12 @@ pub(crate) fn run_with_options(
     }
     let constants = Own::constants(&lowered.program);
     let mut own_totals = Own::default();
-    // Measured once (`Own::measure` and `syntax::statistics` read every row, sorting every column): the first
-    // chunk's, with its nodes or rows, scaled to each later chunk's.
-    let mut own_once: Option<(usize, Own)> = None;
-    let mut measured_once: HashMap<String, (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
+    // Measured once per mix (`Own::measure` and `syntax::statistics` read every row, sorting every column): the
+    // first chunk of a mix, with its nodes or rows, scaled to each later chunk of that mix. A chunk's mix is the file
+    // types holding a tenth of its nodes or more (`chunk_mix`), so a chunk of TypeScript after chunks of Python is
+    // measured again, and a stray file is not a new mix.
+    let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
+    let mut measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
@@ -675,7 +710,7 @@ pub(crate) fn run_with_options(
     worker_doing.set("parse");
     main_doing.set("setup");
     let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
-    // A run over the persistent store records which sources it read, its manifest (decision 0051).
+    // A run over the persistent store records which sources it read, its manifest (decision 0053).
     let recording = tapes.is_some() && t.is_none();
     // The stats the run records are as of its start: an entry is trusted only for a file last changed before then.
     let started_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i64);
@@ -876,13 +911,14 @@ pub(crate) fn run_with_options(
         chunks += 1;
         let mut stats = t_stats.clone();
         repository_stats(&mut stats);
+        let mix = chunk_mix(chunk_docs.iter().map(|(_, path, _, n)| (path.as_str(), *n as usize)));
         if own {
-            let chunk = match &own_once {
+            let chunk = match own_once.get(&mix) {
                 Some((first, measured)) if *first > 0 => measured.scaled(chunk_nodes_built as f64 / *first as f64),
                 _ => {
-                    let _measure = crate::code_rule_dsl::logic::profile::span(|| "measure constants".into());
+                    let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure constants ({mix})"));
                     let measured = Own::measure(&sources, &constants);
-                    own_once = Some((chunk_nodes_built, measured.clone()));
+                    own_once.insert(mix.clone(), (chunk_nodes_built, measured.clone()));
                     measured
                 }
             };
@@ -906,13 +942,14 @@ pub(crate) fn run_with_options(
                     col.extend((0..source.len()).map(|r| source.value(r, c)));
                 }
             }
-            let measured = match measured_once.get(&rel) {
+            let key = (mix.clone(), rel.clone());
+            let measured = match measured_once.get(&key) {
                 Some((first, measured)) if *first > 0 => scaled_statistics(measured, *first, source.estimated_len()),
                 _ => {
-                    let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
+                    let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
                     let measured = syntax::statistics(source.as_ref());
                     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (source.len() * source.columns().len()) as u64);
-                    measured_once.insert(rel.clone(), (source.estimated_len(), measured.clone()));
+                    measured_once.insert(key, (source.estimated_len(), measured.clone()));
                     measured
                 }
             };
@@ -1010,7 +1047,7 @@ pub(crate) fn run_with_options(
     crate::code_rule_dsl::logic::profile::wait("the worker's end", &worker_doing, || worker.join()).map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
-    // The run's manifest, then collection in the background while the cross-file part runs (decision 0051).
+    // The run's manifest, then collection in the background while the cross-file part runs (decision 0053).
     let collecting = if recording { record_run(store, root, &worker_cpu.2, &memo_program)? } else { None };
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
@@ -1065,7 +1102,7 @@ pub(crate) fn run_with_options(
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
-        // Bounded rounds only for a program that declares them (decision 0052: a typing program); a rule's
+        // Bounded rounds only for a program that declares them (decision 0056: a typing program); a rule's
         // cross-file part is one fixpoint, which no chain length cuts.
         let declared = cross_rounds::declared(&prog);
         let got = if bounded.hops.is_empty() || declared.is_none() {
@@ -1134,20 +1171,20 @@ pub(crate) fn run_with_options(
     phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
     let (tested, text_cpu) = *vocabulary.tested.lock().unwrap();
     drop(statements);
-    // The run's atoms are written at its end (decision 0047 §4.3), and the profile says how often they were.
+    // The run's atoms are written at its end (decision 0049 §4.3), and the profile says how often they were.
     store.flush_atoms().map_err(|e| Error::Plan(e.to_string()))?;
     let ((segments, atoms, bytes), pending) = store.atom_writes();
     crate::code_rule_dsl::logic::profile::decision("atoms", || {
-        format!("{atoms} atoms appended in {segments} segments ({:.1} MB), {pending} pending at the end (decision 0047)", bytes as f64 / 1e6)
+        format!("{atoms} atoms appended in {segments} segments ({:.1} MB), {pending} pending at the end (decision 0049)", bytes as f64 / 1e6)
     });
     if memoised {
         crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk)", docs.len()));
     }
     if let Some(collecting) = collecting {
         let collection = crate::code_rule_dsl::logic::profile::Activity::default();
-        collection.set("collecting the store (decision 0051)");
+        collection.set("collecting the store (decision 0053)");
         let (passes, outcome) = crate::code_rule_dsl::logic::profile::wait("the store's collection", &collection, || collecting.join()).map_err(|_| Error::Plan("store collection panicked".to_owned()))?;
-        crate::code_rule_dsl::logic::profile::decision("store collection (decision 0051)", || match outcome {
+        crate::code_rule_dsl::logic::profile::decision("store collection (decision 0053)", || match outcome {
             Ok(summary) => format!("{passes} passes in the background: {summary}"),
             Err(e) => format!("{passes} passes, then stopped: {e}"),
         });
@@ -1636,5 +1673,17 @@ impl Own {
         for (rel, vals) in by {
             stats.measured(rel, [], vals);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_chunks_mix_is_the_file_types_holding_a_tenth_of_its_nodes() {
+        assert_eq!(super::chunk_mix([("a/b.py", 900), ("c.ts", 50), ("d.ts", 60)].into_iter()), "py,ts/4");
+        assert_eq!(super::chunk_mix([("a/b.py", 950), ("c.ts", 50)].into_iter()), "py/4");
+        assert_eq!(super::chunk_mix([("Makefile", 10), ("x.v1/README", 10)].into_iter()), "/1");
+        // Many small files and a few large ones of one language are two mixes.
+        assert_ne!(super::chunk_mix([("a.py", 20), ("b.py", 30)].into_iter()), super::chunk_mix([("c.py", 2000)].into_iter()));
     }
 }

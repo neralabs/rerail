@@ -298,7 +298,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
 /// O12 (option a): `nearest` made by the transducer's file-local FIX (`typing::file_local`) and read as the input
 /// `nearest_<set>(n, a)`, on the CPU and on the device work queue: T's programs derive T's outputs.
 #[test]
-#[ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)"]
+#[cfg_attr(debug_assertions, ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)")]
 fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;

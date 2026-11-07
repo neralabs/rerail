@@ -1,0 +1,25 @@
+.policy "ruff-f622-multiple-starred-expressions" revision 2
+.description "Use at most one starred element in each Python unpacking target; two in the same target is a syntax error."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F622 (pyflakes): an unpacking target with two starred names; CPython cannot tell how to split the value.
+// Any target counts: an assignment, a `for` loop, a `with … as`.
+//   *a, *b, c = items         ← F622
+//   a, *rest = items          not reported
+#include "python/pyflakes.rr"
+
+.violation F622(at: node) code "F622" "Two starred expressions in assignment"
+    suppress ruff "F622"
+// tree-sitter writes a target as a pattern (`pattern_list`, …) with `list_splat_pattern` elements, except under
+// `with … as`, where the target is a tuple or list expression with `list_splat` elements.
+F622(t) :- kind(t, k), pattern_kind(k), count : { child(t, c, _), kind(c, "list_splat_pattern") } > 1.
+F622(t) :- with_target(t), (kind(t, "tuple") ; kind(t, "list")), count : { child(t, c, _), kind(c, "list_splat") } > 1.
+.decl pattern_kind(k: symbol)
+pattern_kind("pattern_list"). pattern_kind("tuple_pattern"). pattern_kind("list_pattern").
+// with_target(t): t is (part of) the target of `with … as`, through tuples, lists and parentheses.
+.decl with_target(t: node)
+with_target(t) :- kind(p, "as_pattern_target"), child(p, t, 0).
+with_target(t) :- with_target(p), (kind(p, "tuple") ; kind(p, "list") ; kind(p, "parenthesized_expression")),
+    child(p, t, _).

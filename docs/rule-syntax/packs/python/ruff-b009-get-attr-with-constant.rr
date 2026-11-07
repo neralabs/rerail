@@ -1,0 +1,20 @@
+.policy "ruff-b009-get-attr-with-constant" revision 2
+.description "Use plain attribute access instead of getattr() with a constant attribute name; it is no safer and harder to read."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B009 (flake8-bugbear): `getattr(o, "name")` with a constant name that is a valid identifier: `o.name` says
+// the same. Exactly two positional arguments and no keyword (a default makes getattr useful); the object is not
+// `*xs`; a name-mangled private (`__x`, not ending in `__`) is left alone, since `o.__x` would be mangled.
+//   getattr(foo, "bar")        ← B009
+//   builtins.getattr(1, "real")← B009
+//   getattr(foo, "bar", None)  not reported: a default
+//   getattr(foo, "123abc")     not reported: not an identifier
+#include "python/bugbear.rr"
+
+.violation B009(at: node) code "B009"
+    "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access."
+    suppress ruff "B009"
+B009(c) :- bb_builtin_call(c, "getattr"), call_nargs(c, 2), call_nkwargs(c, 0), bb_pos(c, 0, o), !kind(o, "list_splat"),
+    bb_pos(c, 1, a), plain_str(a, v), identifier(v), !bb_mangled(v).

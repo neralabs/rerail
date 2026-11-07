@@ -1,0 +1,22 @@
+.policy "ruff-pth201-path-constructor-current-directory" revision 2
+.description "Call Path() without arguments instead of passing the current directory explicitly; the constructor already defaults to it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH201 (flake8-use-pathlib): `pathlib.Path` or `pathlib.PurePath`, however imported, called with one
+// positional argument that is the str literal "." or "" (adjacent literals joined), and no keywords. Path()
+// is already the current directory. Reported at the argument.
+//   Path(".")                            ← PTH201: `Path()`
+//   pathlib.PurePath("")                 ← PTH201
+//   Path(".", "foo"), Path(f"."), Path(b".")      not reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
+//   call_only(c, a)   a is c's one argument, positional (python/ruff)
+//   plain_str(e, v)   a str literal's value (python/pyflakes)
+
+.violation PTH201(at: node, f: node) code "PTH201"
+    "Call `{f}()` with no argument instead of `{f}({at})`; the constructor already defaults to the current directory."
+    suppress ruff "PTH201"
+PTH201(a, f) :- pth_call(c, q, f), (q = "pathlib.Path" ; q = "pathlib.PurePath"), call_only(c, v), unparen(v, a),
+    plain_str(a, s), (s = "." ; s = "").

@@ -1,0 +1,28 @@
+.policy "ruff-ruf037-unnecessary-empty-iterable-within-deque-call" revision 3
+.description "Don't pass an empty list, tuple, dict, set or string as the iterable of a deque; a deque starts empty, so drop it and keep maxlen if it is set."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF037: `collections.deque(x)` where x, the iterable (first positional or `iterable=`), is empty:
+// `[]`, `()`, `{}`, `set()`, `list()`, `tuple()`, `dict()`, or an empty str, bytes, f- or t-string. A deque
+// starts empty; `maxlen` can go by keyword. Calls with more than two arguments are left alone.
+//   deque([])                  ← RUF037  `deque()`
+//   deque([], maxlen=10)       ← RUF037  `deque(maxlen=10)`
+//   deque(iterable=())         ← RUF037
+//   deque([1, 2])              not reported
+//   deque(frozenset())         not reported: Ruff takes only set, list, dict and tuple calls
+#include "python/ruff.rr"
+param_slot("collections.deque", "iterable", 0). param_slot("collections.deque", "maxlen", 1).
+
+.violation RUF037(at: node, msg: symbol) code "RUF037" "{msg}"
+    suppress ruff "RUF037"
+RUF037(c, m) :- call_param(c, "iterable", a), empty_literal(a, t), !empty_ctor_call(a, "str"), !empty_ctor_call(a, "bytes"),
+    !empty_ctor_call(a, "frozenset"), call_nargs(c, n), call_nkwargs(c, k), n + k <= 2, says(c, m).
+.decl empty_ctor_call(a: node, t: symbol)
+empty_ctor_call(a, t) :- unparen(a, m), kind(m, "call"), empty_literal(m, t).
+.decl says(c: node, m: symbol)
+says(c, "Drop the empty iterable and pass the bound by keyword: `deque(maxlen=...)`; a deque already starts empty.") :-
+    call_param(c, "iterable", _), call_param(c, "maxlen", _).
+says(c, "Remove the empty iterable argument; `deque()` already starts empty.") :-
+    call_param(c, "iterable", _), !call_param(c, "maxlen", _).

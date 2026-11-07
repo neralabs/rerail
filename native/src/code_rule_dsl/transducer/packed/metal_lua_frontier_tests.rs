@@ -116,7 +116,7 @@ fn shared_lua_patterns_preserve_ordered_repetitions_captures_backreferences_and_
         execute_with_backend(ExecutionBackend::Metal, &programs, &files, &anchors).unwrap();
     assert_eq!(actual, expected);
     let trace = scope.snapshot();
-    assert!(trace.len() <= 600);
+    assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert!(
         trace
             .iter()
@@ -314,7 +314,7 @@ fn check_value_costs(cases: &[ValueCase<'_>], units: &[Option<u32>]) {
                 assert_eq!(work[index] as usize, used, "request={index}, unit={unit:?}");
             }
             let trace = scope.snapshot();
-            assert!(trace.len() <= 600);
+            assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
             assert!(
                 trace
                     .iter()
@@ -514,7 +514,7 @@ fn lua_values_inherit_work_before_later_operands_and_share_one_code_owner() {
             rows.truncate(limit as usize);
         }
         assert_eq!(actual.outputs, outputs);
-        assert!(trace.len() <= 600);
+        assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
         assert!(
             trace
                 .iter()

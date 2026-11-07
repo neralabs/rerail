@@ -1,0 +1,40 @@
+.policy "ruff-ruf051-if-key-in-dict-del" revision 1
+.description "Use dict pop with a None default instead of testing a key with in and then deleting it; it removes the key in one step."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF051: `if k in d: del d[k]`, with no elif or else and nothing else in the body, where d is a name
+// bound once to a dict (`{}`, `dict(…)`, a dict comprehension, `d: dict[str, int]`, `**kwargs`) and both
+// keys are the same name or equal literals (`"abc"` and `"a" "bc"`, `0.1234` and `.1_2_3_4`). Reported at
+// the `del`.
+//   if k in d:
+//       del d[k]           ← RUF051  `d.pop(k, None)`
+//   if a.k in d: …         not reported: only names and literals
+#include "python/ruff.rr"
+
+.violation RUF051(at: node, d: symbol, k: symbol) code "RUF051"
+    "Use `{d}.pop({k}, None)` instead of checking `{k} in {d}` and then running `del {d}[{k}]`; keep any comments from the removed lines."
+    suppress ruff "RUF051"
+RUF051(x, dn, kt) :- kind(i, "if_statement"), !field(i, "alternative", _), field(i, "condition", t), unparen(t, tc),
+    cmp(tc, "in", k1, dv), unparen(dv, d), kind(d, "identifier"), text(d, dn), typed_as(d, "dict"),
+    field(i, "consequence", b), child(b, x, 0), !second_stmt(b),
+    kind(x, "delete_statement"), child(x, s, 0), !child(x, _, 1), kind(s, "subscript"), field(s, "value", d2),
+    text(d2, dn), field(s, "subscript", k2), !field_more(s), same_key(k1, k2), text(k1, kt).
+.decl second_stmt(b: node)
+second_stmt(b) :- kind(b, "block"), child(b, y, j), j > 0, !kind(y, "comment").
+.decl field_more(s: node)
+field_more(s) :- kind(s, "subscript"), count : { child(s, c, _), !kind(c, "comment") } > 2.
+// same_key(a, b): two keys Ruff compares equal: one name, or literals of one kind with one value.
+.decl same_key(a: node, b: node)
+same_key(a, b) :- key_of(a, t, v), key_of(b, t, v).
+.decl key_of(e: node, t: symbol, v: symbol)
+key_of(e, "name", x) :- unparen(e, m), kind(m, "identifier"), text(m, x).
+key_of(e, "str", v) :- unparen(e, m), plain_str(m, v).
+key_of(e, "bytes", v) :- unparen(e, m), string_form(m, "bytes"), value(m, v).
+key_of(e, "bytes", v) :- unparen(e, m), kind(m, "concatenated_string"), child(m, s0, 0), string_form(s0, "bytes"),
+    v = join x by i sep "" : { child(m, s, i), kind(s, "string"), value(s, x) }.
+key_of(e, "integer", v) :- unparen(e, m), kind(m, "integer"), value(m, v).
+// A float by its digits: `.1_2_3_4` is `0.1234`.
+key_of(e, "float", @replace_all(@replace_all(t, "_", ""), "^\\.", "0.")) :- unparen(e, m), kind(m, "float"), text(m, t).
+key_of(e, k, "") :- unparen(e, m), kind(m, k), (k = "true" ; k = "false" ; k = "none" ; k = "ellipsis").

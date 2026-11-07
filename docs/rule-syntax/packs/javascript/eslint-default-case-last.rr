@@ -1,0 +1,15 @@
+.policy "eslint-default-case-last" revision 4
+.description "Put the default clause last in a switch statement; a default in the middle is easy to misread."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's default-case-last: a `default:` clause followed by another clause of the same switch.
+//   switch (a) { default: f(); case 1: g(); }   → the default is reported
+//   switch (a) { case 1: g(); default: f(); }   fine
+// No options.
+.violation default_case_last(at: node) code "default-case-last" "Default clause should be the last clause."
+    suppress eslint "default-case-last"
+    suppress oxlint "default-case-last"
+    suppress biome "lint/suspicious/useDefaultSwitchClauseLast"
+default_case_last(d) :- kind(d, "switch_default"), precedes(d, c), kind(c, "switch_case").

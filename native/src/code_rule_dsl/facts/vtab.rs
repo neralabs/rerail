@@ -54,6 +54,19 @@ pub(crate) trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
+    /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
+    fn doc_column(&self) -> Option<usize> {
+        None
+    }
+    /// The rows whose `column` is one of `values` in document `doc` (by its key): a lookup over a column that
+    /// spans the documents (a kind) where the statement binds the document too. `None`: not kept to one.
+    fn lookup_in(&self, _column: usize, _values: &[i64], _doc: i64) -> Option<Vec<usize>> {
+        None
+    }
+    /// Whether a lookup on `column` can be kept to one document (`lookup_in`).
+    fn kept_to_doc(&self, _column: usize) -> bool {
+        false
+    }
     fn value(&self, row: usize, column: usize) -> i64;
     /// The rows whose columns hold every `(column, value)` of `eqs`, ascending: a scan, which a source may do faster
     /// than a `value` call per row.
@@ -272,6 +285,21 @@ unsafe impl<'a> VTab<'a> for Table {
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         let source = self.binding.current();
+        // The document bound by an `EQ`, where the source can keep a lookup to it (`lookup_in`).
+        let doc = source.doc_column().and_then(|d| {
+            info.constraints().enumerate().find_map(|(j, c)| {
+                (c.is_usable()
+                    && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+                    && c.column() == d as i32
+                    && info.collation(j).is_ok_and(|v| v == "BINARY"))
+                .then_some(j)
+            })
+        });
+        // A lookup kept to one document reads that document's share of its matches.
+        let in_doc = |matches: usize| {
+            let d = source.doc_column().expect("a document column");
+            (matches * source.estimated_matches(d, false) / source.estimated_len().max(1)).max(1)
+        };
         let selected = info
             .constraints()
             .enumerate()
@@ -283,7 +311,10 @@ unsafe impl<'a> VTab<'a> for Table {
                     && info.collation(i).is_ok_and(|v| v == "BINARY")
                 {
                     let batch = info.is_in_constraint(i).ok()?;
-                    Some((i, c.column(), source.estimated_matches(c.column() as usize, batch)))
+                    let col = c.column() as usize;
+                    let matches = source.estimated_matches(col, batch);
+                    let kept = doc.is_some() && source.kept_to_doc(col);
+                    Some((i, c.column(), if kept { in_doc(matches) } else { matches }))
                 } else {
                     None
                 }
@@ -358,8 +389,14 @@ unsafe impl<'a> VTab<'a> for Table {
                 info.set_in_constraint(i, true)?;
             }
             info.constraint_usage(i).set_argv_index(1);
+            // A lookup over a column that spans the documents (a kind), where the document is bound as well:
+            // kept to that document, rather than every document's rows rechecked against it.
+            let doc = doc.filter(|_| source.kept_to_doc(col as usize));
+            if let Some(j) = doc {
+                info.constraint_usage(j).set_argv_index(2);
+            }
             // No affinity or collation assumptions: SQLite rechecks every filter.
-            info.set_idx_num((col + 1) * 2 + i32::from(batch));
+            info.set_idx_num((col + 1) * 2 + i32::from(batch) | if doc.is_some() { 1 << 21 } else { 0 });
             info.set_estimated_rows(matches as i64);
             info.set_estimated_cost(matches.max(1) as f64);
         } else {
@@ -419,6 +456,8 @@ unsafe impl VTabCursor for Cursor {
                 self.selected = self.source.range_lookup(column as usize, lower.flatten(), upper.flatten());
             }
         } else if index != 0 {
+            let in_doc = index & (1 << 21) != 0;
+            let index = index & !(1 << 21);
             let batch = index % 2 == 1;
             let column = (index / 2 - 1) as usize;
             let mut values = Vec::new();
@@ -433,7 +472,12 @@ unsafe impl VTabCursor for Cursor {
             } else {
                 values.extend(integer(&args.get::<Value>(0)?));
             }
-            self.selected = self.source.lookup(column, &values);
+            // A document that is not an integer matches no row: the plain lookup, which SQLite rechecks.
+            let doc = if in_doc { integer(&args.get::<Value>(1)?) } else { None };
+            self.selected = match doc {
+                Some(doc) => self.source.lookup_in(column, &values, doc).or_else(|| self.source.lookup(column, &values)),
+                None => self.source.lookup(column, &values),
+            };
         }
         let count = self.selected.as_ref().map_or(self.range.len(), Vec::len);
         stats.candidates.fetch_add(count as u64, Ordering::Relaxed);

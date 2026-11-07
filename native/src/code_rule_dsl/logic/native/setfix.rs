@@ -51,7 +51,7 @@ fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()
 /// Symbols are the store's atoms (`content_store::atoms`, C12), so a symbol column holds atom ids and joins
 /// directly with fact families' atom columns. T numbered symbols per process and stored them as text.
 /// A run interns the symbols it creates (`cat`) in the process's arena of the database, the one the store uses
-/// (decision 0047): they are pending until a write transaction or a due flush appends them, and SQL sees them
+/// (decision 0049): they are pending until a write transaction or a due flush appends them, and SQL sees them
 /// through the `atoms` virtual table meanwhile. `buf`: scratch for `cat`, so joining two symbols allocates only when
 /// the result is new. `failed`: the first interning that failed (the atoms lease not obtained), returned by `check`
 /// at the run's next boundary; its symbol is -1, which matches nothing.
@@ -91,7 +91,7 @@ fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
 
 /// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`a.b`) over `conn`'s symbols: the planner's SQL holds symbols
 /// as atoms (decision 0009), and these are the only places it reads or makes their text. NULL gives NULL. Also
-/// registers `atoms` and the store's commit hook on `conn` (decision 0047).
+/// registers `atoms` and the store's commit hook on `conn` (decision 0049).
 pub fn register_symbols(conn: &Connection) -> Result<()> {
     use rusqlite::functions::FunctionFlags;
     crate::content_store::atoms::Atoms::install(conn)?;
@@ -127,7 +127,7 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Appends the symbols pending in `conn`'s database if a flush is due (decision 0047 §4.2): a run's end.
+/// Appends the symbols pending in `conn`'s database if a flush is due (decision 0049 §4.2): a run's end.
 pub fn flush_symbols(conn: &Connection) -> Result<()> {
     crate::content_store::atoms::Atoms::for_connection(conn).flush_if_due(conn).map_err(|e| err(e.to_string()))
 }
@@ -1402,6 +1402,11 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
             }
             other => return Err(err(format!("unknown join item {other}"))),
         }
+    }
+    // Every head term reads a slot the body binds: an unbound one is refused here, not read out of range later.
+    let unbound = |s: usize| !bound.get(s).copied().unwrap_or(false);
+    if out.iter().any(|t| match t { Term::Slot(s) => unbound(*s), Term::Cat(a, b) => unbound(*a) || unbound(*b), Term::Const(_) => false }) {
+        return Err(err(format!("a head reads a slot its body does not bind: {spec}")));
     }
     let counts = steps.iter().map(|_| Default::default()).collect();
     Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts })

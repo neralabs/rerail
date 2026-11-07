@@ -1,0 +1,17 @@
+.policy "ruff-d408-missing-section-underline-after-name" revision 2
+.description "Put a section underline on the line directly below the section name, with no blank line between them."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D408 (pydocstyle): a section's dashed underline separated from its header by blank lines. Reported at
+// the underline. Sections are found in the docstring's convention (python/docstrings-sections).
+//   Returns
+//
+//   -------                  ← D408
+#include "python/docstrings-sections.rr"
+
+.violation D408(at: span, k: symbol) code "D408"
+    "Move this underline up to the line directly below the section name, removing the blank lines between them."
+    suppress ruff "D408"
+D408(at, v) :- doc_section(s, i, v, _, _, _), doc_after(s, i, f, k), k > 0, doc_dashes(s, f, _), doc_at(s, f, at).

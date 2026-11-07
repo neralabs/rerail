@@ -1,0 +1,41 @@
+.policy "ruff-fast001-fast-api-redundant-response-model" revision 2
+.description "Remove a FastAPI route's response_model argument when it repeats the return annotation; FastAPI already infers the response model from it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FAST001 (FastAPI): a route decorator's `response_model=T` where the function is annotated `-> T` with
+// the same type, built only of names and subscripts (`Item`, `list[Item]`, `Dict[str, Item]`); since FastAPI
+// 0.89 the annotation is enough. An attribute (`models.Item`) or a literal is never compared. Reported at the
+// whole `response_model=T` keyword argument. Ruff's fix removes the argument (unsafe); it is not offered here. Silent where annotations are deferred
+// (`from __future__ import annotations`, or `pythonVersion` 3.14 and later): Ruff then resolves the annotation's
+// names only after the walk, and they never match the decorator's.
+//   @app.post("/items/", response_model=Item)
+//   async def create_item(item: Item) -> Item: …        ← FAST001
+//   @app.post("/items/", response_model=str)
+//   async def create_item(item: Item) -> Item: …        not reported
+#include "python/misc2-fastapi.rr"
+//   fast_route(f, dc), fast_strip(e, m); call_kwarg (python/ruff)
+
+.violation FAST001(at: node) code "FAST001"
+    "Remove `{at}`: FastAPI 0.89 and newer already use the route's return annotation, which names the same type. Keep it on older versions."
+    suppress ruff "FAST001"
+FAST001(k) :- fast_route(f, dc), call_kwarg(dc, "response_model", v), ast_up(v, k), kind(k, "keyword_argument"),
+    field(f, "return_type", r0), fast_strip(r0, r),
+    plain_type(v), plain_type(r), flat(v, x), flat(r, x), docof(f, d), !future_annotations(d), !targets(14).
+// plain_type(e): e is a name, or a subscript of names, each resolving to a binding made before it (or a
+// builtin), as Ruff's is_identical_types compares them: an undefined `Foo` matches nothing.
+.decl plain_type(e: node)
+plain_type(e) :- (kind(e, "identifier") ; kind(e, "subscript") ; kind(e, "generic_type")),
+    count : { within(n, e), !kind(n, "identifier"), !type_part(n) } = 0, !unresolved(e).
+.decl unresolved(e: node)
+unresolved(e) :- kind(e, "identifier"), !resolved(e).
+unresolved(e) :- within(n, e), kind(n, "identifier"), !resolved(n).
+.decl resolved(n: node)
+resolved(n) :- perf_latest_site(n, _).
+resolved(n) :- builtin_ref(n, _).
+.decl type_part(n: node)
+type_part(n) :- kind(n, k), (k = "subscript" ; k = "generic_type" ; k = "type_parameter" ; k = "type" ; k = "tuple" ;
+    k = "comment").
+.decl flat(e: node, x: symbol)  // the text without whitespace: `Dict[str, Item]` and `Dict[str,Item]` agree
+flat(e, @replace_all(@replace_all(y, "#[^\\n]*", ""), "\\s", "")) :- plain_type(e), text(e, y).

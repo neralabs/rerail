@@ -78,7 +78,7 @@ must stay identical.
 ### Options
 
 1. **Converter only: emit `inside` where kinds are known.** This is cheap and it removes
-   some uses. It doesn't remove the `has` from an unknown kind, and decision 0046's point
+   some uses. It doesn't remove the `has` from an unknown kind, and decision 0048's point
    stands: conversions are imperfect, and the engine must not depend on them.
 2. **Engine: a range join on spans.** Sort the file's nodes by start position and probe
    with a range. This is generic, but containment needs two ranges at once (start ≤ s and
@@ -178,7 +178,7 @@ drop to about the matches.
 3. The converter's `inside` where kinds are known, last, and only as tidying. The engine
    handles both forms by then.
 
-   Done (decision 0048 §4). No converted clause knew the ancestor's kinds, so none could use
+   Done (decision 0050 §4). No converted clause knew the ancestor's kinds, so none could use
    `inside`. The converter writes the language's `within` instead, which the engine serves
    from the same tree relation.
 

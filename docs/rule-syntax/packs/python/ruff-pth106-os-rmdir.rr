@@ -1,0 +1,20 @@
+.policy "ruff-pth106-os-rmdir" revision 2
+.description "Use Path.rmdir() instead of os.rmdir(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH106 (flake8-use-pathlib): a call of `os.rmdir`, however it is imported, with exactly one argument:
+// the `path` parameter, by position or by keyword. pathlib's form is `Path(p).rmdir()`.
+// Reported at the callee.
+//   os.rmdir(p)                     ← PTH106
+//   from os import rmdir
+//   rmdir(path=p)                   ← PTH106
+//   os.rmdir(p, dir_fd=None)        not reported: two arguments
+#include "python/pathlib.rr"
+//   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
+
+.violation PTH106(at: node, s: node) code "PTH106"
+    "Use `Path({s}).rmdir()` from pathlib instead of `os.rmdir({s})`; leave it where the argument is a bytes path."
+    suppress ruff "PTH106"
+PTH106(f, a) :- single_arg(_, "os.rmdir", "path", f, a).

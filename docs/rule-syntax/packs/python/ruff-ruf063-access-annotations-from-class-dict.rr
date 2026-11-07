@@ -1,0 +1,20 @@
+.policy "ruff-ruf063-access-annotations-from-class-dict" revision 1
+.description "Use the dedicated get_annotations function instead of reading annotations from an object's __dict__; direct access is not forward-compatible with deferred annotation evaluation."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF063: `x.__dict__.get("__annotations__"[, default])` or `x.__dict__["__annotations__"]`. With
+// deferred annotations (PEP 649, Python 3.14) a class's `__dict__` may not hold them yet.
+//   foo.__dict__["__annotations__"]     ← RUF063  `inspect.get_annotations(foo)`
+//   foo.__annotations__                 not reported
+#include "python/ruff.rr"
+
+.violation RUF063(at: node, msg: symbol) code "RUF063" "{msg}"
+    suppress ruff "RUF063"
+RUF063(c, "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annotations(obj)` (3.10+) or `typing_extensions.get_annotations(obj)` instead of `__dict__.get(\"__annotations__\")`.") :-
+    kind(c, "call"), field(c, "function", f), attr_of(f, o, "get"), attr_of(o, _, "__dict__"), call_nkwargs(c, 0),
+    call_nargs(c, n), n >= 1, n <= 2, ruff_arg(c, 0, k), unparen(k, s), plain_str(s, "__annotations__").
+RUF063(x, "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annotations(obj)` (3.10+) or `typing_extensions.get_annotations(obj)` instead of `__dict__[\"__annotations__\"]`.") :-
+    kind(x, "subscript"), field(x, "value", o), attr_of(o, _, "__dict__"), field(x, "subscript", k), unparen(k, s),
+    plain_str(s, "__annotations__").

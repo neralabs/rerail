@@ -1,0 +1,5 @@
+(?i)callback|callable|effect|function|hook
+(?i)callback|callable|effect|function|hook|processor|transform
+(?i)register
+(?i)runtime
+RawResult

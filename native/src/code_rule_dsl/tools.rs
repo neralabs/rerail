@@ -30,7 +30,7 @@ pub fn assemble(text: &str) -> Result<String, String> {
 
 /// `programs` (`.rr` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
-/// one (decision 0049): each file is parsed and batched once for all of them, and `violation` holds every one's
+/// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
 /// findings. T's facts reproduce one program's run only.
 pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
     use super::typing::file_local::Binding;

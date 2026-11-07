@@ -1,0 +1,40 @@
+.policy "typescript-eslint-no-invalid-this" revision 4
+.description "Avoid this outside classes, methods and functions that receive one in TypeScript; there it is undefined in strict mode."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-globals.rr"
+//   default_this(f) (isDefaultThisBinding), anonymous, capital_id; and this_owner, program, source_type,
+//   strict_scope, call_arg, function_kind
+#include "tsx/eslint-a-text.rr"
+//   js_comment
+
+// typescript-eslint's no-invalid-this: ESLint's rule, where `this` is undefined, plus TypeScript's ways of
+// giving a function a `this`. In strict code (a module, a class, "use strict") `this` is invalid
+//   at the top level of a module:             export const x = this;
+//   in a function called with the default binding:   function f() { return this.a; }
+// and valid in a method, a field initializer, a static block, a function that declares `this: T`, one named
+// with a capital (a constructor), one bound with call/apply/bind or assigned to a member, or one with a
+// `@this` comment. An arrow has its enclosing `this`. Sloppy functions are not checked.
+// capIsConstructor (default true) is always on here: tsx/eslint-a-globals' default_this has no switch for it.
+.violation no_invalid_this(at: node) code "@typescript-eslint/no-invalid-this"
+    "Unexpected 'this'."
+    suppress eslint "@typescript-eslint/no-invalid-this"
+no_invalid_this(t) :- kind(t, "this"), !field(_, "pattern", t), this_owner(t, s), invalid_frame(s).
+
+// invalid_frame(s): the frame's `this` is undefined. A field value or static block never is.
+.decl invalid_frame(s: node)
+invalid_frame(p) :- program(d, p), (source_type(d, "module") ; option("globalReturn", "true"), strict_scope(p)).
+invalid_frame(f) :- function_node(f), strict_scope(f), default_this(f), !ts_bound(f).
+
+// ts_bound(f): a binding ESLint sees that default_this misses (a TypeScript parameter's capitalised default is
+// eslint-a-globals' now): getJSDocComment climbs from f to the first ancestor with a comment before it, stopping at
+// a function, method or property.
+//   /** @this Obj */ return function () { this; };    a JSDoc comment before the statement f's value starts
+.decl ts_bound(f: node)
+ts_bound(f) :- kind(f, "function_expression"), !call_arg(_, f, _), within_stop(f, x, jsdoc_stop), kind(x, k), !jsdoc_stop(k),
+    next_sibling(c, x), js_comment(c, "Block", v), match("\\*[\\s\\S]*@this[\\s\\S]*", v).
+.decl jsdoc_stop(k: symbol)
+jsdoc_stop(k) :- function_kind(k).
+jsdoc_stop("pair"). jsdoc_stop("method_definition").

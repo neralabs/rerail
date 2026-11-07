@@ -1,0 +1,37 @@
+.policy "typescript-eslint-prefer-as-const" revision 5
+.description "Use as const instead of repeating a literal as its own type, in assertions or annotations; it states the intent without duplication."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   type_parent; through tsx/eslint-a-common: deparen
+
+// typescript-eslint's prefer-as-const: a literal repeated as its own literal type says "this exact value", which
+// `as const` says once. The literal and the type must be written the same (raw text): a string, number or boolean.
+//   'a' as 'a'   <'a'>'a'   1 as (1)          → "Expected a `const` …"; the fix writes `as const`
+//   let a: 'a' = 'a';   class C { b: 2 = 2 }  → reported at the type annotation, without a fix
+//   'a' as "a"   -1 as -1   null as null   let x: 'a' = 'b'      fine
+// No options. The annotation's suggestion (drop it, add `as const`) is not offered here.
+.violation prefer_as_const(at: node, msg: symbol) code "@typescript-eslint/prefer-as-const" "{msg}"
+    suppress eslint "@typescript-eslint/prefer-as-const"
+    suppress oxlint "prefer-as-const"
+    suppress biome "lint/style/useAsConstAssertion"
+    fix safe to_const "Use `as const`"
+prefer_as_const(t, "Expected a `const` instead of a literal type assertion.") :- asserted(t).
+prefer_as_const(t, "Expected a `const` assertion instead of a literal type annotation.") :- annotated(t).
+to_const(t, m) :- asserted(t), prefer_as_const(t, m) => replace(t, `const`).
+
+// asserted(t): t is the literal type of `v as t` or `<t>v`, repeating v.
+.decl asserted(t: node)
+asserted(t) :- kind(a, "as_expression"), child(a, e, 0), child(a, ty, 1), same_literal(e, ty, t).
+asserted(t) :- kind(a, "type_assertion"), child(a, ta, 0), child(ta, ty, 0), child(a, e, 1), same_literal(e, ty, t).
+// annotated(t): t is the literal type in `let x: t = v` or a class field `x: t = v`, repeating v.
+.decl annotated(t: node)
+annotated(t) :- (kind(d, "variable_declarator") ; kind(d, "public_field_definition")), field(d, "type", a),
+    child(a, ty, 0), field(d, "value", e), same_literal(e, ty, t).
+// same_literal(e, ty, t): expression e and type ty, both without parentheses (t is ty's literal_type), are the
+// same literal as written. A literal type of null or undefined is TSNullKeyword in TSESTree, no literal.
+.decl same_literal(e: node, ty: node, t: node)
+same_literal(e, ty, t) :- deparen(e, v), type_child(ty, t), kind(t, "literal_type"), child(t, l, 0),
+    kind(l, k), (k = "string" ; k = "number" ; k = "true" ; k = "false"), kind(v, k), text(l, x), text(v, x).

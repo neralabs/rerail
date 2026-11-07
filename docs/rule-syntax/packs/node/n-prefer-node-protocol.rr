@@ -1,0 +1,58 @@
+.policy "n-prefer-node-protocol" revision 4
+.description "Load Node.js built-in modules with the node: prefix, such as node:fs, when the project's Node versions support it; it marks them as built-ins npm packages can't shadow."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-node-protocol: load Node.js built-ins by their `node:` names:
+//   require("fs")    import fs from "fs"    export * from "path"    import("os")    process.getBuiltinModule("os")
+//                                                           each reported: write "node:fs", …
+//   require("node:fs")   require(`fs`)   require("fs", x)   require?.("fs")   import x from "leftpad"     not
+// The module names are the plugin's: built-ins that also have a `node:` form (not "constants" or "sys").
+// require() is the identifier by name, with exactly one argument, not an optional call; getBuiltinModule is a
+// member of `process` or `globalThis.process`. Imports are reported only where the configured Node.js range (the
+// version option, else values.rr's node_range) supports `node:` imports (^12.20.0 || >=14.13.1); require()
+// also needs it for require (^14.18.0 || >=16.0.0); getBuiltinModule always. The fix adds the prefix.
+
+#include "tsx/node.rr"   // called, deparen, call_arg_count, static_prop, node_runs_on
+
+.decl esm_ok(d: number)
+esm_ok(d) :- node_runs_on(d, r), @semver_subset(r, "^12.20.0 || >=14.13.1") = 1.
+.decl cjs_ok(d: number)
+cjs_ok(d) :- esm_ok(d), node_runs_on(d, r), @semver_subset(r, "^14.18.0 || >=16.0.0") = 1.
+
+// protocol_source(n): a string literal n that loads a module, where the rule applies.
+.decl protocol_source(n: node)
+protocol_source(s) :- called(c, f), kind(f, "identifier"), text(f, "require"), !field(c, "optional_chain", _),
+    call_arg_count(c, 1), call_arg(c, w, 0), deparen(w, s), kind(s, "string"), docof(c, d), cjs_ok(d).
+protocol_source(s) :- called(c, f), static_prop(f, o, "getBuiltinModule"), process_ref(o), call_arg(c, w, 0),
+    deparen(w, s), kind(s, "string").
+protocol_source(s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", s), docof(i, d),
+    esm_ok(d).
+protocol_source(s) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "import"), call_arg(c, w, 0),
+    deparen(w, s), kind(s, "string"), docof(c, d), esm_ok(d).
+.decl process_ref(o: node)  // `process` or `globalThis.process` (by name)
+process_ref(o) :- kind(o, "identifier"), text(o, "process").
+process_ref(o) :- static_prop(o, g, "process"), kind(g, "identifier"), text(g, "globalThis").
+
+.violation node_protocol(at: node, x: symbol) code "n/prefer-node-protocol" "Prefer `node:{x}` over `{x}`."
+    suppress eslint "n/prefer-node-protocol"
+    fix add_prefix "Add the node: prefix"
+node_protocol(s, x) :- protocol_source(s), value(s, x), protocol_module(x).
+add_prefix(s, _) :- text(s, t), match("(?<q>.)(?<r>.*)", t), w = cat(cat(q, "node:"), r) => replace(s, `$w`).
+
+// protocol_module(x): the plugin's built-ins x for which "node:x" is one too.
+.decl protocol_module(x: symbol)
+protocol_module("assert"). protocol_module("assert/strict"). protocol_module("async_hooks").
+protocol_module("buffer"). protocol_module("child_process"). protocol_module("cluster"). protocol_module("console").
+protocol_module("crypto"). protocol_module("dgram"). protocol_module("diagnostics_channel"). protocol_module("dns").
+protocol_module("dns/promises"). protocol_module("events"). protocol_module("fs"). protocol_module("fs/promises").
+protocol_module("http2"). protocol_module("http"). protocol_module("https"). protocol_module("inspector").
+protocol_module("inspector/promises"). protocol_module("module"). protocol_module("net"). protocol_module("os").
+protocol_module("path"). protocol_module("path/posix"). protocol_module("path/win32"). protocol_module("perf_hooks").
+protocol_module("process"). protocol_module("querystring"). protocol_module("readline").
+protocol_module("readline/promises"). protocol_module("repl"). protocol_module("stream").
+protocol_module("stream/promises"). protocol_module("stream/web"). protocol_module("stream/consumers").
+protocol_module("string_decoder"). protocol_module("timers"). protocol_module("timers/promises").
+protocol_module("tls"). protocol_module("trace_events"). protocol_module("tty"). protocol_module("url").
+protocol_module("util"). protocol_module("util/types"). protocol_module("v8"). protocol_module("vm").
+protocol_module("wasi"). protocol_module("worker_threads"). protocol_module("zlib").

@@ -1,0 +1,42 @@
+.policy "ruff-pyi034-non-self-return-type" revision 2
+.description "Annotate methods that return their own instance, such as in-place operators, context-manager entry and an iterator's iter method, with Self instead of the class or a broad iterator type."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI034 (flake8-pyi), every file: a method that returns its receiver, annotated with something other than
+// `Self`. Ruff checks four cases, in methods with a positional parameter that are not abstract or overloaded,
+// outside metaclasses:
+//   def __iadd__(self, x) -> C: ...         an in-place operator returning the class by name ← PYI034
+//   def __enter__(self) -> C: ...           `__enter__`, `__new__`, `async __aenter__`
+//                                           returning the class by name (a @final class may) ← PYI034
+//   def __iter__(self) -> Iterator[int]     in a class derived from Iterator                ← PYI034
+//   def __aiter__(self) -> AsyncIterator    in a class derived from AsyncIterator           ← PYI034
+// Reported at the method name.
+#include "python/typing.rr"
+
+.violation PYI034(at: node, m: symbol, c: symbol, msg: symbol) code "PYI034" "{msg}"
+    suppress ruff "PYI034"
+PYI034(n, x, r, cat("Annotate the return type of `", x, "` as `Self` (from typing, or typing_extensions before 3.11) instead of `", r, "`. Leave it if the method does not return the receiver.")) :-
+    candidate(c, f, x, t), field(f, "name", n), text(t, r),
+    ( is_async(f), x = "__aenter__", by_name(c, t), !final_class(c)
+    ; !is_async(f), inplace(x), by_name(c, t)
+    ; !is_async(f), (x = "__enter__" ; x = "__new__"), by_name(c, t), !final_class(c) ).
+PYI034(n, x, cn, cat("Annotate the return type of `", x, "` as `Self` (from typing, or typing_extensions before 3.11) instead of an iterator type, since `", cn, "` is itself an iterator. Leave it if another object is returned.")) :-
+    candidate(c, f, x, t), !is_async(f), !by_name(c, t), iterates(x, i, o), (abc_head(t, i) ; abc_head(t, o)),
+    abc_base(c, o), field(f, "name", n), def_name(c, cn).
+// candidate(c, f, x, t): method x of class c returns t.
+.decl candidate(c: node, f: node, x: symbol, t: node)
+candidate(c, f, x, t) :- pyi_method(c, f, x), !metaclass(c), !abstract(f), !decorated(f, "overload"), first_param(f, _, _),
+    returns(f, t).
+// by_name(c, t): t names the class itself, bare or quoted.
+.decl by_name(c: node, t: node)
+by_name(c, t) :- candidate(c, _, _, t), def_name(c, x), (kind(t, "identifier"), text(t, x) ; plain_str(t, x)).
+.decl final_class(c: node)  // decorated @final
+final_class(c) :- kind(c, "class_definition"), decorator(c, e), typing_sym(e, "final").
+.decl inplace(x: symbol)  // the in-place operators
+inplace("__iadd__"). inplace("__isub__"). inplace("__imul__"). inplace("__imatmul__"). inplace("__itruediv__").
+inplace("__ifloordiv__"). inplace("__imod__"). inplace("__ipow__"). inplace("__ilshift__"). inplace("__irshift__").
+inplace("__iand__"). inplace("__ixor__"). inplace("__ior__").
+.decl iterates(x: symbol, iterable: symbol, iterator: symbol)  // the method, and the two return types it checks
+iterates("__iter__", "Iterable", "Iterator"). iterates("__aiter__", "AsyncIterable", "AsyncIterator").

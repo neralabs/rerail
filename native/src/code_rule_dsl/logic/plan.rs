@@ -470,69 +470,6 @@ pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
 
-/// The suffix `private_derived_inputs` gives a derived relation named as a base relation: a suffix, so the name sorts
-/// where the base relation's would (components and plans are ordered by name).
-const PRIVATE: &str = "_rr_derived";
-
-/// `prog` with each relation it derives under a base relation's name (`input_columns`) and does not read as an
-/// input renamed `<rel>_rr_derived` (O81). T's programs derive `docof(n, d) :- node(d, n, …)`, which `core.rr` now
-/// makes an input: `sql_col` names an input's columns, but a derived table's are `c0, c1`. An output keeps its name
-/// (it is the program's result): one that collides is refused here, not misread later.
-pub(in crate::code_rule_dsl) fn private_derived_inputs(prog: &Program) -> Result<std::borrow::Cow<'_, Program>> {
-    let clash: BTreeSet<String> = prog
-        .rules
-        .iter()
-        .map(|r| r.head.rel.clone())
-        .chain(prog.facts.keys().cloned())
-        .filter(|rel| super::sql::select::input_columns(rel).is_some() && !prog.inputs.contains(rel))
-        .collect();
-    if let Some(rel) = clash.iter().find(|rel| prog.decls.contains_key(&format!("{rel}{PRIVATE}"))) {
-        return Err(Error::Plan(format!("{rel}{PRIVATE} is the engine's name for the derived {rel}")));
-    }
-    if clash.is_empty() {
-        return Ok(std::borrow::Cow::Borrowed(prog));
-    }
-    if let Some(out) = clash.iter().find(|rel| prog.outputs.contains(rel)) {
-        return Err(Error::Plan(format!("the output {out} is derived under a base relation's name")));
-    }
-    let name = |rel: &str| if clash.contains(rel) { format!("{rel}{PRIVATE}") } else { rel.to_owned() };
-    let mut p = prog.clone();
-    fn rekey<V>(m: &mut BTreeMap<String, V>, clash: &BTreeSet<String>) {
-        for rel in clash {
-            if let Some(v) = m.remove(rel) {
-                m.insert(format!("{rel}{PRIVATE}"), v);
-            }
-        }
-    }
-    rekey(&mut p.decls, &clash);
-    rekey(&mut p.lattice, &clash);
-    rekey(&mut p.facts, &clash);
-    p.demand.iter_mut().for_each(|d| *d = name(d));
-    for r in &mut p.rules {
-        r.head.rel = name(&r.head.rel);
-        for l in &mut r.body {
-            match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => a.rel = name(&a.rel),
-                _ => {}
-            }
-        }
-    }
-    Ok(std::borrow::Cow::Owned(p))
-}
-
-/// `out` with `private_derived_inputs`' names given back: the plans and components are reported as the program wrote them.
-fn public_names(mut out: Outcome) -> Outcome {
-    let public = |s: &str| s.replace(PRIVATE, "");
-    for c in &mut out.chosen {
-        c.head = public(&c.head);
-        c.anchor = public(&c.anchor);
-        c.walks.iter_mut().for_each(|(w, _)| *w = public(w));
-    }
-    out.iterations = std::mem::take(&mut out.iterations).into_iter().map(|(k, v)| (public(&k), v)).collect();
-    out.native = std::mem::take(&mut out.native).into_iter().map(|k| public(&k)).collect();
-    out
-}
-
 fn is_join(l: &Literal) -> bool {
     matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. })
 }
@@ -945,11 +882,20 @@ impl Model {
             return Err(Error::Plan(format!("rule for {head}: no executor for {l} yet")));
         }
         let joins: Vec<usize> = (0..body.len()).filter(|&i| is_join(&body[i])).collect();
-        if !joins.iter().any(|&i| matches!(body[i], Literal::Atom(_))) {
+        if !joins.is_empty() && !joins.iter().any(|&i| matches!(body[i], Literal::Atom(_))) {
             return Err(Error::Plan(format!("rule for {head} has no positive atom")));
         }
         let mut candidates = 0u64;
-        let (work, rows, order, subsets) = if let Some(fixed) = fixed {
+        let (work, rows, order, subsets) = if joins.is_empty() {
+            // A body of filters and aggregates alone (`n = count : { … }`) runs over the relational unit, one empty
+            // binding: ground negations and constant expressions filter it; an unbound variable still fails.
+            let (mut order, mut bound, mut rest) = (Vec::new(), BTreeSet::new(), (0..body.len()).collect());
+            let rows = close(&mut order, 1.0, &mut bound, &mut rest);
+            if !rest.is_empty() {
+                return Err(Error::Plan(format!("unbound literals in {head}")));
+            }
+            (1.0, rows, order, 1)
+        } else if let Some(fixed) = fixed {
             // The kept order, priced now: each join step as the search prices it, each filter once ready.
             let (mut work, mut rows, mut bound, mut order) = (0.0, 1.0, BTreeSet::new(), Vec::new());
             if fixed.len() != body.len() {
@@ -1415,6 +1361,8 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
+        "tree_digest" => &[&["n"], &["s", "n"]],
+        "rx_span" => &[&["c"], &["m"]],
         "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
@@ -1422,7 +1370,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "source" | "src_line" | "line_count" => &[&["d"]],
         "str_part" => &[&["lit"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
-        // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0048).
+        // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
         "within" => &[&["n"], &["a"]],
         "span_within" => &[&["inner"], &["outer"]],
         "doc" | "pkg" | "syntax_error" => &[&["d"]],
@@ -1814,7 +1762,14 @@ impl Model {
                         }
                     };
                     let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);
-                    env.insert(var.clone(), Expr::Scalar(Box::new(query)));
+                    let value = Expr::Scalar(Box::new(query));
+                    // Planning may bind the result first (`n = 0` before the count): the aggregate then tests that
+                    // binding, which replacing it would drop.
+                    if let Some(bound) = env.get(var) {
+                        wh.push(eq(bound.clone(), value));
+                    } else {
+                        env.insert(var.clone(), value);
+                    }
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) && self.inputs.native.contains("nearest") => {
                     // The climb is a native function over the tape: no CTE, and its result is just a column expression.
@@ -2236,6 +2191,66 @@ impl Run<'_> {
             self.db.execute_batch(&format!("DROP TABLE IF EXISTS delta_{r}; ALTER TABLE new_{r} RENAME TO delta_{r};"))?;
         }
         Ok(total)
+    }
+
+    /// Makes `rel`'s rows natively from the tables of the relations it reads (`front::Native`); returns them.
+    fn native_relation(&mut self, rel: &str, native: &crate::code_rule_dsl::logic::front::Native) -> Result<usize> {
+        use crate::code_rule_dsl::logic::front::Native;
+        let (edge, target, roots) = match native {
+            Native::DfsFirst { edge, target, roots } => (edge, target, roots),
+            Native::MatchAll { input, pattern, groups } => return self.match_all(rel, input, pattern, groups),
+        };
+        let cols = |r: &str, n: usize| (0..n).map(|c| self.model.col(r, c)).collect::<Vec<_>>();
+        let read = |sql: &str, width: usize| -> Result<Vec<Vec<i64>>> {
+            let mut st = self.db.prepare(sql)?;
+            let rows = st.query_map([], |row| (0..width).map(|i| row.get::<_, i64>(i)).collect::<rusqlite::Result<Vec<i64>>>())?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        };
+        let e = cols(edge, 3);
+        let edges: Vec<(i64, i64, i64)> = read(&format!("SELECT DISTINCT {}, {}, {} FROM {edge}", e[0], e[1], e[2]), 3)?.into_iter().map(|r| (r[0], r[1], r[2])).collect();
+        let t = cols(target, 1);
+        let targets: Vec<i64> = read(&format!("SELECT DISTINCT {} FROM {target}", t[0]), 1)?.into_iter().map(|r| r[0]).collect();
+        // `dfs_first_memo`'s roots in increasing order of their second column: a number, or a symbol as text.
+        let roots: Option<Vec<i64>> = match roots {
+            Some(roots) => {
+                let r = cols(roots, 2);
+                let symbol = self.prog.decls[roots.as_str()][1].1 == "sym" && self.model.inputs.atoms.is_some();
+                let key = if symbol { format!("sym_text({})", r[1]) } else { r[1].clone() };
+                let mut seen = BTreeSet::new();
+                let ordered = read(&format!("SELECT {}, {key} FROM {roots} ORDER BY 2, 1", r[0]), 1)?;
+                Some(ordered.into_iter().map(|row| row[0]).filter(|r| seen.insert(*r)).collect())
+            }
+            None => None,
+        };
+        let rows = crate::code_rule_dsl::logic::native::dfs_first::dfs_first(&edges, &targets, roots.as_deref());
+        let n = rows.len();
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {rel}"), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
+        Ok(n)
+    }
+
+    /// `match_all` over symbols (`front::Native::MatchAll`): each distinct text of `input`, and each match's groups.
+    /// Symbols are atoms (interned by `sym_atom`) or text, as the run stores them.
+    fn match_all(&mut self, rel: &str, input: &str, pattern: &str, groups: &[String]) -> Result<usize> {
+        let re = regex::Regex::new(pattern).map_err(|e| Error::Plan(format!("match_all: bad regex {pattern:?}: {e}")))?;
+        let atoms = self.model.inputs.atoms.is_some();
+        let c = self.model.col(input, 0);
+        let text = if atoms { format!("sym_text({c})") } else { c.clone() };
+        let texts: Vec<(SqlValue, String)> = {
+            let mut st = self.db.prepare(&format!("SELECT DISTINCT {c}, {text} FROM {input}"))?;
+            let rows = st.query_map([], |row| Ok((row.get::<_, SqlValue>(0)?, row.get::<_, Option<String>>(1)?)))?;
+            rows.filter_map(|r| r.map(|(v, t)| t.map(|t| (v, t))).transpose()).collect::<rusqlite::Result<_>>()?
+        };
+        let hole = if atoms { "sym_atom(?)" } else { "?" };
+        let holes: Vec<&str> = std::iter::once("?").chain(groups.iter().map(|_| hole)).collect();
+        let mut st = self.db.prepare(&format!("INSERT OR IGNORE INTO {rel} VALUES ({})", holes.join(", ")))?;
+        let mut n = 0;
+        for (v, t) in &texts {
+            for row in crate::code_rule_dsl::logic::native::match_all::rows(&re, groups, t) {
+                let params: Vec<SqlValue> = std::iter::once(v.clone()).chain(row.into_iter().map(|g| SqlValue::Text(g.to_owned()))).collect();
+                n += st.execute(rusqlite::params_from_iter(params))?;
+            }
+        }
+        Ok(n)
     }
 
     fn refresh(&mut self, r: &str, at_least_one: bool) -> Result<()> {
@@ -2753,6 +2768,10 @@ impl Run<'_> {
         self.why_not = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
             self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
+            return Ok(false);
+        }
+        if scc.iter().any(|r| prog.natives.contains_key(r)) {
+            self.why_not = Some("a relation made natively from its inputs' tables (`dfs_first`)".into());
             return Ok(false);
         }
         let rels: Vec<&String> = scc.iter().collect();
@@ -3351,7 +3370,7 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
 /// with the planner's statistics in the attached schema `stats`. `db` is a connection to the content store: the
-/// symbols the run makes are the store's atoms (pending until a flush, decision 0047), and derived relations are
+/// symbols the run makes are the store's atoms (pending until a flush, decision 0049), and derived relations are
 /// `temp` tables, dropped by the next run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
@@ -3409,7 +3428,7 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     super::native::forget_inputs(db);
     let out = run(&lowered.program, db, inputs, Some(lowered));
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
-    // write transaction (decision 0047).
+    // write transaction (decision 0049).
     super::native::flush_symbols(db)?;
     out
 }
@@ -3480,10 +3499,6 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
 }
 
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
-    run_named(&*private_derived_inputs(prog)?, db, inputs, lowered).map(public_names)
-}
-
-fn run_named(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
     let db = db;
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
@@ -3522,12 +3537,12 @@ fn run_named(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&l
         super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
     }
     // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
-    // 0046); in a corpus run only (kept plans), so T's golden plans are unchanged.
+    // 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
     let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
     let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
         Some((p, demanded)) => {
-            super::profile::decision("demand (decision 0046)", || {
+            super::profile::decision("demand (decision 0048)", || {
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
             });
             split = p;
@@ -3668,6 +3683,21 @@ fn run_named(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&l
             .chain(scc.iter().cloned())
             .collect();
         run.ensure(&read)?;
+        // A relation made natively (`dfs_first`): its inputs' rows in, the operator's rows out; its rule only
+        // ordered it after them.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(native) = prog.natives.get(*rel)
+        {
+            super::profile::stratum(&skey, "native operator over its inputs' tables (dfs_first, match_all)", || why.clone());
+            let n = run.native_relation(rel, native)?;
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            run.refresh(rel, false)?;
+            for c in 0..prog.decls[*rel].len() {
+                let d = run.count(&format!("SELECT count(DISTINCT c{c}) FROM {rel}"))?;
+                run.model.ndv.insert(((*rel).clone(), c), if d == 0 { 1.0 } else { d as f64 });
+            }
+            continue;
+        }
         let mut planned = Vec::new();
         let mut explained = Vec::new();
         let planning = super::profile::span(|| "plan".into());

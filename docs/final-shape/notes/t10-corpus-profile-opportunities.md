@@ -183,7 +183,7 @@ A profile of the warm full run's file-local part (39.7 s, profiled build) had th
 
 That brought the file-local part from 49 s to 29 s.
 
-Then decision 0050: each file's file-local rows are memoised under its content, its path and the run's plan. A
+Then decision 0052: each file's file-local rows are memoised under its content, its path and the run's plan. A
 file that hasn't changed is neither parsed nor evaluated; its rows are replayed into the cross-file tables.
 
 Every converted rule (100) in one run (M; load 24–52):
@@ -205,7 +205,7 @@ cross-file statistics. The memo adds 32 MB to the full corpus's store.
 
 Two items from §1 measured again on the full corpus, with the memo off and the tapes cached:
 
-- **Batch: 4.1 s**, no longer SQLite durability. Atom writes are deferred (decision 0047), so interning takes
+- **Batch: 4.1 s**, no longer SQLite durability. Atom writes are deferred (decision 0049), so interning takes
   0.08 s. What's left is nearest ancestors (1.8 s), projecting (1.3 s) and text tests (0.9 s). It is paid only for
   files the memo misses.
 - **Memory doesn't creep with corpus size.** `RERAIL_PROF_CHUNKS=1` prints memory as each chunk arrives. The live
@@ -221,7 +221,7 @@ samples), and the run's spans. Three fixes came out of it first:
 | Change | Instructions |
 |---|---|
 | before | 748e9 |
-| Demand (decision 0046) drops only the candidates whose split fails. One component closing a cycle through a negation (`p65_m41`) had left all 100 rules without demand. Now 33 relations are demanded. Joins 18.3 to 13.6 s. | 690e9 |
+| Demand (decision 0048) drops only the candidates whose split fails. One component closing a cycle through a negation (`p65_m41`) had left all 100 rules without demand. Now 33 relations are demanded. Joins 18.3 to 13.6 s. | 690e9 |
 | A stratum borrows the relations run so far instead of cloning them (quadratic in strata: 3%), and a store path is canonicalised once (`realpath` per stratum: 2.5%) | 669e9 |
 
 The replay and the 252 findings are unchanged.
@@ -256,18 +256,18 @@ key:**
 | `p33_m132`, `p33_m16` | 6.0M each | `m17(n) :- m126(n), m16(n)` and similar | 1.82 s |
 | `p55_m676` | 6.9M: all nodes of kind 1025 or 1228 | `p55_m678(n) :- p55_m676(n), name(n, v), strtest_221(v)` | 0.41 s |
 
-Together that's about 7.4 s of 17.6 s of join CPU. Decision 0046 demands only relations that are read solely by
+Together that's about 7.4 s of 17.6 s of join CPU. Decision 0048 demands only relations that are read solely by
 negations and whose every rule starts from every node. Two extensions would cover these:
 
 1. **Positive reads:** cut a positive read of a candidate when the reader's other literals bind its variables, as
-   0046 does for negations. The demanded relation is then built for the reader's keys only.
+   0048 does for negations. The demanded relation is then built for the reader's keys only.
 2. **Rules that start from a filtered base scan** (`node(_, n, 1025, …)`, `field(n, 65555, _)`, `name(n, v)`) as
    well as from every node.
 
 The structural guard has to be restated for positive reads. A negation only filters, so the reader's remaining
 body is no larger than its own work. A positive read can connect the body, so cutting it can make `pre_<i>` larger
 than the reader. The candidate rule: cut a positive read only when a kept positive atom that is derived or
-constant-filtered binds all its variables. This is for a decision (an extension of 0046), not done here.
+constant-filtered binds all its variables. This is for a decision (an extension of 0048), not done here.
 
 ### 2e. The roofline: every span against what its work needs (2026-11-06)
 
@@ -286,7 +286,7 @@ Tree-sitter has no roof: it is the roof, and only a memo hit avoids it. Planning
 its rate.
 
 Runs: the full corpus (9,010 files, 28.2M nodes), the 94 converted rules of the checks with no hand-written rule,
-one combined run. Store as in decision 0051. The cold run is a fresh store. The warm run is the same tree again.
+one combined run. Store as in decision 0053. The cold run is a fresh store. The warm run is the same tree again.
 The incremental run comes after 20 files each gained a function. Instructions are user and system, and the load
 was 18–27.
 
@@ -319,7 +319,7 @@ Where the cold run's excess is, with its cause where the profile names it:
    - `p53_m676` and `p61_m107` each copy all 6.0M identifiers.
 
    These cost about 100 ns a row against a 5 ns probe. A kind set belongs to the batch's kind index, a complement
-   to an anti-join where it is read (decision 0046), and a subtree to `within` (decision 0048).
+   to an anti-join where it is read (decision 0048), and a subtree to `within` (decision 0050).
 2. **Tape work, 7.6 s.** Encoding the tape costs 140 ns a node against a 4.7 ns roof (3.8 s). Storing it costs 2.1 s
    for 246 MB. Facts from the tape and the tape restore cost 1.8 s more.
 3. **Content keys, 3.0 s.** Each source is read (0.9 s), hashed and stored for the memo (1.9 s, 14 ns a byte against
@@ -481,14 +481,14 @@ retired:
 | step | instructions | load |
 |---|---|---|
 | before | 697.8e9 | 14–19 |
-| join specs kept by their inputs' digest (`logic::derived`, 0053) | 690.5e9 | 33–47 |
-| kind-set axes made per looked-up node (`within::Axis`, 0053) | 635.5e9 | 55–68 |
+| join specs kept by their inputs' digest (`logic::derived`, 0057) | 690.5e9 | 33–47 |
+| kind-set axes made per looked-up node (`within::Axis`, 0057) | 635.5e9 | 55–68 |
 
 The counters were added after Homebrew's LLVM was replaced under its rustc. The build since then uses rustup's
 1.97.1, which has its own LLVM. The counters' run, 647.6e9 at load 92–115, includes the two new roofs' calibration,
 and its instructions do not compare with the rows above.
 
-- **Cross-file rounds (2g) are now the library's call (0052).** A program declares `.pragma "cross-rounds" "k"`
+- **Cross-file rounds (2g) are now the library's call (0056).** A program declares `.pragma "cross-rounds" "k"`
   (the five typing programs say 4). Every other program runs its cross-file part as one fixpoint. Bridged typing
   answers are one shared fact family, handed over as rows.
 - **Join specs.** 160,654 requests: 158,810 kept, 1,844 made. Writing the digest field by field, rather than as
@@ -529,4 +529,4 @@ The fix for each is one engine rule, not one per check:
 
 P2, P4 and P5 are simplifier rules (decision 0038's family). P3 and P6 are planning. P1 is a structural join on the
 tape. A converter fix can also remove P1 and P3 at the source (`inside`, `has` on the file), but the engine must
-not depend on it (decision 0046's point: imperfect conversions).
+not depend on it (decision 0048's point: imperfect conversions).

@@ -1,0 +1,51 @@
+.policy "vitest-expect-expect" revision 3
+.description "A test whose function never calls `expect` or `assert`."
+.language typescript
+.mode steer
+.scope include "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/*.test.mts", "**/*.spec.mts", "**/__tests__/**/*.ts", "**/__tests__/**/*.tsx"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
+
+#include "tsx/ts-b-vitest.rr"
+//   vitest_call, vitest_member, test_fn, deparen
+
+// @vitest/eslint-plugin's expect-expect: an it, test, xit or xtest call in which no assertion is called,
+// reported at the call. An assertion is a call whose callee's dotted name starts with an assertFunctionNames
+// entry (default expect and assert), letters in any case: `expect(x).toBe(y)` is "expect.toBe", `assert.equal(…)`,
+// `Expect(1)`; not `expectTypeOf(x)` nor `a.expect(x)`. It may sit anywhere in the call, or in the function
+// declaration a name argument refers to (`it("t", check)`).
+//   it("t", () => {})   it("t", () => { foo(1).toBe(1); })   it("todo")                 → reported
+//   it("t", () => expect(1).toBe(1))   it.skip("t", () => {})   it.todo("t")           fine
+// Options: assertFunctionNames (patterns: `*` any letters or digits, `**` any run with dots too:
+// "request.**.expect"), additionalTestBlockFunctions (more dotted callee names that are tests).
+.violation expect_expect(at: node) code "vitest/expect-expect" "This test asserts nothing, so it passes whatever the code does. Add an expect."
+    suppress eslint "vitest/expect-expect"
+    suppress oxlint "expect-expect"
+    suppress biome "lint/nursery/useExpect"
+expect_expect(c) :- test_block(c), !asserted(c).
+
+.decl test_block(c: node)  // a test call that runs a test: not skip, todo, extend or scoped
+test_block(c) :- vitest_call(c, g, _), (g = "test" ; g = "xtest"), !inert(c).
+test_block(c) :- kind(c, "call_expression"), field(c, "function", f), name_of(f, x), option_item("additionalTestBlockFunctions", _, x).
+.decl inert(c: node)
+inert(c) :- vitest_member(c, _, x, _), (x = "skip" ; x = "todo" ; x = "extend" ; x = "scoped").
+// name_of(e, x): jest's getNodeName: `a.b.c`, through calls (`expect(x).toBe` is expect.toBe) and parentheses.
+.decl name_of(e: node, x: symbol)
+name_of(e, x) :- deparen(e, i), kind(i, "identifier"), text(i, x).
+name_of(e, cat(x, cat(".", y))) :- deparen(e, m), kind(m, "member_expression"), field(m, "object", o), name_of(o, x),
+    field(m, "property", p), text(p, y).
+name_of(e, cat(x, cat(".", y))) :- deparen(e, m), kind(m, "subscript_expression"), field(m, "object", o), name_of(o, x),
+    field(m, "index", i), deparen(i, s), (kind(s, "string"), value(s, y) ; kind(s, "identifier"), text(s, y)).
+name_of(e, x) :- deparen(e, c), kind(c, "call_expression"), field(c, "function", f), name_of(f, x).
+// assert_call(a): call a (not a tagged template) has a callee name an assertFunctionNames pattern starts.
+.decl assert_call(a: node)
+assert_call(a) :- kind(a, "call_expression"), field(a, "arguments", g), kind(g, "arguments"), field(a, "function", f),
+    name_of(f, x), pattern(p), match(cat("(?i)", cat(p, "(\\..*)?")), x).
+.decl pattern(p: symbol)  // the regex of each assertFunctionNames entry
+pattern(p) :- names(n), p = @replace_all(@replace_all(@replace_all(@replace_all(n, "\\.", "\\."), "\\*\\*", "~"),
+    "\\*", "[a-z\\d]*"), "~", "[_a-z\\d\\.]*").
+.decl names(n: symbol)
+names(n) :- option_item("assertFunctionNames", _, n).
+names(n) :- !option("assertFunctionNames", _), (n = "expect" ; n = "assert").
+.decl asserted(c: node)
+asserted(c) :- test_block(c), assert_call(a), within(a, c).
+asserted(c) :- test_block(c), test_fn(c, f), kind(f, "function_declaration"), assert_call(a), within(a, f).

@@ -1,0 +1,58 @@
+.policy "ruff-ruf016-invalid-index-type" revision 3
+.description "Index list, tuple, string and bytes literals only with integers or slices; any other index type fails at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF016: a list, tuple, str, f-string, bytes or list-comprehension literal indexed by a literal of the
+// wrong type, which raises TypeError. An index must be an int, a bool or a slice; a slice bound an int, a bool
+// or None. Only literals are judged: a name or a call may hold anything.
+//   [1, 2, 3]["x"]          ← RUF016 at "x"
+//   "abc"[1, 2]             ← RUF016: a tuple index
+//   [1, 2, 3]["x":"y"]      ← RUF016 twice, at each bound
+//   [1][...]                ← RUF016: an ellipsis index
+//   [1][1:"a", 2]           ← RUF016 once, for the tuple; its slice is not looked into
+//   "abc"[i]                not reported
+#include "python/ruff.rr"
+
+.violation RUF016(at: node, msg: symbol) code "RUF016" "{msg}"
+    suppress ruff "RUF016"
+RUF016(i, cat(cat(cat(cat("Index this ", vt), " literal with an integer or a slice; a "), it),
+    " index raises a TypeError.")) :-
+    indexed(s, vt), field(s, "subscript", i), count : { field(s, "subscript", _) } = 1, lit_type(i, it), !index_ok(it).
+RUF016(i, cat(cat("Index this ", vt), " literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError.")) :-
+    indexed(s, vt), field(s, "subscript", i), count : { field(s, "subscript", _) } > 1,
+    count : { field(s, "subscript", i0), i0 < i } = 0.
+RUF016(b, cat(cat("Use an integer (or None) for each bound and step of this slice of a ", vt),
+    cat(cat("; a ", bt), " bound raises a TypeError."))) :-
+    indexed(s, vt), field(s, "subscript", sl), count : { field(s, "subscript", _) } = 1, slice_part(sl, _, b), lit_type(b, bt),
+    !bound_ok(bt).
+
+// indexed(s, t): subscript s indexes a literal of type t.
+.decl indexed(s: node, t: symbol)
+indexed(s, t) :- kind(s, "subscript"), field(s, "value", v), lit_type(v, t), seq_type(t).
+.decl seq_type(t: symbol)
+seq_type("str"). seq_type("bytes"). seq_type("list"). seq_type("tuple"). seq_type("list comprehension").
+.decl index_ok(t: symbol)
+index_ok("int"). index_ok("bool"). index_ok("slice").
+.decl bound_ok(t: symbol)
+bound_ok("int"). bound_ok("bool"). bound_ok("None").
+
+// lit_type(e, t): the type of a literal, through parentheses. f-strings are str, t-strings Template.
+.decl lit_type(e: node, t: symbol)
+lit_type(e, t) :- unparen(e, m), kind(m, k), kind_type(k, t).
+lit_type(e, "str") :- unparen(e, m), (string_form(m, "str") ; string_form(m, "fstr")).
+lit_type(e, "str") :- unparen(e, m), kind(m, "concatenated_string"), !string_form(m, _),
+    count : { child(m, x, _), string_form(x, f), f != "str", f != "fstr" } = 0.
+lit_type(e, "bytes") :- unparen(e, m), string_form(m, "bytes").
+lit_type(e, "bytes") :- unparen(e, m), kind(m, "concatenated_string"), child(m, s0, 0), string_form(s0, "bytes").
+lit_type(e, "Template") :- unparen(e, m), string_form(m, "tstr").
+lit_type(e, "int") :- unparen(e, m), kind(m, "integer"), text(m, x), !match("[\\s\\S]*[jJ]", x).
+lit_type(e, "complex") :- unparen(e, m), (kind(m, "integer") ; kind(m, "float")), text(m, x), match("[\\s\\S]*[jJ]", x).
+lit_type(e, "float") :- unparen(e, m), kind(m, "float"), text(m, x), !match("[\\s\\S]*[jJ]", x).
+.decl kind_type(k: symbol, t: symbol)
+kind_type("true", "bool"). kind_type("false", "bool"). kind_type("none", "None"). kind_type("list", "list").
+kind_type("tuple", "tuple"). kind_type("set", "set"). kind_type("dictionary", "dict"). kind_type("slice", "slice").
+kind_type("list_comprehension", "list comprehension"). kind_type("set_comprehension", "set comprehension").
+kind_type("dictionary_comprehension", "dict comprehension"). kind_type("lambda", "lambda").
+kind_type("generator_expression", "generator"). kind_type("ellipsis", "ellipsis").

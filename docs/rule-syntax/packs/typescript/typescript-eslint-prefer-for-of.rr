@@ -1,0 +1,66 @@
+.policy "typescript-eslint-prefer-for-of" revision 2
+.description "Use a for-of loop instead of an indexed for loop that only reads each element of one array."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-b-scope.rr"
+//   resolves, var_decl, deparen, estree_parent
+
+// typescript-eslint's prefer-for-of: a counting loop `for (let i = 0; i < a.length; i++)` whose body uses i
+// only to read `a[i]` (the same source text as the array before `.length`) could be `for (const x of a)`.
+//   for (let i = 0; i < xs.length; i++) { use(xs[i]); }               → reported at the loop
+//   for (let i = 0; i < xs.length; i += 1) { xs[i] = 0; }             fine: writes the element
+//   for (let i = 0; i < xs.length; i++) { use(i, xs[i]); }            fine: uses i itself
+// The loop must declare one non-const index set to 0, test `i < <array>.length` (no `?.` in it) and step by one:
+// `i++`, `++i`, `i += 1`, `i = i + 1` or `i = 1 + i`. Uses of i outside the body (its head) don't matter.
+.violation prefer_for_of(at: node) code "@typescript-eslint/prefer-for-of" "Rewrite this loop as a `for-of` loop over the array; its index is only used to read the elements."
+    suppress eslint "@typescript-eslint/prefer-for-of"
+    suppress biome "lint/style/useForOf"
+prefer_for_of(f) :- counting(f, s, x, a), !other_use(f, s, x, a).
+
+// counting(f, s, x, a): loop f counts x (declared in scope s) up to the length of the array written a.
+.decl counting(f: node, s: node, x: symbol, a: symbol)
+counting(f, s, x, a) :- kind(f, "for_statement"), field(f, "initializer", d), index_decl(d, id, x), variable(s, x, id, _),
+    field(f, "condition", c), deparen(c, b), kind(b, "binary_expression"), op(b, "<"), field(b, "left", l),
+    named(l, x), field(b, "right", r), deparen(r, m), kind(m, "member_expression"), field(m, "property", p),
+    text(p, "length"), !has(m, _, "optional_chain"), field(m, "object", o), deparen(o, ao), text(ao, a),
+    field(f, "increment", i), step(i, x).
+// index_decl(d, id, x): `let i = 0` or `var i = 0`, one declarator, a plain name.
+.decl index_decl(d: node, id: node, x: symbol)
+index_decl(d, id, x) :- (kind(d, "variable_declaration") ; kind(d, "lexical_declaration"), var_decl(d, k), k != "const"),
+    child(d, v, _), kind(v, "variable_declarator"), count : { child(d, w, _), kind(w, "variable_declarator") } = 1,
+    field(v, "name", id), kind(id, "identifier"), text(id, x), field(v, "value", z), literal(z, "0").
+.decl named(e: node, x: symbol)  // e is the identifier x, parentheses aside
+named(e, x) :- deparen(e, i), kind(i, "identifier"), text(i, x).
+.decl literal(e: node, v: symbol)  // the number literal v, parentheses aside
+literal(e, v) :- deparen(e, n), kind(n, "number"), value(n, v).
+.decl step(e: node, x: symbol)  // e adds one to x
+step(e, x) :- deparen(e, u), kind(u, "update_expression"), op(u, "++"), field(u, "argument", a), named(a, x).
+step(e, x) :- deparen(e, u), kind(u, "augmented_assignment_expression"), op(u, "+="), field(u, "left", l), named(l, x),
+    field(u, "right", r), literal(r, "1").
+step(e, x) :- deparen(e, u), kind(u, "assignment_expression"), field(u, "left", l), named(l, x), field(u, "right", r),
+    deparen(r, b), kind(b, "binary_expression"), op(b, "+"), field(b, "left", p), field(b, "right", q),
+    (named(p, x), literal(q, "1") ; literal(p, "1"), named(q, x)).
+
+// other_use(f, s, x, a): the body uses x other than to read `a[x]`.
+.decl other_use(f: node, s: node, x: symbol, a: symbol)
+other_use(f, s, x, a) :- counting(f, s, x, a), field(f, "body", b), resolves(r, s, x), within(r, b), !element_read(r, a).
+.decl element_read(r: node, a: symbol)  // r is the index of `a[r]`, not written to (and a is not `this`)
+element_read(r, a) :- resolves(r, _, _), estree_parent(r, m), kind(m, "subscript_expression"), field(m, "index", ix),
+    deparen(ix, r), field(m, "object", o), deparen(o, ao), !kind(ao, "this"), text(ao, a), !assignee(m).
+// assignee(m): m, through parentheses, `!`, `as`, `satisfies` and `<T>` casts, is written: `a[i] = 1`, `a[i]++`,
+// `delete a[i]`, `[a[i]] = xs`, `[...a[i]] = xs`. The rule misses `({ k: a[i] } = o)` (its object test wants an
+// object expression, which ESTree's pattern is not) and `for (a[i] of b)`; so does this.
+.decl assignee(m: node)
+assignee(m) :- kind(m, "subscript_expression"), lifted(m, u), estree_parent(u, p), written_by(p, u).
+.decl lifted(m: node, u: node)
+lifted(m, m) :- kind(m, "subscript_expression").
+lifted(m, u) :- lifted(m, w), child(u, w, _), (kind(u, "parenthesized_expression") ; kind(u, "non_null_expression") ;
+    kind(u, "as_expression") ; kind(u, "satisfies_expression") ; kind(u, "type_assertion")).
+.decl written_by(p: node, u: node)
+written_by(p, u) :- (kind(p, "assignment_expression") ; kind(p, "augmented_assignment_expression")), field(p, "left", l),
+    deparen(l, u).
+written_by(p, u) :- kind(p, "unary_expression"), op(p, "delete"), field(p, "argument", u).
+written_by(p, u) :- kind(p, "update_expression"), field(p, "argument", u).
+written_by(p, u) :- (kind(p, "array_pattern") ; kind(p, "rest_pattern")), child(p, u, _).

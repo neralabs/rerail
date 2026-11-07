@@ -1,0 +1,16 @@
+.policy "ruff-b029-except-with-empty-tuple" revision 2
+.description "Don't write an except clause with an empty tuple as its type; it catches nothing, so name the exceptions to handle."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B029 (flake8-bugbear): `except ():`. An empty tuple of exception types catches nothing, so the handler
+// never runs. Reported at the except clause; `except* ()` and `except () as e` too.
+//   except ():                 ← B029
+//   except (ValueError,):      not reported (B013)
+#include "python/bugbear.rr"
+
+.violation B029(at: node) code "B029"
+    "Using `except ():` with an empty tuple does not catch anything; add exceptions to handle"
+    suppress ruff "B029"
+B029(x) :- handler_type(x, t), kind(t, "tuple"), !handler_elt(x, _, _).

@@ -1,0 +1,39 @@
+
+synthetic chain, depth 10000 (20001 nodes), seeded at the bottom
+  reference: marked 10000, waves 10000, seeds 1
+  (a) CPU-driven, 1 command buffer per wave      wall  4968.092 ms  gpu   347.646 ms  waves 10000 (tg-loop 0)   496.81 us/wave  ok 
+  (b) pre-encoded 10002 waves in one command buf wall    78.487 ms  gpu    60.900 ms  waves 10000 (tg-loop 0)     7.85 us/wave  ok encode 15.9 ms; 0 empty trailing waves
+  (b) pre-encoded 11002 waves in one command buf wall    70.943 ms  gpu    55.215 ms  waves 10000 (tg-loop 0)     7.09 us/wave  ok encode 13.5 ms; 1000 empty trailing waves
+  (d) chained buffers, 64 waves each             wall    72.566 ms  gpu    50.719 ms  waves 10000 (tg-loop 0)     7.26 us/wave  ok 158 buffers
+  (d) chained buffers, 1024 waves each           wall    59.398 ms  gpu    56.305 ms  waves 10000 (tg-loop 0)     5.94 us/wave  ok 11 buffers
+  (e) single-threadgroup loop, one dispatch      wall    11.809 ms  gpu    11.197 ms  waves 10000 (tg-loop 10000)     1.18 us/wave  ok 
+  (f) hybrid, hand off at <= 1024, 400 slots     wall    15.529 ms  gpu    12.675 ms  waves 10000 (tg-loop 9999)     1.55 us/wave  ok 
+  (f) hybrid, hand off at <= 8192, 400 slots     wall    14.123 ms  gpu    12.527 ms  waves 10000 (tg-loop 9999)     1.41 us/wave  ok 
+  (c) GPU-encoded ICB command per wave           wall   203.839 ms  gpu   130.443 ms  waves 10000 (tg-loop 0)    20.38 us/wave  ok 
+  (c2) self-encoding ICB, execute split 1        wall   296.099 ms  gpu   149.598 ms  waves 10000 (tg-loop 0)    29.61 us/wave  ok ICB pre-encode 3.5 ms (CPU, reusable)
+
+synthetic chain, depth 100000 (200001 nodes), seeded at the bottom
+  reference: marked 100000, waves 100000, seeds 1
+  (a) CPU-driven, 1 command buffer per wave      wall 38588.886 ms  gpu  3118.371 ms  waves 100000 (tg-loop 0)   385.89 us/wave  ok 
+  (b) pre-encoded 100002 waves in one command bu wall   727.754 ms  gpu   507.204 ms  waves 100000 (tg-loop 0)     7.28 us/wave  ok encode 206.2 ms; 0 empty trailing waves
+  (b) pre-encoded 101002 waves in one command bu wall   711.525 ms  gpu   510.180 ms  waves 100000 (tg-loop 0)     7.12 us/wave  ok encode 199.3 ms; 1000 empty trailing waves
+  (d) chained buffers, 64 waves each             wall   922.983 ms  gpu   511.550 ms  waves 100000 (tg-loop 0)     9.23 us/wave  ok 1564 buffers
+  (d) chained buffers, 1024 waves each           wall   640.750 ms  gpu   523.052 ms  waves 100000 (tg-loop 0)     6.41 us/wave  ok 99 buffers
+  (e) single-threadgroup loop, one dispatch      wall   113.276 ms  gpu   112.751 ms  waves 100000 (tg-loop 100000)     1.13 us/wave  ok 
+  (f) hybrid, hand off at <= 1024, 400 slots     wall   123.345 ms  gpu   113.524 ms  waves 100000 (tg-loop 99999)     1.23 us/wave  ok 
+  (f) hybrid, hand off at <= 8192, 400 slots     wall   119.484 ms  gpu   114.051 ms  waves 100000 (tg-loop 99999)     1.19 us/wave  ok 
+  (c) GPU-encoded ICB command per wave           wall  1865.683 ms  gpu  1232.322 ms  waves 100000 (tg-loop 0)    18.66 us/wave  ok 
+  (c2) self-encoding ICB, execute split 1        wall  2226.871 ms  gpu  1415.303 ms  waves 100000 (tg-loop 0)    22.27 us/wave  ok ICB pre-encode 102.8 ms (CPU, reusable)
+
+CPython stdlib: Lambda-seeded component fixpoint (5.4M nodes)
+  reference: marked 1396267, waves 27, seeds 2227
+  (a) CPU-driven, 1 command buffer per wave      wall    24.023 ms  gpu     1.705 ms  waves 27 (tg-loop 0)   889.75 us/wave  ok 
+  (b) pre-encoded 29 waves in one command buffer wall     1.890 ms  gpu     1.610 ms  waves 27 (tg-loop 0)    70.01 us/wave  ok encode 0.1 ms; 0 empty trailing waves
+  (b) pre-encoded 1029 waves in one command buff wall     7.151 ms  gpu     5.070 ms  waves 27 (tg-loop 0)   264.85 us/wave  ok encode 1.4 ms; 1000 empty trailing waves
+  (d) chained buffers, 64 waves each             wall     3.181 ms  gpu     1.985 ms  waves 27 (tg-loop 0)   117.80 us/wave  ok 2 buffers
+  (d) chained buffers, 1024 waves each           wall    10.634 ms  gpu     8.510 ms  waves 27 (tg-loop 0)   393.87 us/wave  ok 2 buffers
+  (e) single-threadgroup loop, one dispatch      wall     8.608 ms  gpu     8.335 ms  waves 27 (tg-loop 27)   318.80 us/wave  ok 
+  (f) hybrid, hand off at <= 1024, 29 slots      wall     2.647 ms  gpu     1.569 ms  waves 27 (tg-loop 9)    98.04 us/wave  ok 
+  (f) hybrid, hand off at <= 8192, 29 slots      wall     8.649 ms  gpu     8.295 ms  waves 27 (tg-loop 26)   320.32 us/wave  ok 
+  (c) GPU-encoded ICB command per wave           wall     3.904 ms  gpu     1.822 ms  waves 27 (tg-loop 0)   144.60 us/wave  ok 
+  (c2) self-encoding ICB, execute split 1        wall     2.875 ms  gpu     1.925 ms  waves 27 (tg-loop 0)   106.48 us/wave  ok ICB pre-encode 0.0 ms (CPU, reusable)

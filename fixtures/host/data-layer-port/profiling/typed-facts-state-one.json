@@ -1,0 +1,17 @@
+{
+  "format": "rerail.profile-selection/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "serverplan_state_tripwires"
+  ],
+  "files": [
+    {
+      "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+      "sha256": "f5aa852c8d3879e8b4d6a59947e3c0ffd659fedf555f9cc9037e8a535f6d4481"
+    }
+  ],
+  "expectations": {
+    "serverplan_state_tripwires": []
+  },
+  "purpose": "Small actual data-layer state workload for bounded fact-storage benchmarks; source replay separately covers positive findings."
+}

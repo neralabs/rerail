@@ -1,0 +1,48 @@
+.policy "bandit-b505-weak-cryptographic-key" revision 2
+.description "Use RSA and DSA keys of at least 2048 bits and elliptic curves of at least 224 bits; smaller keys can be broken."
+.language python
+.mode steer
+.scope include "**/*"
+// Bandit's B505 (weak_cryptographic_key): a key generated below Bandit's thresholds (its defaults: RSA and
+// DSA 2048 bits, EC 224). The size is the keyword (key_size, bits) if it is truthy, else the positional argument,
+// else the library default, which passes. Only a number literal is judged; a name or string is skipped.
+//   rsa.generate_private_key(65537, 1024)            B505 (cryptography: key_size is argument 1, DSA's is 0)
+//   dsa.generate_private_key(key_size=1024)          B505
+//   RSA.generate(1024)                               B505 (PyCrypto, PyCryptodome: bits, argument 0)
+//   ec.generate_private_key(ec.SECP192R1, backend)   B505: a 192-bit curve, written without the call
+//   ec.generate_private_key(ec.SECP192R1(), b)       not reported: Bandit cannot read a call
+//   rsa.generate_private_key(65537, size)            not reported
+
+#include "python/security.rr"   // qual_call, kwarg, pos_arg, literal, truthy
+
+.violation B505(at: node) code "B505"
+    "Generate this key with at least 2048 bits for RSA or DSA, or a curve of at least 224 bits for EC; smaller keys can be broken."
+    suppress nosec "B505"
+// An int compares as decimal text, never converted (it may have any size): fewer digits, or as many and
+// smaller. A float compares as a float, digit separators dropped (`1e3`, `.5e3`, `1_024.0`).
+B505(c) :- keygen(c, kw, i, least), size_arg(c, kw, i, a), literal(a, "int", v), m = to_string(least),
+    (strlen(v) < strlen(m) ; strlen(v) = strlen(m), v < m).
+B505(c) :- keygen(c, kw, i, least), size_arg(c, kw, i, a), literal(a, "float", v),
+    to_float(@replace_all(v, "_", "")) < to_float(to_string(least)).
+B505(c) :- keygen(c, "curve", 0, _), size_arg(c, "curve", 0, a), literal(a, "str", x), weak_curve(x).
+
+// keygen(c, kw, i, least): c generates a key whose size is keyword kw or argument i; below least is weak.
+.decl keygen(c: node, kw: symbol, i: number, least: number)
+keygen(c, kw, i, least) :- qual_call(c, q), generator(q, kw, i, least).
+.decl generator(q: symbol, kw: symbol, i: number, least: number)
+generator("cryptography.hazmat.primitives.asymmetric.dsa.generate_private_key", "key_size", 0, 2048).
+generator("cryptography.hazmat.primitives.asymmetric.rsa.generate_private_key", "key_size", 1, 2048).
+generator("cryptography.hazmat.primitives.asymmetric.ec.generate_private_key", "curve", 0, 224).
+generator("Crypto.PublicKey.DSA.generate", "bits", 0, 2048).
+generator("Crypto.PublicKey.RSA.generate", "bits", 0, 2048).
+generator("Cryptodome.PublicKey.DSA.generate", "bits", 0, 2048).
+generator("Cryptodome.PublicKey.RSA.generate", "bits", 0, 2048).
+// size_arg(c, kw, i, a): `kw or args[i]`: the keyword if its literal is truthy, else argument i if its is.
+.decl size_arg(c: node, kw: symbol, i: number, a: node)
+size_arg(c, kw, i, a) :- keygen(c, kw, i, _), kwarg(c, kw, a), truthy(a).
+size_arg(c, kw, i, a) :- keygen(c, kw, i, _), !kw_truthy(c, kw), pos_arg(c, i, a), truthy(a).
+.decl kw_truthy(c: node, kw: symbol)
+kw_truthy(c, kw) :- keygen(c, kw, _, _), kwarg(c, kw, a), truthy(a).
+// weak_curve(x): the curves below 224 bits in Bandit's table (SECP192R1 is 192; the SECT163 ones 163).
+.decl weak_curve(x: symbol)
+weak_curve("SECP192R1"). weak_curve("SECT163K1"). weak_curve("SECT163R2").

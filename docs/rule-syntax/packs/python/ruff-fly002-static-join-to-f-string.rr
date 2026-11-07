@@ -1,0 +1,60 @@
+.policy "ruff-fly002-static-join-to-f-string" revision 2
+.description "Use an f-string or a single string literal instead of joining a fixed list of values with a literal separator; it reads more clearly."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FLY002 (flynt): `"sep".join([a, b])` over a list or tuple display of fixed length, which an f-string (or,
+// for all string literals, one string) says more directly. The joiner must be a plain string literal and the
+// call take that one argument. Each element must be a string literal, a number, a boolean, a name, an attribute
+// or a call with no arguments of a name or attribute; an f-string, a `*x` or anything else stops it. Ruff also
+// stops when the f-string would need both quote characters, or when a raw literal's joined text, which needs
+// triple quotes for a newline, holds both triple-quote forms. Reported at the call.
+//   "".join(["Finally, ", a, " World"])         ← FLY002: f"Finally, {a} World"
+//   "x".join(("1", "2", "3"))                    ← FLY002: "1x2x3"
+//   "a".join([choice("flarp")])                  not reported: the call has arguments
+//   "".join([foo, "'", '"'])                     not reported: both quotes
+#include "python/ruff.rr"
+
+.violation FLY002(at: node) code "FLY002"
+    "Replace this `join` of string literals with the single string literal it produces."
+    suppress ruff "FLY002"
+.violation FLY002_fstring(at: node) code "FLY002"
+    "Replace this `join` over a fixed list with an f-string such as `f\"{a}-{b}\"`; keep `join` if an element may be a non-`str` or a `str` subclass, which the f-string would format differently."
+    suppress ruff "FLY002"
+FLY002(c) :- static_join(c, _, a), joined_str(a, _), !raw_both_triples(a).
+FLY002_fstring(c) :- static_join(c, _, a), joinee(a, _, _), !joined_str(a, _), !bad_joinee(a),
+    count : { join_quote(c, _) } < 2.
+
+// static_join(c, j, a): c is `j.join(a)`, j a plain string's value, a a list or tuple display without `*x`.
+.decl static_join(c: node, j: symbol, a: node)
+static_join(c, j, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "join"), unparen(o, s), plain_str(s, j),
+    call_only(c, x), unparen(x, a), (kind(a, "list") ; kind(a, "tuple")), !has_star(a).
+.decl has_star(a: node)
+has_star(a) :- child(a, e, _), kind(e, "list_splat").
+.decl joinee(a: node, i: number, e: node)
+joinee(a, i, e) :- child(a, x, i), !kind(x, "comment"), unparen(x, e).
+// joined_str(a, v): every element is a plain string literal, and v their join; an empty display has none.
+.decl joined_str(a: node, v: symbol)
+joined_str(a, v) :- static_join(_, j, a), joinee(a, _, _), count : { joinee(a, _, e), !plain_str(e, _) } = 0,
+    v = join p by k sep "" : { joined_piece(a, j, k, p) }.
+.decl joined_piece(a: node, j: symbol, k: number, p: symbol)
+joined_piece(a, j, 2 * i, v) :- static_join(_, j, a), joinee(a, i, e), plain_str(e, v).
+joined_piece(a, j, 2 * i + 1, j) :- static_join(_, j, a), joinee(a, i, _), joinee(a, i2, _), i2 > i.
+.decl raw_both_triples(a: node)
+raw_both_triples(a) :- joined_str(a, v), first_raw(a), match("[\\s\\S]*[\\n\\r][\\s\\S]*", v), contains("'''", v),
+    contains("\"\"\"", v).
+.decl first_raw(a: node)
+first_raw(a) :- joinee(a, i, e), count : { joinee(a, i0, _), i0 < i } = 0, raw_piece(e).
+first_raw(a) :- joinee(a, i, e), count : { joinee(a, i0, _), i0 < i } = 0, kind(e, "concatenated_string"),
+    child(e, s, 0), raw_piece(s).
+.decl raw_piece(s: node)
+raw_piece(s) :- kind(s, "string"), strprefix(s, p), contains("r", p).
+.decl bad_joinee(a: node)
+bad_joinee(a) :- static_join(_, _, a), joinee(a, _, e), !plain_str(e, _), !fmt_atom(e).
+.decl fmt_atom(e: node)
+fmt_atom(e) :- kind(e, k), (k = "integer" ; k = "float" ; k = "true" ; k = "false" ; k = "identifier" ; k = "attribute").
+fmt_atom(e) :- kind(e, "call"), call_nargs(e, 0), call_nkwargs(e, 0), field(e, "function", f), dotted_expr(f, _).
+// join_quote(c, q): quote character q appears in the joiner or in a string element.
+.decl join_quote(c: node, q: symbol)
+join_quote(c, q) :- static_join(c, j, a), (v = j ; joinee(a, _, e), plain_str(e, v)), (q = "'" ; q = "\""), contains(q, v).

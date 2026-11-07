@@ -1,0 +1,30 @@
+.policy "phpstan-if-always-false" revision 3
+.description "Remove PHP if statements whose condition is always false, except declaration stubs kept for autoloaders and IDEs; the block is dead code."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/values.rr"
+//   php_if_const(i, c, b)   `if (c)` is always b: literals, class constants, variables with one write
+
+// PHPStan's IfConstantConditionRule (if.alwaysFalse, level 4): an if whose condition is always false.
+//   if (false) {}     $zero = 0; if ($zero) {}     $a = []; if ($a) {}      reported, at the condition
+//   if (!true) {}     if ($a === 0) {}    } elseif (false) {              other rules' (booleanNot, identical, elseif)
+// PHPStan reads types, so it also knows `self` parameters, return types and narrowing from enclosing ifs; this
+// reads values only (NOTES). Two more cases are kept, as the pack does:
+//   trait T { function f() { if (false) {} } }      a trait's body is analysed per using class
+//   if (false) { class Stub {} class_alias(…); }    a declaration stub for autoloaders and IDEs (divergences.json)
+.violation if_always_false(at: node) code "if.alwaysFalse" "If condition is always false."
+    suppress phpstan "if.alwaysFalse"
+if_always_false(c) :- php_if_const(i, c, "false"), !inside(i, _, "trait_declaration"), !stub(i).
+// stub(i): i's block holds declarations and class_alias() calls, at least one, and nothing else but comments.
+.decl stub(i: node)
+stub(i) :- field(i, "body", b), kind(b, "compound_statement"), child(b, _, _),
+    !other_statement(b), declaration(_, b).
+.decl declaration(d: node, b: node)
+declaration(d, b) :- child(b, d, _), (kind(d, "class_declaration") ; kind(d, "interface_declaration") ;
+    kind(d, "trait_declaration") ; kind(d, "enum_declaration") ; kind(d, "function_definition")).
+declaration(d, b) :- child(b, d, _), kind(d, "expression_statement"), child(d, c, 0), php_call_written(c, "class_alias").
+.decl other_statement(b: node)
+other_statement(b) :- child(b, d, _), !kind(d, "comment"), !declaration(d, b).

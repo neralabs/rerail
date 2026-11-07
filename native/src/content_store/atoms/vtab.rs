@@ -1,4 +1,4 @@
-//! `atoms(atom, value)`: the arena as an eponymous virtual table (decision 0047 §3), so the SQL
+//! `atoms(atom, value)`: the arena as an eponymous virtual table (decision 0049 §3), so the SQL
 //! that joins atoms keeps its text. `atom = ?` is an array lookup, `value = ?` a hash probe, and a
 //! range on `value` (the vocabulary's prefix ranges) a binary search of the ids sorted by string.
 //! Pending atoms are visible: SQL never needs a flush first.

@@ -8,4 +8,7 @@ rustflags = ["-C", "target-feature=+crt-static"]
 # serializes the content store connections that evaluation workers read through. Nothing reads
 # them; SQLite recommends this setting.
 [env]
-LIBSQLITE3_FLAGS = "-DSQLITE_DEFAULT_MEMSTATUS=0"
+# The bundled ENABLE_MEMORY_MANAGEMENT option also forces every page cache into one
+# process-global LRU group. Incremental BLOB reads then contend on its mutex across workers.
+# Use SQLite's per-cache groups. Store eviction closes idle connections and releases their pages.
+LIBSQLITE3_FLAGS = "-DSQLITE_DEFAULT_MEMSTATUS=0 -USQLITE_ENABLE_MEMORY_MANAGEMENT"

@@ -1,0 +1,45 @@
+.policy "ruff-ruf064-non-octal-permissions" revision 1
+.description "Write file permission modes passed to os, dbm and pathlib functions as octal literals with a 0o prefix; a plain integer such as 644 is decimal and sets different permissions."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF064: a file mode written as a decimal, hex or binary int, not `0o…`. `0` itself is fine.
+// The mode is the `mode=` keyword if there is one, else the positional slot: 0 for os.umask and Path
+// methods, 1 for os.chmod and friends, 2 for os.open and dbm.open; also `parent_mode=` of makedirs and
+// Path.mkdir.
+//   os.chmod("foo", 644)          ← RUF064  `0o644`
+//   Path("bar").chmod(755)        ← RUF064
+//   os.chmod("foo", 0o644)        not reported
+#include "python/ruff.rr"
+
+.decl mode_fn(q: symbol, i: number)
+mode_fn("os.umask", 0).
+mode_fn(q, 1) :- (q = "os.chmod" ; q = "os.fchmod" ; q = "os.lchmod" ; q = "os.mkdir" ; q = "os.makedirs" ;
+    q = "os.mkfifo" ; q = "os.mknod").
+mode_fn(q, 2) :- (q = "os.open" ; q = "dbm.open" ; q = "dbm.gnu.open" ; q = "dbm.ndbm.open").
+
+// mode_call(c, i, m): call c takes a mode at slot i; m is the method name for a Path method, else "".
+.decl mode_call(c: node, i: number, m: symbol)
+mode_call(c, i, "") :- call_q(c, q), mode_fn(q, i).
+mode_call(c, 0, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
+    (m = "chmod" ; m = "lchmod" ; m = "mkdir" ; m = "touch"), path_object(o).
+// path_object(o): `Path(…)`, or a name assigned one or bound by `with Path(…) as name`.
+.decl path_object(o: node)
+path_object(o) :- path_value(o).
+path_object(o) :- unparen(o, l), look(l, x, s), asg(s, x, r, _), path_value(r).
+path_object(o) :- unparen(o, l), look(l, x, s), kind(ap, "as_pattern"), nearest(ap, s, scope), child(ap, v, 0),
+    path_value(v), child(ap, t, _), kind(t, "as_pattern_target"), text(t, x).
+.decl path_value(v: node)
+path_value(v) :- unparen(v, c), call_q(c, q), (q = "pathlib.Path" ; q = "pathlib.PosixPath" ; q = "pathlib.WindowsPath").
+
+.decl mode_arg(c: node, v: node)
+mode_arg(c, v) :- mode_call(c, _, _), call_kwarg(c, "mode", v).
+mode_arg(c, v) :- mode_call(c, i, _), !call_kwarg(c, "mode", _), ruff_arg(c, i, v).
+mode_arg(c, v) :- (call_q(c, "os.makedirs") ; mode_call(c, _, "mkdir")), call_kwarg(c, "parent_mode", v).
+
+.violation RUF064(at: node, lit: symbol) code "RUF064"
+    "Write `{lit}` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`)."
+    suppress ruff "RUF064"
+RUF064(n, t) :- mode_arg(_, v), unparen(v, n), kind(n, "integer"), text(n, t), t != "0",
+    match("0[xXbB][0-9a-fA-F_]+|[0-9][0-9_]*", t).
