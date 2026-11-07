@@ -22,8 +22,9 @@
 //              storage access are items with an error.
 //   runtime:   a hash of the named top-level runtime definitions in three files, and the list of their names.
 //   signature: when nothing else differs, the policy's Ed25519 signature over its canonical entry texts.
-// Hashes are of trees, @sha256 over @tree_digest, where the verifier hashes ast.dump text: the policy is
-// re-signed once under this digest (OPEN-ISSUES.md), since no CPython runs.
+// Existing hashes and signatures must retain the verifier's exact ast.dump input bytes.
+// This draft still has structural-digest placeholders below; replace them with native canonical serialization
+// before accepting the rule. Do not re-sign the repository to make those placeholders pass.
 // The recorded tests call policy_violations(discovered, entries) with entries they build; the option
 // policyEntries (their JSON) stands in for them and replaces the module's entries (step 6).
 //
@@ -257,7 +258,7 @@ cpl_called_by(e) :- ast_parent(e, c), cpl_callee(c, e).
 cpl_value_of(e) :- ast_parent(e, a), kind(a, "assignment"), field(a, "right", v), unparen(v, e).
 
 // The item's comparable facts: its cache arguments as JSON text, its members as sorted JSON pairs, its hashes.
-// Re-signed scheme: body = @sha256 of the body's digest; signature = parameters | return | type parameters.
+// Unaccepted placeholder: the body and signature must use the original canonical AST dump projections.
 .decl cpl_args_txt(x: node, s: symbol)
 cpl_args_txt(x, s) :- cpl_item(x, _), s = join q by i sep ", " : { cpl_arg(x, i, a), q = @json_str(a) }.
 .decl cpl_members_txt(x: node, s: symbol)

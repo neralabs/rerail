@@ -7780,3 +7780,42 @@ No repository performance claim or whole-repository cold run was made. No Linear
 
 The two format tests, TypeScript typecheck, boundary check, and Windows-path check pass.
 The structure check remains at 24 passing checks and one failure, with the same three pre-existing directory-size violations.
+
+
+## 2026-11-07: native HNSW assertions and string semantics
+
+The user requires native rule execution. No Python AST producer was enabled.
+The 215-case three-rule checkpoint above remains historical and tied to its recorded engine and program hashes.
+
+HNSW now passes all 13 original assertions and 13 complete API-return comparisons.
+Its 37 supplementary API cases cover positive findings, clean inputs, source gates, path scope, Unicode, and malformed Python.
+All 23 configured snapshot reporter cases pass. These are additional contracts, not original pytest cases.
+The original positive mutation control rejects empty native results.
+
+The TDD ladder found these successive defects: normalized identifiers, collapsed repeated constants, wrong fragment starts,
+BOM acceptance, and surrogate escape boundaries. The new native word projection fixes the last defect without lossy string substitution.
+The projection pins CPython 3.13's Unicode 15.1 word class. Its generator runs offline.
+A later ladder exposed missing nested format literals, comment text misread as literal text, and broken CRLF continuations.
+The production reader now follows parser-defined interpolation and format-expression children on the existing tape.
+It does not parse each literal again. The former handwritten expression scanner was removed, including its test-only copy.
+Word-only consumers share their decode pass with positions and do not request full decoded-value rows.
+The projection still prepares requested columns for the batch; node-demand pushdown remains separate work.
+
+Four source reporter repetitions produced three file orders because FactEngine consumes as_completed results.
+Reporter parity permits only inter-file reordering. It retains every duplicate and each file's original ordered values.
+A failing harness regression proved that within-file reordering and duplicate removal remain detectable.
+
+The focused checks pass 34 reader tests, 12 tape-view tests, four decoder tests, and seven Python-value tests.
+One reader test remains ignored upstream. The broad external syntax checker remains excluded after its earlier timeout.
+The tooling passes 37 Python tests. Build time is recorded separately: the word, CST, and final CLI builds took
+15.84, 18.63, and 9.62 seconds respectively. No full-repository cold run or performance claim was made.
+The final native checkpoint is 96329a41e40555871833f81280b60bd27e57965a.
+The rule inventory remains 60 drafts and 40 absent translations. Full migration acceptance remains false.
+Native canonical AST serialization, associated suites, and production workspace acceptance remain required.
+No Linear tickets were created.
+
+The final engine reran the 215 original cases for ForwardRef, type safety, and facade aliases in eight bounded shards.
+All pass, including 224 native calls and 63 complete API returns. The 35 cases without native calls remain individually listed.
+No shard exceeded 39 seconds. Their previous supplemental and reporter receipts remain historical.
+The HNSW reporter also rejects a policy with all ten violation clauses disabled.
+The two format tests pass. Full migration acceptance remains false.

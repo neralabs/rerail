@@ -13,6 +13,11 @@ from migration import ROOT, PIN, git, sha, read_json, write_json, compare
 from replay import execute_native
 
 
+def reporter_file_groups(rows):
+    """Ignore worker completion order between files; retain each file's complete ordered sequence."""
+    return sorted(rows, key=lambda row: row['path'])
+
+
 def run(args):
     harness_root = ROOT / 'scripts/dsl'
     harness_before = {p.resolve(): sha(p.read_bytes()) for p in harness_root.rglob('*.py')}
@@ -56,10 +61,19 @@ def run(args):
             if modes != ['block']:
                 raise ValueError('No source severity adapter for the compiled mode: ' + repr(modes))
             identity = policy['id']
-            if not identity.startswith('data-layer-') or any(r['policy'] != identity for r in result['diagnostics']):
+            prefix = next((p for p in ['data-layer-', 'data-layer:'] if identity.startswith(p)), None)
+            if prefix is None or any(r['policy'] != identity for r in result['diagnostics']):
                 raise ValueError('Unexpected native policy identity')
-            actual = [dict(linter_name=identity.removeprefix('data-layer-').replace('-', '_'), code=r['code'],
-                path=r['path'], line=r['line'], message=r['message'], severity='hard-fail') for r in result['diagnostics']]
+            severities = {}
+            for key, text in metadata['settings']:
+                if key == 'severity':
+                    words = text.split()
+                    if len(words) != 2:
+                        raise ValueError('Unsupported compiled severity metadata: ' + text)
+                    severities[words[0]] = words[1]
+            actual = [dict(linter_name=identity.removeprefix(prefix).replace('-', '_'), code=r['code'],
+                path=r['path'], line=r['line'], message=r['message'],
+                severity=severities.get(r['clause'], 'hard-fail')) for r in result['diagnostics']]
             program = result['programInputs']
             phases = result['phases']
         else:
@@ -82,8 +96,8 @@ def run(args):
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
         if native:
-            last = {'type_safety_patterns': 'message', 'forwardref': 'code', 'data_layer_compat_aliases': 'code'}[case['check']]
-            actual.sort(key=lambda row: (row['path'], row['line'], row[last]))
+            last = {'type_safety_patterns': 'message', 'forwardref': 'code', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code'}[case['check']]
+            actual.sort(key=lambda row: (row['path'], row['line'], row[last], *([row['message']] if case['check'] == 'hnsw_architecture' else [])))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)
         if native:
             row['metadata'] = metadata
@@ -93,7 +107,11 @@ def run(args):
             if expected['id'] != case['id']:
                 raise ValueError('Reporter case identity changed')
             try:
-                compare(expected['value'], actual)
+                if case['check'] == 'hnsw_architecture':
+                    row['comparisonContract'] = 'File groups are unordered (source FactEngine.as_completed); every in-file value, duplicate, and order is exact'
+                    compare(reporter_file_groups(expected['value']), reporter_file_groups(actual))
+                else:
+                    compare(expected['value'], actual)
             except AssertionError as error:
                 row.update(status='failed', expected=expected['value'])
                 write_json(args.out, report)

@@ -331,7 +331,8 @@ Native grammar validation targets Python 3.13, caches each demanded verdict, and
 The native capture producer interns and inserts complete result batches.
 The source-execution guard now also checks nested callbacks and decorated detector bodies.
 
-Current evidence covers ForwardRef, type safety, and facade aliases:
+The hash-bound checkpoint below covers ForwardRef, type safety, and facade aliases.
+It predates the later HNSW changes:
 
 | Contract | Evidence |
 | --- | --- |
@@ -356,3 +357,48 @@ Use manual relational ports and original assertions to close them.
 Exact subtree dumps must follow the pinned interpreter's field defaults and omission rules.
 Offline probes show that Python 3.13.18 omits empty lists and creates a default Load context for a synthetic Tuple.
 Do not infer those details from the surface syntax or substitute a Merkle digest.
+
+
+## Native HNSW checkpoint, 7 November
+
+Rule execution must not invoke Python. Python remains available for offline oracle capture and original assertion bodies.
+Existing signed inputs must retain their original hashes and signatures.
+Native canonical AST serialization remains required. The cached-pure draft still contains unaccepted structural-digest placeholders.
+
+The HNSW rule passes 13 original tests and compares all 13 complete API returns.
+It also matches 37 source-derived API cases and 23 configured snapshot reporter cases.
+Those additional cases do not count as original pytest tests.
+The disabled detector fails an unchanged original positive assertion.
+
+The audit found missing identifier normalization, collapsed string occurrences, wrong fragment lines, and incorrect configured roots.
+It also found BOM acceptance and incorrect Unicode-surrogate boundaries.
+Further cases exposed nested format specifications and comments inside Python 3.13 f-string expressions.
+The production fragment reader now traverses the existing syntax tape. The handwritten expression scanner was removed.
+The reader retains Constant identity, source byte starts, adjacent-literal joining, debug labels, and format-specification fragments.
+
+The new `str_part_word` relation supplies maximal Python Unicode 15.1 word runs per Constant.
+Lone surrogates delimit runs. They are not replaced in decoded string values.
+This projection preserves both HNSW substring searches because each forbidden substring contains only word characters.
+The JSON query searches complete word runs or an embedded `sqljson` prefix.
+Syntactic docstring detection does not require a Rust string value.
+Unread literal projections produce no rows. A word reader shares its decode pass with fragment coordinates.
+This remains batch preparation for requested columns; it does not establish node-demand pushdown or a repository-wide speed improvement.
+
+HNSW's source reporter uses worker-completion order between files.
+Four repeated source runs produced three different file orders.
+The reporter comparison allows file groups to reorder. Every value, duplicate, and within-file order remains exact.
+The direct file API retains its source-defined sorted order.
+
+The engine checkpoint is `96329a41e40555871833f81280b60bd27e57965a`.
+Its native CLI SHA-256 is recorded in the HNSW receipts.
+The production addon remains unchanged. The inventory remains 60 drafts and 40 absent translations.
+Full migration acceptance remains false. Associated suites and production workspace acceptance remain outstanding.
+
+The same engine also reruns all 215 original cases for ForwardRef, type safety, and facade aliases.
+All 224 native calls and 63 complete API returns pass. The 35 cases without native calls remain individually listed.
+This regression run does not recertify those rules' older supplemental or reporter receipts.
+
+- [HNSW original assertions](../fixtures/host/data-layer-port/rr-hnsw-native-direct-contracts.json.gz).
+- [HNSW API and reporter contracts](../fixtures/host/data-layer-port/rr-hnsw-native-supplemental-contracts.json.gz).
+- [Native Constant TDD ladder](../fixtures/host/data-layer-port/rr-hnsw-native-constant-ladder.json.gz).
+- [Three-rule original regression](../fixtures/host/data-layer-port/rr-three-hnsw-regression.json.gz).

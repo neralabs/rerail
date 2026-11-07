@@ -62,13 +62,18 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.rr",
-      "sha256": "7bef63d1277e6391d52a4e51321ac61f47b98008d298c321e4ba49102c7622ef",
+      "sha256": "a7a65e2f69efc36c3fc497c8497fc6ff058c6c08884a18081eecb3ffa10802d1",
       "importedSha256": "1463aa716e8706bdad294ed77ecb69c8e26995872b81ca5044ee14c855b42905",
       "repairs": [
         {
           "before": "1463aa716e8706bdad294ed77ecb69c8e26995872b81ca5044ee14c855b42905",
           "after": "86ef75d6706ae64d49b53543f09a2c382be7845347d9ce5f265a7a244206258c",
           "reason": "Resolve generated tables beside their policy after moving the policy out of docs/rule-syntax/data-layer"
+        },
+        {
+          "before": "7bef63d1277e6391d52a4e51321ac61f47b98008d298c321e4ba49102c7622ef",
+          "after": "a7a65e2f69efc36c3fc497c8497fc6ff058c6c08884a18081eecb3ffa10802d1",
+          "reason": "Remove the upstream re-signing proposal and identify structural hash expressions as unaccepted placeholders"
         }
       ],
       "upstreamSha256": "fb346baa724d25ba9e10d2181c54bba8493b01eb8910524654cd290beb945dae",
@@ -185,7 +190,7 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/hnsw-architecture.rr",
-      "sha256": "f229140c59da19643bcdd901b6cb70274eaf5bc5226ffb1291ce1cc83e8bfc4a",
+      "sha256": "70159a44e04340bf6b478084645ed4d8ec906e21d257649e5167523df55207c1",
       "importedSha256": "7f6aa1428a8c1ffb9b1f1e806213b05bf3ab9d2286e167e76a4ffbd07f2c5147",
       "repairs": [
         {
@@ -207,6 +212,16 @@
           "before": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e",
           "after": "f229140c59da19643bcdd901b6cb70274eaf5bc5226ffb1291ce1cc83e8bfc4a",
           "reason": "Retain each decoded string constant occurrence as a distinct diagnostic witness"
+        },
+        {
+          "before": "f229140c59da19643bcdd901b6cb70274eaf5bc5226ffb1291ce1cc83e8bfc4a",
+          "after": "8302654cdad430023c1e1f4db9987be4595408d9ee91876379565c750478b708",
+          "reason": "Use exact constant coordinates, original configured scope and source gates, and explicit source reporter severity"
+        },
+        {
+          "before": "8302654cdad430023c1e1f4db9987be4595408d9ee91876379565c750478b708",
+          "after": "70159a44e04340bf6b478084645ed4d8ec906e21d257649e5167523df55207c1",
+          "reason": "Preserve Unicode word-query semantics for Python Constant values and identify docstrings from syntax, including lone surrogates"
         }
       ]
     },
@@ -450,7 +465,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "696825f987e1404fd195a1b24dabf1176af36cdd9dcd1f7b701cf274dd911f86",
+      "sha256": "60dfb07916dd1c4f56d7700d447a7f226d97d670e6092db6d22dcd957fa7e5ec",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -462,6 +477,21 @@
           "before": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c",
           "after": "696825f987e1404fd195a1b24dabf1176af36cdd9dcd1f7b701cf274dd911f86",
           "reason": "Add the demanded LF-only source view required by async_executor str.split(newline); preserve all other separators and trailing empty lines"
+        },
+        {
+          "before": "696825f987e1404fd195a1b24dabf1176af36cdd9dcd1f7b701cf274dd911f86",
+          "after": "e763df6886a6023f30bb87f94e5938386ce3362c457315a68bc1936287ded4fa",
+          "reason": "Expose exact Python constant byte starts and retain the existing signed-hash contract without re-signing"
+        },
+        {
+          "before": "e763df6886a6023f30bb87f94e5938386ce3362c457315a68bc1936287ded4fa",
+          "after": "af322eea5497debb1e72513fec0f31670d90c4951a6f4964ce56d0081537057f",
+          "reason": "Distinguish structural digests from CPython AST identity and signed canonical bytes"
+        },
+        {
+          "before": "af322eea5497debb1e72513fec0f31670d90c4951a6f4964ce56d0081537057f",
+          "after": "60dfb07916dd1c4f56d7700d447a7f226d97d670e6092db6d22dcd957fa7e5ec",
+          "reason": "Preserve Unicode word-query semantics for Python Constant values and identify docstrings from syntax, including lone surrogates"
         }
       ]
     },
@@ -527,9 +557,16 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/ast.rr",
-      "sha256": "5f72729eba6db24aed31dde22e5b6a2c7c35b77f8e0d1be0179e055ddece88f4",
+      "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a",
       "upstreamSha256": "5f72729eba6db24aed31dde22e5b6a2c7c35b77f8e0d1be0179e055ddece88f4",
-      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1"
+      "upstreamCommit": "244b95a15724be32936b9350996a1e09fd9f71b1",
+      "repairs": [
+        {
+          "before": "5f72729eba6db24aed31dde22e5b6a2c7c35b77f8e0d1be0179e055ddece88f4",
+          "after": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a",
+          "reason": "Preserve Unicode word-query semantics for Python Constant values and identify docstrings from syntax, including lone surrogates"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/bugbear-loops.rr",
@@ -1697,7 +1734,7 @@
       "legacySha256": "30a298621259d10251e0591993b11d45d28a8b7df8fee8b40e7ebec7fb95fe46",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.rr",
-      "ruleSha256": "7bef63d1277e6391d52a4e51321ac61f47b98008d298c321e4ba49102c7622ef"
+      "ruleSha256": "a7a65e2f69efc36c3fc497c8497fc6ff058c6c08884a18081eecb3ffa10802d1"
     },
     {
       "check": "lazy_sql_surface",
@@ -1913,7 +1950,7 @@
       "legacySha256": "c7545b1fb8197b746548e00b4318a65710dd54c39bee35790a1ebd8a7e80ebd6",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/hnsw-architecture.rr",
-      "ruleSha256": "f229140c59da19643bcdd901b6cb70274eaf5bc5226ffb1291ce1cc83e8bfc4a"
+      "ruleSha256": "70159a44e04340bf6b478084645ed4d8ec906e21d257649e5167523df55207c1"
     },
     {
       "check": "embedding_vector_orchestration",
@@ -1984,7 +2021,7 @@
   ],
   "engineSource": {
     "branch": "jeremy/data-layer-rr-engine-20261106",
-    "commit": "1d43e471380442dcf95052f2ec0b539d47142b59",
+    "commit": "96329a41e40555871833f81280b60bd27e57965a",
     "finalShapeCommit": "5332989f8",
     "qualityBaseCommit": "8f399baeae405bdad5fee4d65e123c25076f5ccf",
     "status": "Integration candidate; primary production addon unchanged",

@@ -21,6 +21,8 @@ from native_guard import codes
 
 def arguments(values, root):
     def convert(value):
+        if isinstance(value, dict) and set(value) == {'path', 'relative'} and value['relative'] is True:
+            return Path(value['path'])
         if isinstance(value, dict) and set(value) == {'path'}:
             return root / value['path']
         if isinstance(value, list):
@@ -69,7 +71,7 @@ def run(args):
         raise ValueError('Fresh oracle is incomplete or is not an offline source recording')
     if len({case['id'] for case in corpus['cases']}) != len(corpus['cases']):
         raise ValueError('Duplicate fresh case identities')
-    report = dict(format='rerail.rr-fresh-contract/v1', sourcePin=PIN, originalPytestCases=0,
+    report = dict(format='rerail.rr-fresh-contract/v1', fullMigrationAcceptance=False, sourcePin=PIN, originalPytestCases=0,
         execution='native-snapshot' if native else 'offline-source', sourceFiles=source_files,
         casesSha256=sha(args.cases.read_bytes()), results=[], semanticFallbacks=[])
     backend = None
@@ -106,6 +108,7 @@ def run(args):
                         path.write_bytes(bytes.fromhex(file['bytesHex']))
                     else:
                         path.write_text(file['source'])
+                os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
                 if native:
@@ -120,12 +123,14 @@ def run(args):
                         raise ValueError('Fresh case identity changed')
                     try:
                         compare(original['value'], actual)
-                    except AssertionError as error:
+                    except AssertionError:
                         report['results'].append(dict(id=case['id'], value=actual, expected=original['value'], status='failed'))
                         report.update(calls=backend.calls, programInputs=backend.inputs)
                         write_json(args.out, report)
-                        raise AssertionError(case['id'] + ': ' + str(error)) from error
+                        os.chdir(source)
+                        continue
                 report['results'].append(dict(id=case['id'], value=actual, status='passed'))
+                os.chdir(source)
     finally:
         os.chdir(previous_directory)
         sys.setprofile(None)
@@ -162,9 +167,15 @@ def main():
     parser.add_argument('--baseline', type=Path)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
+    args.out = args.out.resolve()
+    write_json(args.out, dict(status='started', fullMigrationAcceptance=False, results=[]))
     result = run(args)
+    result['status'] = 'completed'
     write_json(args.out, result)
-    print(json.dumps(dict(cases=len(result['results']), originalPytestCases=0, execution=result['execution'])))
+    failures = sum(row['status'] != 'passed' for row in result['results'])
+    print(json.dumps(dict(cases=len(result['results']), failures=failures, originalPytestCases=0, execution=result['execution'])))
+    if failures:
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':
