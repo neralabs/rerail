@@ -420,12 +420,14 @@ pub(super) enum BlockInst {
     Prev(u16, u8),
     Toggle(u16),
     AfterOddRun(u16),
+    /// `fill(s, e)` (`block::BlockOp::Fill`): one add per word, its carry a borrow.
+    Fill(u16, u16),
 }
 
 impl BlockInst {
     /// Whether the instruction carries across blocks.
     pub(super) fn carried(&self) -> bool {
-        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_))
+        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_) | BlockInst::Fill(..))
     }
 }
 
@@ -448,6 +450,7 @@ impl BlockNative {
                 BlockOp::Prev(a, k) => BlockInst::Prev(a, k),
                 BlockOp::Toggle(a) => BlockInst::Toggle(a),
                 BlockOp::AfterOddRun(a) => BlockInst::AfterOddRun(a),
+                BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
             })
             .collect();
         Self { tables: program.tables.clone(), insts, outputs: program.outputs.clone(), extracts: program.extract_outputs() }
@@ -502,6 +505,7 @@ impl BlockNative {
                 BlockInst::Prev(a, k) => f.push(BlockInst::Prev(m(a), k)),
                 BlockInst::Toggle(a) => f.push(BlockInst::Toggle(m(a))),
                 BlockInst::AfterOddRun(a) => f.push(BlockInst::AfterOddRun(m(a))),
+                BlockInst::Fill(a, b) => f.push(BlockInst::Fill(m(a), m(b))),
                 other => f.push(other),
             };
             at.push(index);

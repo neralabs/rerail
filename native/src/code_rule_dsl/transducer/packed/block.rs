@@ -52,6 +52,10 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     /// The bytes just after a run of `a`'s bits of odd length: simdjson's escaped characters
     /// (`a` the backslashes), by its add-with-carry. Carry: borrow (generate and propagate).
     AfterOddRun(u16),
+    /// Bitlex's `fill(s, e)`: each byte from a byte of `s` up to, not including, the next byte of
+    /// `e`; a byte in both starts a new fill. One add per word (`carry::fill`). Carry: whether a
+    /// fill is open into the next block, a borrow like `after_odd_run`'s.
+    Fill(u16, u16),
 }
 
 /// The carried operations' word functions, shared by the CPU executors' references and the
@@ -90,6 +94,17 @@ pub(super) mod carry {
         word
     }
 
+    /// `fill`: `f[i] = s[i] | (f[i - 1] & !e[i])`, with `f[-1] = cin` (0 or 1). With `a = s` and
+    /// `b = !e | s`, the add `a + b + cin` generates a carry at each start and propagates it
+    /// over each byte that is neither a start nor an end, so the carry into bit `i` is
+    /// `f[i - 1]`. The carry out is the add's overflow, `f[63]`.
+    pub(in crate::code_rule_dsl) fn fill(s: u64, e: u64, cin: u64) -> (u64, u64) {
+        let (a, b) = (s, !e | s);
+        let into = a.wrapping_add(b).wrapping_add(cin) ^ a ^ b;
+        let f = s | (!e & into);
+        (f, f >> 63)
+    }
+
     /// `after_odd_run`: simdjson's branch-free escape finder (`find_escaped_branchless`) with the
     /// carry in (`cin`, 0 or 1: the block's first byte is escaped), without the backslashes
     /// themselves; the carry out is the add's overflow.
@@ -120,6 +135,7 @@ impl BlockOp {
             BlockOp::Prev(a, k) => format!("prev %{a}, {k}"),
             BlockOp::Toggle(a) => format!("toggle %{a}"),
             BlockOp::AfterOddRun(a) => format!("after_odd_run %{a}"),
+            BlockOp::Fill(a, b) => two("fill", a, b),
         }
     }
 
@@ -128,7 +144,9 @@ impl BlockOp {
         match *self {
             BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::AfterOddRun(a) => vec![a],
-            BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) => vec![a, b],
+            BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) => {
+                vec![a, b]
+            }
         }
     }
 
@@ -140,6 +158,7 @@ impl BlockOp {
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
             BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
             BlockOp::AfterOddRun(a) => BlockOp::AfterOddRun(f(a)),
+            BlockOp::Fill(a, b) => BlockOp::Fill(f(a), f(b)),
             BlockOp::And(a, b) => BlockOp::And(f(a), f(b)),
             BlockOp::Or(a, b) => BlockOp::Or(f(a), f(b)),
             BlockOp::Xor(a, b) => BlockOp::Xor(f(a), f(b)),
@@ -184,6 +203,7 @@ impl BlockOp {
             ["prev", a, k] => Ok(BlockOp::Prev(value(a)?, k.parse().map_err(|_| format!("a bad distance `{k}`"))?)),
             ["toggle", a] => Ok(BlockOp::Toggle(value(a)?)),
             ["after_odd_run", a] => Ok(BlockOp::AfterOddRun(value(a)?)),
+            ["fill", a, b] => Ok(BlockOp::Fill(value(a)?, value(b)?)),
             _ => Err(format!("an unknown block operation `{}`", words.join(" "))),
         }
     }
@@ -219,6 +239,7 @@ impl BlockOp {
             BlockOp::Prev(a, k) => two(out, 8, a, u16::from(k)),
             BlockOp::Toggle(a) => two(out, 9, a, a),
             BlockOp::AfterOddRun(a) => two(out, 10, a, a),
+            BlockOp::Fill(a, b) => two(out, 12, a, b),
         }
     }
 }
@@ -392,6 +413,17 @@ impl BlockProgram {
                             let (y, out) = carry::after_odd_run(x, c);
                             c = out;
                             y
+                        })
+                        .collect()
+                }
+                BlockOp::Fill(a, b) => {
+                    let mut c = 0;
+                    v(a).iter()
+                        .zip(v(b))
+                        .map(|(&x, &y)| {
+                            let (f, out) = carry::fill(x, y, c);
+                            c = out;
+                            f
                         })
                         .collect()
                 }

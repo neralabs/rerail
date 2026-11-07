@@ -6,7 +6,7 @@ use super::block_tests::{executors, inputs};
 use super::*;
 
 /// The masks the compiler handles so far: classes, logic, `prev`, `starts`, `after`, `span`,
-/// `toggle` and `after_odd_run`.
+/// `toggle`, `after_odd_run` and `fill`.
 const FORWARD: &str = r#"
 lexer forward
 class quote     = '"'
@@ -25,6 +25,8 @@ mask wstart     = starts(word)
 mask gap        = after(ws)
 mask esc_bytes  = span(backslash & inside, 2)
 mask mixed      = (letter ^ high) | prev(quote, 3) | prev(none, 63) | empty
+mask lit        = fill(wstart & letter, ~word)
+mask after_dot  = fill(prev(quote) & word, ~word)
 "#;
 
 const NAMES: [&str; 15] = [
@@ -58,7 +60,7 @@ fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
 #[test]
 fn forward_masks_equal_the_evaluator_on_every_executor() {
     let mut names: Vec<&str> = NAMES.to_vec();
-    names.push("mixed");
+    names.extend(["mixed", "lit", "after_dot"]);
     let stmts = ::bitlex::syntax::parse(FORWARD).expect("parses");
     let compiled = bitlex_compile::compile(&stmts, &names).unwrap_or_else(|e| panic!("compiles: {e}"));
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);

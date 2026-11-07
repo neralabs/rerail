@@ -9,7 +9,7 @@
 //! (`LaneWidth`: 16, 32 or 64), so a SIMD group's 32 lanes work on 32 words at once, not one bit
 //! each. A byte compare is SWAR over the lane's `uint4`s; the logic is word logic.
 //!
-//! Carried operations (`prev`, `toggle`, `after_odd_run`) follow `06-block-parallel.md` §2 and
+//! Carried operations (`prev`, `toggle`, `after_odd_run`, `fill`) follow `06-block-parallel.md` §2 and
 //! §5: each is a round, one dispatch. A lane's summary is combined across its SIMD group (one
 //! threadgroup of 32 lanes) by SIMD-group operations, and across groups through a state per
 //! group. Masks are recomputed in every round, not stored; only the states persist.
@@ -78,7 +78,7 @@ struct BlockArgs {
 fn kind(inst: &BlockInst) -> u32 {
     match inst {
         BlockInst::Toggle(_) => 0,
-        BlockInst::AfterOddRun(_) => 1,
+        BlockInst::AfterOddRun(_) | BlockInst::Fill(..) => 1,
         _ => unreachable!("scanned carries only"),
     }
 }
@@ -99,6 +99,8 @@ fn encoded(inst: &BlockInst, round: u32) -> [u32; 4] {
         BlockInst::Prev(a, k) => [8, u32::from(a), round, u32::from(k)],
         BlockInst::Toggle(a) => [9, u32::from(a), round, 0],
         BlockInst::AfterOddRun(a) => [10, u32::from(a), round, 0],
+        // Its second operand in `imm`: `b` is the round.
+        BlockInst::Fill(a, e) => [12, u32::from(a), round, u32::from(e)],
         BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
     }
 }
@@ -482,7 +484,7 @@ impl Plan {
 fn operands(inst: &BlockInst) -> Vec<usize> {
     match *inst {
         BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::AfterOddRun(a) => vec![usize::from(a)],
-        BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => {
+        BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
             vec![usize::from(a), usize::from(b)]
         }
         _ => vec![],
@@ -694,6 +696,13 @@ fn body(native: &BlockNative, plan: &Plan, width: LaneWidth, chosen: &[usize], c
                 ));
                 couts.push((round, bit, format!("o{at}")));
             }
+            (Placement::Scanned { round, bit }, BlockInst::Fill(a, e)) => {
+                out.push_str(&format!(
+                    "  uint o{at} = 0u;\n\
+                     \x20 const {m} v{at} = fill_word(v{a}, v{e}, {m}((cv{round} >> {bit}u) & 1u), o{at});\n"
+                ));
+                couts.push((round, bit, format!("o{at}")));
+            }
             (Placement::Scanned { round, bit }, BlockInst::Toggle(a)) => {
                 out.push_str(&format!("  const {m} v{at} = apply_toggle(v{a}, (cv{round} >> {bit}u) & 1u);\n"));
                 couts.push((round, bit, format!("(cv{round} >> {bit}u) ^ summary_toggle(v{a})")));
@@ -805,7 +814,7 @@ fn emit(
             BlockInst::Or(a, b) => format!("v{a} | v{b}"),
             BlockInst::Xor(a, b) => format!("v{a} ^ v{b}"),
             BlockInst::AndNot(a, b) => format!("{m}(v{a} & ~v{b})"),
-            BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_) => unreachable!(),
+            BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_) | BlockInst::Fill(..) => unreachable!(),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
     }
@@ -823,7 +832,7 @@ fn cone(native: &BlockNative, roots: &[usize]) -> Vec<usize> {
         }
         match native.insts[at] {
             BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::AfterOddRun(a) => stack.push(usize::from(a)),
-            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => {
+            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
                 stack.push(usize::from(a));
                 stack.push(usize::from(b));
             }

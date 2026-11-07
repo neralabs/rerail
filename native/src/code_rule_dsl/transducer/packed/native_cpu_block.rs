@@ -138,7 +138,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         f.append_block_params_for_function_params(entry);
         f.append_block_param(body, types::I64);
         // One loop-carried word per carried instruction: `prev`'s previous word, `toggle`'s
-        // parity (all ones or zero), `after_odd_run`'s borrow (0 or 1).
+        // parity (all ones or zero), `after_odd_run`'s and `fill`'s borrow (0 or 1).
         let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
         for _ in &carried {
             f.append_block_param(body, types::I64);
@@ -359,6 +359,21 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     let escaped = f.ins().band(flipped, follows);
                     carries_out.push(f.ins().uextend(types::I64, overflow));
                     f.ins().band_not(escaped, run)
+                }
+                BlockInst::Fill(s, e) => {
+                    // `block::carry::fill`: the carry into each bit of `s + (s | !e) + cin` is
+                    // the fill coming into that byte.
+                    let cin = carries_in[carries_out.len()];
+                    let (start, end) = (v(s), v(e));
+                    let b = f.ins().bor_not(start, end);
+                    let sum = f.ins().iadd(start, b);
+                    let sum = f.ins().iadd(sum, cin);
+                    let into = f.ins().bxor(sum, start);
+                    let into = f.ins().bxor(into, b);
+                    let open = f.ins().band_not(into, end);
+                    let y = f.ins().bor(start, open);
+                    carries_out.push(f.ins().ushr_imm(y, 63));
+                    y
                 }
             };
             values.push(value);

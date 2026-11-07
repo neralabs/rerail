@@ -97,9 +97,9 @@ fn check_all(rows: &str, want: impl Fn(&[u8]) -> Vec<Vec<u64>>) {
     let p = program(rows);
     for bytes in inputs() {
         let want = want(&bytes);
-        for (name, got) in executors(&p, &bytes) {
-            assert_eq!(got, want, "{name}, {} bytes, program:\n{rows}", bytes.len());
-        }
+        // Every executor that disagrees, so one run shows where a lowering is wrong.
+        let wrong: Vec<String> = executors(&p, &bytes).into_iter().filter(|(_, got)| *got != want).map(|(name, _)| name).collect();
+        assert!(wrong.is_empty(), "{} bytes: wrong on {wrong:?}, program:\n{rows}", bytes.len());
     }
 }
 
@@ -191,7 +191,7 @@ fn opcode(line: &str) -> &str {
 const BODY_OPCODES: &[&str] = &[
     "load", "store", "icmp", "icmp_imm", "vhigh_bits", "uextend", "ishl_imm", "bor", "band", "bxor",
     "bnot", "band_not", "iadd", "iadd_imm", "iconst", "brif", "iadd_pairwise", "bitcast", "extractlane",
-    "swizzle", "ushr_imm", "sshr_imm", "uadd_overflow",
+    "swizzle", "ushr_imm", "sshr_imm", "uadd_overflow", "bor_not",
     // The extract pass's size: each extract's popcount, summed as the plane is written.
     "popcnt",
 ];
@@ -660,6 +660,83 @@ fn toggle_equals_reference_on_every_executor() {
 fn after_odd_run_equals_reference_on_every_executor() {
     let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = after_odd_run %0\n  block 0 output %1\n";
     check_all(rows, |bytes| vec![words_of(&after_odd_run_reference(&bits(bytes, |b| b == b'\\')))]);
+}
+
+// --- Primitive 13: fill (carried, two operands) ---------------------------------------------
+
+/// `f[i] = s[i] | (f[i - 1] & !e[i])`: from each start up to, not including, the next end.
+fn fill_reference(s: &[bool], e: &[bool]) -> Vec<bool> {
+    let mut open = false;
+    s.iter().zip(e).map(|(&s, &e)| { open = s || (open && !e); open }).collect()
+}
+
+#[test]
+fn fill_round_trips_and_refusals() {
+    let p = program("  block 0 %0 = eq 0x22
+  block 0 %1 = eq 0x5c
+  block 0 %2 = fill %0, %1
+  block 0 output %2
+");
+    let text = rir::disassemble(&p, None);
+    assert!(text.contains("%2 = fill %0, %1"), "{text}");
+    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    let rows = "  block 0 %0 = eq 0x22
+  block 0 %1 = fill %0, %1
+  block 0 output %1
+";
+    let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
+    assert!(rir::assemble(&text).is_err(), "fill of itself: accepted");
+}
+
+#[test]
+fn fill_equals_reference_on_every_executor() {
+    // Starts at quotes, ends at backslashes; then starts and ends the same bytes (each start
+    // ends the fill coming in and begins another); then ends that are never set.
+    let rows = "  block 0 %0 = eq 0x22
+  block 0 %1 = eq 0x5c
+  block 0 %2 = fill %0, %1
+  block 0 %3 = fill %0, %0
+                \x20 block 0 %4 = const 0x0000000000000000
+  block 0 %5 = fill %0, %4
+                \x20 block 0 output %2
+  block 0 output %3
+  block 0 output %5
+";
+    check_all(rows, |bytes| {
+        let (q, b) = (bits(bytes, |x| x == b'"'), bits(bytes, |x| x == b'\\'));
+        let none = vec![false; bytes.len()];
+        vec![words_of(&fill_reference(&q, &b)), words_of(&fill_reference(&q, &q)), words_of(&fill_reference(&q, &none))]
+    });
+}
+
+/// `fill` in one round with `toggle` and `after_odd_run` (three scanned carries, one table), and
+/// a fill whose operands are carried values.
+#[test]
+fn fill_with_other_carries_equals_reference_on_every_executor() {
+    let rows = "  block 0 %0 = eq 0x5c
+  block 0 %1 = eq 0x22
+  block 0 %2 = eq 0x61
+  block 0 %3 = after_odd_run %0
+                \x20 block 0 %4 = toggle %1
+  block 0 %5 = fill %2, %0
+  block 0 %6 = fill %4, %3
+                \x20 block 0 output %5
+  block 0 output %6
+";
+    check_all(rows, |bytes| {
+        let (bs, q, a) = (bits(bytes, |x| x == b'\\'), bits(bytes, |x| x == b'"'), bits(bytes, |x| x == b'a'));
+        let (escaped, inside) = (after_odd_run_reference(&bs), toggle_reference(&q));
+        vec![words_of(&fill_reference(&a, &bs)), words_of(&fill_reference(&inside, &escaped))]
+    });
+}
+
+#[test]
+fn fill_lowers_to_straight_bit_operations() {
+    check_lowering("fill", &program("  block 0 %0 = eq 0x22
+  block 0 %1 = eq 0x5c
+  block 0 %2 = fill %0, %1
+  block 0 output %2
+"));
 }
 
 /// Carried operations in a chain, each round's carry depending on the one before: the escaped

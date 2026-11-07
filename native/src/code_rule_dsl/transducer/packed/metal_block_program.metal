@@ -11,7 +11,8 @@ struct BlockArgs { uint from, to, lanes, pad; };
 // An operation of the planes form (native IR, `class` written as formulas of bit-planes): op (0
 // eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane, 11 the byte before's plane), operands a and b, and an immediate
 // (eq's byte; const's pattern as b = low half, imm = high half; plane's bit), and the carried
-// operations 8 prev (imm the distance), 9 toggle, 10 after_odd_run, each with its round in b.
+// operations 8 prev (imm the distance), 9 toggle, 10 after_odd_run, 12 fill (imm its ends), each
+// with its round in b.
 struct BlockStep { uint op, a, b, imm; };
 
 // 16 bytes equal to c (repeated in c4) as 16 bits, by SWAR on four words: an exact zero-byte
@@ -80,6 +81,12 @@ static inline void run(device const uint4* bytes, device M* values, constant Blo
       case 8u: out = apply_prev(a, s.imm, halo_before(a, l, halo_of_group_before(halos + s.b * groups, g))); break;
       case 9u: out = apply_toggle(a, lane_in_parity(summary_toggle(a), carry_before(state, 0u, g), l)); break;
       case 10u: out = apply_after_odd_run(a, lane_in_borrow(summary_after_odd_run(a), carry_before(state, 1u, g), l)); break;
+      case 12u: {
+        // `fill`: its ends are in imm (b is the round).
+        const M e = values[min(s.imm, at) * p.lanes + lane];
+        out = apply_fill(a, e, lane_in_borrow(summary_fill(a, e), carry_before(state, 1u, g), l));
+        break;
+      }
       default: out = M(0); break;
     }
     values[at * p.lanes + lane] = out;
@@ -92,7 +99,9 @@ template <typename M>
 static inline uint aggregate(device const M* values, constant BlockArgs& p, device const BlockStep* steps, uint lane) {
   const BlockStep s = steps[p.to];
   const M a = values[s.a * p.lanes + lane];
-  return select(reduce_borrow(summary_after_odd_run(a)), reduce_parity(summary_toggle(a)), s.op == 9u);
+  const M e = values[min(s.imm, p.to) * p.lanes + lane];
+  const uint borrow = select(summary_after_odd_run(a), summary_fill(a, e), s.op == 12u);
+  return select(reduce_borrow(borrow), reduce_parity(summary_toggle(a)), s.op == 9u);
 }
 
 template <typename M>

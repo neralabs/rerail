@@ -12,7 +12,7 @@
 //!   Products are shared between classes and packed eight to a nibble table. A one-byte class is
 //!   an `eq`.
 //! - `mask` over `~ & | ^`, `empty`, `prev`, `starts`, `after`, `span`, `toggle` and
-//!   `after_odd_run`. These read only bytes at or before their own, so the bits a `~` sets past
+//!   `after_odd_run`, `fill`. These read only bytes at or before their own, so the bits a `~` sets past
 //!   the end of the input never reach a byte inside it.
 //!
 //! - `error` and `escape`: each mask joins the fallback output (`FALLBACK`); a file with a bit
@@ -250,6 +250,10 @@ impl Lowering {
             "toggle" => {
                 let a = mask(self, 0)?;
                 self.op(BlockOp::Toggle(a))
+            }
+            "fill" => {
+                let (start, end) = (mask(self, 0)?, mask(self, 1)?);
+                self.op(BlockOp::Fill(start, end))
             }
             "after_odd_run" => {
                 let a = mask(self, 0)?;

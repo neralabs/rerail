@@ -7,7 +7,7 @@ using namespace metal;
 // threadgroups the combined summaries pass through look-back states. Shared by the interpreter
 // and generated MSL. No loops and no branches here.
 //
-// Kinds: 0 parity (`toggle`), 1 borrow (`after_odd_run`: bit 0 generate, bit 1 propagate).
+// Kinds: 0 parity (`toggle`), 1 borrow (`after_odd_run`, `fill`: bit 0 generate, bit 1 propagate).
 // `prev` needs no scan: its carry is a halo, the 64 bits before a lane, from the lanes before it
 // in the group and the group before's last 64 bits (published in its round, read in later ones).
 
@@ -156,6 +156,30 @@ template <typename M> static inline uint summary_after_odd_run(M a) {
 template <typename M> static inline M apply_after_odd_run(M a, uint cin) {
   uint unused = 0u;
   return after_odd_run(a, M(cin), unused);
+}
+
+// Bitlex's `fill(s, e)` on a lane word (`block::carry::fill`): the carry into each bit of
+// s + (s | ~e) + cin is the fill coming into that byte; `out` is the carry out, the last bit.
+// Computed on 64 bits with the lane's mask: on 16-bit words the arithmetic in M gave a correct
+// result but a wrong ballot of the summary (lane_in_borrow saw no generate) on Apple's compiler.
+template <typename M> static inline M fill_word(M s, M e, M cin, thread uint& out) {
+  const uint bits = uint(sizeof(M)) * 8u;
+  const ulong mask = ~0ul >> (64u - bits);
+  const ulong S = ulong(s), b = S | (~ulong(e) & mask);
+  const ulong into = (S + b + ulong(cin)) ^ S ^ b;
+  const ulong f = (S | (~ulong(e) & into)) & mask;
+  out = uint(f >> (bits - 1u)) & 1u;
+  return M(f);
+}
+template <typename M> static inline uint summary_fill(M s, M e) {
+  uint c0 = 0u, c1 = 0u;
+  fill_word(s, e, M(0), c0);
+  fill_word(s, e, M(1), c1);
+  return c0 | ((c1 & ~c0) << 1u);
+}
+template <typename M> static inline M apply_fill(M s, M e, uint cin) {
+  uint unused = 0u;
+  return fill_word(s, e, M(cin), unused);
 }
 
 // The group's exclusive prefix of a finished round, from its state array: the inclusive prefix
