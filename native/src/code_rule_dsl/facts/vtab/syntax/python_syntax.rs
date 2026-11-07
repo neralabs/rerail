@@ -14,3 +14,11 @@ pub(super) fn error(source: &str) -> Option<(u32, String)> {
     let (offset, message) = ordinary.chain(version).min_by_key(|e| e.0)?;
     Some((super::core_rr::Lines::new(source, true).line(offset), message))
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn malformed_parameter_list_has_the_python_syntax_message() {
+        assert_eq!(super::error("def broken(:\n"), Some((1, "invalid syntax".to_owned())));
+    }
+}

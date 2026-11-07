@@ -46,6 +46,7 @@ ENTRIES = {
     'no_api_root_imports': ['check_file', 'check_file_content'],
     'error_handling': ['scan_file_content'],
     'backend_type_strings': ['check_file', 'check_file_content', 'should_skip_file', 'find_python_files'],
+    'serverplan_grammar_surface': ['scan_file', 'iter_python_files'],
     'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
@@ -218,6 +219,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'serverplan_grammar_surface':
+            from grammar_surface_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'backend_type_strings':
             from backend_types_port import scan
             return scan(self, entry, module, arguments)
@@ -499,7 +503,13 @@ class Suite:
         self.modules = {check: importlib.import_module('scripts.lint_' + check) for check in self.checks}
         bind_aliases(self.modules)
         originals = codes(self.modules)
+        if 'serverplan_grammar_surface' in self.modules:
+            shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
+            originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'serverplan_grammar_surface':
+                from grammar_surface_port import install
+                install(self, module)
             if check == 'backend_type_strings':
                 from backend_types_port import install
                 install(self, module)
@@ -542,7 +552,8 @@ class Suite:
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},
                     'backend_coupling': {'cli_main', 'get_project_root'},
-                    'connection_caches': {'cli_main'}, 'backend_type_strings': {'cli_main'}}
+                    'connection_caches': {'cli_main'}, 'backend_type_strings': {'cli_main'},
+                    'serverplan_grammar_surface': {'cli_main'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])
