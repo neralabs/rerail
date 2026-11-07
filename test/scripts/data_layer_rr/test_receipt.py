@@ -16,6 +16,15 @@ import mutation
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_ownership_mutation_keeps_inventory_and_disables_every_finding(self):
+        self.assertTrue(mutation.auxiliary_output('plan_scope_ownership',dict(code='PSO_FILE')))
+        for i in range(14):self.assertFalse(mutation.auxiliary_output('plan_scope_ownership',dict(code=f'PSO{i:03}')))
+        source='Selected(p) :- inventory(p).\n'+''.join(f'Ownership{i}(p, m, s, e, r, w) :- issue{i}(p).\n' for i in range(14))
+        disabled=mutation.disable_policy('plan_scope_ownership',source)
+        self.assertIn('Selected(p) :- inventory(p).',disabled)
+        self.assertEqual(14,disabled.count(':- 1 = 0,'))
+        with self.assertRaises(ValueError):mutation.disable_policy('plan_scope_ownership','')
+
     def test_boundary_mutation_preserves_counts_and_cannot_hide_bridge_findings(self):
         self.assertTrue(mutation.auxiliary_output('async_sync_boundary', dict(code='BS_COUNT')))
         self.assertFalse(mutation.auxiliary_output('async_sync_boundary', dict(code='SYNC_WRAPS_ASYNC')))
