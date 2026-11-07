@@ -565,3 +565,48 @@ The headless library and engine binary pass the compiler check.
 
 This is progress toward item 2. It does not remove the fallback for unpartitioned recursive dependencies or recursive walks that cannot be lifted.
 The next extension must retain causal dependencies or iteration state for those components. Renaming a stratum refresh does not satisfy this requirement.
+
+### Versioned storage for iteration state
+
+General recursive maintenance remains unfinished. The next algorithm needs retained state for each iteration, including reducer support.
+Copying SQL tables or initializing support for every new iteration would scan accumulated state again.
+The engine now has an internal storage backend that shares immutable index roots between operator versions.
+SQL still evaluates rules and applies their deltas through writable temporary virtual tables.
+The public session continues to use its existing tables. This backend is not yet connected to recursive scheduling.
+
+Each relation has persistent indexes for complete rows, primary keys, row IDs, and individual columns.
+Writes copy affected search paths. Active cursors pin their version before reading.
+Canonical tree hashes identify unchanged subtrees, including versions built in different insertion orders.
+A sparse comparison over 20,000 rows visits 94 tree nodes, including split traversal and emitted rows.
+Ordered primary-key probes read minima and maxima lazily. Two probes over one 20,000-row group read fewer than 20 columns.
+SQLite still checks additional filters before applying `LIMIT`.
+
+Retained count, sum, min, and max operators can use this backend, including materialized computed correlation keys.
+Forking an operator shares its result and support indexes. It rebuilds checked descriptors without initializing support again.
+A 2,000-context regression applies insertions and retractions to independent forks and compares results with fresh SQL aggregates.
+Each edit reconsiders fewer than three contexts. Saved support versions remain unchanged.
+Scratch scopes reuse temporary tables between sequential operator updates while preserving the caller's input deltas.
+
+Two integration failures had specific causes:
+
+| Failure | Root cause | Fix |
+| --- | --- | --- |
+| Volatile state triggered the content store's durable-write guard. | Writable eponymous tables belonged to `main`. | Create writable virtual tables in `temp`. |
+| `INSERT OR IGNORE` failed on duplicate keys. | The pinned rusqlite configuration helper omitted the required constraint-support flag. | Call `sqlite3_vtab_config` with the explicit flag and reject constraints before mutation. |
+
+The constraint protocol follows [SQLite's virtual-table configuration API](https://www.sqlite.org/c3ref/c_vtab_constraint_support.html).
+Native state uses an explicit Rust transaction guard to restore previous roots and remove tables created by a failed batch.
+Ordinary SQL rollback alone does not restore this backend. Session transaction integration is still required.
+
+The combined suite passes 268 tests, with four ignored tests and the separate syntax census excluded.
+It covers SQL execution, compiler emission, front-end checks, rule syntax, corpus scheduling, virtual-table bindings, and the content store.
+The headless library and engine binary pass the compiler check.
+These checks validate the storage and operator foundation; they do not validate an iteration-indexed recursive executor.
+
+Next, retain iteration inputs, operator caches, published relations, frontiers, and widening counters.
+Update each frame from input differences. Fork the preceding cache when execution needs another iteration.
+Preserve the cold scheduler's gates and widening order, then publish only actual final differences.
+Integrate native rollback and cleanup before enabling this path in sessions.
+Compare cyclic and mutually recursive programs against fresh execution after every edit, including failures and retries.
+Measure native index work as well as SQL instructions: SQL counters exclude native hashing, allocation, and index traversal.
+Until that integration passes, unpartitioned recursive lattices and aggregates retain their visible stratum-refresh fallback.

@@ -21,6 +21,7 @@ pub(super) struct Reducer {
     groups: String,
     values: String,
     join: Option<E>,
+    native_keys: bool,
 }
 impl Reducer {
     pub fn plan(
@@ -29,6 +30,7 @@ impl Reducer {
         original: &E,
         outer: &BTreeMap<(String, String), usize>,
         previous: &[Reducer],
+        native: bool,
     ) -> Result<Option<Self>> {
         let (inner, kind, value) = match original {
             E::Exists { negated, query } => (query.as_ref(), Kind::Matches(*negated), integer(1)),
@@ -259,6 +261,7 @@ impl Reducer {
                 predicates: local,
             },
         };
+        let native_keys = native && outer_keys.iter().any(|e| !matches!(e, E::Qualified { .. }));
         Ok(Some(Self {
             original: original.clone(),
             kind,
@@ -269,6 +272,7 @@ impl Reducer {
             groups: format!("{prefix}_groups"),
             values: format!("{prefix}_values"),
             join,
+            native_keys,
         }))
     }
     fn keys(&self) -> usize {
@@ -289,12 +293,20 @@ impl Reducer {
             .map(|e| rule.in_context(e, alias))
             .collect()
     }
-    pub fn index_context(&self, db: &rusqlite::Connection, rule: &Rule) -> Result<()> {
+    pub fn index_context(
+        &self,
+        db: &rusqlite::Connection,
+        rule: &Rule,
+        storage: Option<&versions::Store>,
+    ) -> Result<()> {
         if self.dynamic() {
-            return self.initialize_dependencies(db, rule);
+            return self.initialize_dependencies(db, rule, storage);
         }
         let expressions = self.context_keys(rule, "rr_context");
         if expressions.is_empty() {
+            return Ok(());
+        }
+        if storage.is_some() {
             return Ok(());
         }
         let columns = expressions
@@ -377,6 +389,7 @@ impl Reducer {
         &self,
         db: &rusqlite::Connection,
         objects: &mut Vec<(String, bool)>,
+        storage: Option<&versions::Store>,
     ) -> Result<()> {
         let keys = self.keys();
         let cols = names("", keys);
@@ -389,6 +402,7 @@ impl Reducer {
                 "{},n INTEGER NOT NULL CHECK(n>0),value INTEGER NOT NULL,PRIMARY KEY({cols})",
                 schema(keys)
             ),
+            storage,
         )?;
         let reduction = match self.kind {
             Kind::Count | Kind::Matches(_) => "count(*)".into(),
@@ -415,6 +429,7 @@ impl Reducer {
                     schema(self.width()),
                     names("", self.width())
                 ),
+                storage,
             )?;
             execute(
                 db,

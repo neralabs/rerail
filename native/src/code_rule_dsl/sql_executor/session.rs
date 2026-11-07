@@ -101,6 +101,9 @@ pub(super) fn index(
             "index columns must be distinct valid positions".into(),
         ));
     }
+    if super::super::facts::vtab::bound_source(db, relation).is_some_and(|s| s.writable()) {
+        return Ok(());
+    }
     let suffix = columns
         .iter()
         .map(ToString::to_string)

@@ -14,6 +14,10 @@ pub(super) struct Work<'a> {
     positions: BTreeMap<(String, bool), usize>,
     pub created: usize,
 }
+pub(super) struct Mark {
+    used: usize,
+    positions: BTreeMap<(String, bool), usize>,
+}
 
 impl Pool {
     pub fn clear(&mut self, db: &rusqlite::Connection) -> Result<()> {
@@ -27,6 +31,23 @@ impl Pool {
 }
 
 impl<'a> Work<'a> {
+    /// Sequential temporal operators reuse scratch slots while the caller's deltas stay live.
+    pub fn mark(&self) -> Mark {
+        Mark {
+            used: self.used.len(),
+            positions: self.positions.clone(),
+        }
+    }
+    pub fn rewind(&mut self, mark: Mark) -> Result<()> {
+        for name in &self.used[mark.used..] {
+            self.db
+                .execute(&format!("DELETE FROM {}", quote(name)), [])
+                .map_err(error)?;
+        }
+        self.used.truncate(mark.used);
+        self.positions = mark.positions;
+        Ok(())
+    }
     pub fn new(db: &'a rusqlite::Connection, pool: &Pool) -> Self {
         Self {
             db,

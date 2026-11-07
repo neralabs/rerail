@@ -106,6 +106,7 @@ pub(super) fn rule(
     output: &str,
     id: usize,
     q: &Query,
+    native: bool,
 ) -> Result<Option<Rule>> {
     if !q.ctes.is_empty() {
         return Ok(None);
@@ -157,6 +158,7 @@ pub(super) fn rule(
             &e,
             &fields_by_name,
             &sites,
+            native,
         )?
         else {
             return Ok(None);
@@ -279,6 +281,11 @@ impl Rule {
         query
     }
     pub fn index(&self, db: &rusqlite::Connection, columns: &[usize]) -> Result<()> {
+        if super::super::super::facts::vtab::bound_source(db, &self.contexts)
+            .is_some_and(|s| s.writable())
+        {
+            return Ok(());
+        }
         let columns: Vec<_> = columns
             .iter()
             .copied()

@@ -3,7 +3,7 @@ use super::*;
 
 impl Reducer {
     pub fn dynamic(&self) -> bool {
-        self.outer_keys.iter().any(|e| !plain(e))
+        self.native_keys || self.outer_keys.iter().any(|e| !plain(e))
     }
     fn dependencies(&self) -> String {
         format!("{}_dependencies", self.groups)
@@ -12,13 +12,26 @@ impl Reducer {
         &self,
         db: &rusqlite::Connection,
         rule: &Rule,
+        storage: Option<&versions::Store>,
     ) -> Result<()> {
         let table = self.dependencies();
         let keys = (0..self.keys())
             .map(|i| format!("k{i} INTEGER"))
             .collect::<Vec<_>>()
             .join(",");
-        db.execute_batch(&format!("CREATE TEMP TABLE {table}({},{keys},PRIMARY KEY({})) WITHOUT ROWID; CREATE INDEX {table}_keys ON {table}({})", schema(rule.width), names("",rule.width), (0..self.keys()).map(|i|format!("k{i}")).collect::<Vec<_>>().join(","))).map_err(error)?;
+        if let Some(storage) = storage {
+            storage.create(
+                db,
+                &table,
+                versions::Schema::generated(&format!(
+                    "{},{keys},PRIMARY KEY({})",
+                    schema(rule.width),
+                    names("", rule.width)
+                ))?,
+            )?;
+        } else {
+            db.execute_batch(&format!("CREATE TEMP TABLE {table}({},{keys},PRIMARY KEY({})) WITHOUT ROWID; CREATE INDEX {table}_keys ON {table}({})", schema(rule.width), names("",rule.width), (0..self.keys()).map(|i|format!("k{i}")).collect::<Vec<_>>().join(","))).map_err(error)?;
+        }
         execute(db, &self.dependency_insert(rule, &rule.contexts))?;
         Ok(())
     }

@@ -402,3 +402,15 @@ Compiler projection views receive private names when their public name already b
 An AST matcher atom must become native match facts before the rule enters this executor.
 The standalone session does not publish derivation records or replace the product audit path.
 The product path continues to use the same SQL scheduler with its provenance and incremental storage.
+
+## Recursive maintenance work in progress
+
+Recursive lattice and aggregate components can rederive independent partitions when checked queries prove an invariant partition key.
+Components without that proof still refresh their affected stratum.
+General incremental recursion needs retained iteration state so unsupported cycles cannot preserve their own results.
+
+An internal backend now provides versioned integer relations through writable temporary virtual tables.
+It can fork retained reducer state by sharing persistent indexes, then apply sparse SQL updates to each fork independently.
+This backend has storage and operator tests. The public session does not yet use it for recursive execution.
+Its native writes require an explicit rollback guard; SQL rollback alone is insufficient.
+See the [implementation plan](sql-unification-and-updates-plan.md#versioned-storage-for-iteration-state) for results, limitations, and remaining integration work.

@@ -46,6 +46,7 @@ impl JoinTree {
         db: &rusqlite::Connection,
         heads: &str,
         objects: &mut Vec<(String, bool)>,
+        storage: Option<&versions::Store>,
     ) -> Result<()> {
         let keys = names("", self.keys);
         owned(
@@ -56,6 +57,7 @@ impl JoinTree {
                 "{},value INTEGER NOT NULL,left_value INTEGER,right_value INTEGER,height INTEGER NOT NULL,summary INTEGER NOT NULL,PRIMARY KEY({keys},value)",
                 schema(self.keys)
             ),
+            storage,
         )?;
         owned(
             db,
@@ -65,6 +67,7 @@ impl JoinTree {
                 "{},root_value INTEGER NOT NULL,summary INTEGER NOT NULL,PRIMARY KEY({keys})",
                 schema(self.keys)
             ),
+            storage,
         )?;
         let mut stmt = db
             .prepare(&format!(

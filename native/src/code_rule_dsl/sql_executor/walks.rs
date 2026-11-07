@@ -116,7 +116,11 @@ fn probe(query: &Query, name: &str) -> Query {
     }
 }
 
-pub(super) fn prepare(w: &mut Work<'_>, run: &mut session::Execution) -> Result<Vec<String>> {
+pub(super) fn prepare(
+    w: &mut Work<'_>,
+    run: &mut session::Execution,
+    storage: Option<&versions::Store>,
+) -> Result<Vec<String>> {
     if !run
         .emitted
         .queries
@@ -192,11 +196,15 @@ pub(super) fn prepare(w: &mut Work<'_>, run: &mut session::Execution) -> Result<
                 .collect::<Vec<_>>()
                 .join(",");
             for table in [name.clone(), format!("new_{name}"), format!("delta_{name}")] {
-                w.db.execute_batch(&format!(
-                    "CREATE TEMP TABLE {}({definition},PRIMARY KEY({cols})) WITHOUT ROWID",
-                    quote(&table)
-                ))
-                .map_err(error)?;
+                if let Some(storage) = storage {
+                    storage.create(w.db, &table, versions::Schema::integers(width, width))?;
+                } else {
+                    w.db.execute_batch(&format!(
+                        "CREATE TEMP TABLE {}({definition},PRIMARY KEY({cols})) WITHOUT ROWID",
+                        quote(&table)
+                    ))
+                    .map_err(error)?;
+                }
                 run.objects.push((table, true));
             }
             let count =

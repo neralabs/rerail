@@ -25,6 +25,7 @@ mod recursive;
 mod reductions;
 mod scratch;
 mod updates;
+mod versions;
 mod walks;
 use super::logic::sql::lattices;
 use super::logic::sql::program;
@@ -830,12 +831,13 @@ impl CodeRuleSqlExecutor {
                     .execute_batch(&format!("ANALYZE temp.{}", quote(name)))
                     .map_err(error)?;
             }
-            let mut initializations = walks::prepare(&mut work, &mut execution)?;
+            let mut initializations = walks::prepare(&mut work, &mut execution, None)?;
             let mut potential = execution.inputs.clone();
             initializations.extend(reductions::prepare(
                 &mut work,
                 &mut execution,
                 &mut potential,
+                None,
             )?);
             initializations.sort();
             initializations.dedup();
