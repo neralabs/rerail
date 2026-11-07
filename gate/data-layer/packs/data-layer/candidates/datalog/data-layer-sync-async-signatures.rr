@@ -1,24 +1,53 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.input doc, node, child, field, text
 .decl in_scope(d: number)
-.decl m10(n: node)
-.decl m11(n: node)
-.decl m14(n: node)
-.decl m15(n: node)
-.decl m17(n: node)
-.decl m18(n: node)
-.decl m24(n: node)
-.decl m30(n: node)
-.decl m31(n: node)
-.decl m7(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
-.decl u2(n: node)
-.decl u5(n: node)
+.decl sas_after_star(q: node)
+.decl sas_ann_any(n: node)
+.decl sas_ann_conn(n: node)
+.decl sas_ann_txn(n: node)
+.decl sas_any_name(s: symbol)
+.decl sas_before_slash(q: node)
+.decl sas_conn_name(s: symbol)
+.decl sas_def(d: number, f: node, name: symbol, s: number, e: number)
+.decl sas_earlier_child(g: node, i: number)
+.decl sas_first_child(g: node, c: node)
+.decl sas_first_param(f: node, q: node)
+.decl sas_has_param(f: node)
+.decl sas_last(d: number, f: node, name: symbol)
+.decl sas_later_pos(q: node)
+.decl sas_leaf(n: node, s: symbol)
+.decl sas_left_any(n: node)
+.decl sas_named_param(q: node)
+.decl sas_pos_param(ps: node, q: node, i: number)
+.decl sas_splat(q: node)
+.decl sas_splat_kind(x: node)
+.decl sas_star(z: node)
+.decl sas_string_kind(n: node)
+.decl sas_superseded(f: node)
+.decl sas_sync_key(d: number, k: symbol)
+.decl sas_txn_name(s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, text, child, field, value, value_type_of, syntax_error, node_text, line
+.output violation
+sas_conn_name("Connection").
+sas_conn_name("SyncDatabaseConnection").
+sas_conn_name("SyncVersionedDatabaseConnection").
+sas_conn_name("VersionedConnection").
+sas_txn_name("LazyVersionedReadTransaction").
+sas_txn_name("LazyVersionedWriteTransaction").
+sas_txn_name("ReadTransaction").
+sas_txn_name("SchemaTransaction").
+sas_txn_name("Transaction").
+sas_txn_name("WriteTransaction").
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
@@ -119,24 +148,53 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-m7(n) :- node(_, n, "identifier", _, _), text(n, v6), v6 = "self".
-m10(n) :- node(_, n, "identifier", _, _), text(n, v9), v9 = "self".
-m11(n) :- node(_, n, "default_parameter", _, _).
-m11(n) :- node(_, n, "typed_default_parameter", _, _).
-m14(n) :- node(_, n, "identifier", _, _), text(n, v13), v13 = "self".
-m15(n) :- node(_, n, "identifier", _, _), !m7(n).
-m15(n) :- node(_, n, "typed_parameter", _, _), child(n, v8, _), node(_, v8, "identifier", _, _), !m10(v8).
-m15(n) :- m11(n), field(n, "name", v12), node(_, v12, "identifier", _, _), !m14(v12).
-m17(n) :- node(_, n, "list_splat_pattern", _, _).
-m17(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m18(n) :- node(_, n, "list_splat_pattern", _, _).
-m18(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m18(n) :- node(_, n, "typed_parameter", _, _), child(n, v16, _), m17(v16).
-m24(n) :- child(v21, n, v22), child(v21, v20, v23), v22 < v23, node(_, v20, "positional_separator", _, _).
-m30(n) :- node(_, n, "keyword_separator", _, _).
-m30(n) :- node(_, n, "list_splat_pattern", _, _).
-m30(n) :- node(_, n, "typed_parameter", _, _), child(n, v29, _), node(_, v29, "list_splat_pattern", _, _).
-m31(n) :- child(v26, n, v27), child(v26, v25, v28), v28 < v27, m30(v25).
-u5(n) :- m15(n), !m18(n), child(v19, n, _), node(_, v19, "parameters", _, _), !m24(n), !m31(n).
-u2(n) :- field(n, "parameters", v3), child(v3, v4, _), u5(v4).
-.output violation
+sas_named_param(q) :- node(_, q, "identifier", _, _), text(q, s), s != "self".
+sas_named_param(q) :- node(_, q, "typed_parameter", _, _), child(q, x, _), node(_, x, "identifier", _, _), text(x, s), s != "self".
+sas_named_param(q) :- node(_, q, "default_parameter", _, _), field(q, "name", x), node(_, x, "identifier", _, _), text(x, s), s != "self".
+sas_named_param(q) :- node(_, q, "typed_default_parameter", _, _), field(q, "name", x), node(_, x, "identifier", _, _), text(x, s), s != "self".
+sas_splat(q) :- sas_splat_kind(q).
+sas_splat(q) :- node(_, q, "typed_parameter", _, _), child(q, x, _), sas_splat_kind(x).
+sas_splat_kind(x) :- node(_, x, "list_splat_pattern", _, _).
+sas_splat_kind(x) :- node(_, x, "dictionary_splat_pattern", _, _).
+sas_before_slash(q) :- child(ps, q, i), child(ps, z, j), j > i, node(_, z, "positional_separator", _, _).
+sas_star(z) :- node(_, z, "keyword_separator", _, _).
+sas_star(z) :- node(_, z, "list_splat_pattern", _, _).
+sas_star(z) :- node(_, z, "typed_parameter", _, _), child(z, x, _), node(_, x, "list_splat_pattern", _, _).
+sas_after_star(q) :- child(ps, q, i), child(ps, z, j), j < i, sas_star(z).
+sas_pos_param(ps, q, i) :- node(_, ps, "parameters", _, _), child(ps, q, i), sas_named_param(q), !sas_splat(q), !sas_before_slash(q), !sas_after_star(q).
+sas_has_param(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), sas_pos_param(ps, _, _).
+sas_later_pos(q) :- sas_pos_param(ps, q, i), sas_pos_param(ps, _, j), j < i.
+sas_first_param(f, q) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), sas_pos_param(ps, q, _), !sas_later_pos(q).
+sas_any_name(s) :- sas_conn_name(s).
+sas_any_name(s) :- sas_txn_name(s).
+sas_leaf(n, s) :- node(_, n, "identifier", _, _), text(n, s).
+sas_leaf(n, s) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, s).
+sas_leaf(n, s) :- sas_string_kind(n), value(n, s), value_type_of(n, "str").
+sas_string_kind(n) :- node(_, n, "string", _, _).
+sas_string_kind(n) :- node(_, n, "concatenated_string", _, _).
+sas_first_child(g, c) :- node(_, g, "generic_type", _, _), child(g, c, i), !sas_earlier_child(g, i).
+sas_earlier_child(g, i) :- node(_, g, "generic_type", _, _), child(g, _, i), child(g, _, j), j < i.
+sas_ann_any(n) :- sas_leaf(n, s), sas_any_name(s).
+sas_ann_any(n) :- node(_, n, "type", _, _), child(n, c, _), sas_ann_any(c).
+sas_ann_any(n) :- sas_first_child(n, c), sas_ann_any(c).
+sas_ann_any(n) :- node(_, n, "subscript", _, _), field(n, "value", c), sas_ann_any(c).
+sas_ann_any(n) :- node(_, n, "binary_operator", _, _), field(n, "left", c), sas_ann_any(c).
+sas_ann_any(n) :- node(_, n, "binary_operator", _, _), field(n, "right", c), sas_ann_any(c).
+sas_left_any(n) :- node(_, n, "binary_operator", _, _), field(n, "left", c), sas_ann_any(c).
+sas_ann_conn(n) :- sas_leaf(n, s), sas_conn_name(s).
+sas_ann_conn(n) :- node(_, n, "type", _, _), child(n, c, _), sas_ann_conn(c).
+sas_ann_conn(n) :- sas_first_child(n, c), sas_ann_conn(c).
+sas_ann_conn(n) :- node(_, n, "subscript", _, _), field(n, "value", c), sas_ann_conn(c).
+sas_ann_conn(n) :- node(_, n, "binary_operator", _, _), field(n, "left", c), sas_ann_conn(c).
+sas_ann_conn(n) :- node(_, n, "binary_operator", _, _), !sas_left_any(n), field(n, "right", c), sas_ann_conn(c).
+sas_ann_txn(n) :- sas_leaf(n, s), sas_txn_name(s).
+sas_ann_txn(n) :- node(_, n, "type", _, _), child(n, c, _), sas_ann_txn(c).
+sas_ann_txn(n) :- sas_first_child(n, c), sas_ann_txn(c).
+sas_ann_txn(n) :- node(_, n, "subscript", _, _), field(n, "value", c), sas_ann_txn(c).
+sas_ann_txn(n) :- node(_, n, "binary_operator", _, _), field(n, "left", c), sas_ann_txn(c).
+sas_ann_txn(n) :- node(_, n, "binary_operator", _, _), !sas_left_any(n), field(n, "right", c), sas_ann_txn(c).
+sas_def(d, f, t, s, e) :- node(d, f, "function_definition", s, e), sas_has_param(f), field(f, "name", nm), text(nm, t).
+sas_superseded(f) :- sas_def(d, f, t, _, e), sas_def(d, _, t, s2, _), s2 >= e.
+sas_last(d, f, t) :- sas_def(d, f, t, _, _), !sas_superseded(f).
+sas_sync_key(d, k) :- sas_last(d, f, b), sas_first_param(f, q), field(q, "type", t), sas_ann_txn(t), k = @concat(b, "_async").
+violation("data-layer-sync-async-signatures", "transaction-connection", "sync_async_signature_mismatch", p, l) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), sas_last(d, f, k), sas_sync_key(d, k), field(f, "name", nm), node_text(nm, s), match(".*_async", s), sas_first_param(f, q), field(q, "type", t), sas_ann_conn(t), line(f, l).

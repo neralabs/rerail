@@ -1,21 +1,46 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, child, text, name, line, syntax_error
 .decl k0(kind: symbol)
 k0("expression_statement").
 .decl k1(kind: symbol)
 k1("module").
+.decl log_reraise_block(kind: symbol)
+log_reraise_block("block").
+.decl log_reraise_stop(kind: symbol)
+log_reraise_stop("except_clause"). log_reraise_stop("function_definition"). log_reraise_stop("lambda").
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
-.decl m17(n: node)
-.decl m2(n: node)
-.decl m3(n: node)
+.decl line(n: node, l: number)
+.decl log_reraise_at(r: node, p: node, i: number)
+.decl log_reraise_code(p: node, j: number)
+.decl log_reraise_follows(r: node, e: node)
+.decl log_reraise_gate(d: number)
+.decl log_reraise_level(s: symbol)
+.decl log_reraise_log(e: node)
+.decl log_reraise_value(kind: symbol)
+.decl log_reraise_valued(r: node)
+.decl m9(n: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(i: number, k: number, p: node)
+.decl rr_ctx2(i: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, text, line, syntax_error, node_text, field, token
+.output violation
+log_reraise_level("error").
+log_reraise_level("warning").
+log_reraise_value("identifier").
+log_reraise_value("call").
+log_reraise_value("attribute").
+log_reraise_value("string").
+log_reraise_value("integer").
+log_reraise_value("none").
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("services/**/*.py", p).
@@ -27,14 +52,18 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-m2(n) :- node(_, n, "identifier", _, _).
-m2(n) :- node(_, n, "call", _, _).
-m2(n) :- node(_, n, "attribute", _, _).
-m2(n) :- node(_, n, "string", _, _).
-m2(n) :- node(_, n, "integer", _, _).
-m2(n) :- node(_, n, "none", _, _).
-m3(n) :- child(n, v1, _), m2(v1).
-m17(n) :- node(_, n, "module", _, _), node(v10, n, _, _, _), node(v10, v11, _, _, _), name(v11, v12), (contains("logger.error", v12) ; contains("logger.warning", v12) ; contains("txn.commit", v12)).
-m17(n) :- inside(n, v13, k1), node(_, v13, "module", _, _), node(v14, v13, _, _, _), node(v14, v15, _, _, _), name(v15, v16), (contains("logger.error", v16) ; contains("logger.warning", v16) ; contains("txn.commit", v16)).
-violation("data-layer-error-handling", "admin-commit", "EH001", p, l) :- node(_, n, "call", _, _), node(_, n, "call", _, _), child(n, v5, 0), node(_, v5, "attribute", _, _), child(v5, v6, 0), node(_, v6, "identifier", _, _), text(v6, "txn"), child(v5, v7, 1), node(_, v7, "identifier", _, _), text(v7, "commit"), !child(v5, _, 2), child(n, v8, 1), node(_, v8, "argument_list", _, _), !child(v8, _, 0), !child(n, _, 2), inside(n, v9, k0), node(_, v9, "expression_statement", _, _), m17(n), doc(d, p, m), prefix("api/l8000_admin/tools", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation
+m9(n) :- node(_, n, "module", _, _), node_text(n, v6), match("(?s:.*)(?:logger\\.error|logger\\.warning|txn\\.commit)(?s:.*)", v6).
+m9(n) :- inside(n, v7, k1), node(_, v7, "module", _, _), node_text(v7, v8), match("(?s:.*)(?:logger\\.error|logger\\.warning|txn\\.commit)(?s:.*)", v8).
+violation("data-layer-error-handling", "admin-commit", "EH001", p, l) :- node(_, n, "call", _, _), node(_, n, "call", _, _), child(n, v1, 0), node(_, v1, "attribute", _, _), child(v1, v2, 0), node(_, v2, "identifier", _, _), text(v2, "txn"), child(v1, v3, 1), node(_, v3, "identifier", _, _), text(v3, "commit"), !child(v1, _, 2), child(n, v4, 1), node(_, v4, "argument_list", _, _), !child(v4, _, 0), !child(n, _, 2), inside(n, v5, k0), node(_, v5, "expression_statement", _, _), m9(n), doc(d, p, m), prefix("api/l8000_admin/tools", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+log_reraise_log(e) :- node(_, e, "expression_statement", _, _), child(e, c, _), node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "object", o), node(_, o, "identifier", _, _), text(o, "logger"), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), log_reraise_level(s).
+log_reraise_valued(r) :- node(_, r, "raise_statement", _, _), child(r, c, _), node(_, c, k, _, _), log_reraise_value(k).
+log_reraise_at(r, p, i) :- node(_, r, "raise_statement", s, e), !log_reraise_valued(r), child(p, r, _), token(p, i, _, s, e).
+log_reraise_code(p, j) :- log_reraise_at(_, p, _), token(p, j, t, _, _), !prefix("#", t).
+rr_ctx2(i) :- log_reraise_at(r, p, i), token(p, j, _, s, t), child(p, e, _), node(_, e, _, s, t), log_reraise_log(e).
+rr_agg1(i, k, p) :- rr_ctx2(i), log_reraise_code(p, k), k < i.
+log_reraise_follows(r, e) :- log_reraise_at(r, p, i), j = max k : { rr_agg1(i, k, p) }, token(p, j, _, s, t), child(p, e, _), node(_, e, _, s, t), log_reraise_log(e).
+log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("logger.error", s).
+log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("logger.warning", s).
+log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("txn.commit", s).
+log_reraise_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
+violation("data-layer-error-handling", "log-reraise", "EH001", p, l) :- log_reraise_follows(r, _), node(d, r, _, _, _), line(r, l), inside(r, _, log_reraise_block), nearest(r, x, log_reraise_stop), node(_, x, "except_clause", _, _), doc(d, p, _), (prefix("api", p) ; prefix("impl", p) ; prefix("services", p)), log_reraise_gate(d), in_scope(d), !out_scope(d), !syntax_error(d).

@@ -1,0 +1,108 @@
+// data-layer-conn-or-txn-union, clauses `union` (UNION) and `separate` (SEPARATE_PARAMS), from
+// candidates/rules-ast/data-layer-conn-or-txn-union.json (utilities in its `shared` clause).
+//
+// The utilities `connection` and `transaction`: each is a cycle of ten copies (`connection` -> `connection-7` -> … ->
+// `connection-0` -> `connection-rec` -> `connection`), every copy the same matcher, so each is one recursive
+// relation here, exactly: an identifier of the name set, an attribute whose `attribute` is one, a string literal
+// (prefix of at most two of r/u/f, any quotes) whose content is one, or a type / type_parameter / generic_type /
+// subscript / tuple / union_type / binary_operator with a direct child that is one. W's `matches` recursion stops at
+// 256 nested utilities (or 1 MiB of stack: `matcher::util::MAX_UTIL_DEPTH`), failing the clause for the file
+// (`budget-exceeded`) rather than reporting; this recursion has no such limit (a type nested over 256 deep).
+//
+// The clauses' regexes `Connection` and `Transaction` over the function's and its parameter list's full text are
+// implied by the typed-parameter tests that follow them: every name of the connection set contains `Connection`
+// and every name of the transaction set `Transaction`, and the matched type lies within the parameter list. So they
+// are left out, exactly.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl str(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, str, strprefix, line, syntax_error
+.output violation
+
+.decl union_conn_names(s: symbol)
+union_conn_names("Connection"). union_conn_names("DoltDbConnection"). union_conn_names("MariaDbConnection").
+union_conn_names("MongoDbConnection"). union_conn_names("SyncDatabaseConnection"). union_conn_names("SyncNeo4jConnection").
+union_conn_names("SyncPostgresConnection"). union_conn_names("SyncSqliteConnection").
+.decl union_txn_names(s: symbol)
+union_txn_names("AsyncReadTransaction"). union_txn_names("AsyncWriteTransaction").
+union_txn_names("LazyVersionedReadTransaction"). union_txn_names("LazyVersionedWriteTransaction").
+union_txn_names("ReadTransaction"). union_txn_names("SchemaTransaction"). union_txn_names("Transaction").
+union_txn_names("WriteTransaction").
+
+// `^[rRuUfF]{0,2}`: strprefix is the prefix lowercased.
+.decl union_prefixes(s: symbol)
+union_prefixes(""). union_prefixes("r"). union_prefixes("u"). union_prefixes("f").
+union_prefixes("rr"). union_prefixes("ru"). union_prefixes("rf"). union_prefixes("ur"). union_prefixes("uu").
+union_prefixes("uf"). union_prefixes("fr"). union_prefixes("fu"). union_prefixes("ff").
+
+.decl union_containers(kind: symbol)
+union_containers("type"). union_containers("type_parameter"). union_containers("generic_type").
+union_containers("subscript"). union_containers("tuple"). union_containers("union_type"). union_containers("binary_operator").
+
+.decl union_conn(n: node)
+union_conn(n) :- node(_, n, "identifier", _, _), text(n, s), union_conn_names(s).
+union_conn(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), union_conn_names(s).
+union_conn(n) :- node(_, n, "string", _, _), strprefix(n, p), union_prefixes(p), str(n, s), union_conn_names(s).
+union_conn(n) :- node(_, n, k, _, _), union_containers(k), child(n, c, _), union_conn(c).
+
+.decl union_txn(n: node)
+union_txn(n) :- node(_, n, "identifier", _, _), text(n, s), union_txn_names(s).
+union_txn(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), union_txn_names(s).
+union_txn(n) :- node(_, n, "string", _, _), strprefix(n, p), union_prefixes(p), str(n, s), union_txn_names(s).
+union_txn(n) :- node(_, n, k, _, _), union_containers(k), child(n, c, _), union_txn(c).
+
+.decl union_param_kinds(kind: symbol)
+union_param_kinds("typed_parameter"). union_param_kinds("typed_default_parameter").
+// A typed parameter of a parameter list (a direct child) with no direct `self` identifier child, and its type.
+.decl union_typed(ps: node, p: node, t: node)
+union_typed(ps, p, t) :-
+    node(_, ps, "parameters", _, _), child(ps, p, _), node(_, p, k, _, _), union_param_kinds(k),
+    !union_self(p), field(p, "type", t).
+.decl union_self(p: node)
+union_self(p) :- child(p, c, _), node(_, c, "identifier", _, _), text(c, "self").
+
+// The exemptions: by name, or by name within the nearest enclosing class of a name.
+.decl union_exempt_names(s: symbol)
+union_exempt_names("_get_metadata_id_for_revision"). union_exempt_names("_lookup_doltdb_metadata_by_revision_id").
+union_exempt_names("_revision_id_from_metadata_id"). union_exempt_names("execute_vector_query").
+union_exempt_names("index_versioned_table_at_revision"). union_exempt_names("process_trigger_ripple").
+union_exempt_names("search_versioned_table_with_replay").
+.decl union_exempt_methods(method: symbol, class: symbol)
+union_exempt_methods("__init__", "GenericSparseVersionedWriteTransaction"). union_exempt_methods("__init__", "Neo4jCrossBranchQuery").
+union_exempt_methods("__init__", "Neo4jQuery"). union_exempt_methods("__init__", "Neo4jRevisionHistoryQuery").
+union_exempt_methods("__init__", "SqlCrossBranchQuery"). union_exempt_methods("from_spec", "SqlCrossBranchQuery").
+union_exempt_methods("__init__", "SqlQuery"). union_exempt_methods("__init__", "SqlQueryBase").
+union_exempt_methods("__init__", "SqlRevisionHistoryQuery"). union_exempt_methods("__init__", "VersionedWriteSqlQuery").
+.decl union_classes(k: symbol)
+union_classes("class_definition").
+.decl union_exempt(f: node)
+union_exempt(f) :- field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), union_exempt_names(s).
+// `inside` with `stopBy: {kind: class_definition}`: the walk stops at (and tests) the first enclosing class.
+union_exempt(f) :-
+    field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), union_exempt_methods(s, c),
+    nearest(f, k, union_classes), field(k, "name", kn), node(_, kn, "identifier", _, _), text(kn, c).
+
+.decl union_function(f: node, ps: node)
+union_function(f, ps) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), !union_exempt(f).
+
+violation("data-layer-conn-or-txn-union", "union", "UNION", p, l) :-
+    union_function(f, ps), union_typed(ps, _, t), union_conn(t), union_txn(t),
+    node(d, f, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+
+// `separate`: one typed parameter of a connection type, one of a transaction type, none of both.
+.decl separate_both(ps: node)
+separate_both(ps) :- union_typed(ps, _, t), union_conn(t), union_txn(t).
+
+violation("data-layer-conn-or-txn-union", "separate", "SEPARATE_PARAMS", p, l) :-
+    union_function(f, ps), union_typed(ps, _, t1), union_conn(t1), union_typed(ps, _, t2), union_txn(t2), !separate_both(ps),
+    node(d, f, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).

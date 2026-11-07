@@ -1,0 +1,188 @@
+// data-layer-versioned-merged-identity: the one reporting clause, `constructors`, is relational SQL (stages over
+// five evidence inputs, a recursive CTE building qualnames, scalar nearest-frame subqueries, NOT EXISTS), which the
+// converter cannot say (decision 0043). Policy: gate/data-layer/packs/data-layer/candidates/rules/
+// data-layer-versioned-merged-identity.json. Cross-file (no partitionBy): every in-scope document that parses
+// (`syntax: valid`) feeds the inputs; the reviewed callers are the option `expectedCallers` (option_item rows, the
+// converter giving the policy's default list when the run configures none).
+//
+// The inputs, as rows over tree-sitter's tree (`__start`/`__end` the matched node's bytes):
+//   raw_functions / raw_classes ↔ constructors_frame: a function_definition / class_definition, its `name` field's
+//     text; `wrapper` the start of its parent when that is a decorated_definition (the `inside … neighbor` branch),
+//     else NULL; frames' lexical_start = coalesce(wrapper, __start).
+//   raw_calls ↔ constructors_call: a call whose `function` field is an identifier (CALLEE that) or an attribute
+//     (CALLEE its `attribute` field); PROJECTION the `value` of the first (child order: `has`'s search) keyword_argument
+//     child of the `arguments` field named `read_projection` (constructors_proj), NULL where there is none.
+//   raw_assignments ↔ constructors_asg: an assignment with a `right` field; `each: TARGET` gives one row per binding:
+//     the `left` identifier, or, where `right` is a call and `left` a pattern_list/list_pattern/tuple_pattern, each
+//     identifier child of it.
+//   raw_aliases ↔ constructors_alias: an aliased_import whose `name` text is exactly SqlVersionedMergedCte, inside an
+//     import_from_statement, ALIAS its `alias` field's text (any such import of the file, at any depth). An
+//     aliased_import is only ever a child of an import statement, which nothing nests in: `inside … stopBy end` is
+//     its parent being an import_from_statement (a `from __future__` one is a future_import_statement in both).
+// Captured texts are node_text (W's capture source text).
+//
+// The stages:
+//   frames containment `p.lexical_start < x.start AND p.__end >= x.__end` nests (tree nodes), so the containing frames
+//   of a node are one chain and `ORDER BY lexical_start DESC LIMIT 1` is its innermost (constructors_cframe/_aown);
+//   contexts' qualname of a frame is the names of its containing frames by lexical_start, then its own, joined by
+//   '.'. Value-building recursion (the CTE's `||`) is refused, so a caller is never built: it is compared with each
+//   expected item e (constructors_caller), e split at its last ':' (a qualname has none) into the file name (W's
+//   `file.name`, the path after its last '/': `file_name`) and the qualname q; a call's caller is e iff the file names
+//   agree and the frames containing it (call_owners' qualname frame and its chain) are as many as q's '.'-segments,
+//   the frame of depth j (j frames contain it) named q's segment j (a whole-string regex over q with the depth as its
+//   repeat count, the frame's name, an identifier, as its literal); a call no frame contains has qualname '' (the
+//   coalesce). call_owners' owner / assignments' owner: the innermost containing
+//   function_definition frame (classes skipped), NULL where none; `a.owner = c.owner` never holds for NULL.
+//   versions: per constructor, each target's assignment of the same owner ending before the constructor starts with
+//   no same-target assignment of that owner ending strictly between (constructors_later); catalog_aliases its
+//   recursive closure (no new values: a fixpoint over versions' targets).
+//   The final query: VMI002 a constructor whose caller is no expected item; VMI003 one whose caller is, unless its
+//   projection is a call starting where a raw_calls row named one of the three catalog builders starts (the join is
+//   on the start byte only, as the SQL's) or an identifier that is a catalog alias at that constructor;
+//   `NOT coalesce(…, 0)` reports a NULL projection too. VMI001 an expected item no constructor's caller is, at the
+//   policy's location `impl/common/l2070_server_plan/steps` (start/end 0: W's default span, line 1).
+//
+// The clause implements the policy's stages as written, for every expectedCallers list; the one divergence is W's
+// failure on duplicate relational identities (finding id = path, span and the key caller+issue). Only VMI001 rows can
+// collide: an expectedCallers list naming one item twice gives two rows at (location, 0, 0) with one key, and W fails
+// the clause ("relational results have duplicate identities") where this program, reading option_item (a set),
+// reports the item once. The default list names no item twice. Constructor rows are one per call node, so distinct
+// spans. An error result is not a violation, so this is not expressible here.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl syntax_error(d: number)
+.decl node_text(n: node, s: symbol)
+.decl file_name(d: number, s: symbol)
+.input node_text, file_name
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_item(name: symbol, i: number, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- the inputs -------------------------------------------------------------------------------------------------
+.decl constructors_doc(d: number, p: symbol)
+constructors_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+
+.decl constructors_frame_kind(kind: symbol, isfn: number)
+constructors_frame_kind("function_definition", 1).
+constructors_frame_kind("class_definition", 0).
+// frames: (doc, frame, lexical_start, end, name, is_function)
+.decl constructors_frame(d: number, f: node, ls: number, e: number, nm: symbol, isfn: number)
+constructors_frame(d, f, ws, e, nm, isfn) :- constructors_frame_kind(k, isfn), node(d, f, k, _, e), constructors_doc(d, _),
+    field(f, "name", n), node_text(n, nm), child(w, f, _), node(d, w, "decorated_definition", ws, _).
+constructors_frame(d, f, s, e, nm, isfn) :- constructors_frame_kind(k, isfn), node(d, f, k, s, e), constructors_doc(d, _),
+    field(f, "name", n), node_text(n, nm), !constructors_wrapped(f).
+.decl constructors_wrapped(f: node)
+constructors_wrapped(f) :- node(d, w, "decorated_definition", _, _), child(w, f, _), node(d, f, k, _, _), constructors_frame_kind(k, _).
+
+// raw_calls: (doc, call, start, end, callee name)
+.decl constructors_call(d: number, c: node, s: number, e: number, nm: symbol)
+constructors_call(d, c, s, e, nm) :- node(d, c, "call", s, e), constructors_doc(d, _), field(c, "function", f),
+    node(d, f, "identifier", _, _), node_text(f, nm).
+constructors_call(d, c, s, e, nm) :- node(d, c, "call", s, e), constructors_doc(d, _), field(c, "function", f),
+    node(d, f, "attribute", _, _), field(f, "attribute", x), node_text(x, nm).
+.decl constructors_kw(c: node, i: number, v: node)
+constructors_kw(c, i, v) :- constructors_call(d, c, _, _, _), field(c, "arguments", al), child(al, kw, i),
+    node(d, kw, "keyword_argument", _, _), field(kw, "name", k), node(d, k, "identifier", _, _),
+    node_text(k, "read_projection"), field(kw, "value", v).
+.decl constructors_proj(c: node, v: node)
+constructors_proj(c, v) :- constructors_kw(c, i, v), i = min j : { constructors_kw(c, j, _) }.
+
+// raw_assignments: (doc, assignment, its start, its end, target, value)
+.decl constructors_pattern_kind(kind: symbol)
+constructors_pattern_kind("pattern_list"). constructors_pattern_kind("list_pattern"). constructors_pattern_kind("tuple_pattern").
+.decl constructors_asg(d: number, a: node, s: number, e: number, t: symbol, v: node)
+constructors_asg(d, a, s, e, t, v) :- node(d, a, "assignment", s, e), constructors_doc(d, _), field(a, "right", v),
+    field(a, "left", l), node(d, l, "identifier", _, _), node_text(l, t).
+constructors_asg(d, a, s, e, t, v) :- node(d, a, "assignment", s, e), constructors_doc(d, _), field(a, "right", v),
+    node(d, v, "call", _, _), field(a, "left", l), node(d, l, pk, _, _), constructors_pattern_kind(pk), child(l, x, _),
+    node(d, x, "identifier", _, _), node_text(x, t).
+
+// raw_aliases
+.decl constructors_alias(d: number, a: symbol)
+constructors_alias(d, a) :- node(d, ai, "aliased_import", _, _), constructors_doc(d, _), field(ai, "name", n),
+    node_text(n, "SqlVersionedMergedCte"), field(ai, "alias", x), node_text(x, a), child(s, ai, _),
+    node(d, s, "import_from_statement", _, _).
+
+// ---- constructors and their frames --------------------------------------------------------------------------------
+.decl constructors_ctor(d: number, c: node, s: number, e: number)
+constructors_ctor(d, c, s, e) :- constructors_call(d, c, s, e, "SqlVersionedMergedCte").
+constructors_ctor(d, c, s, e) :- constructors_call(d, c, s, e, nm), constructors_alias(d, nm).
+
+// The frames containing a constructor (call_owners' qualname frame and its chain).
+.decl constructors_cframe(c: node, f: node)
+constructors_cframe(c, f) :- constructors_ctor(d, c, s, e), constructors_frame(d, f, ls, fe, _, _), ls < s, fe >= e.
+.decl constructors_nframe(c: node, k: number)
+constructors_nframe(c, k) :- constructors_ctor(_, c, _, _), k = count : { constructors_cframe(c, _) }.
+// A frame's depth: the frames containing it (parents' chain).
+.decl constructors_fanc(f: node, a: node)
+constructors_fanc(f, a) :- constructors_frame(d, f, ls, e, _, _), constructors_frame(d, a, als, ae, _, _), als < ls, ae >= e.
+.decl constructors_fdepth(f: node, j: number)
+constructors_fdepth(f, j) :- constructors_frame(_, f, _, _, _, _), j = count : { constructors_fanc(f, _) }.
+
+// call_owners' / assignments' owner: the innermost containing function frame.
+.decl constructors_cfn(c: node, f: node, ls: number)
+constructors_cfn(c, f, ls) :- constructors_ctor(d, c, s, e), constructors_frame(d, f, ls, fe, _, 1), ls < s, fe >= e.
+.decl constructors_cown(c: node, f: node)
+constructors_cown(c, f) :- constructors_cfn(c, f, ls), ls = max x : { constructors_cfn(c, _, x) }.
+.decl constructors_afn(a: node, f: node, ls: number)
+constructors_afn(a, f, ls) :- constructors_asg(d, a, s, e, _, _), constructors_frame(d, f, ls, fe, _, 1), ls < s, fe >= e.
+.decl constructors_aown(a: node, f: node)
+constructors_aown(a, f) :- constructors_afn(a, f, ls), ls = max x : { constructors_afn(a, _, x) }.
+
+// ---- the expected callers, split ---------------------------------------------------------------------------------
+// fok(e, d, q): e is d's file name, ':', and q holding no ':' (so the file name is all before e's last ':').
+.decl constructors_fok(e: symbol, d: number, q: symbol)
+constructors_fok(e, d, q) :- option_item("expectedCallers", _, e), constructors_doc(d, _), file_name(d, f), k = strlen(f),
+    n = strlen(e), n > k, substr(e, 0, k) = f, substr(e, k, 1) = ":", q = substr(e, k + 1, n - k - 1), !contains(":", q).
+
+// caller(c) = e.
+.decl constructors_mis(c: node, e: symbol)
+constructors_mis(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, q), constructors_cframe(c, f), constructors_fdepth(f, j),
+    constructors_frame(_, f, _, _, nm, _), x = cat("(?:[^.]*\\.){", cat(to_string(j), cat("}", cat(nm, "(?:\\.[^.]*)*")))), !match(x, q).
+.decl constructors_caller(c: node, e: symbol)
+constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, ""), constructors_nframe(c, 0).
+constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, q), constructors_nframe(c, k), k > 0,
+    x = cat("[^.]*(?:\\.[^.]*){", cat(to_string(k - 1), "}")), match(x, q), !constructors_mis(c, e).
+.decl constructors_reviewed(c: node)
+constructors_reviewed(c) :- constructors_caller(c, _).
+.decl constructors_found(e: symbol)
+constructors_found(e) :- constructors_caller(_, e).
+
+// ---- versions and catalog aliases ---------------------------------------------------------------------------------
+.decl constructors_cand(c: node, a: node, ae: number, t: symbol, v: node)
+constructors_cand(c, a, ae, t, v) :- constructors_ctor(d, c, cs, _), constructors_cown(c, f), constructors_asg(d, a, _, ae, t, v),
+    constructors_aown(a, f), ae < cs.
+.decl constructors_later(c: node, a: node, t: symbol)
+constructors_later(c, a, t) :- constructors_cand(c, a, ae, t, _), constructors_cand(c, _, be, t, _), be > ae.
+.decl constructors_version(c: node, t: symbol, v: node)
+constructors_version(c, t, v) :- constructors_cand(c, a, _, t, v), !constructors_later(c, a, t).
+.decl constructors_catname(nm: symbol)
+constructors_catname("_get_versioned_table_projection_info").
+constructors_catname("catalog_versioned_merged_projection").
+constructors_catname("versioned_merged_projection_from_catalog").
+// A raw_calls row naming a catalog builder starts at byte s.
+.decl constructors_catcall(d: number, s: number)
+constructors_catcall(d, s) :- constructors_call(d, _, s, _, nm), constructors_catname(nm).
+.decl constructors_catalog(c: node, t: symbol)
+constructors_catalog(c, t) :- constructors_version(c, t, v), constructors_ctor(d, c, _, _), node(d, v, "call", vs, _),
+    constructors_catcall(d, vs).
+constructors_catalog(c, t) :- constructors_version(c, t, v), node(_, v, "identifier", _, _), node_text(v, x),
+    constructors_catalog(c, x).
+
+.decl constructors_ok(c: node)
+constructors_ok(c) :- constructors_ctor(d, c, _, _), constructors_proj(c, v), node(d, v, "call", vs, _), constructors_catcall(d, vs).
+constructors_ok(c) :- constructors_ctor(_, c, _, _), constructors_proj(c, v), node(_, v, "identifier", _, _), node_text(v, x),
+    constructors_catalog(c, x).
+
+// ---- findings -------------------------------------------------------------------------------------------------------
+violation("data-layer-versioned-merged-identity", "constructors", "VMI002", p, l) :- constructors_ctor(d, c, _, _),
+    !constructors_reviewed(c), constructors_doc(d, p), line(c, l).
+violation("data-layer-versioned-merged-identity", "constructors", "VMI003", p, l) :- constructors_ctor(d, c, _, _),
+    constructors_reviewed(c), !constructors_ok(c), constructors_doc(d, p), line(c, l).
+violation("data-layer-versioned-merged-identity", "constructors", "VMI001", "impl/common/l2070_server_plan/steps", 1) :-
+    option_item("expectedCallers", _, e), !constructors_found(e).

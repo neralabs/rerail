@@ -1,0 +1,591 @@
+// data-layer-internal-dead-code: clause `unreachable-internal-symbols` (relational, repository-wide: no partitionBy).
+// Policy: candidates/rules-ast/data-layer-internal-dead-code.json. Starts from
+// native/src/code_rule_dsl/logic/programs/data_layer/internal_dead_code.rr (its stage-per-relation layout), rewritten
+// over the base relations: no `ast(…)` atoms, no SQL builtins.
+// W's reference graph is `reference_edge(src, dst, via)` (the SQL's `reference_edges` rows, between definitions; the
+// converter's `.references` setting gives the policy's siblingLinks and constructorFields); the option
+// oracleAnalyzer is `option_on("oracleAnalyzer")`.
+//
+// A SQL row keyed by (__path, __start) is a node here. Ids and qualified names are built with `cat`: id
+// module::name or module::Class.name, fqname module.name or module.Class.name, module the SQL's
+// replace(rx_replace(path, '/__init__\.py$|\.py$', ''), '/', '.'), with `@rx_replace`.
+// Exact: a decorator's name is `^@\s*([^\s(]+)`'s group read on the decorator's line (`match_group`, the match at
+// the decorator's column); a base's name is the SQL's trim(rx_replace(rx_replace(text, '(?s)\[.*$', ''), '^.*\.',
+// '')), with `@rx_replace`; an `__all__` entry is W's `value` of the string or concatenation; the dynamic imports
+// are the regex's matches over the module's source, from the module's first token on, and their `module`/`attr`
+// groups (`match_group`, whose `m` is the match); a relative import climbs one package per dot past the first, as
+// the SQL's rx_replace(prefix, '\.?[^.]+$', '') does, at any depth; the hierarchy's least depth is found at any
+// depth.
+// Approximations (noted):
+// - an import item's original name is the dotted name's text without spaces (the SQL: the first word of the
+//   comma-split, comment-stripped item text, which differs for a backslash continuation or a dotted name written
+//   with spaces);
+// - among several bases at the least depth holding a public method, the one first by route is found greedily
+//   (exact for routes, which are the bases' start offsets in order).
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl col(n: loc, c: number)
+.decl source(d: number, sp: span)
+.decl tape_line(d: number, l: number, sp: span)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl inside(n: node, a: node, set: relation)
+.decl nearest(n: node, a: node, set: relation)
+.decl option_on(name: symbol)
+.decl reference_edge(src: node, dst: node, via: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl unreachable_fdef(kind: symbol)
+unreachable_fdef("function_definition").
+.decl unreachable_cdef(kind: symbol)
+unreachable_cdef("class_definition").
+.decl unreachable_imports_k(kind: symbol)
+unreachable_imports_k("import_statement"). unreachable_imports_k("import_from_statement").
+
+// The documents the inputs read: in scope, parsed (`syntax: valid`); the module the SQL names from the path.
+.decl unreachable_doc(d: number, p: symbol, m: symbol)
+unreachable_doc(d, p, m) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    m = @rx_replace(@rx_replace(p, "/__init__\\.py$|\\.py$", ""), "/", ".").
+
+// ---- inputs ----
+// raw_functions: a def in no def; its nearest class (CLASS) if any.
+.decl unreachable_fn(f: node, d: number, x: symbol)
+unreachable_fn(f, d, x) :- node(d, f, "function_definition", _, _), unreachable_doc(d, _, _), !inside(f, _, unreachable_fdef),
+    field(f, "name", n), text(n, x).
+.decl unreachable_fn_class(f: node, c: node, cx: symbol)
+unreachable_fn_class(f, c, cx) :- unreachable_fn(f, _, _), nearest(f, c, unreachable_cdef), field(c, "name", n), text(n, cx).
+// raw_classes: every class.
+.decl unreachable_cls(c: node, d: number, x: symbol)
+unreachable_cls(c, d, x) :- node(d, c, "class_definition", _, _), unreachable_doc(d, _, _), field(c, "name", n), text(n, x).
+// raw_decorators: (definition, decorator name): `^@\s*([^\s(]+)` over the decorator's text, read on its first line
+// (a decorator starts its line, so the line's match at its column is the one W's regex finds).
+.decl unreachable_deco(o: node, x: symbol)
+unreachable_deco(o, x) :- unreachable_deco_at(o, d, l, c), tape_line(d, l, sp),
+    match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
+// A decorator of definition o: its document, line and column.
+.decl unreachable_deco_at(o: node, d: number, l: number, c: number)
+unreachable_deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _),
+    node(_, dc, "decorator", _, _), line(dc, l), col(dc, c).
+
+// ---- inventory, declarations ----
+// unreachable_inv(id, x, d, name, kind, module, fqname)
+.decl unreachable_inv(id: symbol, x: node, d: number, nm: symbol, k: symbol, m: symbol, fq: symbol)
+unreachable_inv(id, f, d, x, "function", m, fq) :- unreachable_fn(f, d, x), !unreachable_fn_class(f, _, _), unreachable_doc(d, _, m),
+    id = cat(m, cat("::", x)), fq = cat(m, cat(".", x)).
+unreachable_inv(id, f, d, x, "method", m, fq) :- unreachable_fn(f, d, x), unreachable_fn_class(f, _, cx), unreachable_doc(d, _, m),
+    id = cat(m, cat("::", cat(cx, cat(".", x)))), fq = cat(m, cat(".", cat(cx, cat(".", x)))).
+unreachable_inv(id, c, d, x, "class", m, fq) :- unreachable_cls(c, d, x), unreachable_doc(d, _, m),
+    id = cat(m, cat("::", x)), fq = cat(m, cat(".", x)).
+// The last definition (by start) of each id.
+.decl unreachable_inv_start(id: symbol, s: number)
+unreachable_inv_start(id, s) :- unreachable_inv(id, x, _, _, _, _, _), node(_, x, _, s, _).
+.decl unreachable_last(id: symbol, s: number)
+unreachable_last(id, s) :- unreachable_inv_start(id, _), s = max t : { unreachable_inv_start(id, t) }.
+.decl unreachable_decl(id: symbol, x: node, d: number, nm: symbol, k: symbol, m: symbol, fq: symbol)
+unreachable_decl(id, x, d, n, k, m, fq) :- unreachable_inv(id, x, d, n, k, m, fq), node(_, x, _, s, _), unreachable_last(id, s).
+// A method declaration's class name.
+.decl unreachable_decl_class(id: symbol, cx: symbol)
+unreachable_decl_class(id, cx) :- unreachable_decl(id, x, _, _, "method", _, _), unreachable_fn_class(x, _, cx).
+.decl unreachable_decl_node(x: node, id: symbol)
+unreachable_decl_node(x, id) :- unreachable_decl(id, x, _, _, _, _, _).
+.decl unreachable_fq(fq: symbol, id: symbol)
+unreachable_fq(fq, id) :- unreachable_decl(id, _, _, _, _, _, fq).
+// Methods by (module, class name, name).
+.decl unreachable_method(m: symbol, cx: symbol, n: symbol, id: symbol)
+unreachable_method(m, cx, n, id) :- unreachable_decl(id, _, _, n, "method", m, _), unreachable_decl_class(id, cx).
+
+// ---- parameters, annotation_names ----
+// raw_parameters: the named parameters of a def in no def (direct children of its `parameters`), no splat, not
+// before `/`; the identifier named.
+.decl unreachable_param(p: node, f: node, nm: node)
+unreachable_param(p, f, p) :- unreachable_fn(f, _, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "identifier", _, _).
+unreachable_param(p, f, n) :- unreachable_fn(f, _, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_parameter", _, _),
+    child(p, n, _), node(_, n, "identifier", _, _).
+unreachable_param(p, f, n) :- unreachable_fn(f, _, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "default_parameter", _, _),
+    field(p, "name", n).
+unreachable_param(p, f, n) :- unreachable_fn(f, _, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_default_parameter", _, _),
+    field(p, "name", n).
+.decl unreachable_param_ok(p: node, f: node, x: symbol)
+unreachable_param_ok(p, f, x) :- unreachable_param(p, f, n), text(n, x), !unreachable_positional(p).
+.decl unreachable_positional(p: node)
+unreachable_positional(p) :- unreachable_param(p, _, _), child(ps, p, i), child(ps, s, j), node(_, s, "positional_separator", _, _), j > i.
+// parameters: of a declaration, less self/cls of a method.
+.decl unreachable_parameter(p: node, sym: symbol)
+unreachable_parameter(p, id) :- unreachable_param_ok(p, f, _), unreachable_decl(id, f, _, _, "function", _, _).
+unreachable_parameter(p, id) :- unreachable_param_ok(p, f, x), unreachable_decl(id, f, _, _, "method", _, _), x != "self", x != "cls".
+// annotation_names: identifiers in a declaration's return annotation or its parameters' types.
+.decl unreachable_ann_k(kind: symbol)
+unreachable_ann_k("type").
+.decl unreachable_ann(sym: symbol, x: symbol)
+unreachable_ann(id, x) :- unreachable_decl(id, f, _, _, k, _, _), k != "class", field(f, "return_type", t), node(_, i, "identifier", _, _),
+    inside(i, t, unreachable_ann_k), text(i, x).
+unreachable_ann(id, x) :- unreachable_decl(id, f, _, _, k, _, _), k != "class", field(f, "return_type", t), node(_, t, "identifier", _, _), text(t, x).
+unreachable_ann(id, x) :- unreachable_parameter(p, id), field(p, "type", t), node(_, i, "identifier", _, _), inside(i, t, unreachable_ann_k), text(i, x).
+unreachable_ann(id, x) :- unreachable_parameter(p, id), field(p, "type", t), node(_, t, "identifier", _, _), text(t, x).
+
+// ---- imports ----
+// One row per import item: (statement, document, module, original, alias or none), the base below.
+.decl unreachable_item(i: node, d: number, o: symbol, it: node)
+unreachable_item(i, d, o, x) :- unreachable_import_stmt(i, d), field(i, "name", x), node(_, x, "dotted_name", _, _), name(x, o).
+unreachable_item(i, d, o, x) :- unreachable_import_stmt(i, d), field(i, "name", x), node(_, x, "aliased_import", _, _), field(x, "name", dn), name(dn, o).
+.decl unreachable_import_stmt(i: node, d: number)
+unreachable_import_stmt(i, d) :- node(d, i, "import_statement", _, _), unreachable_doc(d, _, _).
+unreachable_import_stmt(i, d) :- node(d, i, "import_from_statement", _, _), unreachable_doc(d, _, _).
+.decl unreachable_alias(it: node, a: symbol)
+unreachable_alias(x, a) :- unreachable_item(_, _, _, x), node(_, x, "aliased_import", _, _), field(x, "alias", n), text(n, a).
+// The statement's base: absolute (`from a.b import …`), or relative with k leading dots and the rest (maybe "").
+.decl unreachable_abs_base(i: node, b: symbol)
+unreachable_abs_base(i, b) :- node(_, i, "import_from_statement", _, _), field(i, "module_name", m), node(_, m, "dotted_name", _, _), name(m, b).
+.decl unreachable_rel_base(i: node, k: number, rest: symbol)
+unreachable_rel_base(i, k, rest) :- unreachable_dots(i, dots), k = strlen(dots), field(i, "module_name", r), unreachable_rel_rest(r, rest).
+.decl unreachable_dots(i: node, dots: symbol)
+unreachable_dots(i, dots) :- node(_, i, "import_from_statement", _, _), field(i, "module_name", r), node(_, r, "relative_import", _, _),
+    child(r, ip, _), node(_, ip, "import_prefix", _, _), node_text(ip, dots).
+.decl unreachable_rel_rest(r: node, rest: symbol)
+unreachable_rel_rest(r, rest) :- node(_, r, "relative_import", _, _), child(r, m, _), node(_, m, "dotted_name", _, _), name(m, rest).
+unreachable_rel_rest(r, "") :- node(_, r, "relative_import", _, _), !unreachable_rel_dotted(r).
+.decl unreachable_rel_dotted(r: node)
+unreachable_rel_dotted(r) :- node(_, r, "relative_import", _, _), child(r, m, _), node(_, m, "dotted_name", _, _).
+// The package a relative import starts from: the module for a package's __init__.py (the SQL's `path LIKE
+// '%/__init__.py'`: ASCII case folded, `_` any one character), else the module less its last part; then one package
+// up per dot past the first, each the SQL's rx_replace(prefix, '\.?[^.]+$', ''), written as the prefix of that
+// length (a `substr` of the package: a part of a value, which bounds the recursion), the dots left counted down
+// the same way.
+.decl unreachable_init(p: symbol)
+unreachable_init(p) :- unreachable_doc(_, p, _), match("(?s).*/..[iI][nN][iI][tT]..\\.[pP][yY]", p).
+.decl unreachable_pkg0(i: node, p: symbol)
+unreachable_pkg0(i, m) :- unreachable_rel_base(i, _, _), node(d, i, _, _, _), unreachable_doc(d, p, m), unreachable_init(p).
+unreachable_pkg0(i, q) :- unreachable_rel_base(i, _, _), node(d, i, _, _, _), unreachable_doc(d, p, m), !unreachable_init(p),
+    q = @rx_replace(m, "\\.?[^.]+$", "").
+// unreachable_up(i, left, p): package p, with the dots `left` still to climb.
+.decl unreachable_up(i: node, left: symbol, p: symbol)
+unreachable_up(i, left, p) :- unreachable_pkg0(i, p), unreachable_dots(i, dots), left = substr(dots, 1, strlen(dots) - 1).
+unreachable_up(i, left2, q) :- unreachable_up(i, left, p), left != "", left2 = substr(left, 1, strlen(left) - 1),
+    q = substr(p, 0, strlen(@rx_replace(p, "\\.?[^.]+$", ""))).
+.decl unreachable_prefix(i: node, p: symbol)
+unreachable_prefix(i, p) :- unreachable_up(i, "", p).
+// The resolved candidate: (statement, document, module, name, target, kind).
+.decl unreachable_imp_c(i: node, d: number, m: symbol, n: symbol, t: symbol, k: symbol)
+unreachable_imp_c(i, d, m, a, o, "module") :- node(_, i, "import_statement", _, _), unreachable_item(i, d, o, x), unreachable_doc(d, _, m), unreachable_alias(x, a).
+unreachable_imp_c(i, d, m, n, o, "module") :- node(_, i, "import_statement", _, _), unreachable_item(i, d, o, x), unreachable_doc(d, _, m),
+    !unreachable_alias(x, _), unreachable_first(o, n).
+unreachable_imp_c(i, d, m, n, t, "symbol") :- unreachable_abs_base(i, b), unreachable_item(i, d, o, x), unreachable_doc(d, _, m),
+    t = cat(b, cat(".", o)), unreachable_item_name(x, o, n).
+unreachable_imp_c(i, d, m, n, t, "symbol") :- unreachable_rel_base(i, _, rest), unreachable_prefix(i, p), unreachable_item(i, d, o, x),
+    unreachable_doc(d, _, m), unreachable_join(p, rest, o, t), unreachable_item_name(x, o, n).
+.decl unreachable_item_name(x: node, o: symbol, n: symbol)
+unreachable_item_name(x, o, a) :- unreachable_item(_, _, o, x), unreachable_alias(x, a).
+unreachable_item_name(x, o, o) :- unreachable_item(_, _, o, x), !unreachable_alias(x, _).
+// [prefix.][rest.]original
+.decl unreachable_join(p: symbol, rest: symbol, o: symbol, t: symbol)
+unreachable_join(p, rest, o, t) :- unreachable_rel_base(i, _, rest), unreachable_prefix(i, p), unreachable_item(i, _, o, _), p != "", rest != "",
+    t = cat(p, cat(".", cat(rest, cat(".", o)))).
+unreachable_join(p, rest, o, t) :- unreachable_rel_base(i, _, rest), unreachable_prefix(i, p), unreachable_item(i, _, o, _), p = "", rest != "",
+    t = cat(rest, cat(".", o)).
+unreachable_join(p, rest, o, t) :- unreachable_rel_base(i, _, rest), unreachable_prefix(i, p), unreachable_item(i, _, o, _), p != "", rest = "",
+    t = cat(p, cat(".", o)).
+unreachable_join(p, rest, o, o) :- unreachable_rel_base(i, _, rest), unreachable_prefix(i, p), unreachable_item(i, _, o, _), p = "", rest = "".
+// The first dotted segment.
+.decl unreachable_first(o: symbol, n: symbol)
+unreachable_first(o, o) :- unreachable_item(_, _, o, _), !contains(".", o).
+unreachable_first(o, n) :- unreachable_item(_, _, o, _), split_dot(o, n, r), !contains(".", n).
+// row_number() OVER (PARTITION BY module, name, base IS NULL ORDER BY ordinal DESC) = 1.
+.decl unreachable_imp_s(m: symbol, n: symbol, k: symbol, s: number)
+unreachable_imp_s(m, n, k, s) :- unreachable_imp_c(i, _, m, n, _, k), node(_, i, _, s, _).
+.decl unreachable_imp_last(m: symbol, n: symbol, k: symbol, s: number)
+unreachable_imp_last(m, n, k, s) :- unreachable_imp_s(m, n, k, _), s = max t : { unreachable_imp_s(m, n, k, t) }.
+.decl unreachable_import(i: node, d: number, m: symbol, n: symbol, t: symbol, k: symbol)
+unreachable_import(i, d, m, n, t, k) :- unreachable_imp_c(i, d, m, n, t, k), node(_, i, _, s, _), unreachable_imp_last(m, n, k, s).
+.decl unreachable_imported_fq(t: symbol)
+unreachable_imported_fq(t) :- unreachable_import(_, _, _, _, t, "symbol").
+
+// ---- resolved_names ----
+.decl unreachable_resolved(fq: symbol, sym: symbol)
+unreachable_resolved(fq, id) :- unreachable_fq(fq, id).
+unreachable_resolved(fq, id) :- unreachable_resolved(t, id), unreachable_import(_, _, m, n, t, "symbol"), fq = cat(m, cat(".", n)), !unreachable_fq(fq, _).
+
+// ---- bases, base_edges ----
+// raw_bases: (class, base node, its text).
+.decl unreachable_base_k(kind: symbol)
+unreachable_base_k("identifier"). unreachable_base_k("attribute"). unreachable_base_k("generic_type"). unreachable_base_k("subscript").
+.decl unreachable_raw_base(c: node, b: node)
+unreachable_raw_base(c, b) :- unreachable_cls(c, _, _), field(c, "superclasses", al), child(al, b, _), node(_, b, k, _, _), unreachable_base_k(k).
+.decl unreachable_base_text(c: node, s: symbol)
+unreachable_base_text(c, s) :- unreachable_raw_base(c, b), node_text(b, s).
+// The base's name, the SQL's trim(rx_replace(rx_replace(name, '(?s)\[.*$', ''), '^.*\.', '')) (SQLite's trim takes
+// spaces off both ends).
+.decl unreachable_base_name_of(b: node, x: symbol)
+unreachable_base_name_of(b, x) :- unreachable_raw_base(_, b), node_text(b, s),
+    x = @rx_replace(@rx_replace(@rx_replace(s, "(?s)\\[.*$", ""), "^.*\\.", ""), "^ +| +$", "").
+// base_edges(owner id, base id, ordinal): the base's name, by an import of the owner's module naming a class,
+// else a class of the owner's module, else the one class of that name.
+.decl unreachable_bname(owner: symbol, m: symbol, bn: symbol, ord: number)
+unreachable_bname(id, m, bn, s) :- unreachable_raw_base(c, b), unreachable_decl(id, c, _, _, "class", m, _), unreachable_base_name_of(b, bn), node(_, b, _, s, _).
+.decl unreachable_base_import(owner: symbol, base: symbol)
+unreachable_base_import(id, b) :- unreachable_bname(id, m, bn, _), unreachable_import(_, _, m, bn, t, "symbol"), unreachable_decl(b, _, _, _, "class", _, t).
+.decl unreachable_base_module(owner: symbol, base: symbol)
+unreachable_base_module(id, b) :- unreachable_bname(id, m, bn, _), unreachable_decl(b, _, _, bn, "class", m, _).
+.decl unreachable_class_named(n: symbol, id: symbol)
+unreachable_class_named(n, id) :- unreachable_decl(id, _, _, n, "class", _, _).
+.decl unreachable_unique_class(n: symbol, id: symbol)
+unreachable_unique_class(n, id) :- unreachable_class_named(n, id), k = count : { unreachable_class_named(n, _) }, k = 1.
+.decl unreachable_has_bi(owner: symbol, bn: symbol)
+unreachable_has_bi(id, bn) :- unreachable_bname(id, m, bn, _), unreachable_import(_, _, m, bn, t, "symbol"), unreachable_decl(_, _, _, _, "class", _, t).
+.decl unreachable_has_bm(owner: symbol, bn: symbol)
+unreachable_has_bm(id, bn) :- unreachable_bname(id, m, bn, _), unreachable_decl(_, _, _, bn, "class", m, _).
+.decl unreachable_base_edge(owner: symbol, base: symbol, ord: number)
+unreachable_base_edge(id, b, s) :- unreachable_bname(id, m, bn, s), unreachable_import(_, _, m, bn, t, "symbol"), unreachable_decl(b, _, _, _, "class", _, t).
+unreachable_base_edge(id, b, s) :- unreachable_bname(id, m, bn, s), !unreachable_has_bi(id, bn), unreachable_decl(b, _, _, bn, "class", m, _).
+unreachable_base_edge(id, b, s) :- unreachable_bname(id, _, bn, s), !unreachable_has_bi(id, bn), !unreachable_has_bm(id, bn), unreachable_unique_class(bn, b).
+
+// ---- hierarchy: every base of a class, at its least depth ----
+// (shortest path per pair: the SQL's walk never revisits a class, so its least depth is the least walk's)
+// Layer by layer: a layer's depth is one of o's hop numbers, 1 … the number of classes o reaches (a least walk
+// from o visits each at most once), so the recursion makes no number.
+.decl unreachable_reach(owner: symbol, base: symbol)
+unreachable_reach(id, id) :- unreachable_decl(id, _, _, _, "class", _, _).
+unreachable_reach(o, b) :- unreachable_reach(o, x), unreachable_base_edge(x, b, _).
+.decl unreachable_hops(owner: symbol, k: number)
+unreachable_hops(o, k) :- unreachable_reach(o, b), unreachable_decl_node(x, b),
+    k = count : { unreachable_reach(o, c), unreachable_decl_node(y, c), y <= x }.
+.decl unreachable_hier_l(owner: symbol, base: symbol, depth: number)
+unreachable_hier_l(id, id, 0) :- unreachable_decl(id, _, _, _, "class", _, _).
+unreachable_hier_l(o, b, j) :- unreachable_hier_l(o, x, i), unreachable_base_edge(x, b, _), unreachable_hops(o, j), j = i + 1.
+.decl unreachable_hier_d(owner: symbol, base: symbol, depth: number)
+unreachable_hier_d(o, b, k) :- unreachable_hier_l(o, b, _), k = min j : { unreachable_hier_l(o, b, j) }.
+
+// ---- public_methods: per (owner, name), the method of the base first by (depth, route) ----
+.decl unreachable_excluded(n: symbol)
+unreachable_excluded("__aenter__"). unreachable_excluded("__aexit__"). unreachable_excluded("__enter__"). unreachable_excluded("__exit__").
+unreachable_excluded("__init__"). unreachable_excluded("__repr__"). unreachable_excluded("__str__"). unreachable_excluded("authorize_internal_access").
+unreachable_excluded("disable_thread_affinity_checks"). unreachable_excluded("get_thread_checks_disabled"). unreachable_excluded("set_disable_thread_checks").
+unreachable_excluded("validate_legacy_delegates"). unreachable_excluded("versioned_read"). unreachable_excluded("versioned_write").
+.decl unreachable_property(x: node)
+unreachable_property(x) :- unreachable_deco(x, n), (suffix("property", n) ; suffix(".setter", n) ; suffix(".deleter", n)).
+// A class declaration c and a public method n of it (module and class name match, as the SQL joins).
+.decl unreachable_pub(c: symbol, n: symbol, sym: symbol)
+unreachable_pub(c, n, id) :- unreachable_decl(c, _, _, cn, _, cm, _), unreachable_decl(id, x, _, n, "method", cm, _), unreachable_decl_class(id, cn),
+    !prefix("_", n), !unreachable_excluded(n), !unreachable_property(x).
+// The least depth from o to a class with a public method n.
+.decl unreachable_pdist(o: symbol, n: symbol, k: number)
+unreachable_pdist(o, n, k) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _), k = min j : { unreachable_hier_d(o, c2, j), unreachable_pub(c2, n, _) }.
+// Greedy walk along the least route: from o, at each step the base edge of least ordinal that stays on a shortest
+// path to such a class (a route's order is its ordinals', in turn).
+.decl unreachable_next_c(x: symbol, n: symbol, k: number, y: symbol, ord: number)
+unreachable_next_c(x, n, k, y, ord) :- unreachable_pdist(x, n, k), k > 0, unreachable_base_edge(x, y, ord), unreachable_pdist(y, n, k - 1).
+.decl unreachable_next_min(x: symbol, n: symbol, k: number, ord: number)
+unreachable_next_min(x, n, k, m) :- unreachable_next_c(x, n, k, _, _), m = min q : { unreachable_next_c(x, n, k, _, q) }.
+.decl unreachable_next(x: symbol, n: symbol, k: number, y: symbol)
+unreachable_next(x, n, k, y) :- unreachable_next_min(x, n, k, m), unreachable_next_c(x, n, k, y, m).
+.decl unreachable_walk(o: symbol, n: symbol, x: symbol)
+unreachable_walk(o, n, o) :- unreachable_pdist(o, n, _).
+unreachable_walk(o, n, y) :- unreachable_walk(o, n, x), unreachable_pdist(x, n, k), unreachable_next(x, n, k, y).
+.decl unreachable_public(owner: symbol, n: symbol, sym: symbol)
+unreachable_public(o, n, id) :- unreachable_walk(o, n, c), unreachable_pdist(c, n, 0), unreachable_pub(c, n, id).
+
+// ---- exports ----
+// raw_all: `__all__ = …` statements of the module, in no def, class, if or try, in data_layer/<file>.py.
+.decl unreachable_nest_k(kind: symbol)
+unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"). unreachable_nest_k("if_statement"). unreachable_nest_k("try_statement").
+.decl unreachable_all(a: node, d: number)
+unreachable_all(a, d) :- node(d, a, "assignment", _, _), unreachable_doc(d, p, _), match("data_layer/[^/]+\\.py", p), field(a, "left", l),
+    node(_, l, "identifier", _, _), text(l, "__all__"), child(e, a, _), node(_, e, "expression_statement", _, _), !inside(a, _, unreachable_nest_k).
+.decl unreachable_all_start(d: number, s: number)
+unreachable_all_start(d, s) :- unreachable_all(a, d), node(_, a, _, s, _).
+.decl unreachable_first_all(d: number, a: node)
+unreachable_first_all(d, a) :- unreachable_all(a, d), node(_, a, _, s, _), s = min t : { unreachable_all_start(d, t) }.
+.decl unreachable_all_array(a: node, r: node)
+unreachable_all_array(a, r) :- unreachable_all(a, _), field(a, "right", r), node(_, r, "list", _, _).
+unreachable_all_array(a, r) :- unreachable_all(a, _), field(a, "right", r), node(_, r, "tuple", _, _).
+.decl unreachable_all_name(a: node, n: symbol)
+// raw_all_names: a string or concatenation directly in the array, its W value (the TEXT transform's `value: true`).
+unreachable_all_name(a, n) :- unreachable_all_array(a, r), child(r, v, _), node(_, v, "string", _, _), value(v, n).
+unreachable_all_name(a, n) :- unreachable_all_array(a, r), child(r, v, _), node(_, v, "concatenated_string", _, _), value(v, n).
+// export_names: (document, name, target).
+.decl unreachable_export(d: number, n: symbol, t: symbol)
+unreachable_export(d, n, t) :- unreachable_import(i, d, _, n, t, "symbol"), child(mo, i, _), node(_, mo, "module", _, _),
+    unreachable_doc(d, p, _), match("data_layer/[^/]+\\.py", p).
+unreachable_export(d, n, fq) :- unreachable_decl(_, _, d, n, k, _, fq), k != "method", unreachable_doc(d, p, _), match("data_layer/[^/]+\\.py", p).
+.decl unreachable_has_all(d: number)
+unreachable_has_all(d) :- unreachable_first_all(d, _).
+.decl unreachable_exported(sym: symbol)
+unreachable_exported(id) :- unreachable_export(d, n, t), unreachable_resolved(t, id), !prefix("_", n), !unreachable_has_all(d).
+unreachable_exported(id) :- unreachable_export(d, n, t), unreachable_resolved(t, id), !prefix("_", n), unreachable_first_all(d, a),
+    unreachable_all_name(a, n).
+
+// ---- dead_traits ----
+// base_name: the name less `_async` or `_lazy`.
+.decl unreachable_base_name(id: symbol, b: symbol)
+unreachable_base_name(id, b) :- unreachable_decl(id, _, _, n, _, _, _), suffix("_async", n), b = substr(n, 0, strlen(n) - 6).
+unreachable_base_name(id, b) :- unreachable_decl(id, _, _, n, _, _, _), suffix("_lazy", n), b = substr(n, 0, strlen(n) - 5).
+unreachable_base_name(id, n) :- unreachable_decl(id, _, _, n, _, _, _), !suffix("_async", n), !suffix("_lazy", n).
+.decl unreachable_class_id(id: symbol, cid: symbol)
+unreachable_class_id(id, cid) :- unreachable_decl_class(id, cx), unreachable_decl(id, _, _, _, _, m, _), cid = cat(m, cat("::", cx)).
+.decl unreachable_abstract(id: symbol)
+unreachable_abstract(id) :- unreachable_decl(id, x, _, _, "class", _, _), unreachable_base_text(x, s), contains("ABC", s).
+unreachable_abstract(id) :- unreachable_decl(id, x, _, _, k, _, _), k != "class", unreachable_deco(x, n), suffix("abstractmethod", n).
+.decl unreachable_is_property(id: symbol)
+unreachable_is_property(id) :- unreachable_decl(id, x, _, _, _, _, _), unreachable_property(x).
+.decl unreachable_implicit(id: symbol)
+unreachable_implicit(id) :- unreachable_decl(id, _, _, n, _, _, _), match("__.*__", n).
+unreachable_implicit(id) :- unreachable_decl(id, _, _, n, _, _, _), (n = "main" ; n = "pytest_configure" ; n = "pytest_collection_modifyitems").
+unreachable_implicit(id) :- unreachable_decl(id, x, _, _, _, _, _), unreachable_deco(x, n), (suffix("validator", n) ; suffix("overload", n)).
+.decl unreachable_structural(id: symbol)
+unreachable_structural(id) :- unreachable_decl(id, x, _, _, _, _, _), unreachable_base_text(x, s), contains("Protocol", s).
+.decl unreachable_protocol(id: symbol)
+unreachable_protocol(id) :- unreachable_structural(id).
+unreachable_protocol(id) :- unreachable_decl(id, _, _, n, _, _, _), suffix("Protocol", n).
+
+// ---- class_names: the class an annotation names ----
+.decl unreachable_annotated(m: symbol, n: symbol)
+unreachable_annotated(m, n) :- unreachable_ann(id, n), unreachable_decl(id, _, _, _, _, m, _).
+.decl unreachable_cn_import(m: symbol, n: symbol, c: symbol)
+unreachable_cn_import(m, n, c) :- unreachable_annotated(m, n), unreachable_import(_, _, m, n, t, "symbol"), unreachable_resolved(t, c),
+    unreachable_decl(c, _, _, _, "class", _, _).
+.decl unreachable_has_cn_import(m: symbol, n: symbol)
+unreachable_has_cn_import(m, n) :- unreachable_cn_import(m, n, _).
+.decl unreachable_class_names(m: symbol, n: symbol, c: symbol)
+unreachable_class_names(m, n, c) :- unreachable_cn_import(m, n, c).
+unreachable_class_names(m, n, c) :- unreachable_annotated(m, n), !unreachable_has_cn_import(m, n), unreachable_decl(c, _, _, n, "class", m, _).
+
+// ---- module_names: names the module's own code reads ----
+// raw_module_names: an identifier w, not in an import, not an attribute's attr, a keyword's, def's or class's name,
+// not a parameter's binding, and (in no def's body, or in a class nested in a class in no def, or in a top-level
+// statement other than a definition).
+.decl unreachable_body_k(kind: symbol)
+unreachable_body_k("block").
+.decl unreachable_param_name(n: node)
+.decl unreachable_params(ps: node)
+unreachable_params(ps) :- node(_, ps, "parameters", _, _).
+unreachable_params(ps) :- node(_, ps, "lambda_parameters", _, _).
+unreachable_param_name(n) :- unreachable_params(ps), child(ps, n, _), node(_, n, "identifier", _, _).
+unreachable_param_name(n) :- unreachable_params(ps), child(ps, p, _), child(p, n, _), node(_, n, "identifier", _, _),
+    (node(_, p, "typed_parameter", _, _) ; node(_, p, "list_splat_pattern", _, _) ; node(_, p, "dictionary_splat_pattern", _, _)).
+unreachable_param_name(n) :- unreachable_params(ps), child(ps, p, _), child(p, s, _),
+    (node(_, s, "list_splat_pattern", _, _) ; node(_, s, "dictionary_splat_pattern", _, _)), child(s, n, _), node(_, n, "identifier", _, _).
+unreachable_param_name(n) :- node(_, p, "default_parameter", _, _), field(p, "name", n).
+unreachable_param_name(n) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", n).
+.decl unreachable_not_word(w: node)
+unreachable_not_word(w) :- node(_, w, "identifier", _, _), inside(w, _, unreachable_imports_k).
+unreachable_not_word(w) :- node(_, a, "attribute", _, _), field(a, "attribute", w).
+unreachable_not_word(w) :- node(_, a, "keyword_argument", _, _), field(a, "name", w).
+unreachable_not_word(w) :- node(_, a, "function_definition", _, _), field(a, "name", w).
+unreachable_not_word(w) :- node(_, a, "class_definition", _, _), field(a, "name", w).
+unreachable_not_word(w) :- unreachable_param_name(w).
+// In a def's body: inside a block whose parent is a def.
+.decl unreachable_in_fbody(w: node)
+unreachable_in_fbody(w) :- node(_, w, "identifier", _, _), inside(w, b, unreachable_body_k), field(f, "body", b), node(_, f, "function_definition", _, _).
+// A class nested in a class, in no def.
+.decl unreachable_nested(c: node)
+unreachable_nested(c) :- node(_, c, "class_definition", _, _), inside(c, _, unreachable_cdef), !inside(c, _, unreachable_fdef).
+// A top-level statement other than a definition.
+.decl unreachable_control(s: node)
+unreachable_control(s) :- node(_, mo, "module", _, _), child(mo, s, _), !unreachable_def_node(s).
+.decl unreachable_def_node(s: node)
+unreachable_def_node(s) :- node(_, s, "class_definition", _, _).
+unreachable_def_node(s) :- node(_, s, "function_definition", _, _).
+unreachable_def_node(s) :- node(_, s, "decorated_definition", _, _).
+.decl unreachable_word(w: node, d: number, x: symbol)
+unreachable_word(w, d, x) :- node(d, w, "identifier", _, _), unreachable_doc(d, _, _), !unreachable_not_word(w), text(w, x).
+.decl unreachable_word_ok(w: node)
+unreachable_word_ok(w) :- unreachable_word(w, _, _), !unreachable_in_fbody(w).
+unreachable_word_ok(w) :- unreachable_word(w, _, _), unreachable_nested(c), inside(w, c, unreachable_cdef).
+unreachable_word_ok(w) :- unreachable_word(w, _, _), unreachable_control(s), inside(w, s, unreachable_any_k).
+// The statement kinds other than definitions (a module's children), for `inside(w, s, …)` with s a control.
+.decl unreachable_any_k(kind: symbol)
+unreachable_any_k("expression_statement"). unreachable_any_k("if_statement"). unreachable_any_k("for_statement").
+unreachable_any_k("while_statement"). unreachable_any_k("try_statement"). unreachable_any_k("with_statement").
+unreachable_any_k("match_statement"). unreachable_any_k("return_statement"). unreachable_any_k("delete_statement").
+unreachable_any_k("raise_statement"). unreachable_any_k("pass_statement"). unreachable_any_k("break_statement").
+unreachable_any_k("continue_statement"). unreachable_any_k("global_statement"). unreachable_any_k("nonlocal_statement").
+unreachable_any_k("assert_statement"). unreachable_any_k("import_statement"). unreachable_any_k("import_from_statement").
+unreachable_any_k("future_import_statement"). unreachable_any_k("print_statement"). unreachable_any_k("exec_statement").
+unreachable_any_k("type_alias_statement").
+// The optional captures, each the nearest ancestor with its condition (most starts; of equal starts the inner).
+// DEC_FN / DEC_CLASS: the nearest decorated_definition holding a def / a class.
+.decl unreachable_dd_k(kind: symbol)
+unreachable_dd_k("decorated_definition").
+.decl unreachable_dec(w: node, dd: node, x: node, k: symbol)
+unreachable_dec(w, dd, x, k) :- unreachable_word(w, _, _), inside(w, dd, unreachable_dd_k), field(dd, "definition", x), node(_, x, k, _, _).
+.decl unreachable_dec_start(w: node, k: symbol, s: number)
+unreachable_dec_start(w, k, s) :- unreachable_dec(w, dd, _, k), node(_, dd, _, s, _).
+.decl unreachable_dec_near(w: node, x: node, k: symbol)
+unreachable_dec_near(w, x, k) :- unreachable_dec(w, dd, x, k), node(_, dd, _, s, _), s = max t : { unreachable_dec_start(w, k, t) }.
+// FUNCTION: the nearest def. CLASS: the nearest class. CLASS_BODY: the nearest block of a class.
+.decl unreachable_w_fn(w: node, f: node)
+unreachable_w_fn(w, f) :- unreachable_word(w, _, _), nearest(w, f, unreachable_fdef).
+.decl unreachable_w_cls(w: node)
+unreachable_w_cls(w) :- unreachable_word(w, _, _), inside(w, _, unreachable_cdef).
+.decl unreachable_w_cbody(w: node)
+unreachable_w_cbody(w) :- unreachable_word(w, _, _), inside(w, b, unreachable_body_k), field(c, "body", b), node(_, c, "class_definition", _, _).
+// DEFAULT: within a default parameter's value.
+.decl unreachable_w_default(w: node)
+unreachable_w_default(w) :- unreachable_word(w, _, _), inside(w, p, unreachable_default_k), field(p, "value", v), node(d, w, _, ws, we),
+    node(d, v, _, vs, ve), vs <= ws, we <= ve.
+.decl unreachable_default_k(kind: symbol)
+unreachable_default_k("default_parameter"). unreachable_default_k("typed_default_parameter").
+// NESTED: a nested class holds w. CONTROL: a top-level statement holds w.
+.decl unreachable_w_nested(w: node)
+unreachable_w_nested(w) :- unreachable_word(w, _, _), unreachable_nested(c), inside(w, c, unreachable_cdef).
+.decl unreachable_w_control(w: node)
+unreachable_w_control(w) :- unreachable_word(w, _, _), unreachable_control(s), inside(w, s, unreachable_any_k).
+// A def that is a method (raw_functions' class_name).
+.decl unreachable_header_method(f: node)
+unreachable_header_method(f) :- unreachable_fn_class(f, _, _).
+// module_names' WHERE.
+.decl unreachable_w_keep(w: node)
+unreachable_w_keep(w) :- unreachable_w_control(w).
+unreachable_w_keep(w) :- unreachable_w_nested(w).
+unreachable_w_keep(w) :- unreachable_w_dfn_ok(w), unreachable_w_dcls_ok(w), unreachable_w_cls_ok(w), unreachable_w_fn_ok(w).
+.decl unreachable_w_dfn_ok(w: node)
+unreachable_w_dfn_ok(w) :- unreachable_word(w, _, _), !unreachable_dec_near(w, _, "function_definition").
+unreachable_w_dfn_ok(w) :- unreachable_dec_near(w, f, "function_definition"), unreachable_header_method(f).
+.decl unreachable_w_dcls_ok(w: node)
+unreachable_w_dcls_ok(w) :- unreachable_word(w, _, _), !unreachable_dec_near(w, _, "class_definition").
+unreachable_w_dcls_ok(w) :- unreachable_word(w, _, _), unreachable_w_cbody(w).
+.decl unreachable_w_cls_ok(w: node)
+unreachable_w_cls_ok(w) :- unreachable_word(w, _, _), !unreachable_w_cls(w).
+unreachable_w_cls_ok(w) :- unreachable_w_cbody(w).
+.decl unreachable_w_fn_ok(w: node)
+unreachable_w_fn_ok(w) :- unreachable_word(w, _, _), !unreachable_w_fn(w, _).
+unreachable_w_fn_ok(w) :- unreachable_w_fn(w, f), unreachable_w_default(w), unreachable_header_method(f).
+.decl unreachable_module_names(m: symbol, n: symbol)
+unreachable_module_names(m, x) :- unreachable_word_ok(w), unreachable_w_keep(w), unreachable_word(w, d, x), unreachable_doc(d, _, m).
+
+// ---- imported_modules: every dotted prefix of an imported module ----
+.decl unreachable_imported_module(m: symbol)
+unreachable_imported_module(t) :- unreachable_import(_, _, _, _, t, "module").
+unreachable_imported_module(p) :- unreachable_import(_, _, _, _, t, "symbol"), split_dot(t, p, x), !contains(".", x).
+.decl unreachable_imported_modules(m: symbol)
+unreachable_imported_modules(m) :- unreachable_imported_module(m), m != "".
+unreachable_imported_modules(q) :- unreachable_imported_module(m), split_dot(m, q, rest), rest != "", q != "".
+
+// ---- dead_roots ----
+.decl unreachable_root(s: symbol)
+unreachable_root(s) :- unreachable_exported(s).
+unreachable_root(s) :- unreachable_public(o, _, s), unreachable_exported(o).
+unreachable_root(s) :- unreachable_imported_modules(m), s = cat("@module:", m).
+// oracleAnalyzer false: dynamic imports `import_module('m').attr` anywhere in a module's text (strings and comments
+// too): each match of raw_dynamic_imports' regex (`each: ENTRY`) in the module's source, from the module's first
+// token on, its `module` and `attr` groups naming m.attr.
+
+.decl unreachable_dyn(d: number, fq: symbol)
+unreachable_dyn(d, fq) :- unreachable_dyn_at(d, fq, lm, _), unreachable_dyn_module(d, l0, _), lm > l0.
+unreachable_dyn(d, fq) :- unreachable_dyn_at(d, fq, l0, cm), unreachable_dyn_module(d, l0, c0), cm >= c0.
+// The module's first token: its line and column.
+.decl unreachable_dyn_module(d: number, l: number, c: number)
+unreachable_dyn_module(d, l, c) :- !option_on("oracleAnalyzer"), unreachable_doc(d, _, _), node(d, mo, "module", _, _), line(mo, l), col(mo, c).
+// Each match m.attr at line l, column c.
+.decl unreachable_dyn_at(d: number, fq: symbol, l: number, c: number)
+unreachable_dyn_at(d, fq, l, c) :- unreachable_dyn_module(d, _, _), source(d, sp),
+    match_group("(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", sp, m, "module", gm),
+    match_group("(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", sp, m, "attr", ga),
+    line(m, l), col(m, c), text(gm, mn), text(ga, an), fq = cat(mn, cat(".", an)).
+unreachable_root(s) :- unreachable_dyn(_, fq), unreachable_resolved(fq, s).
+
+// ---- reach_edges ----
+.decl unreachable_hook(n: symbol)
+unreachable_hook("__new__"). unreachable_hook("__init__"). unreachable_hook("__init_subclass__"). unreachable_hook("__post_init__").
+unreachable_hook("__set_name__"). unreachable_hook("__class_getitem__").
+.decl unreachable_sibling(b: symbol, n: symbol)
+unreachable_sibling(b, b) :- unreachable_base_name(_, b).
+unreachable_sibling(b, n) :- unreachable_base_name(_, b), n = cat(b, "_async").
+unreachable_sibling(b, n) :- unreachable_base_name(_, b), n = cat(b, "_lazy").
+.decl unreachable_local(m: symbol, n: symbol)
+unreachable_local(m, n) :- unreachable_decl(_, _, _, n, _, m, _).
+.decl unreachable_edge(s: symbol, t: symbol)
+unreachable_edge(s, t) :- reference_edge(sn, tn, _), unreachable_decl_node(sn, s), unreachable_decl_node(tn, t).
+unreachable_edge(o, s) :- unreachable_public(o, _, s).
+unreachable_edge(o, mid) :- unreachable_hier_d(o, c, _), unreachable_decl(c, _, _, cn, _, cm, _), unreachable_method(cm, cn, n, mid), unreachable_hook(n).
+unreachable_edge(o, b) :- unreachable_base_edge(o, b, _).
+unreachable_edge(b, o) :- unreachable_base_edge(o, b, _).
+unreachable_edge(id, s) :- unreachable_decl(id, _, _, _, "function", m, _), unreachable_base_name(id, b), unreachable_sibling(b, sn),
+    unreachable_decl(s, _, _, sn, _, m, _), s != id.
+unreachable_edge(id, s) :- unreachable_decl(id, _, _, _, "method", _, _), unreachable_base_name(id, b), unreachable_class_id(id, cid),
+    unreachable_sibling(b, sn), s = cat(cid, cat(".", sn)), unreachable_decl(s, _, _, _, _, _, _), s != id.
+unreachable_edge(id, c) :- unreachable_ann(id, n), unreachable_decl(id, _, _, _, _, m, _), unreachable_class_names(m, n, c).
+unreachable_edge(id, s) :- unreachable_decl(id, _, _, _, _, m, _), s = cat("@module:", m).
+unreachable_edge(s, id) :- unreachable_module_names(m, n), unreachable_decl(id, _, _, n, _, m, _), s = cat("@module:", m).
+unreachable_edge(s, id) :- unreachable_module_names(m, n), unreachable_import(_, _, m, n, t, "symbol"), unreachable_decl(id, _, _, _, _, _, t),
+    !unreachable_local(m, n), s = cat("@module:", m).
+unreachable_edge(mid, oid) :- unreachable_class_id(mid, c), unreachable_structural(c), unreachable_decl(mid, _, _, n, _, _, _),
+    unreachable_decl(oid, _, _, n, "method", _, _), unreachable_class_id(oid, oc), oc != c.
+
+// ---- reachable: (symbol, dispatch) states ----
+.decl unreachable_flow0(s: symbol)
+.decl unreachable_flowd(s: symbol, p: symbol)
+unreachable_flow0(s) :- unreachable_root(s).
+unreachable_flow0(t) :- unreachable_flow0(n), unreachable_edge(n, t).
+unreachable_flowd(o, n) :- unreachable_flow0(n), unreachable_decl(n, _, _, _, "method", _, _), unreachable_class_id(n, cid), unreachable_base_edge(o, cid, _).
+unreachable_flowd(o, p) :- unreachable_flowd(n, p), unreachable_base_edge(o, n, _).
+unreachable_flowd(b, p) :- unreachable_flowd(n, p), unreachable_base_edge(n, b, _), unreachable_class_id(p, pc), b != pc.
+unreachable_flow0(mid) :- unreachable_flowd(n, p), unreachable_decl(n, _, _, cn, _, cm, _), unreachable_decl(p, _, _, pn, _, _, _),
+    unreachable_method(cm, cn, pn, mid).
+
+// ---- annotation_reachable ----
+.decl unreachable_ann_reach(s: symbol)
+unreachable_ann_reach(s) :- unreachable_flow0(s).
+unreachable_ann_reach(c) :- unreachable_ann_reach(s), unreachable_ann(s, n), unreachable_unique_class(n, c).
+
+// ---- high_confidence ----
+.decl unreachable_overrides_abstract(id: symbol)
+unreachable_overrides_abstract(id) :- unreachable_decl(id, _, _, n, _, _, _), unreachable_class_id(id, cid), unreachable_hier_d(cid, b, k), k > 0,
+    unreachable_decl(b, _, _, bn, _, bm, _), unreachable_method(bm, bn, n, mid), unreachable_abstract(mid).
+.decl unreachable_owner(id: symbol, o: symbol)
+unreachable_owner(id, id) :- unreachable_decl(id, _, _, _, "class", _, _).
+unreachable_owner(id, c) :- unreachable_decl(id, _, _, _, k, _, _), k != "class", unreachable_class_id(id, c).
+.decl unreachable_abstract_base(id: symbol)
+unreachable_abstract_base(id) :- unreachable_owner(id, o), unreachable_hier_d(o, b, k), k > 0, unreachable_ann_reach(b), unreachable_abstract(b).
+unreachable_abstract_base(id) :- unreachable_owner(id, o), unreachable_hier_d(o, b, k), k > 0, unreachable_ann_reach(b),
+    unreachable_decl(b, _, _, bn, _, _, _), contains("ABC", bn), unreachable_base_edge(o, b, _).
+.decl unreachable_class_protocol(id: symbol)
+unreachable_class_protocol(id) :- unreachable_class_id(id, c), unreachable_protocol(c).
+.decl unreachable_kept(id: symbol)
+unreachable_kept(id) :- unreachable_ann_reach(id).
+unreachable_kept(id) :- unreachable_decl(id, _, _, _, _, m, _), match("(?:api|data_layer)\\..*", m).
+unreachable_kept(id) :- unreachable_implicit(id).
+unreachable_kept(id) :- unreachable_decl(id, _, _, _, _, _, fq), unreachable_imported_fq(fq).
+unreachable_kept(id) :- unreachable_decl(id, _, _, _, "class", _, _), unreachable_protocol(id).
+unreachable_kept(id) :- unreachable_decl(id, _, _, n, k, _, _), k != "class", unreachable_kept_member(id, n).
+unreachable_kept(id) :- unreachable_abstract_base(id).
+.decl unreachable_kept_member(id: symbol, n: symbol)
+unreachable_kept_member(id, n) :- unreachable_decl(id, _, _, n, _, _, _), unreachable_abstract(id).
+unreachable_kept_member(id, n) :- unreachable_decl(id, _, _, n, _, _, _), unreachable_is_property(id).
+unreachable_kept_member(id, n) :- unreachable_decl(id, _, _, n, _, _, _), prefix("_lower_", n).
+unreachable_kept_member(id, n) :- unreachable_decl(id, _, _, n, _, _, _), icontains("register", n).
+unreachable_kept_member(id, n) :- unreachable_decl(id, _, _, n, _, _, _), match("_create_.*_(?:connection|validator|factory)", n).
+unreachable_kept_member(id, n) :- unreachable_decl(id, _, _, n, _, _, _), unreachable_class_protocol(id).
+unreachable_kept_member(id, n) :- unreachable_decl(id, _, _, n, _, _, _), unreachable_overrides_abstract(id).
+.decl unreachable_high(id: symbol, x: node, d: number, n: symbol, k: symbol)
+unreachable_high(id, x, d, n, k) :- unreachable_decl(id, x, d, n, k, _, _), !unreachable_kept(id).
+
+// ---- the clause's query: a category per finding ----
+.decl unreachable_intent(id: symbol)
+unreachable_intent(id) :- unreachable_high(id, _, _, n, "class"), suffix("Intent", n).
+unreachable_intent(id) :- unreachable_high(id, x, _, _, "class"), unreachable_base_text(x, s), contains("ServerPlanStep", s).
+.decl unreachable_grammar(id: symbol)
+unreachable_grammar(id) :- unreachable_high(id, _, d, _, "class"), !unreachable_protocol(id), unreachable_doc(d, p, _), contains("/l2100_sql_grammar/", p).
+unreachable_grammar(id) :- unreachable_high(id, _, _, n, "class"), !unreachable_protocol(id), (suffix("Grammar", n) ; prefix("Sql", n)).
+unreachable_grammar(id) :- unreachable_high(id, x, _, _, "class"), !unreachable_protocol(id), unreachable_base_text(x, s), (contains("Sql", s) ; contains("Grammar", s)).
+.decl unreachable_category(id: symbol, x: node, d: number, c: symbol)
+unreachable_category(id, x, d, "high_confidence_functions") :- unreachable_high(id, x, d, _, k), k != "class".
+unreachable_category(id, x, d, "high_confidence_intents") :- unreachable_high(id, x, d, _, "class"), unreachable_intent(id).
+unreachable_category(id, x, d, "high_confidence_grammar_classes") :- unreachable_high(id, x, d, _, "class"), unreachable_grammar(id).
+unreachable_category(id, x, d, "high_confidence_other_classes") :- unreachable_high(id, x, d, _, "class"), !unreachable_intent(id), !unreachable_grammar(id).
+// oracleAnalyzer false: none under impl/browser/.
+.decl unreachable_shown(d: number)
+unreachable_shown(d) :- unreachable_doc(d, _, _), option_on("oracleAnalyzer").
+unreachable_shown(d) :- unreachable_doc(d, p, _), !option_on("oracleAnalyzer"), !prefix("impl/browser/", p).
+
+violation("data-layer-internal-dead-code", "unreachable-internal-symbols", c, p, l) :-
+    unreachable_category(_, x, d, c), unreachable_shown(d), doc(d, p, _), line(x, l).

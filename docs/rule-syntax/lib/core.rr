@@ -85,8 +85,21 @@
 .decl static_value(n: node, v: symbol)                   // value after following file-local constant bindings
 // value_type("12", "int") for Python, "number" for TypeScript: the type of a value produced by `value`.
 .decl value_type(v: symbol, t: symbol)                   // "str", "int", "string", "number", …
+// value_type_of(n, "str") for the literal "12", value_type_of(n, "int") for 12, value_type_of(n, "list") for [1]:
+// the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
+// container or bytes has no text in `value`.
+.decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
+// fstring_piece(n, i, kind, v): the pieces of f-string n (a Python string, concatenated_string or format_specifier
+// whose value is a JoinedStr), in order from 0: in f'a{x!r:>10}b{y=}', (0, "literal", "a"), (1, "interpolation",
+// "x"), (1, "format_spec", ">10"), (2, "literal", "by="), (3, "interpolation", "y"), (3, "debug", "y="). A literal
+// piece is decoded and holds a debug field's `y=` text, as CPython's Constant does; debug and format_spec rows share
+// their interpolation's i. No row for a plain string, bytes, or a literal whose value is not known.
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+// fstring_template(n, "{...}", "SELECT {...} FROM t") for f'SELECT {x} FROM t': n's decoded text with each
+// interpolation replaced by the marker, a constant; a debug field's `x = ` stays literal text. The same hosts.
+.decl fstring_template(n: node, marker: symbol, v: symbol)
 .input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
-.input value, str, strprefix, name, comment, static_value, value_type
+.input value, str, strprefix, name, comment, static_value, value_type, value_type_of, fstring_piece, fstring_template
 
 // ---- text tests (built-in constraints) -----------------------------------------------------------------------
 // Most tests on text are not regexes: exact names, sets of names, prefixes, suffixes, path shapes. They are
@@ -111,31 +124,54 @@
 // ---- source text (every document, parsed or not) ------------------------------------------------------------
 // Checks that count lines, scan comments or read files with no grammar (Markdown, Rust read as text) need the
 // raw bytes, comments and blank lines included. A document in `.scope text "**/*.md"` has doc, path_part and these
-// relations, and no tree.
-// source(d, sp): the whole file as one span. match / match_all over it give spans with lines.
+// relations, and no tree; its lines (tape_line, a match's) end at \r\n, \r, \n, U+2028 and U+2029, as the linter's
+// do in a file of no language.
+// source(d, sp): the whole file as one span. match_all over it gives spans with lines.
 .decl source(d: number, sp: span)
-// src_line(d, 12, sp): physical line 12, without its terminator. Lines end at \n, \r\n or a lone \r: the
-// terminators CPython's tokenizer, Ruff and ESLint count, so src_line numbers agree with line(n). A form feed is
-// whitespace inside a line (str.splitlines() would split there, and disagree with every tool).
+// src_line(d, 12, sp): physical line 12, without its terminator. Python and text-only documents split as
+// str.splitlines() does (\r, \v, \f, \x1c-\x1e, \x85 and the Unicode separators also end a line), as the linter's
+// `lines` regexes do; others split at \n only.
 // A Datalog version over match_all would be exact for \n only, so it is native.
 .decl src_line(d: number, l: number, sp: span)
+// src_line_lf(d, 12, sp): line 12 split at \n only, a \r kept (a regex rule's `terminators: "lf"`).
+.decl src_line_lf(d: number, l: number, sp: span)
+// tape_line(d, 12, sp): line 12 as line(n, l) numbers lines (\r\n, \r and \n for Python, the linter's), the empty
+// line after a final terminator included: the lines a `layout` rule reads.
+.decl tape_line(d: number, l: number, sp: span)
 .decl line_count(d: number, k: number)                   // number of physical lines, as src_line counts them
-.decl end_line(n: loc, l: number)                        // 1-based line of the last character
-.decl col(n: loc, c: number)                             // 0-based column of the start, for keys that need one
+// end_line(n, l): the line holding n's end offset, as `layout` counts: its last character's, except that a node
+// ending with a line terminator (a module) ends on the line after it.
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)                             // 0-based byte column of the start, for keys that need one
+// node_text(n, "f(x,\n  y)"): n's source text exactly, comments and strings in it included: what a `regex` on a
+// node reads. text(n, s) on a node is the interned token text of names (above).
+.decl node_text(n: node, s: symbol)
 // op_at(n, i, s): n's operator tokens in order, from 0: in `a < b <= c`, op_at(cmp, 0, "<"), op_at(cmp, 1, "<=").
 // A two-word operator is one token: "not in", "is not". The tokens are n's anonymous children other than
 // brackets, quotes, `,`, `;`, `:` and `.`, whatever field holds them: in a Rust
 // `let` chain, op_at(chain, 0, "&&"); in `not x`, op_at(n, 0, "not"). `op` (above) is the unordered view, with
 // punctuation; chained comparisons need the order.
 .decl op_at(n: node, i: number, s: symbol)
+// prev_token(b, ","): in `import a, b`, the token right before b among its parent's children, anonymous tokens and
+// comments included: its text (an anonymous token's is its kind). What a JSON `follows` reads at a neighbour.
+.decl prev_token(n: node, s: symbol)
+// token(p, i, s, start, end): p's children in order, from 0, anonymous tokens and comments included, each its text
+// and byte range. In `f(a, b)` the argument list's are "(", "a", ",", "b", ")". What a JSON `precedes` or
+// `follows` reads at a neighbour, from either side.
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 // syntax_error(d, 3, "invalid syntax"): the file does not parse. One row per document, at the first error.
-// For Python the verdict and line come from a native parser that follows CPython's grammar (Ruff's parser):
-// tree-sitter recovers from errors, so its tree cannot say whether CPython accepts the file. The message is that
-// parser's; messages are not part of a finding's key. No CPython runs, in any form. Other languages use
-// tree-sitter's ERROR and MISSING nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
+// For Python the verdict, line and message are CPython 3.13's `ast.parse`, computed natively (no Python runs: Ruff's
+// parser reads CPython's grammar, the engine's `cpython::syntax`): an empty block, an invalid target, a bracket never
+// closed are errors; what only compile rejects (`return` outside a function, a repeated keyword) is not. The
+// message is CPython's where CPython names the error (indentation, brackets, strings, targets), else "invalid
+// syntax"; a null byte's line, which CPython does not give, is 1. The corpus binds it as cpython_syntax_error(d, l,
+// msg); a program that declares syntax_error(d: number) reads the tape's verdict (tree-sitter's ERROR and MISSING
+// nodes) under that name instead, as the converter's do. Other languages use tree-sitter's ERROR and MISSING
+// nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
-.input source, src_line, line_count, end_line, col, op_at, syntax_error
+.input source, src_line, src_line_lf, tape_line, line_count, end_line, col, node_text, op_at, prev_token, token
+.input syntax_error
 // Tokens: the leaves of the parse tree, named or anonymous, in source order. Comments are not tokens, as in
 // ESLint's token store (getTokenBefore, getFirstToken, …), so rules that reason about tokens port directly.
 // A token is a span, as a regex capture is: text, line, end_line and col apply to it, a finding can sit on it,
@@ -146,6 +182,18 @@
 .decl token_before(x: loc, t: span)                     // the token just before node or token x
 .decl token_after(x: loc, t: span)                      // the token just after node or token x
 .input first_token, last_token, token_before, token_after
+
+// ---- the Python reference graph (across files) --------------------------------------------------------------
+// Which definition refers to which, over the policy's files, as the linker resolves names: through imports,
+// re-exports and packages, self/cls through the bases breadth first, declared parameter types, constructor
+// fields, and the policy's sibling links (`.references`, at the end). What dead-code and caller checks walk.
+// reference_edge(f, g, "self"): f's body refers to g, here as `self.g`. f and g are function_definition or
+// class_definition nodes; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
+.decl reference_edge(src: node, dst: node, via: symbol)
+// reference_open(f): f refers to something no static name denotes, or f's file does not parse: what f reaches
+// is not all known.
+.decl reference_open(n: node)
+.input reference_edge, reference_open
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
@@ -179,9 +227,13 @@
 // `follows` with a `stopBy` rule.
 .decl precedes_stop(a: node, b: node, stop: relation)
 // Python `x: "List[int]"`: parsed(str, "annotation", root) gives the tree of the code inside the string, so
-// rules can resolve names in string annotations. Native because it runs the parser on the string's contents.
-// Cost: one parse per distinct string; ask for it only for strings that hold code (annotations, embedded SQL).
-.decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation", …)
+// rules can resolve names in string annotations. Native: the string's value (decoded) parsed as Ruff's
+// `parse_type_annotation` reads it, at each string_annotation; the tree is a document of its own (its nodes have the
+// tree rows, text, name, line and the rest over the value's text; no doc, pkg or syntax_error row), root an
+// expression_statement over the whole value, and a string nested in it (`"List['A']"`) a node of that document. A
+// string the parser refuses (as CPython's `ast.parse(value, mode="eval")` does) has no row.
+// Cost: the scope table of each Python file, then one parse per string annotation.
+.decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation")
 // spread(n) for `*args` in `f(*args)` and `...xs` in `[...xs]`: positions after a spread are not fixed, so
 // argument-matching rules must treat the call as open.
 .decl spread(n: node)                                    // a spread element or argument (`*args`, `...xs`)
@@ -273,7 +325,14 @@
 //                   A group that takes no part in the match (an unmatched `(?<X>…)?`) gives no row.
 //                   Inside `!` or `count : { … }`, groups bind only there, like any variable.
 //                 e.g. match("use_(?<x>.*)", "use_foo") binds x = "foo".
-// match_all("re", s)  one row per non-overlapping match of re anywhere in s, with that match's groups bound.
+// match_all("re", sp, m)  one row per match m of re in span sp's text, leftmost-first and non-overlapping (Rust's
+//                 find_iter: "aa" in "aaaaa" at 0 and 2), as the linter's `regex` finds them. m is a span: its text
+//                 is what matched; its line, end_line and col are the linter's finding's (in source, the lines and
+//                 byte column of the file; in a line span, that line and the column in it). re is a constant;
+//                 its named groups bind as match's do. !match_all("re", sp, _): re does not occur in sp.
+// match_group("re", sp, m, g, gsp)  the groups of match_all's matches, as spans: gsp is the span of named group g
+//                 in match m, one row per group that takes part, placed as the linter places a finding at that
+//                 capture. match_group("(?P<module>[\w.]+)\.py", sp, m, "module", gsp) is the module's span.
 //
 // User functors, declared as in Soufflé and written @name(…). They compute a symbol from symbols.
 .functor dot(a: symbol, b: symbol): symbol               // "a.b" ("" . b gives b): @dot("os", "path") = "os.path"
@@ -297,6 +356,9 @@
 // Transforms: today's JSON `transform` computes a metavariable from another one's text. Each kind is one functor.
 // @replace_all("a  b", "\\s+", " ") = "a b": every match of re becomes by; ${1} in by is group 1.
 .functor replace_all(s: symbol, re: symbol, by: symbol): symbol
+// @rx_replace("a  b", "\\s+", " ") = "a b": W's SQL rx_replace, the regex crate's replace_all ($1, $name, ${name},
+// $$ as it reads them: `$1x` is a group named 1x). Same argument order as replace_all.
+.functor rx_replace(s: symbol, re: symbol, by: symbol): symbol
 // @convert("max-age", "camelCase", "dash") = "maxAge". Cases: lowerCase, upperCase, capitalize, camelCase,
 // snakeCase, kebabCase, pascalCase. seps lists separators ("dash,underscore"); "" splits on all of them.
 .functor convert(s: symbol, to: symbol, seps: symbol): symbol
@@ -322,8 +384,9 @@
 // Text for keys and signatures.
 .functor count_matches(re: symbol, s: symbol): number    // non-overlapping matches of re anywhere in s
 .functor sha256(s: symbol): symbol                       // hex digest of s's UTF-8 bytes
-// @json_str(s): s as a JSON string literal, quotes included, escaped as Python's json.dumps does by default
-// (non-ASCII as \uXXXX, surrogate pairs above U+FFFF), so rebuilt messages match the bytes that were signed.
+// @json_str(s): s as a JSON string literal, quotes included, as W's signed-list stages write an element
+// (json_group_array: `"`, `\` and controls escaped, non-ASCII kept), so rebuilt messages match the bytes W checks.
+// Python's json.dumps (ensure_ascii) escapes non-ASCII too: a repository that signs non-ASCII entries needs that.
 .functor json_str(s: symbol): symbol
 .functor nfkc(s: symbol): symbol                         // Unicode NFKC, as Python normalises identifiers
 // @ed25519_ok(key_hex, message, sig_b64) = 1 when sig (base64) is key's Ed25519 signature of message's UTF-8
@@ -338,6 +401,7 @@
 // message previews such as "{@unparse(call)}". Not for keys or comparisons: compare trees with @tree_digest, and
 // parts of trees with relations.
 .functor unparse(n: node): symbol
+
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
 // Facts from the repository that are not source code. Each reader parses one kind of file (JSON configs,
@@ -362,8 +426,9 @@
 // rows: `"engines": { "node": 18 }` gives none, as the engine ignores a non-string there.
 .decl package_for(path: symbol, dir: symbol)
 .decl package_field(dir: symbol, key: symbol, v: symbol)
-// Python: in `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the list of
-// positions follows Ruff's own table, not anything visible in the tree.
+// Python: in `x: "Foo"`, `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the
+// list of positions follows Ruff's own table (its semantic model's string type definitions, nested ones included),
+// not anything visible in the tree. A `Literal` argument or `Annotated` metadata is none.
 .decl string_annotation(s: node)                         // a string Ruff reads as a type definition
 // option("max_depth", "3"): a policy's tunable, so one rule text serves repositories with different settings.
 .decl option(name: symbol, v: symbol)  // a rule option's configured value (rerail.policy/v1 `options`)
@@ -389,9 +454,15 @@
 // at is the source piece it starts in. Bytes literals give no row. Decoded natively, by the language reference's
 // literal rules (escapes, raw prefixes, `{{`/`}}`), checked once against CPython's own decoder offline.
 .decl str_part(lit: node, i: number, v: symbol, at: node, spec: number)
+// literal_json(n, "{\"a\":[1,2.5]}") for `{'a': [1, 2.5]}`: CPython 3.13's json.dumps(ast.literal_eval(node),
+// sort_keys=True, separators=(",", ":")) of the `ast` node at n's span (W's pythonAst `literal_json`): a constant, a
+// tuple, list or dict of them, or `-n`. No row where literal_eval raises (a name, a call, an f-string, an unhashable
+// key) or json.dumps does (bytes, a set, a complex number, `...`, keys of different kinds, more than 4300 digits).
+// Native over Ruff's tree of the file; no Python runs. Cost: one parse per file and a pass over its expressions.
+.decl literal_json(n: node, v: symbol)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
-.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part
+.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part, literal_json
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
 // format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no
@@ -498,3 +569,6 @@
 //                                              ends unknown on any file. Members run as usual.
 // .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
 //                                              skip .git, .venv, venv, __pycache__ and tmp.
+// .references {"siblingLinks": […], "constructorFields": {…}, "scope": {…}}
+//                                              the reference graph's links, as the policy's `references` gives
+//                                              them, over the files of `scope` (default: every file).

@@ -1,0 +1,161 @@
+// data-layer-bootstrap-cache-health, clauses `bootstrap-cache` and `reported-parser-error` (relational), by hand.
+// Source: gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-cache-health.json.
+// Checked against the 16 recorded batch 9-10 API events (all exact) and fixtures.
+//
+// bootstrap-cache reads CPython's `ast` (the `pythonAst` stage; columns as
+// native/src/code_rule_dsl/value/python_ast/metadata.py at 40e7b6cac builds them) on tree-sitter's tree, as
+// authored/data-layer-bootstrap-eager-resolve.rr does: Call is `call`, its func the `function` field with
+// parentheses dropped, Name `identifier` (ast_name its text), Attribute `attribute` (ast_name its `attribute`).
+// - `fn` (ast_function) is the nearest FunctionDef along CPython's parent chain: a def's decorators, parameters
+//   and annotations are inside it (tree-sitter puts decorators beside the def, under decorated_definition);
+//   classes and lambdas pass through;
+// - `qualified` names a Name, an Attribute chain on one (value.attr) and a Call by its func's name;
+// - a keyword's ast_name is its `arg`: a keyword_argument's `name` (`**x` has none);
+// - `call_lines` reads the call's first line and the one before (source_line/previous_line: `source.splitlines()`
+//   indexed by the 0-based line of the call's start offset, the offsets split at \r\n?|\n; previous_line '' on the
+//   first line): src_line(d, l, sp) and src_line(d, l - 1, sp) at line(c, l), the tape's line (\r\n, \r, \n) as
+//   that index plus one, src_line splitlines()'s. Exact, also where the two splits disagree.
+// - The gate (syntax valid, the module's text holds one of the callee names) is !syntax_error(d), W's own
+//   (tree-sitter) verdict; its text test is implied: every reported call names one of the gate's alternatives
+//   (create_table(s) holds create_table). The pythonAst stage then runs CPython's `ast.parse` on each gated file:
+//   a file it rejects makes the worker raise (W's run errors), so such a file (cpython_syntax_error, CPython
+//   3.13's verdict) is read here as giving nothing. Remaining gap: W's error itself is not reproduced.
+// Options: entryPoint (default "all") is read only by reported-parser-error; parameters is unread.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl src_line(d: number, l: number, sp: span)
+.decl node_text(n: node, s: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl nearest(n: node, a: node, set: relation)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- bootstrap-cache ----
+// Slots read through parentheses: a call's func, an attribute's value (for `qualified`).
+.decl bootstrap_cache_slot(n: node)
+bootstrap_cache_slot(f) :- node(_, c, "call", _, _), field(c, "function", f).
+bootstrap_cache_slot(o) :- bootstrap_cache_need(a), node(_, a, "attribute", _, _), field(a, "object", o).
+bootstrap_cache_slot(e) :- bootstrap_cache_decorator(_, e).
+bootstrap_cache_slot(x) :- bootstrap_cache_slot(p), node(_, p, "parenthesized_expression", _, _), child(p, x, _),
+    !node(_, x, "comment", _, _).
+// Mirrors python/ast.rr unparen (which takes child 0: here any non-comment child).
+.decl bootstrap_cache_ast(n: node, e: node)
+bootstrap_cache_ast(n, n) :- bootstrap_cache_slot(n), !node(_, n, "parenthesized_expression", _, _).
+bootstrap_cache_ast(n, e) :- bootstrap_cache_slot(n), node(_, n, "parenthesized_expression", _, _), child(n, x, _),
+    !node(_, x, "comment", _, _), bootstrap_cache_ast(x, e).
+
+// The `calls` stage: (call, callee_kind, callee).
+.decl bootstrap_cache_call(c: node, kind: symbol, callee: symbol)
+bootstrap_cache_call(c, "Name", s) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_cache_ast(f0, f),
+    node(_, f, "identifier", _, _), text(f, s).
+bootstrap_cache_call(c, "Attribute", s) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_cache_ast(f0, f),
+    node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s).
+
+// fn: the def a node belongs to, along CPython's parent chain. Mirrors python/ast.rr def_frame, and goes on up
+// from a decorated class (def_frame has no row there; CPython's chain passes through the ClassDef).
+.decl bootstrap_cache_scope(kind: symbol)
+bootstrap_cache_scope("function_definition"). bootstrap_cache_scope("decorator").
+.decl bootstrap_cache_up(n: node)
+bootstrap_cache_up(c) :- bootstrap_cache_call(c, _, _).
+bootstrap_cache_up(w) :- bootstrap_cache_up(n), nearest(n, d, bootstrap_cache_scope), node(_, d, "decorator", _, _),
+    child(w, d, _), field(w, "definition", k), !node(_, k, "function_definition", _, _).
+.decl bootstrap_cache_fn(n: node, f: node)
+bootstrap_cache_fn(n, f) :- bootstrap_cache_up(n), nearest(n, f, bootstrap_cache_scope), node(_, f, "function_definition", _, _).
+bootstrap_cache_fn(n, g) :- bootstrap_cache_up(n), nearest(n, d, bootstrap_cache_scope), node(_, d, "decorator", _, _),
+    child(w, d, _), field(w, "definition", g), node(_, g, "function_definition", _, _).
+bootstrap_cache_fn(n, f) :- bootstrap_cache_up(n), nearest(n, d, bootstrap_cache_scope), node(_, d, "decorator", _, _),
+    child(w, d, _), field(w, "definition", k), !node(_, k, "function_definition", _, _), bootstrap_cache_fn(w, f).
+
+// A def's decorator_list entries: (def, expression).
+.decl bootstrap_cache_decorator(f: node, e: node)
+bootstrap_cache_decorator(f, e) :- node(_, f, "function_definition", _, _), field(w, "definition", f),
+    node(_, w, "decorated_definition", _, _), child(w, d, _), node(_, d, "decorator", _, _), child(d, e, _),
+    !node(_, e, "comment", _, _).
+// `qualified`, on the decorators' expressions, without building the dotted text (a value made in recursion):
+// a node has a qualified name when it is a Name, or an Attribute or Call over one (calls take their func's name);
+// its last dotted segment is the Name's id, the Attribute's attr, or the func's. The tests on it: q = "fixture"
+// holds when the node, calls taken off, is the Name `fixture`; q ending in "pytest.fixture" when it is an
+// Attribute `.fixture` over a qualified value whose last segment ends in "pytest" ("pytest" has no dot, so it
+// lies in that segment).
+.decl bootstrap_cache_need(n: node)
+bootstrap_cache_need(e) :- bootstrap_cache_decorator(_, e0), bootstrap_cache_ast(e0, e).
+bootstrap_cache_need(f) :- bootstrap_cache_need(c), node(_, c, "call", _, _), field(c, "function", f0), bootstrap_cache_ast(f0, f).
+bootstrap_cache_need(o) :- bootstrap_cache_need(a), node(_, a, "attribute", _, _), field(a, "object", o0), bootstrap_cache_ast(o0, o).
+.decl bootstrap_cache_qualified(n: node)
+bootstrap_cache_qualified(n) :- bootstrap_cache_need(n), node(_, n, "identifier", _, _).
+bootstrap_cache_qualified(a) :- bootstrap_cache_need(a), node(_, a, "attribute", _, _), field(a, "object", o0),
+    bootstrap_cache_ast(o0, o), bootstrap_cache_qualified(o).
+bootstrap_cache_qualified(c) :- bootstrap_cache_need(c), node(_, c, "call", _, _), field(c, "function", f0),
+    bootstrap_cache_ast(f0, f), bootstrap_cache_qualified(f).
+// head(n, h): n with its calls taken off (through parentheses).
+.decl bootstrap_cache_head(n: node, h: node)
+bootstrap_cache_head(n, n) :- bootstrap_cache_need(n), !node(_, n, "call", _, _).
+bootstrap_cache_head(c, h) :- bootstrap_cache_need(c), node(_, c, "call", _, _), field(c, "function", f0),
+    bootstrap_cache_ast(f0, f), bootstrap_cache_head(f, h).
+.decl bootstrap_cache_last(n: node, s: symbol)
+bootstrap_cache_last(n, s) :- bootstrap_cache_head(n, h), node(_, h, "identifier", _, _), text(h, s).
+bootstrap_cache_last(n, s) :- bootstrap_cache_head(n, h), node(_, h, "attribute", _, _), field(h, "attribute", t), text(t, s).
+.decl bootstrap_cache_fixture(e: node)
+bootstrap_cache_fixture(e) :- bootstrap_cache_head(e, h), node(_, h, "identifier", _, _), text(h, "fixture").
+bootstrap_cache_fixture(e) :- bootstrap_cache_head(e, h), node(_, h, "attribute", _, _), field(h, "attribute", t),
+    text(t, "fixture"), field(h, "object", o0), bootstrap_cache_ast(o0, o), bootstrap_cache_qualified(o),
+    bootstrap_cache_last(o, s), suffix("pytest", s).
+// A test or a fixture: `test_*`, or decorated by `fixture`/`…pytest.fixture` (called or not).
+.decl bootstrap_cache_test(f: node)
+bootstrap_cache_test(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s), prefix("test_", s).
+bootstrap_cache_test(f) :- bootstrap_cache_decorator(f, e0), bootstrap_cache_ast(e0, e), bootstrap_cache_fixture(e).
+
+// `cache_calls`: calls whose line and the line before carry no `bootstrap-cache-health: allow`.
+.decl bootstrap_cache_allowed(c: node)
+bootstrap_cache_allowed(c) :- bootstrap_cache_call(c, _, _), node(d, c, _, _, _), line(c, l), src_line(d, l, sp), text(sp, s),
+    contains("bootstrap-cache-health: allow", s).
+bootstrap_cache_allowed(c) :- bootstrap_cache_call(c, _, _), node(d, c, _, _, _), line(c, l), k = l - 1, src_line(d, k, sp),
+    text(sp, s), contains("bootstrap-cache-health: allow", s).
+.decl bootstrap_cache_in_test(c: node)
+bootstrap_cache_in_test(c) :- bootstrap_cache_fn(c, f), bootstrap_cache_test(f).
+.decl bootstrap_cache_helper(s: symbol)
+bootstrap_cache_helper("bootstrap_test_logged_tables_for_tests"). bootstrap_cache_helper("bootstrap_test_logged_tables_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_queues_for_tests"). bootstrap_cache_helper("bootstrap_test_queues_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_schema_for_tests"). bootstrap_cache_helper("bootstrap_test_schema_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_table_triggers_for_tests"). bootstrap_cache_helper("bootstrap_test_table_triggers_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_tables_for_tests"). bootstrap_cache_helper("bootstrap_test_tables_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_versioning_domain_for_tests"). bootstrap_cache_helper("bootstrap_test_versioning_domain_for_tests_async").
+.decl bootstrap_cache_doc(d: number, p: symbol)
+bootstrap_cache_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _).
+
+// BCH001: a bootstrap helper inside a test or fixture.
+violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH001", p, l) :- bootstrap_cache_call(c, _, s),
+    bootstrap_cache_helper(s), bootstrap_cache_in_test(c), !bootstrap_cache_allowed(c),
+    node(d, c, _, _, _), bootstrap_cache_doc(d, p), line(c, l).
+// BCH002: a bootstrap helper given manifest_key=.
+violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH002", p, l) :- bootstrap_cache_call(c, _, s),
+    bootstrap_cache_helper(s), field(c, "arguments", al), child(al, k, _), node(_, k, "keyword_argument", _, _),
+    field(k, "name", x), text(x, "manifest_key"), !bootstrap_cache_allowed(c),
+    node(d, c, _, _, _), bootstrap_cache_doc(d, p), line(c, l).
+// BCH003: create_table(s)(…) by name inside a test or fixture.
+violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH003", p, l) :- bootstrap_cache_call(c, "Name", s),
+    (s = "create_table" ; s = "create_tables"), bootstrap_cache_in_test(c), !bootstrap_cache_allowed(c),
+    node(d, c, _, _, _), bootstrap_cache_doc(d, p), line(c, l).
+
+// ---- reported-parser-error ----
+// The `invalid` input: a module with a syntax error (W's `syntax: invalid`, tree-sitter's ERROR nodes:
+// syntax_error(d)) whose text matches the callee-name regex, and whose path passes the entryPoint filter (`all`,
+// the default: `\b\B`, no path; any other value: `(?s).*`, every path). The SQL then keeps the files whose CPython
+// parse fails (`p.syntax_error != 'null'`, `ast.parse` in the pythonAst worker: cpython_syntax_error(d, _, _),
+// CPython 3.13's verdict) and reports BCH000 at line 1. (The message's line and msg are CPython's; messages are
+// not keys.)
+// The module's text (node_text, what W's regex reads) searched with the policy's regex.
+.decl reported_parser_error_entry(d: number)
+reported_parser_error_entry(d) :- option_value("entryPoint", v), v != "all", node(d, m, "module", _, _), node_text(m, s),
+    match("(?s:.*)(?:bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables)(?s:.*)", s).
+violation("data-layer-bootstrap-cache-health", "reported-parser-error", "BCH000", p, 1) :- reported_parser_error_entry(d),
+    doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), cpython_syntax_error(d, _, _).

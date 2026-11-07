@@ -1,8 +1,88 @@
+.decl union_classes(kind: symbol)
+union_classes("class_definition").
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl separate_both(ps: node)
+.decl str(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl union_conn(n: node)
+.decl union_conn_names(s: symbol)
+.decl union_containers(kind: symbol)
+.decl union_exempt(f: node)
+.decl union_exempt_methods(method: symbol, class: symbol)
+.decl union_exempt_names(s: symbol)
+.decl union_function(f: node, ps: node)
+.decl union_param_kinds(kind: symbol)
+.decl union_prefixes(s: symbol)
+.decl union_self(p: node)
+.decl union_txn(n: node)
+.decl union_txn_names(s: symbol)
+.decl union_typed(ps: node, p: node, t: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, str, strprefix, line, syntax_error
+.output violation
+union_conn_names("Connection").
+union_conn_names("DoltDbConnection").
+union_conn_names("MariaDbConnection").
+union_conn_names("MongoDbConnection").
+union_conn_names("SyncDatabaseConnection").
+union_conn_names("SyncNeo4jConnection").
+union_conn_names("SyncPostgresConnection").
+union_conn_names("SyncSqliteConnection").
+union_containers("type").
+union_containers("type_parameter").
+union_containers("generic_type").
+union_containers("subscript").
+union_containers("tuple").
+union_containers("union_type").
+union_containers("binary_operator").
+union_exempt_methods("__init__", "GenericSparseVersionedWriteTransaction").
+union_exempt_methods("__init__", "Neo4jCrossBranchQuery").
+union_exempt_methods("__init__", "Neo4jQuery").
+union_exempt_methods("__init__", "Neo4jRevisionHistoryQuery").
+union_exempt_methods("__init__", "SqlCrossBranchQuery").
+union_exempt_methods("from_spec", "SqlCrossBranchQuery").
+union_exempt_methods("__init__", "SqlQuery").
+union_exempt_methods("__init__", "SqlQueryBase").
+union_exempt_methods("__init__", "SqlRevisionHistoryQuery").
+union_exempt_methods("__init__", "VersionedWriteSqlQuery").
+union_exempt_names("_get_metadata_id_for_revision").
+union_exempt_names("_lookup_doltdb_metadata_by_revision_id").
+union_exempt_names("_revision_id_from_metadata_id").
+union_exempt_names("execute_vector_query").
+union_exempt_names("index_versioned_table_at_revision").
+union_exempt_names("process_trigger_ripple").
+union_exempt_names("search_versioned_table_with_replay").
+union_param_kinds("typed_parameter").
+union_param_kinds("typed_default_parameter").
+union_prefixes("").
+union_prefixes("r").
+union_prefixes("u").
+union_prefixes("f").
+union_prefixes("rr").
+union_prefixes("ru").
+union_prefixes("rf").
+union_prefixes("ur").
+union_prefixes("uu").
+union_prefixes("uf").
+union_prefixes("fr").
+union_prefixes("fu").
+union_prefixes("ff").
+union_txn_names("AsyncReadTransaction").
+union_txn_names("AsyncWriteTransaction").
+union_txn_names("LazyVersionedReadTransaction").
+union_txn_names("LazyVersionedWriteTransaction").
+union_txn_names("ReadTransaction").
+union_txn_names("SchemaTransaction").
+union_txn_names("Transaction").
+union_txn_names("WriteTransaction").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -105,4 +185,19 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-.output violation
+union_conn(n) :- node(_, n, "identifier", _, _), text(n, s), union_conn_names(s).
+union_conn(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), union_conn_names(s).
+union_conn(n) :- node(_, n, "string", _, _), strprefix(n, p), union_prefixes(p), str(n, s), union_conn_names(s).
+union_conn(n) :- node(_, n, k, _, _), union_containers(k), child(n, c, _), union_conn(c).
+union_txn(n) :- node(_, n, "identifier", _, _), text(n, s), union_txn_names(s).
+union_txn(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), union_txn_names(s).
+union_txn(n) :- node(_, n, "string", _, _), strprefix(n, p), union_prefixes(p), str(n, s), union_txn_names(s).
+union_txn(n) :- node(_, n, k, _, _), union_containers(k), child(n, c, _), union_txn(c).
+union_typed(ps, p, t) :- node(_, ps, "parameters", _, _), child(ps, p, _), node(_, p, k, _, _), union_param_kinds(k), !union_self(p), field(p, "type", t).
+union_self(p) :- child(p, c, _), node(_, c, "identifier", _, _), text(c, "self").
+union_exempt(f) :- field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), union_exempt_names(s).
+union_exempt(f) :- field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), union_exempt_methods(s, c), nearest(f, k, union_classes), field(k, "name", kn), node(_, kn, "identifier", _, _), text(kn, c).
+union_function(f, ps) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), !union_exempt(f).
+violation("data-layer-conn-or-txn-union", "union", "UNION", p, l) :- union_function(f, ps), union_typed(ps, _, t), union_conn(t), union_txn(t), node(d, f, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+separate_both(ps) :- union_typed(ps, _, t), union_conn(t), union_txn(t).
+violation("data-layer-conn-or-txn-union", "separate", "SEPARATE_PARAMS", p, l) :- union_function(f, ps), union_typed(ps, _, t1), union_conn(t1), union_typed(ps, _, t2), union_txn(t2), !separate_both(ps), node(d, f, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).

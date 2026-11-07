@@ -1,12 +1,29 @@
+.decl comparison_defs(kind: symbol)
+comparison_defs("function_definition").
+.decl child(p: node, c: node, i: number)
+.decl comparison_classvar(n: node)
+.decl comparison_compare(c: node)
+.decl comparison_exempt(n: node)
+.decl comparison_get_origin(n: node)
+.decl comparison_ops(s: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.input doc, node, field, text
 .decl in_scope(d: number)
-.decl m4(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl prev_token(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, text, field, child, token, node_text, prev_token, syntax_error, line
+.output violation
+comparison_ops("is").
+comparison_ops("is not").
+comparison_ops("==").
+comparison_ops("!=").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -108,6 +125,10 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-m4(n) :- node(_, n, "identifier", _, _), text(n, v1), v1 = "ClassVar".
-m4(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v2), node(_, v2, "identifier", _, _), text(v2, v3), v3 = "ClassVar".
-.output violation
+comparison_classvar(n) :- node(_, n, "identifier", _, _), text(n, "ClassVar").
+comparison_classvar(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "ClassVar").
+comparison_get_origin(n) :- node(_, n, "identifier", _, _), text(n, "get_origin").
+comparison_get_origin(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "get_origin").
+comparison_compare(c) :- node(_, c, "comparison_operator", _, _), child(c, call, 0), node(_, call, "call", _, _), field(call, "function", f), comparison_get_origin(f), token(c, _, s, _, _), comparison_ops(s).
+comparison_exempt(n) :- inside(n, f, comparison_defs), node_text(f, s), match("(?s:.*)(?:^def\\b)(?s:.*)", s), field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, "is_classvar_annotation").
+violation("data-layer-classvar-check", "comparison", "CLASSVAR001", p, l) :- comparison_compare(c), child(c, x, _), comparison_classvar(x), prev_token(x, s), comparison_ops(s), !comparison_exempt(x), node(d, c, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(c, l).

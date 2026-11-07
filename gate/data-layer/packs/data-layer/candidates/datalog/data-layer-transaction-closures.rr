@@ -1,44 +1,112 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl tc_def(kind: symbol)
+tc_def("function_definition").
+.decl tc_lam(kind: symbol)
+tc_lam("lambda").
 .decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.input doc, node, child, field, text
-.decl k0(kind: symbol)
-k0("lambda").
-.decl k1(kind: symbol)
-k1("call").
-.decl k2(kind: symbol)
-k2("function_definition").
-.decl blocked126(low: node, high: node)
-.decl blocked132(low: node, high: node)
-.decl blocked169(low: node, high: node)
-.decl blocked175(low: node, high: node)
-.decl blocked55(low: node, high: node)
-.decl blocked61(low: node, high: node)
-.decl blocked89(low: node, high: node)
-.decl blocked95(low: node, high: node)
 .decl in_scope(d: number)
-.decl m112(n: node)
-.decl m149(n: node)
-.decl m155(n: node)
-.decl m157(n: node)
-.decl m161(n: node)
-.decl m192(n: node)
-.decl m24(n: node)
-.decl m26(n: node)
-.decl m30(n: node)
-.decl m78(n: node)
+.decl inline_bound(l: node, x: symbol)
+.decl inline_cand(m: node, x: symbol, l: node)
+.decl inline_invoked(l: node)
+.decl inline_ok(m: node, x: symbol)
+.decl inline_shadow(l: node, x: symbol, m: node)
+.decl line(n: node, l: number)
+.decl named_bound(o: node, x: symbol)
+.decl named_cand(m: node, c: node)
+.decl named_cand0(m: node, c: node)
+.decl named_closure(c: node, o: node)
+.decl named_closure0(c: node, o: node, name: symbol)
+.decl named_invoked(c: node)
+.decl named_lambetween(m: node, c: node)
+.decl named_lamin(a: node, b: node)
+.decl named_mcand(m: node, x: symbol, c: node)
+.decl named_ok(m: node, x: symbol)
+.decl named_redef(c: node)
+.decl named_shadow(c: node, x: symbol, m: node)
+.decl named_sq(m: node, x: symbol, c: node, a: node, b: node)
+.decl named_target(d: number, m: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl u119(n: node)
-.decl u153(n: node)
-.decl u162(n: node)
-.decl u22(n: node)
-.decl u31(n: node)
-.decl u48(n: node)
-.decl u5(n: node)
-.decl u82(n: node)
+.decl syntax_error(d: number)
+.decl tc_argbefore(g: node, c: node, b: node)
+.decl tc_argok(g: node, c: node, i: number)
+.decl tc_argx(k: symbol)
+.decl tc_asgn(d: number, a: node, x: symbol, s: number, e: number, ne: number)
+.decl tc_callmut(d: number, m: node, x: symbol)
+.decl tc_closarg(i: node, g: node, v: node)
+.decl tc_defcls(s: node, x: symbol)
+.decl tc_doc(d: number, p: symbol)
+.decl tc_fnkw(g: node, v: node)
+.decl tc_gate(d: number)
+.decl tc_hasfn(g: node)
+.decl tc_ident(n: node, s: symbol)
+.decl tc_importk(s: node)
+.decl tc_kwonly(q: node)
+.decl tc_modasg(a: node, x: symbol)
+.decl tc_modbind(d: number, x: symbol)
+.decl tc_mut(d: number, m: node, x: symbol)
+.decl tc_mutmeth(s: symbol)
+.decl tc_pab(p: node, x: symbol)
+.decl tc_packk(k: symbol)
+.decl tc_pc(p: node, x: symbol)
+.decl tc_pchild(p: node, q: node, i: number, k: symbol)
+.decl tc_pkind(k: symbol)
+.decl tc_plain(p: node, q: node, k: symbol)
+.decl tc_posonly(q: node)
+.decl tc_second(g: node, c: node)
+.decl tc_splatk(k: symbol)
+.decl tc_star(p: node, i: number)
+.decl tc_store(n: node)
+.decl tc_storek(k: symbol)
+.decl tc_storeq(n: node)
+.decl tc_subcand(n: node)
+.decl tc_submut(d: number, m: node, x: symbol)
+.decl tc_txcall(i: node, g: node)
+.decl tc_txmeth(s: symbol)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, node_text, syntax_error, text, field, child, line
+.output violation
+option_on("sourceGate").
+tc_argx("keyword_argument").
+tc_argx("dictionary_splat").
+tc_mutmeth("add").
+tc_mutmeth("append").
+tc_mutmeth("clear").
+tc_mutmeth("discard").
+tc_mutmeth("extend").
+tc_mutmeth("insert").
+tc_mutmeth("pop").
+tc_mutmeth("popitem").
+tc_mutmeth("remove").
+tc_mutmeth("setdefault").
+tc_mutmeth("update").
+tc_packk("pattern_list").
+tc_packk("tuple_pattern").
+tc_packk("list_pattern").
+tc_packk("tuple").
+tc_packk("list").
+tc_packk("list_splat_pattern").
+tc_packk("parenthesized_expression").
+tc_pkind("identifier").
+tc_pkind("default_parameter").
+tc_pkind("typed_parameter").
+tc_pkind("typed_default_parameter").
+tc_splatk("list_splat_pattern").
+tc_splatk("dictionary_splat_pattern").
+tc_storek("assignment").
+tc_storek("augmented_assignment").
+tc_storek("for_statement").
+tc_storek("for_in_clause").
+tc_txmeth("read").
+tc_txmeth("read_version").
+tc_txmeth("versioned_read").
+tc_txmeth("versioned_write").
+tc_txmeth("write").
+tc_txmeth("write_version").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -51,46 +119,87 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-m24(n) :- node(_, n, "assignment", _, _).
-m24(n) :- node(_, n, "augmented_assignment", _, _).
-m24(n) :- node(_, n, "for_statement", _, _).
-m24(n) :- node(_, n, "for_in_clause", _, _).
-m26(n) :- node(_, n, "pattern_list", _, _).
-m26(n) :- node(_, n, "tuple_pattern", _, _).
-m26(n) :- node(_, n, "list_pattern", _, _).
-m26(n) :- node(_, n, "tuple", _, _).
-m26(n) :- node(_, n, "list", _, _).
-m26(n) :- node(_, n, "list_splat_pattern", _, _).
-m26(n) :- node(_, n, "parenthesized_expression", _, _).
-m30(n) :- field(v23, "left", n), m24(v23).
-m30(n) :- child(v25, n, _), m26(v25), u22(v25).
-m30(n) :- child(v27, n, _), node(_, v27, "as_pattern_target", _, _), field(v28, "alias", v27), node(_, v28, "as_pattern", _, _), child(v29, v28, _), node(_, v29, "with_item", _, _).
-u22(n) :- m30(n).
-blocked55(low, high) :- inside(low, s, k0), node(_, s, "lambda", _, _), inside(s, high, k2).
-blocked61(low, high) :- inside(low, high, k1), inside(low, s, k2), node(_, s, "function_definition", _, _), node(_, s, _, v62, v63), node(_, high, _, v64, v65), v64 <= v62, v63 <= v65, s != high.
-m78(n) :- child(n, v75, _), node(_, v75, "keyword_argument", _, _), field(v75, "name", v76), node(_, v76, "identifier", _, _), text(v76, v77), v77 = "fn".
-blocked89(low, high) :- inside(low, s, k0), node(_, s, "lambda", _, _), inside(s, high, k2).
-blocked95(low, high) :- inside(low, high, k1), inside(low, s, k2), node(_, s, "function_definition", _, _), node(_, s, _, v96, v97), node(_, high, _, v98, v99), v98 <= v96, v97 <= v99, s != high.
-m112(n) :- child(n, v109, _), node(_, v109, "keyword_argument", _, _), field(v109, "name", v110), node(_, v110, "identifier", _, _), text(v110, v111), v111 = "fn".
-blocked126(low, high) :- inside(low, s, k0), node(_, s, "lambda", _, _), inside(s, high, k2).
-blocked132(low, high) :- inside(low, high, k1), inside(low, s, k2), node(_, s, "function_definition", _, _), node(_, s, _, v133, v134), node(_, high, _, v135, v136), v135 <= v133, v134 <= v136, s != high.
-m149(n) :- child(n, v146, _), node(_, v146, "keyword_argument", _, _), field(v146, "name", v147), node(_, v147, "identifier", _, _), text(v147, v148), v148 = "fn".
-m155(n) :- node(_, n, "assignment", _, _).
-m155(n) :- node(_, n, "augmented_assignment", _, _).
-m155(n) :- node(_, n, "for_statement", _, _).
-m155(n) :- node(_, n, "for_in_clause", _, _).
-m157(n) :- node(_, n, "pattern_list", _, _).
-m157(n) :- node(_, n, "tuple_pattern", _, _).
-m157(n) :- node(_, n, "list_pattern", _, _).
-m157(n) :- node(_, n, "tuple", _, _).
-m157(n) :- node(_, n, "list", _, _).
-m157(n) :- node(_, n, "list_splat_pattern", _, _).
-m157(n) :- node(_, n, "parenthesized_expression", _, _).
-m161(n) :- field(v154, "left", n), m155(v154).
-m161(n) :- child(v156, n, _), m157(v156), u153(v156).
-m161(n) :- child(v158, n, _), node(_, v158, "as_pattern_target", _, _), field(v159, "alias", v158), node(_, v159, "as_pattern", _, _), child(v160, v159, _), node(_, v160, "with_item", _, _).
-u153(n) :- m161(n).
-blocked169(low, high) :- inside(low, s, k0), node(_, s, "lambda", _, _), inside(s, high, k2).
-blocked175(low, high) :- inside(low, high, k1), inside(low, s, k2), node(_, s, "function_definition", _, _), node(_, s, _, v176, v177), node(_, high, _, v178, v179), v178 <= v176, v177 <= v179, s != high.
-m192(n) :- child(n, v189, _), node(_, v189, "keyword_argument", _, _), field(v189, "name", v190), node(_, v190, "identifier", _, _), text(v190, v191), v191 = "fn".
-.output violation
+tc_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, t), (contains(".read(", t) ; contains(".read_version(", t) ; contains(".versioned_read(", t) ; contains(".versioned_write(", t) ; contains(".write(", t) ; contains(".write_version(", t)).
+tc_gate(d) :- doc(d, _, _), !option_on("sourceGate").
+tc_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), tc_gate(d).
+tc_ident(n, s) :- node(_, n, "identifier", _, _), text(n, s).
+tc_callmut(d, m, x) :- tc_doc(d, _), node(d, m, "call", _, _), field(m, "function", a), node(_, a, "attribute", _, _), field(a, "object", o), tc_ident(o, x), field(a, "attribute", y), tc_ident(y, meth), tc_mutmeth(meth).
+tc_subcand(n) :- tc_doc(d, _), node(d, n, "subscript", _, _).
+tc_store(n) :- tc_storeq(n), field(p, "left", n), node(_, p, k, _, _), tc_storek(k).
+tc_store(n) :- tc_storeq(n), child(p, n, _), node(_, p, k, _, _), tc_packk(k), tc_store(p).
+tc_store(n) :- tc_storeq(n), child(t, n, _), node(_, t, "as_pattern_target", _, _), field(a, "alias", t), node(_, a, "as_pattern", _, _), child(w, a, _), node(_, w, "with_item", _, _).
+tc_storeq(n) :- tc_subcand(n).
+tc_storeq(p) :- tc_storeq(n), child(p, n, _), node(_, p, k, _, _), tc_packk(k).
+tc_submut(d, m, x) :- tc_subcand(m), node(d, m, _, _, _), field(m, "value", o), tc_ident(o, x), tc_store(m).
+tc_mut(d, m, x) :- tc_callmut(d, m, x).
+tc_mut(d, m, x) :- tc_submut(d, m, x).
+tc_txcall(i, g) :- node(d, i, "call", _, _), tc_doc(d, _), field(i, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", y), tc_ident(y, t), tc_txmeth(t), field(i, "arguments", g).
+tc_fnkw(g, v) :- tc_txcall(_, g), child(g, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", y), tc_ident(y, "fn"), field(k, "value", v).
+tc_hasfn(g) :- tc_fnkw(g, _).
+tc_argok(g, c, i) :- tc_txcall(_, g), child(g, c, i), node(_, c, k, _, _), !tc_argx(k).
+tc_argbefore(g, c, b) :- tc_argok(g, c, i), tc_argok(g, b, j), j < i.
+tc_second(g, c) :- tc_argok(g, c, _), n = count : { tc_argbefore(g, c, _) }, n = 1.
+tc_closarg(i, g, v) :- tc_txcall(i, g), tc_fnkw(g, v).
+tc_closarg(i, g, v) :- tc_txcall(i, g), !tc_hasfn(g), tc_second(g, v).
+tc_pchild(p, q, i, k) :- field(f, "parameters", p), node(d, f, _, _, _), tc_doc(d, _), child(p, q, i), node(_, q, k, _, _).
+tc_star(p, i) :- tc_pchild(p, _, i, "keyword_separator").
+tc_star(p, i) :- tc_pchild(p, _, i, k), tc_splatk(k).
+tc_star(p, i) :- tc_pchild(p, q, i, "typed_parameter"), child(q, s, _), node(_, s, k, _, _), tc_splatk(k).
+tc_posonly(q) :- tc_pchild(p, q, i, _), tc_pchild(p, _, j, "positional_separator"), j > i.
+tc_kwonly(q) :- tc_pchild(p, q, i, _), tc_star(p, j), j < i.
+tc_plain(p, q, k) :- tc_pchild(p, q, _, k), tc_pkind(k), !tc_posonly(q), !tc_kwonly(q).
+tc_pab(p, x) :- tc_plain(p, q, "identifier"), tc_ident(q, x).
+tc_pab(p, x) :- tc_plain(p, q, _), field(q, "name", y), tc_ident(y, x).
+tc_pab(p, x) :- tc_plain(p, q, _), child(q, y, _), tc_ident(y, x).
+tc_pab(p, x) :- tc_pchild(p, q, _, k), tc_splatk(k), child(q, y, _), tc_ident(y, x).
+tc_pab(p, x) :- tc_pchild(p, q, _, "typed_parameter"), child(q, s, _), node(_, s, k, _, _), tc_splatk(k), child(s, y, _), tc_ident(y, x).
+tc_pc(p, x) :- tc_plain(p, q, "identifier"), tc_ident(q, x).
+tc_pc(p, x) :- tc_plain(p, q, _), field(q, "name", y), tc_ident(y, x).
+tc_pc(p, x) :- tc_plain(p, q, "typed_parameter"), child(q, y, _), tc_ident(y, x).
+tc_asgn(d, a, x, s, e, ne) :- tc_doc(d, _), node(d, a, "assignment", s, e), field(a, "left", y), node(_, y, "identifier", _, ne), text(y, x).
+tc_asgn(d, a, x, s, e, ne) :- tc_doc(d, _), node(d, a, "named_expression", s, e), field(a, "name", y), node(_, y, "identifier", _, ne), text(y, x).
+tc_modasg(a, x) :- node(d, a, "assignment", _, _), tc_doc(d, _), field(a, "left", y), tc_ident(y, x).
+tc_modasg(a, x) :- node(d, a, "assignment", _, _), tc_doc(d, _), field(a, "right", r), tc_modasg(r, x).
+inline_cand(m, x, l) :- tc_mut(d, m, x), nearest(m, l, tc_lam), field(l, "body", b), node(d, b, _, bs, be), node(d, m, _, ms, me), bs <= ms, me <= be.
+inline_invoked(l) :- tc_closarg(_, _, l), node(_, l, "lambda", _, _).
+inline_shadow(l, x, m) :- inline_cand(m, x, l), field(l, "parameters", p), tc_pab(p, x).
+inline_shadow(l, x, m) :- inline_cand(m, x, l), field(l, "body", b), node(d, b, _, bs, be), tc_asgn(d, a, x, as2, ae, ne), bs <= as2, ae <= be, nearest(a, l, tc_lam), node(d, m, _, ms, _), ne <= ms.
+inline_bound(l, x) :- inline_cand(_, x, l), inside(l, f, tc_def), field(f, "parameters", p), tc_pab(p, x).
+inline_bound(l, x) :- inline_cand(_, x, l), inside(l, f, tc_def), node(d, f, _, fs, fe), tc_asgn(d, _, x, as2, ae, _), fs <= as2, ae <= fe.
+inline_bound(l, x) :- inline_cand(_, x, l), node(d, l, _, _, _), tc_modbind(d, x).
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), node(_, s, "expression_statement", _, _), child(s, a, _), tc_modasg(a, x).
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), tc_defcls(s, x).
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), node(_, s, "decorated_definition", _, _), child(s, t, _), tc_defcls(t, x).
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), tc_importk(s), child(s, a, _), node(_, a, "aliased_import", _, _), field(a, "alias", y), tc_ident(y, x).
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), tc_importk(s), child(s, dn, _), node(_, dn, "dotted_name", _, _), !field(s, "module_name", dn), child(dn, y, 0), tc_ident(y, x).
+tc_defcls(s, x) :- node(_, s, "function_definition", _, _), field(s, "name", y), tc_ident(y, x).
+tc_defcls(s, x) :- node(_, s, "class_definition", _, _), field(s, "name", y), tc_ident(y, x).
+tc_importk(s) :- node(_, s, "import_statement", _, _).
+tc_importk(s) :- node(_, s, "import_from_statement", _, _).
+inline_ok(m, x) :- inline_cand(m, x, l), inline_invoked(l), !inline_shadow(l, x, m), inline_bound(l, x).
+violation("data-layer-transaction-closures", "inline-mutation", "TXN003", p, l) :- tc_callmut(d, m, x), inline_ok(m, x), tc_doc(d, p), line(m, l).
+violation("data-layer-transaction-closures", "inline-subscript", "TXN004", p, l) :- tc_submut(d, m, x), inline_ok(m, x), tc_doc(d, p), line(m, l).
+named_closure0(c, o, name) :- node(d, c, "function_definition", _, _), tc_doc(d, _), field(c, "name", y), tc_ident(y, name), child(bk, c, _), node(_, bk, "block", _, _), child(o, bk, _), node(_, o, "function_definition", _, _).
+named_invoked(c) :- named_closure0(c, o, name), tc_closarg(i, _, v), tc_ident(v, name), nearest(i, o, tc_def), field(o, "body", ob), node(d, ob, _, bs, be), node(d, i, _, is2, ie2), bs <= is2, ie2 <= be, node(d, c, _, _, ce), ce <= is2.
+named_redef(c) :- named_closure0(c, o, name), field(o, "body", ob), child(ob, c2, _), node(d, c2, "function_definition", s2, _), field(c2, "name", y), tc_ident(y, name), node(d, c, _, _, ce), s2 >= ce.
+named_closure(c, o) :- named_closure0(c, o, _), named_invoked(c), !named_redef(c).
+named_target(d, m) :- tc_mut(d, m, _).
+named_target(d, n) :- tc_doc(d, _), node(d, n, "identifier", _, _), child(s, n, _), node(_, s, "nonlocal_statement", _, _).
+named_target(d, n) :- tc_doc(d, _), node(d, n, "identifier", _, _), child(s, n, _), node(_, s, "global_statement", _, _).
+named_cand0(m, c) :- named_target(d, m), inside(m, c, tc_def), named_closure(c, _), field(c, "body", b), node(d, b, _, bs, be), node(d, m, _, ms, me), bs <= ms, me <= be.
+named_lambetween(m, c) :- named_cand0(m, c), inside(m, lm, tc_lam), inside(lm, c, tc_def).
+named_cand(m, c) :- named_cand0(m, c), !named_lambetween(m, c).
+named_mcand(m, x, c) :- tc_mut(_, m, x), named_cand(m, c).
+named_sq(m, x, c, a, b) :- named_mcand(m, x, c), field(c, "body", b), node(d, b, _, bs, be), tc_asgn(d, a, x, as2, ae, ne), bs <= as2, ae <= be, node(d, m, _, ms, _), ne <= ms.
+named_sq(m, x, c, f, b) :- named_mcand(m, x, c), field(c, "body", b), node(d, b, _, bs, be), node(d, f, "function_definition", fs, fe), bs <= fs, fe <= be, node(d, m, _, ms, _), fe <= ms, field(f, "parameters", p), tc_pab(p, x).
+named_lamin(a, b) :- named_sq(_, _, _, a, b), inside(a, lm, tc_lam), node(d, lm, _, ls, le), node(d, b, _, bs, be), bs <= ls, le <= be.
+named_shadow(c, x, m) :- named_mcand(m, x, c), field(c, "parameters", p), tc_pab(p, x).
+named_shadow(c, x, m) :- named_sq(m, x, c, a, b), !named_lamin(a, b).
+named_bound(o, x) :- named_mcand(_, x, c), named_closure(c, o), field(o, "parameters", p), tc_pc(p, x).
+named_bound(o, x) :- named_mcand(_, x, c), named_closure(c, o), field(o, "body", ob), child(ob, s, _), node(_, s, "expression_statement", _, _), child(s, a, _), tc_modasg(a, x).
+named_bound(o, x) :- named_mcand(_, x, c), named_closure(c, o), field(o, "body", ob), child(ob, a, _), node(_, a, "assignment", _, _), field(a, "left", y), tc_ident(y, x).
+named_ok(m, x) :- named_mcand(m, x, c), named_closure(c, o), !named_shadow(c, x, m), named_bound(o, x).
+violation("data-layer-transaction-closures", "named-mutation", "TXN003", p, l) :- tc_callmut(d, m, x), named_ok(m, x), tc_doc(d, p), line(m, l).
+violation("data-layer-transaction-closures", "named-subscript", "TXN004", p, l) :- tc_submut(d, m, x), named_ok(m, x), tc_doc(d, p), line(m, l).
+violation("data-layer-transaction-closures", "named-nonlocal", "TXN001", p, l) :- named_cand(n, _), child(s, n, _), node(d, s, "nonlocal_statement", _, _), tc_doc(d, p), line(n, l).
+violation("data-layer-transaction-closures", "named-global", "TXN002", p, l) :- named_cand(n, _), child(s, n, _), node(d, s, "global_statement", _, _), tc_doc(d, p), line(n, l).

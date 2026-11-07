@@ -5,15 +5,69 @@
 //! Each sub-rule is a conjunction of literals over one node variable. `any` is a relation with one rule per
 //! branch, `not` its negation, a utility a relation of its own (recursive where it reaches itself). Regexes become string tests or
 //! name sets, never regexes. What it cannot say is a gap, named; what it says only approximately is noted.
-//! The clause is converted whole or not at all.
+//! The clause is converted whole or not at all: a clause that fails leaves nothing it emitted (`Emitter::clause`),
+//! and the program keeps only what `violation` reaches (`reachable`).
 //!
 //! The relations, per node `n`:
 //! - `inside` (to the end): `inside($n, $a, set)`, the set being the kinds the ancestor's rule allows;
 //! - `inside` with a stop rule: the same, less ancestors past the first stop node (`blocked`);
-//! - `has` likewise, read from the ancestor; with a field, the descendant is within that field's child
-//!   (byte spans, both nodes bound);
+//! - `has` (to the end): `inside($m, $n, set)` read the other way, `$m` the descendant; the set filters the
+//!   ancestor `$n`, so it is the kinds `$n`'s own rule allows (the enclosing `all`'s, `here`), or every kind where
+//!   that rule names none; with a stop rule, less descendants past the first stop node; with a field, the
+//!   descendant is within that field's child (byte spans, both nodes bound);
 //! - neighbours: `child(p, c, i)` or `field(p, f, c)`.
+//!
+//! # The authored overlay
+//!
+//! What the converter cannot say is written by hand, one `.rr` file per rule (decision 0043), and merged over the
+//! converted program (`overlay`):
+//! - the file is `gate/data-layer/packs/data-layer/candidates/datalog/authored/<rule-id>.rr`, the rule id as in the
+//!   policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
+//! - it declares every relation it reads or defines but core.rr's, whose declarations are every program's prelude
+//!   (`rr::lower`; its own declaration replaces core.rr's, as `syntax_error(d: number)` does). The base relations the
+//!   corpus runner binds, with the converter's signatures (`BASE`): `doc(d: number, path: symbol, module: symbol)`,
+//!   `node(d: number, n: node, kind: symbol, start: number, end: number)`, `child(p: node, c: node, i: number)`
+//!   (named children), `field(p: node, f: symbol, c: node)`, `text(n: node, s: symbol)`, `name(n: node, s: symbol)`,
+//!   `str(n: node, s: symbol)`, `strprefix(n: node, s: symbol)`, `intval(n: node, v: number)`,
+//!   `op(n: node, s: symbol)`, `line(n: node, l: number)`, `syntax_error(d: number)`, and core.rr's the README lists
+//!   (the source text, `docof`, `op_at`, `prev_token`, `token`, `visit_index`, `path_part`, `file_name`, `pkg`, W's
+//!   values and f-string trees: `fstring_piece`, `fstring_template`, whose marker is a constant; CPython's verdict,
+//!   `cpython_syntax_error(d: number, l: number, msg: symbol)`, core.rr's `syntax_error(d, l, msg)`; Ruff's string
+//!   annotations and their trees, `string_annotation(s: node)` and `parsed(s: node, grammar: symbol, root: node)`,
+//!   each tree a document of its own; W's pythonAst `literal_json(n: node, v: symbol)`); those
+//!   it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rr`): their `.output`s are
+//!   theirs. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's (the policy's,
+//!   or the replay's per event): read, never derived. So is the report gate, `report_when_gt(k: number)`: one row
+//!   `k` where the policy (as the run configures it) has `report_when: {count: {gt: k}}`, the only form the compiler
+//!   accepts (once per policy, on a define clause): the rule reports nothing unless its findings, all files and
+//!   clauses together, number more than `k`; no row where it has none. The tree: `inside(n, a, set)` and
+//!   `has(a, n, set)` (`a` a strict ancestor of `n` of a kind in `set`), `nearest(n, a, set)` (the nearest one),
+//!   `set` a relation of kind facts the file declares (`.decl calls(kind: symbol)`, `calls("call").`). The
+//!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give.
+//!   The options, as the run resolves them (the policy's config, else each option's default; the replay's per
+//!   event), are given too, read, never derived: `option_on(name: symbol)`, a row per boolean option that is true;
+//!   `option_item(name: symbol, i: number, v: symbol)`, a row per item of an array option, i from 0 (core.rr's; strings
+//!   as they are, others as JSON); `option_value(name: symbol, v: symbol)`, a row per string, number or object
+//!   option, as text;
+//!   `option_json(name: symbol, pointer: symbol, v: symbol)`, a row per leaf of a JSON option (an object or array,
+//!   or a string holding one, as `parameters` does) at its JSON pointer (`/lineCounts/a~1b.py`), as W's
+//!   `json_extract` reads it, the leaf as `option_value` renders it. A clause
+//!   whose matchers carry `when: {option: …}` converts for the run's options only (its matchers that do not apply
+//!   give nothing); coverage marks it: an authored clause, gated on these facts, follows every configuration.
+//!   `match_all("re", sp, m)` is a built-in, never declared: `m` each match of regex `re` in span `sp`'s text; so is
+//!   `match_group("re", sp, m, g, gsp)`: `gsp` the span of the named group `g` in that match;
+//! - each clause it gives derives `violation("<rule-id>", "<clause-id>", "<code>", p, l)`, declared
+//!   `.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)`, the rule and clause
+//!   constant and the clause one of the policy's;
+//! - its helper relations and kind sets start with a prefix of their clause's. A name the converter makes is an
+//!   error (`m`, `u`, `t`, `k` or `blocked` and digits; `never`, `in_scope`, `out_scope`, `report_when_gt`,
+//!   `option_on`, `option_item`, `option_value`, `option_json`; `strtest_*`, `matchall_*`, `matchgroup_*`, `magic_*`,
+//!   `done_*`, `inside_*`, `nearest_*`), and so are a relation both derive and one name declared with other columns;
+//! - a clause it derives is authored, whatever the converter made of it: its rules replace the converter's. A
+//!   clause the run leaves out (the replay's `keep`) is dropped from both. The merge, less what `violation` does not
+//!   reach, is printed with `rr::print`.
 
+use super::front::{self, Literal, Program, Term};
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::matcher::{AstMatcher, Axis, Semantic, StopBy};
 use ast_grep_core::matcher::{Pattern, PatternNode};
@@ -32,6 +86,7 @@ fn gap<T>(what: impl Into<String>) -> Res<T> {
 }
 
 /// The rules one or more clauses need, and the shared declarations.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Emitter {
     kinds: KindCatalog,
     /// Relation declarations, by name: `(name, columns)`.
@@ -48,6 +103,9 @@ pub(in crate::code_rule_dsl) struct Emitter {
     pub(in crate::code_rule_dsl) captures: BTreeMap<String, String>,
     /// Whether the empty relation `never` is used.
     never: bool,
+    /// The kinds the node being converted can have, where the rules around it name them: what `has` filters
+    /// its ancestor by.
+    here: Option<BTreeSet<u16>>,
 }
 
 /// A conjunction over one node variable: the literals, as text.
@@ -66,7 +124,19 @@ impl Emitter {
             utils: BTreeMap::new(),
             captures: BTreeMap::new(),
             never: false,
+            here: None,
         }
+    }
+
+    /// Converts one clause with `f`. Where it fails, all it emitted is taken back (rules, declarations, kind sets,
+    /// utilities, approximations): a clause is converted whole or leaves nothing.
+    pub(in crate::code_rule_dsl) fn clause(&mut self, f: impl FnOnce(&mut Self) -> Res<()>) -> Res<()> {
+        let saved = self.clone();
+        let out = f(self);
+        if out.is_err() {
+            *self = saved;
+        }
+        out
     }
 
     fn fresh(&mut self, stem: &str) -> String {
@@ -106,14 +176,21 @@ impl Emitter {
         Ok(name)
     }
 
-    /// A relation `p(n)` holding where `body` (over `$n`) holds; its name.
-    fn relation(&mut self, bodies: Vec<Body>) -> String {
+    /// A relation `p(n, …)` holding where `bodies` (over `$n`) hold; its atom at `n`. The variables the bodies share
+    /// with the rule around them (made before `mark`: the metavariables it bound) are columns, passed in: a
+    /// variable of a rule of its own is that rule's alone, so one left out would match anything.
+    fn relation(&mut self, bodies: Vec<Body>, mark: usize, n: &str) -> String {
+        let outer = outer_vars(&bodies, mark);
         let name = self.fresh("m");
-        self.decls.insert(name.clone(), "n: node".to_owned());
+        let columns: Vec<String> = std::iter::once("n: node".to_owned()).chain(outer.iter().map(|v| format!("{}: node", &v[1..]))).collect();
+        self.decls.insert(name.clone(), columns.join(", "));
+        let args = |first: &str| std::iter::once(first.to_owned()).chain(outer.iter().cloned()).collect::<Vec<_>>().join(", ");
         for body in bodies {
-            self.rules.push(format!("{name}($n) :- {}.", nonempty(body, "$n").join(", ")));
+            // Each column bound in the body: one only negated reads every node first, as `$n` does.
+            let body = outer.iter().fold(nonempty(body, "$n"), |body, v| nonempty(body, v));
+            self.rules.push(format!("{name}({}) :- {}.", args("$n"), body.join(", ")));
         }
-        name
+        format!("{name}({})", args(n))
     }
 
     /// The literals under which `m` holds at `n`.
@@ -133,31 +210,41 @@ impl Emitter {
                 self.approx.insert("supertype as its kinds".into());
                 let set = self.kindset(&st.kinds)?;
                 let bodies = self.kindsets[&set].iter().map(|k| vec![format!("node(_, $n, {}, _, _)", quote(k))]).collect();
-                let r = self.relation(bodies);
-                vec![format!("{r}({n})")]
+                vec![self.relation(bodies, 0, n)]
             }
             AstMatcher::Pattern(p) => self.pattern(p, n)?,
             AstMatcher::Constrained(c) => {
                 let mut body = self.body(&c.rule, n)?;
                 for (name, rule) in &c.constraints {
                     let Some(v) = self.captures.get(name).cloned() else { return gap(format!("constraint on ${name}, not captured")) };
-                    body.extend(self.body(rule, &v)?);
+                    body.extend(self.at(rule, &v)?);
                 }
                 body
             }
             AstMatcher::Regex(r) => self.regex(r.as_str(), n, None)?,
             AstMatcher::All(ms) => {
                 let kinds = kinds(m, 0);
-                let mut body = Vec::new();
-                for t in ms {
-                    match t {
-                        AstMatcher::Regex(r) => body.extend(self.regex(r.as_str(), n, kinds.as_ref())?),
-                        _ => body.extend(self.body(t, n)?),
+                // Every sub-rule is at this node: what they say of its kinds holds for each.
+                let here = match (self.here.clone(), kinds.clone()) {
+                    (Some(a), Some(b)) => Some(a.intersection(&b).copied().collect()),
+                    (a, b) => a.or(b),
+                };
+                let saved = std::mem::replace(&mut self.here, here);
+                let body = (|| {
+                    let mut body = Vec::new();
+                    for t in ms {
+                        match t {
+                            AstMatcher::Regex(r) => body.extend(self.regex(r.as_str(), n, kinds.as_ref())?),
+                            _ => body.extend(self.body(t, n)?),
+                        }
                     }
-                }
-                body
+                    Ok(body)
+                })();
+                self.here = saved;
+                body?
             }
             AstMatcher::Any(ms) => {
+                let mark = self.next;
                 let bodies = ms.iter().map(|t| self.scoped(|e| e.body(t, "$n"))).collect::<Res<Vec<_>>>()?;
                 if bodies.iter().any(Vec::is_empty) {
                     return Ok(Vec::new());
@@ -165,20 +252,20 @@ impl Emitter {
                 if bodies.len() == 1 {
                     return Ok(rename(&bodies[0], "$n", n));
                 }
-                let r = self.relation(bodies);
-                vec![format!("{r}({n})")]
+                vec![self.relation(bodies, mark, n)]
             }
             AstMatcher::Not(t) => {
+                let mark = self.next;
                 let body = self.scoped(|e| e.body(t, "$n"))?;
                 if body.is_empty() {
                     return Ok(self.never(n));
                 }
                 // One positive literal over `$n` alone is negated as written.
                 let r = match body.as_slice() {
-                    [one] if single(one) && !one.contains("$v") => one.clone(),
-                    _ => format!("{}($n)", self.relation(vec![body])),
+                    [one] if single(one) && !one.contains("$v") => rename(&[one.clone()], "$n", n).remove(0),
+                    _ => self.relation(vec![body], mark, n),
                 };
-                vec![format!("!{}", rename(&[r], "$n", n)[0])]
+                vec![format!("!{r}")]
             }
             AstMatcher::Inside(related, stop) => self.walk(Axis::Inside, None, related.rule(), stop, n)?,
             AstMatcher::Has(related, stop) => self.walk(Axis::Has, None, related.rule(), stop, n)?,
@@ -196,7 +283,13 @@ impl Emitter {
                         let name = self.fresh("u");
                         self.utils.insert(key, name.clone());
                         self.decls.insert(name.clone(), "n: node".to_owned());
-                        let body = u.with_target(|rule| self.scoped(|e| e.body(rule, "$n"))).ok_or_else(|| Gap("utility unavailable".into()))??;
+                        // The relation is every caller's: it knows of the node only what its own rule says, and
+                        // reads no metavariable a caller bound.
+                        let mark = self.next;
+                        let body = u.with_target(|rule| self.scoped(|e| e.at(rule, "$n"))).ok_or_else(|| Gap("utility unavailable".into()))??;
+                        if !outer_vars(std::slice::from_ref(&body), mark).is_empty() {
+                            return gap("a utility reading a metavariable bound outside it");
+                        }
                         self.rules.push(format!("{name}($n) :- {}.", nonempty(body, "$n").join(", ")));
                         name
                     }
@@ -240,6 +333,21 @@ impl Emitter {
         out
     }
 
+    /// The literals under which `m` holds at `n`, a node other than the one being converted: what is known of its
+    /// kinds is what `m` says.
+    fn at(&mut self, m: &AstMatcher, n: &str) -> Res<Body> {
+        let saved = std::mem::replace(&mut self.here, kinds(m, 0));
+        let body = self.body(m, n);
+        self.here = saved;
+        body
+    }
+
+    /// Every kind a node with children can have: the named kinds, comments left out (they are not in `node`).
+    fn every_kind(&self) -> BTreeSet<u16> {
+        let count = u16::try_from(self.kinds.kind_count()).unwrap_or(u16::MAX);
+        (0..count).filter(|&k| self.kinds.kind_is_named(k) && self.kinds.kind_name(k).is_some_and(|name| name != "comment")).collect()
+    }
+
     /// A text condition (`regex`, `notRegex`) over the text in `s`.
     pub(in crate::code_rule_dsl) fn condition(&mut self, c: &crate::code_rule_dsl::language::TextCondition, s: &str) -> Res<Body> {
         let mut body = Vec::new();
@@ -276,7 +384,15 @@ impl Emitter {
                 None => body.push(format!("child({n}, {m}, _)")),
             },
             (Axis::Inside | Axis::Has, StopBy::End | StopBy::Rule(_)) => {
-                let Some(ks) = kinds(rule, 0) else { return gap(format!("{axis:?} to a rule of any kind")) };
+                // `inside` filters the ancestor by its rule's kinds; `has` filters the ancestor too, the node here,
+                // by what the rules around it say of its kinds, or by none.
+                let ks = match axis {
+                    Axis::Inside => match kinds(rule, 0) {
+                        Some(ks) => ks,
+                        None => return gap("Inside to a rule of any kind"),
+                    },
+                    _ => self.here.clone().unwrap_or_else(|| self.every_kind()),
+                };
                 let set = self.kindset(&ks)?;
                 let (low, high) = if axis == Axis::Inside { (n.to_owned(), m.clone()) } else { (m.clone(), n.to_owned()) };
                 // `inside` stopping at the first node of the same kinds is the nearest one (decision 0038): a
@@ -295,7 +411,11 @@ impl Emitter {
                 {
                     let Some(stops) = kinds(stop, 0) else { return gap("a stop rule of any kind") };
                     let stops = self.kindset(&stops)?;
-                    let is_stop = self.scoped(|e| e.body(stop, "$s"))?;
+                    let mark = self.next;
+                    let is_stop = self.scoped(|e| e.at(stop, "$s"))?;
+                    if !outer_vars(std::slice::from_ref(&is_stop), mark).is_empty() {
+                        return gap("a stop rule reading a metavariable bound outside it");
+                    }
                     let blocked = self.fresh("blocked");
                     self.decls.insert(blocked.clone(), "low: node, high: node".to_owned());
                     // A stop node strictly between: over `low`, under `high`.
@@ -331,7 +451,7 @@ impl Emitter {
         if matches!(axis, Axis::Has | Axis::Inside) && matches!(stop, StopBy::Neighbor) {
             self.approx.insert("neighbours among named children".into());
         }
-        body.extend(self.body(rule, &m)?);
+        body.extend(self.at(rule, &m)?);
         Ok(body)
     }
 
@@ -467,13 +587,11 @@ impl Emitter {
             body.extend(self.tests(source, &s, &["name(_, $s)"], Text::Name)?);
             return Ok(body);
         }
-        // A module's text: read as the names in its file, where the regex only looks for names.
-        if names.as_ref().is_some_and(|k| k.len() == 1 && k.contains("module")) && module_names(&hir) {
-            self.approx.insert("a module's text read as its file's names".into());
-            let (d, m, s) = (self.var(), self.var(), self.var());
-            let mut body = vec![format!("node({d}, {n}, _, _, _)"), format!("node({d}, {m}, _, _, _)"), format!("name({m}, {s})")];
-            body.extend(self.tests_hir(&hir, source, &s, &["name(_, $s)"], Text::Name)?);
-            return Ok(body);
+        // A module's text, exactly: W's regex searches the file's text (from its first token, comments and strings
+        // included), which `node_text` holds; `rx` is that search.
+        if names.as_ref().is_some_and(|k| k.len() == 1 && k.contains("module")) {
+            let s = self.var();
+            return Ok(vec![format!("node_text({n}, {s})"), format!("@rx({s}, {})", quote(source))]);
         }
         if !text_kinds {
             return gap(format!("a regex on the text of {} ({source})", names.map_or("any node".to_owned(), |k| k.into_iter().collect::<Vec<_>>().join("|"))));
@@ -671,7 +789,9 @@ impl Emitter {
     }
 }
 
-/// The base relations every converted program reads.
+/// The base relations every converted program reads, and those the corpus runner binds for an authored file beyond
+/// them (core.rr's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not; and W's
+/// Python reference graph (`logic::plan::corpus::references`).
 pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
@@ -685,9 +805,38 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl op(n: node, s: sym)
 .decl line(n: node, l: int)
 .decl syntax_error(d: int)
+.decl source(d: int, sp: node)
+.decl src_line(d: int, l: int, sp: node)
+.decl src_line_lf(d: int, l: int, sp: node)
+.decl tape_line(d: int, l: int, sp: node)
+.decl line_count(d: int, k: int)
+.decl end_line(n: node, l: int)
+.decl col(n: node, c: int)
+.decl node_text(n: node, s: sym)
+.decl pkg(d: int, p: sym)
+.decl docof(n: node, d: int)
+.decl op_at(n: node, i: int, s: sym)
+.decl prev_token(n: node, s: sym)
+.decl token(p: node, i: int, s: sym, start: int, end: int)
+.decl visit_index(n: node, i: int)
+.decl path_part(d: int, s: sym)
+.decl file_name(d: int, s: sym)
+.decl value(n: node, v: sym)
+.decl static_value(n: node, v: sym)
+.decl value_type_of(n: node, t: sym)
+.decl value_type(v: sym, t: sym)
+.decl comment(n: node, s: sym)
+.decl fstring_piece(n: node, i: int, kind: sym, v: sym)
+.decl fstring_template(n: node, marker: sym, v: sym)
+.decl cpython_syntax_error(d: int, l: int, msg: sym)
+.decl string_annotation(s: node)
+.decl parsed(s: node, grammar: sym, root: node)
+.decl literal_json(n: node, v: sym)
+.decl reference_edge(src: node, dst: node, via: sym)
+.decl reference_open(n: node)
 ";
 
-const BASE_RELATIONS: [&str; 12] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error"];
+const BASE_RELATIONS: [&str; 13] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error", "node_text"];
 
 /// Python's keywords: tokens, never names.
 const KEYWORDS: [&str; 35] = [
@@ -699,6 +848,229 @@ const KEYWORDS: [&str; 35] = [
 /// The strings a path or module condition tests.
 const DOC: [&str; 2] = ["doc(_, $s, _)", "doc(_, _, $s)"];
 
+/// `prog` less what its outputs do not reach: the rules (`front::prune`), then the declarations, inputs, facts and
+/// kind sets no rule left reads or derives.
+pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
+    let mut prog = front::prune(prog);
+    let mut used: BTreeSet<String> = prog.outputs.iter().cloned().collect();
+    let mut sets = BTreeSet::new();
+    for r in &prog.rules {
+        used.insert(r.head.rel.clone());
+        for l in &r.body {
+            if let Some(a) = l.atom() {
+                used.insert(a.rel.clone());
+                if let Some(set) = a.rel.strip_prefix(front::AXIS) {
+                    sets.insert(set.to_owned());
+                }
+            }
+            if let Literal::Nearest { kindset, .. } = l {
+                sets.insert(kindset.clone());
+            }
+        }
+    }
+    prog.decls.retain(|r, _| used.contains(r));
+    prog.inputs.retain(|r| used.contains(r));
+    prog.facts.retain(|r, _| used.contains(r));
+    prog.lattice.retain(|r, _| used.contains(r));
+    prog.kindsets.retain(|k, _| sets.contains(k));
+    prog
+}
+
+/// Where a clause's rules come from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::code_rule_dsl) enum Origin {
+    /// The converter's, from the clause's matcher.
+    Converted,
+    /// The rule's authored file (the overlay).
+    Authored,
+}
+
+/// The columns of `violation(rule, clause, code, path, line)`.
+const VIOLATION: [&str; 5] = ["sym", "sym", "sym", "sym", "int"];
+
+/// What the converter gives an authored file to read: the scope, the report gate and the options.
+pub(in crate::code_rule_dsl) use super::plan::corpus::GIVEN;
+
+/// The column types of what the converter gives (`GIVEN`), where `rel` is one.
+fn given_types(rel: &str) -> Option<Vec<String>> {
+    let types: &[&str] = match rel {
+        "in_scope" | "out_scope" | "report_when_gt" => &["int"],
+        "option_on" => &["sym"],
+        "option_item" => &["sym", "int", "sym"],
+        "option_value" => &["sym", "sym"],
+        "option_json" => &["sym", "sym", "sym"],
+        _ => return None,
+    };
+    Some(types.iter().map(|t| (*t).to_owned()).collect())
+}
+
+/// A base relation's column types (`BASE`), where `rel` is one.
+fn base_types(rel: &str) -> Option<Vec<String>> {
+    BASE.lines().find_map(|line| {
+        let columns = line.strip_prefix(".decl ")?.strip_prefix(rel)?.strip_prefix('(')?.strip_suffix(')')?;
+        Some(columns.split(", ").map(|c| c.split(": ").nth(1).unwrap_or_default().to_owned()).collect())
+    })
+}
+
+/// The names the converter makes: an authored file declares none of them, but for reading the scope.
+fn converter_name(rel: &str) -> bool {
+    let numbered = |stem: &str| rel.strip_prefix(stem).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    ["m", "u", "t", "k", "blocked"].into_iter().any(numbered)
+        || ["never"].contains(&rel)
+        || GIVEN.contains(&rel)
+        || ["strtest_", "matchall_", "matchgroup_", "magic_", "done_", "inside_", "nearest_"].iter().any(|p| rel.starts_with(p))
+}
+
+fn types(columns: &[(String, String)]) -> Vec<&str> {
+    columns.iter().map(|(_, t)| t.as_str()).collect()
+}
+
+/// Column types in `.rr` spellings, for the errors.
+fn spelled<'a>(types: impl IntoIterator<Item = &'a str>) -> String {
+    let spell = |t: &'a str| match t {
+        "int" => "number",
+        "sym" => "symbol",
+        other => other,
+    };
+    types.into_iter().map(spell).collect::<Vec<_>>().join(", ")
+}
+
+/// The rule and clause a `violation` rule derives, where both are constants.
+fn violation_of(r: &front::Rule) -> Option<(&str, &str)> {
+    match r.head.args.as_slice() {
+        [Term::Str(rule), Term::Str(clause), ..] if r.head.rel == "violation" => Some((rule, clause)),
+        _ => None,
+    }
+}
+
+fn push_new(list: &mut Vec<String>, items: impl IntoIterator<Item = String>) {
+    for item in items {
+        if !list.contains(&item) {
+            list.push(item);
+        }
+    }
+}
+
+/// The authored overlay (module doc): rule `rule`'s authored program over its converted one. `clauses`: the policy's
+/// clause ids; `keep`: the clauses this run keeps (the replay's, per event). The merged program, with only what
+/// `violation` reaches, and the clauses the authored program derives (kept or not).
+pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Program, rule: &str, clauses: &[String], keep: &dyn Fn(&str) -> bool) -> Result<(Program, BTreeSet<String>), String> {
+    let err = |m: String| Err(format!("authored {rule}: {m}"));
+    if !authored.policies.is_empty() || !authored.settings.is_empty() {
+        return err("`.policy` and setting directives are the policy's, not the overlay's".into());
+    }
+    if let Some(o) = authored.outputs.iter().find(|o| *o != "violation") {
+        return err(format!(".output {o}: the only output is violation"));
+    }
+    let axis = |rel: &str| rel.strip_prefix(front::AXIS).is_some_and(|set| authored.kindsets.contains_key(set));
+    // Declarations: the base relations, `violation` and the scope as the converter declares them, and no name the
+    // converter makes.
+    for (name, columns) in &authored.decls {
+        if axis(name) {
+            continue;
+        }
+        if matches!(name.as_str(), "match_all" | "match_group") {
+            return err(format!("{name} is a built-in constraint (match_all(\"re\", sp, m), match_group(\"re\", sp, m, g, gsp)): it is not declared"));
+        }
+        let want = match name.as_str() {
+            "violation" => Some(VIOLATION.map(str::to_owned).to_vec()),
+            _ => given_types(name).or_else(|| base_types(name)),
+        };
+        match want {
+            Some(want) if types(columns) != want => {
+                return err(format!("{name}({}) is declared with other columns than the converter's ({})", spelled(types(columns)), spelled(want.iter().map(String::as_str))));
+            }
+            None if converter_name(name) => {
+                return err(format!("{name} is a name the converter makes (m, u, t, k or blocked and digits; never, strtest_*, matchall_*, magic_*, done_*, inside_*, nearest_*): name it after its clause"));
+            }
+            _ => {}
+        }
+    }
+    if let Some(set) = authored.kindsets.keys().find(|k| converter_name(k) || base_types(k).is_some()) {
+        return err(format!("kind set {set} has a name the converter makes: name it after its clause"));
+    }
+    // What it derives: never a base relation or the scope; each relation declared, each one read given by
+    // something; each `violation` at a constant clause of this rule.
+    let derived: BTreeSet<&str> = authored.rules.iter().map(|r| r.head.rel.as_str()).chain(authored.facts.keys().map(String::as_str)).collect();
+    if let Some(rel) = derived.iter().find(|r| base_types(r).is_some() || GIVEN.contains(*r)) {
+        return err(format!("{rel} is derived here, but the corpus or the converter gives it: read it only"));
+    }
+    if let Some(rel) = derived.iter().find(|r| !authored.decls.contains_key(**r)) {
+        return err(format!("{rel} is derived and not declared"));
+    }
+    let mut authored_clauses = BTreeSet::new();
+    for r in &authored.rules {
+        // `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are built-ins, which the runner makes
+        // relations of (`strings::as_relations`).
+        for a in r.body.iter().filter_map(Literal::atom).filter(|a| !matches!(a.rel.as_str(), "match_all" | "match_group")) {
+            let rel = a.rel.as_str();
+            if !authored.decls.contains_key(rel) {
+                return err(format!("{rel} is read and not declared"));
+            }
+            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel)) {
+                return err(format!("{rel} is read, and nothing derives or inputs it"));
+            }
+        }
+        if r.head.rel == "violation" {
+            let Some((of, clause)) = violation_of(r) else { return err(format!("a violation whose rule and clause are not constants: {r}")) };
+            if of != rule {
+                return err(format!("a violation of rule {of:?}"));
+            }
+            if !clauses.iter().any(|c| c == clause) {
+                return err(format!("a violation of clause {clause:?}, which the policy has not"));
+            }
+            authored_clauses.insert(clause.to_owned());
+        }
+    }
+    // The converter's rules for the authored clauses give way; nothing else may be derived by both.
+    converted.rules.retain(|r| violation_of(r).is_none_or(|(_, c)| !authored_clauses.contains(c)));
+    let both = {
+        let defined: BTreeSet<&str> = converted.rules.iter().map(|r| r.head.rel.as_str()).chain(converted.facts.keys().map(String::as_str)).collect();
+        derived.iter().find(|r| **r != "violation" && defined.contains(**r)).map(|r| (*r).to_owned())
+    };
+    if let Some(rel) = both {
+        return err(format!("{rel} is derived by both the converter and the overlay"));
+    }
+    // The base relations it reads are inputs, declared `.input` or not.
+    let reads_base: Vec<String> = authored.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).filter(|r| base_types(r).is_some()).collect();
+    let Program { decls, lattice, facts, rules, inputs, outputs, kindsets, demand, .. } = authored;
+    for (name, columns) in decls {
+        match converted.decls.get(&name) {
+            Some(c) if types(c) != types(&columns) => {
+                return err(format!("{name} is declared as ({}) here and as ({}) by the converter", spelled(types(&columns)), spelled(types(c))));
+            }
+            Some(_) => {}
+            None => {
+                converted.decls.insert(name, columns);
+            }
+        }
+    }
+    for (name, kinds) in kindsets {
+        match converted.kindsets.get(&name) {
+            Some(k) if *k != kinds => return err(format!("kind set {name} has other kinds than the converter's")),
+            Some(_) => {}
+            None => {
+                converted.kindsets.insert(name, kinds);
+            }
+        }
+    }
+    for (name, l) in lattice {
+        match converted.lattice.get(&name) {
+            Some(c) if *c != l => return err(format!("{name}'s lattice differs from the converter's")),
+            _ => {
+                converted.lattice.insert(name, l);
+            }
+        }
+    }
+    for (rel, rows) in facts {
+        converted.facts.entry(rel).or_default().extend(rows);
+    }
+    push_new(&mut converted.inputs, inputs.into_iter().chain(reads_base));
+    push_new(&mut converted.outputs, outputs.into_iter().chain(["violation".to_owned()]));
+    push_new(&mut converted.demand, demand);
+    converted.rules.extend(rules.into_iter().filter(|r| violation_of(r).is_none_or(|(_, c)| keep(c))));
+    Ok((reachable(converted), authored_clauses))
+}
 
 fn quote(s: &str) -> String {
     serde_json::to_string(s).expect("a string")
@@ -778,6 +1150,24 @@ fn single(literal: &str) -> bool {
 
 fn rename(body: &[String], from: &str, to: &str) -> Body {
     body.iter().map(|l| replace_var(l, from, to)).collect()
+}
+
+/// The variables of `bodies` made before `mark` (`Emitter::fresh` numbers them in order): those of the rule around.
+fn outer_vars(bodies: &[Body], mark: usize) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    for literal in bodies.iter().flatten() {
+        let mut rest = literal.as_str();
+        while let Some(at) = rest.find("$v") {
+            let digits: String = rest[at + 2..].chars().take_while(char::is_ascii_digit).collect();
+            rest = &rest[at + 2 + digits.len()..];
+            if let Ok(k) = digits.parse::<usize>()
+                && k <= mark
+            {
+                out.insert(k);
+            }
+        }
+    }
+    out.into_iter().map(|k| format!("$v{k}")).collect()
 }
 
 /// Replaces the variable `from` (whole names only) in a literal.
@@ -986,16 +1376,6 @@ pub(in crate::code_rule_dsl) enum Text {
     Path,
     /// A string's content: any characters.
     Content,
-}
-
-/// Whether a regex only looks for names: literal alternatives of word characters and dots.
-fn module_names(hir: &Hir) -> bool {
-    let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
-    match shape(hir) {
-        Some(Shape::Names(set)) => set.iter().all(|w| word(w)),
-        Some(Shape::Tests(tests)) => tests.iter().all(|(_, w)| word(w)),
-        _ => false,
-    }
 }
 
 /// `$s` is one of `set`: `$s = "a"`, or `$s in {"a", "b"}`.

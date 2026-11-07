@@ -1,41 +1,78 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl pod_fdef(kind: symbol)
+pod_fdef("function_definition").
+.decl removed_surface_imports(kind: symbol)
+removed_surface_imports("import_statement"). removed_surface_imports("import_from_statement").
 .decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl domain_helper_allowed(s: symbol)
+.decl domain_helper_allowed_name(f: node)
+.decl duplicate_enum_first(d: number, f: node, e: symbol, m: symbol, s: number)
+.decl duplicate_enum_start(d: number, f: node, e: symbol, m: symbol, s: number)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, child, field, text, name, op, line, syntax_error
-.decl k0(kind: symbol)
-k0("function_definition").
-.decl k1(kind: symbol)
-k1("module").
-.decl k2(kind: symbol)
-k2("import_from_statement"). k2("import_statement").
 .decl in_scope(d: number)
-.decl m14(n: node)
-.decl m19(n: node)
-.decl m32(n: node)
-.decl m40(n: node)
-.decl m41(n: node)
-.decl m43(n: node)
-.decl m45(n: node)
-.decl m47(n: node)
-.decl m49(n: node)
-.decl m5(n: node)
-.decl m51(n: node)
-.decl m53(n: node)
-.decl m55(n: node)
-.decl m56(n: node)
-.decl m65(n: node)
-.decl m73(n: node)
-.decl m79(n: node)
-.decl m87(n: node)
-.decl m99(n: node)
+.decl line(n: node, l: number)
+.decl multi_enum_builder_fn(f: node)
+.decl multi_enum_builder_row(d: number, f: node, c: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op_at(n: node, i: number, s: symbol)
 .decl out_scope(d: number)
+.decl payload_aliases_alias(f: node, name: symbol, since: number)
+.decl payload_aliases_assign(d: number, a: node, f: node, t: symbol, s: number, v: node)
+.decl payload_aliases_lp(q: node)
+.decl payload_aliases_owned_probe(d: number, n: node, f: node, r: symbol, s: number)
+.decl payload_aliases_payload(a: node)
+.decl payload_aliases_probe(d: number, n: node, r: symbol)
+.decl pod_binary_cmp(c: node, s: symbol)
+.decl pod_builder_fn(f: node)
+.decl pod_doc(d: number)
+.decl pod_enum_attr(a: node, e: symbol, m: symbol)
+.decl pod_enum_cmp(d: number, c: node, f: node, e: symbol, m: symbol)
+.decl pod_enum_name(s: symbol)
+.decl pod_first_enum(c: node)
+.decl pod_is_enum_attr(a: node)
+.decl pod_key_membership(d: number, c: node)
+.decl pod_keys_call(n: node)
+.decl pod_kwargs_container(n: node)
+.decl pod_materializer_fn(f: node)
+.decl pod_nth(p: node, x: node, k: number)
+.decl pod_nth_parent(p: node)
+.decl pod_plain_string(n: node)
+.decl removed_base_name(n: node)
+.decl removed_surface_excluded(n: node)
+.decl removed_surface_hit(n: node)
+.decl removed_surface_name(s: symbol)
+.decl rr_agg1(p: node, s: number, t: symbol, xs: number)
+.decl rr_ctx2(xs: number)
+.decl strprefix(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, line, syntax_error, node_text, strprefix, op_at, token, value_type_of
+.output violation
+domain_helper_allowed("_materialize_assertion_from_row").
+domain_helper_allowed("_materialize_by_post_op_behavior").
+domain_helper_allowed("_materialize_hydrate_dict_many").
+domain_helper_allowed("_materialize_hydrate_dict_one").
+domain_helper_allowed("_materialize_scalar_column").
+domain_helper_allowed("_materialize_scalar_column_list").
+domain_helper_allowed("_materialize_scalar_row_value").
+domain_helper_allowed("_materialize_scalar_tuple").
+domain_helper_allowed("_materialize_terminal_array").
+domain_helper_allowed("_materialize_terminal_object").
+domain_helper_allowed("_materialize_terminal_scalar").
+pod_enum_name("ResultMaterializationKind").
+pod_enum_name("RuntimeBuilderKind").
+pod_enum_name("RuntimeBuilderName").
+removed_surface_name("ResultMaterializationKind").
+removed_surface_name("RuntimeBuilderKind").
+removed_surface_name("RuntimeBuilderName").
+removed_surface_name("RuntimeBuilderSpec").
+removed_surface_name("_RUNTIME_BUILDER_NAMES_BY_KIND").
+removed_surface_name("materialize_runtime_builder").
+removed_surface_name("runtime_builder_post_op").
 in_scope(d) :- doc(d, p, _), glob("l2070_batching/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l2060_query_builder/**/*.py", p).
@@ -52,36 +89,64 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
-m5(n) :- node(_, n, "comparison_operator", _, _), op(n, "=="), child(n, v1, 0), child(n, v2, 1), !child(n, _, 2).
-m5(n) :- node(_, n, "comparison_operator", _, _), op(n, "is"), child(n, v3, 0), child(n, v4, 1), !child(n, _, 2).
-m14(n) :- child(n, v10, _), node(_, v10, "attribute", _, _), field(v10, "object", v11), node(_, v11, "identifier", _, _), text(v11, v12), (v12 = "ResultMaterializationKind" ; v12 = "RuntimeBuilderKind" ; v12 = "RuntimeBuilderName"), field(v10, "attribute", v13), child(_, v10, 0).
-m19(n) :- child(n, v6, _), node(_, v6, "attribute", _, _), field(v6, "object", v7), node(_, v7, "identifier", _, _), text(v7, v8), (v8 = "ResultMaterializationKind" ; v8 = "RuntimeBuilderKind" ; v8 = "RuntimeBuilderName"), field(v6, "attribute", v9), child(_, v6, 0).
-m19(n) :- !m14(n), child(n, v15, _), node(_, v15, "attribute", _, _), field(v15, "object", v16), node(_, v16, "identifier", _, _), text(v16, v17), (v17 = "ResultMaterializationKind" ; v17 = "RuntimeBuilderKind" ; v17 = "RuntimeBuilderName"), field(v15, "attribute", v18), child(_, v15, 1).
-m32(n) :- node(_, n, "module", _, _), node(v25, n, _, _, _), node(v25, v26, _, _, _), name(v26, v27), (contains("ResultMaterializationKind", v27) ; contains("ResultRowMaterializer", v27) ; contains("RuntimeBuilderKind", v27) ; contains("RuntimeBuilderName", v27) ; contains("RuntimeBuilderSpec", v27) ; contains("_RUNTIME_BUILDER_NAMES_BY_KIND", v27) ; contains("_materialize_", v27) ; contains("literal_payload", v27) ; contains("materialize_runtime_builder", v27) ; contains("row_materializer", v27) ; contains("runtime_builder_post_op", v27)).
-m32(n) :- inside(n, v28, k1), node(_, v28, "module", _, _), node(v29, v28, _, _, _), node(v29, v30, _, _, _), name(v30, v31), (contains("ResultMaterializationKind", v31) ; contains("ResultRowMaterializer", v31) ; contains("RuntimeBuilderKind", v31) ; contains("RuntimeBuilderName", v31) ; contains("RuntimeBuilderSpec", v31) ; contains("_RUNTIME_BUILDER_NAMES_BY_KIND", v31) ; contains("_materialize_", v31) ; contains("literal_payload", v31) ; contains("materialize_runtime_builder", v31) ; contains("row_materializer", v31) ; contains("runtime_builder_post_op", v31)).
-m40(n) :- node(_, n, "import_statement", _, _).
-m40(n) :- node(_, n, "import_from_statement", _, _).
-m41(n) :- inside(n, v39, k2), m40(v39).
-m43(n) :- field(v42, "attribute", n), node(_, v42, "attribute", _, _).
-m45(n) :- field(v44, "name", n), node(_, v44, "keyword_argument", _, _).
-m47(n) :- field(v46, "name", n), node(_, v46, "function_definition", _, _).
-m49(n) :- field(v48, "name", n), node(_, v48, "class_definition", _, _).
-m51(n) :- field(v50, "name", n), node(_, v50, "default_parameter", _, _).
-m53(n) :- field(v52, "name", n), node(_, v52, "typed_default_parameter", _, _).
-m55(n) :- node(_, n, "parameters", _, _).
-m55(n) :- node(_, n, "list_splat_pattern", _, _).
-m55(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m56(n) :- child(v54, n, _), m55(v54).
-m65(n) :- field(n, "name", v63), node(_, v63, "identifier", _, _), text(v63, v64), (v64 = "_materialize_assertion_from_row" ; v64 = "_materialize_by_post_op_behavior" ; v64 = "_materialize_hydrate_dict_many" ; v64 = "_materialize_hydrate_dict_one" ; v64 = "_materialize_scalar_column" ; v64 = "_materialize_scalar_column_list" ; v64 = "_materialize_scalar_row_value" ; v64 = "_materialize_scalar_tuple" ; v64 = "_materialize_terminal_array" ; v64 = "_materialize_terminal_object" ; v64 = "_materialize_terminal_scalar").
-m73(n) :- node(_, n, "module", _, _), node(v66, n, _, _, _), node(v66, v67, _, _, _), name(v67, v68), (contains("ResultMaterializationKind", v68) ; contains("ResultRowMaterializer", v68) ; contains("RuntimeBuilderKind", v68) ; contains("RuntimeBuilderName", v68) ; contains("RuntimeBuilderSpec", v68) ; contains("_RUNTIME_BUILDER_NAMES_BY_KIND", v68) ; contains("_materialize_", v68) ; contains("literal_payload", v68) ; contains("materialize_runtime_builder", v68) ; contains("row_materializer", v68) ; contains("runtime_builder_post_op", v68)).
-m73(n) :- inside(n, v69, k1), node(_, v69, "module", _, _), node(v70, v69, _, _, _), node(v70, v71, _, _, _), name(v71, v72), (contains("ResultMaterializationKind", v72) ; contains("ResultRowMaterializer", v72) ; contains("RuntimeBuilderKind", v72) ; contains("RuntimeBuilderName", v72) ; contains("RuntimeBuilderSpec", v72) ; contains("_RUNTIME_BUILDER_NAMES_BY_KIND", v72) ; contains("_materialize_", v72) ; contains("literal_payload", v72) ; contains("materialize_runtime_builder", v72) ; contains("row_materializer", v72) ; contains("runtime_builder_post_op", v72)).
-violation("data-layer-post-op-no-internal-dispatch", "domain-helper", "POSTOPDISPATCH006", p, l) :- node(_, n, "function_definition", _, _), node(v58, n, _, _, _), doc(v58, v59, _), v59 = "l2070_batching/post_op.py", field(n, "name", v60), name(v60, v62), prefix("_materialize_", v62), !m65(n), m73(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m79(n) :- node(_, n, "identifier", _, _), text(n, v76), v76 = "ResultRowMaterializer".
-m79(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v77), node(_, v77, "identifier", _, _), text(v77, v78), v78 = "ResultRowMaterializer".
-m87(n) :- node(_, n, "module", _, _), node(v80, n, _, _, _), node(v80, v81, _, _, _), name(v81, v82), (contains("ResultMaterializationKind", v82) ; contains("ResultRowMaterializer", v82) ; contains("RuntimeBuilderKind", v82) ; contains("RuntimeBuilderName", v82) ; contains("RuntimeBuilderSpec", v82) ; contains("_RUNTIME_BUILDER_NAMES_BY_KIND", v82) ; contains("_materialize_", v82) ; contains("literal_payload", v82) ; contains("materialize_runtime_builder", v82) ; contains("row_materializer", v82) ; contains("runtime_builder_post_op", v82)).
-m87(n) :- inside(n, v83, k1), node(_, v83, "module", _, _), node(v84, v83, _, _, _), node(v84, v85, _, _, _), name(v85, v86), (contains("ResultMaterializationKind", v86) ; contains("ResultRowMaterializer", v86) ; contains("RuntimeBuilderKind", v86) ; contains("RuntimeBuilderName", v86) ; contains("RuntimeBuilderSpec", v86) ; contains("_RUNTIME_BUILDER_NAMES_BY_KIND", v86) ; contains("_materialize_", v86) ; contains("literal_payload", v86) ; contains("materialize_runtime_builder", v86) ; contains("row_materializer", v86) ; contains("runtime_builder_post_op", v86)).
-violation("data-layer-post-op-no-internal-dispatch", "removed-base", "POSTOPDISPATCH008", p, l) :- node(_, n, "class_definition", _, _), field(n, "superclasses", v74), child(v74, v75, _), m79(v75), m87(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m99(n) :- node(_, n, "module", _, _), node(v92, n, _, _, _), node(v92, v93, _, _, _), name(v93, v94), (contains("ResultMaterializationKind", v94) ; contains("ResultRowMaterializer", v94) ; contains("RuntimeBuilderKind", v94) ; contains("RuntimeBuilderName", v94) ; contains("RuntimeBuilderSpec", v94) ; contains("_RUNTIME_BUILDER_NAMES_BY_KIND", v94) ; contains("_materialize_", v94) ; contains("literal_payload", v94) ; contains("materialize_runtime_builder", v94) ; contains("row_materializer", v94) ; contains("runtime_builder_post_op", v94)).
-m99(n) :- inside(n, v95, k1), node(_, v95, "module", _, _), node(v96, v95, _, _, _), node(v96, v97, _, _, _), name(v97, v98), (contains("ResultMaterializationKind", v98) ; contains("ResultRowMaterializer", v98) ; contains("RuntimeBuilderKind", v98) ; contains("RuntimeBuilderName", v98) ; contains("RuntimeBuilderSpec", v98) ; contains("_RUNTIME_BUILDER_NAMES_BY_KIND", v98) ; contains("_materialize_", v98) ; contains("literal_payload", v98) ; contains("materialize_runtime_builder", v98) ; contains("row_materializer", v98) ; contains("runtime_builder_post_op", v98)).
-violation("data-layer-post-op-no-internal-dispatch", "removed-keyword", "POSTOPDISPATCH009", p, l) :- node(_, n, "call", _, _), field(n, "arguments", v88), child(v88, v89, _), node(_, v89, "keyword_argument", _, _), field(v89, "name", v90), node(_, v90, "identifier", _, _), text(v90, v91), v91 = "row_materializer", m99(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation
+pod_doc(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), node_text(m, s), match("(?s:.*)(?:ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op)(?s:.*)", s).
+pod_binary_cmp(c, s) :- node(_, c, "comparison_operator", _, _), child(c, _, 0), child(c, _, 1), !child(c, _, 2), op_at(c, 0, s), !op_at(c, 1, _), (s = "==" ; s = "is" ; s = "in").
+pod_nth_parent(c) :- pod_binary_cmp(c, _).
+pod_nth_parent(a) :- field(c, "arguments", a), node(_, c, "call", _, _).
+rr_ctx2(xs) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _).
+rr_agg1(p, s, t, xs) :- rr_ctx2(xs), token(p, _, t, s, _), prefix("#", t), s < xs.
+pod_nth(p, x, k) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _), j = count : { rr_agg1(p, _, _, xs) }, k = @add(@add(i, 1), j).
+pod_enum_attr(a, e, m) :- node(_, a, "attribute", _, _), field(a, "object", o), node(_, o, "identifier", _, _), text(o, e), pod_enum_name(e), field(a, "attribute", x), text(x, m).
+pod_is_enum_attr(a) :- pod_enum_attr(a, _, _).
+pod_first_enum(c) :- pod_nth(c, a, 1), pod_is_enum_attr(a).
+pod_enum_cmp(d, c, f, e, m) :- pod_binary_cmp(c, s), (s = "==" ; s = "is"), pod_nth(c, a, 1), pod_enum_attr(a, e, m), nearest(c, f, pod_fdef), node(d, c, _, _, _), pod_doc(d).
+pod_enum_cmp(d, c, f, e, m) :- pod_binary_cmp(c, s), (s = "==" ; s = "is"), !pod_first_enum(c), pod_nth(c, a, 2), pod_enum_attr(a, e, m), nearest(c, f, pod_fdef), node(d, c, _, _, _), pod_doc(d).
+pod_builder_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, s), (s = "materialize_result" ; s = "materialize_runtime_builder").
+pod_builder_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, s), glob("materialize_*builder", s).
+pod_materializer_fn(f) :- pod_builder_fn(f).
+pod_materializer_fn(f) :- node(d, f, "function_definition", _, _), doc(d, "l2070_batching/post_op.py", _), field(f, "name", x), text(x, s), prefix("_materialize_", s).
+pod_plain_string(n) :- node(_, n, "string", _, _), strprefix(n, p), match("[ru]*", p), value_type_of(n, "str").
+pod_keys_call(n) :- node(_, n, "call", _, _), field(n, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", x), node(_, x, "identifier", _, _), text(x, "keys").
+pod_kwargs_container(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "kwargs" ; s = "literal_kwargs").
+pod_kwargs_container(n) :- pod_keys_call(n).
+pod_key_membership(d, c) :- pod_binary_cmp(c, "in"), pod_nth(c, k, 1), pod_plain_string(k), pod_nth(c, x, 2), pod_kwargs_container(x), nearest(c, f, pod_fdef), pod_materializer_fn(f), node(d, c, _, _, _), pod_doc(d).
+duplicate_enum_start(d, f, e, m, s) :- pod_enum_cmp(d, c, f, e, m), node(d, c, _, s, _).
+duplicate_enum_first(d, f, e, m, s) :- duplicate_enum_start(d, f, e, m, _), k = count : { duplicate_enum_start(d, f, e, m, _) }, k > 1, s = min t : { duplicate_enum_start(d, f, e, m, t) }.
+violation("data-layer-post-op-no-internal-dispatch", "duplicate-enum", "POSTOPDISPATCH001", p, l) :- duplicate_enum_first(d, f, e, m, s), pod_enum_cmp(d, c, f, e, m), node(d, c, _, s, _), doc(d, p, _), line(c, l).
+violation("data-layer-post-op-no-internal-dispatch", "builder-name", "POSTOPDISPATCH002", p, l) :- pod_enum_cmp(d, c, f, "RuntimeBuilderName", _), pod_builder_fn(f), doc(d, p, _), line(c, l).
+violation("data-layer-post-op-no-internal-dispatch", "literal-kwargs", "POSTOPDISPATCH003", p, l) :- pod_key_membership(d, c), doc(d, p, _), line(c, l).
+multi_enum_builder_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s), glob("materialize_*builder", s).
+multi_enum_builder_row(d, f, c) :- pod_enum_cmp(d, c, f, _, _), multi_enum_builder_fn(f).
+violation("data-layer-post-op-no-internal-dispatch", "multi-enum-builder", "POSTOPDISPATCH004", p, l) :- multi_enum_builder_row(d, f, _), k = count : { multi_enum_builder_row(d, f, _) }, k > 1, doc(d, p, _), line(f, l).
+removed_surface_excluded(n) :- inside(n, _, removed_surface_imports).
+removed_surface_excluded(n) :- field(q, "attribute", n), node(_, q, "attribute", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "keyword_argument", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "function_definition", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "class_definition", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "default_parameter", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "typed_default_parameter", _, _).
+removed_surface_excluded(n) :- child(q, n, _), node(_, q, "parameters", _, _).
+removed_surface_excluded(n) :- child(q, n, _), node(_, q, "list_splat_pattern", _, _).
+removed_surface_excluded(n) :- child(q, n, _), node(_, q, "dictionary_splat_pattern", _, _).
+removed_surface_excluded(n) :- child(q, n, 0), node(_, q, "typed_parameter", _, _).
+removed_surface_hit(n) :- node(_, n, "identifier", _, _), text(n, s), removed_surface_name(s), !removed_surface_excluded(n).
+removed_surface_hit(n) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, s), removed_surface_name(s).
+violation("data-layer-post-op-no-internal-dispatch", "removed-surface", "POSTOPDISPATCH005", p, l) :- removed_surface_hit(n), node(d, n, _, _, _), pod_doc(d), doc(d, p, _), line(n, l).
+domain_helper_allowed_name(f) :- field(f, "name", x), node(_, x, "identifier", _, _), text(x, s), domain_helper_allowed(s).
+violation("data-layer-post-op-no-internal-dispatch", "domain-helper", "POSTOPDISPATCH006", p, l) :- node(d, f, "function_definition", _, _), doc(d, "l2070_batching/post_op.py", _), field(f, "name", x), text(x, s), prefix("_materialize_", s), !domain_helper_allowed_name(f), pod_doc(d), doc(d, p, _), line(f, l).
+payload_aliases_lp(q) :- node(_, q, "attribute", _, _), field(q, "attribute", x), node(_, x, "identifier", _, _), text(x, "literal_payload").
+payload_aliases_assign(d, a, f, t, s, v) :- node(d, a, "assignment", s, _), pod_doc(d), field(a, "left", x), node(_, x, "identifier", _, _), text(x, t), field(a, "right", v), nearest(a, f, pod_fdef).
+payload_aliases_payload(a) :- payload_aliases_assign(d, a, _, _, _, v), node(d, v, _, vs, ve), payload_aliases_lp(q), node(d, q, _, qs, qe), vs <= qs, qe <= ve.
+payload_aliases_alias(f, "literal_payload", -1) :- node(d, f, "function_definition", _, _), pod_doc(d).
+payload_aliases_alias(f, t, s) :- payload_aliases_assign(_, a, f, t, s, _), payload_aliases_payload(a).
+payload_aliases_alias(f, t, s) :- payload_aliases_assign(_, _, f, t, s, v), node(_, v, "identifier", _, _), text(v, w), payload_aliases_alias(f, w, s0), s0 <= s.
+payload_aliases_probe(d, n, r) :- node(d, n, "call", _, _), field(n, "function", g), node(_, g, "attribute", _, _), field(g, "object", o), node(_, o, "identifier", _, _), text(o, r), field(g, "attribute", x), node(_, x, "identifier", _, _), text(x, "get"), field(n, "arguments", args), pod_nth(args, k, 1), pod_plain_string(k).
+payload_aliases_probe(d, n, r) :- node(d, n, "subscript", _, _), field(n, "value", o), node(_, o, "identifier", _, _), text(o, r), field(n, "subscript", k), pod_plain_string(k).
+payload_aliases_probe(d, n, r) :- pod_binary_cmp(n, "in"), pod_nth(n, k, 1), pod_plain_string(k), pod_nth(n, o, 2), node(_, o, "identifier", _, _), text(o, r), node(d, n, _, _, _).
+payload_aliases_owned_probe(d, n, f, r, s) :- payload_aliases_probe(d, n, r), pod_doc(d), nearest(n, f, pod_fdef), pod_materializer_fn(f), node(d, n, _, s, _).
+violation("data-layer-post-op-no-internal-dispatch", "payload-aliases", "POSTOPDISPATCH007", p, l) :- payload_aliases_owned_probe(d, n, f, r, s), payload_aliases_alias(f, r, s0), s0 <= s, doc(d, p, _), line(n, l).
+violation("data-layer-post-op-no-internal-dispatch", "payload-aliases", "POSTOPDISPATCH007", p, l) :- pod_key_membership(d, c), doc(d, p, _), line(c, l).
+removed_base_name(n) :- node(_, n, "identifier", _, _), text(n, "ResultRowMaterializer").
+removed_base_name(n) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, "ResultRowMaterializer").
+violation("data-layer-post-op-no-internal-dispatch", "removed-base", "POSTOPDISPATCH008", p, l) :- node(d, c, "class_definition", _, _), field(c, "superclasses", sc), child(sc, b, _), removed_base_name(b), pod_doc(d), doc(d, p, _), line(c, l).
+violation("data-layer-post-op-no-internal-dispatch", "removed-keyword", "POSTOPDISPATCH009", p, l) :- node(d, c, "call", _, _), field(c, "arguments", args), child(args, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", x), node(_, x, "identifier", _, _), text(x, "row_materializer"), pod_doc(d), doc(d, p, _), line(c, l).

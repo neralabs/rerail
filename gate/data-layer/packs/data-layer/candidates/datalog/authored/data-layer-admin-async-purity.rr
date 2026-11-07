@@ -1,0 +1,45 @@
+// data-layer-admin-async-purity, clauses `pattern-0`, `pattern-1` and `pattern-2`, by hand.
+// Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-admin-async-purity.json, its clauses as
+// the recorded oracle (scripts/lint_admin_async_purity.py) decides them: the line scan of
+// candidates/rules/data-layer-admin-async-purity.json, the policy the batch-02 evidence passed with.
+//
+// rules-ast matches an `attribute` node `asyncio.to_thread` and `identifier`s `run_in_executor` and
+// `disable_sync_in_async_check`, which is not the linter: it flags code between two `"""` written in comments
+// (`# """` lines 1 and 3 hide line 2, probe quotes-in-comment), and not a mention in a one-quote string
+// (`x = 'asyncio.to_thread'` is flagged). The linter scans each line (W's `lines`, `str.splitlines()`: src_line)
+// with a two-state filter (W's `lines.state`, `query::line_state`), on every line before `lines.exclude`: a line
+// with an odd number of `"""`/`'''` (non-overlapping, find_iter) toggles code/hidden and is skipped, one with an
+// even number above 0 is skipped, and a line with none emits only in code. So a line emits iff it has none and the
+// lines before it have an even number in all. Then `^\s*#` lines are left out and the clause's regex searched, the
+// first match a finding at the line (`first: true`: one per line). Exact.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl src_line(d: number, l: number, sp: span)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// Each `"""` or `'''` of line l, as find_iter finds them in the line.
+.decl admin_async_quote(d: number, l: number, m: span)
+admin_async_quote(d, l, m) :- src_line(d, l, sp), match_all("\"\"\"|'''", sp, m).
+
+// A line the clause's regex matches, with no triple quote and not a comment line.
+.decl admin_async_hit(d: number, l: number, clause: symbol)
+admin_async_hit(d, l, "pattern-0") :- in_scope(d), !out_scope(d), src_line(d, l, sp),
+    match_all("\\basyncio\\.to_thread\\b", sp, _), !match_all("\"\"\"|'''", sp, _), !match_all("^\\s*#", sp, _).
+admin_async_hit(d, l, "pattern-1") :- in_scope(d), !out_scope(d), src_line(d, l, sp),
+    match_all("\\brun_in_executor\\b", sp, _), !match_all("\"\"\"|'''", sp, _), !match_all("^\\s*#", sp, _).
+admin_async_hit(d, l, "pattern-2") :- in_scope(d), !out_scope(d), src_line(d, l, sp),
+    match_all("\\bdisable_sync_in_async_check\\b", sp, _), !match_all("\"\"\"|'''", sp, _), !match_all("^\\s*#", sp, _).
+
+// The line is in code: the triple quotes of the lines before it number an even count.
+.decl admin_async_code(d: number, l: number)
+admin_async_code(d, l) :- admin_async_hit(d, l, _), k = count : { admin_async_quote(d, j, m), j < l }, k - 2 * (k / 2) = 0.
+
+violation("data-layer-admin-async-purity", "pattern-0", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-0"),
+    admin_async_code(d, l), doc(d, p, _).
+violation("data-layer-admin-async-purity", "pattern-1", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-1"),
+    admin_async_code(d, l), doc(d, p, _).
+violation("data-layer-admin-async-purity", "pattern-2", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-2"),
+    admin_async_code(d, l), doc(d, p, _).

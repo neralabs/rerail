@@ -1,10 +1,444 @@
+.decl conditional_assign_kinds(kind: symbol)
+conditional_assign_kinds("assignment").
+.decl conditional_decorated(kind: symbol)
+conditional_decorated("decorated_definition").
+.decl conditional_defs(kind: symbol)
+conditional_defs("function_definition").
+.decl conditional_frames(kind: symbol)
+conditional_frames("function_definition"). conditional_frames("class_definition"). conditional_frames("decorator").
+.decl conditional_imports(kind: symbol)
+conditional_imports("import_statement"). conditional_imports("import_from_statement"). conditional_imports("future_import_statement").
+.decl conditional_pattern_kinds(kind: symbol)
+conditional_pattern_kinds("case_pattern").
+.decl conditional_type_kinds(kind: symbol)
+conditional_type_kinds("type").
+.decl child(p: node, c: node, i: number)
+.decl conditional_alias(i: node, a: node, nm: symbol, asname: symbol)
+.decl conditional_alias_between(d: number, h: symbol, t: number, s: number)
+.decl conditional_aliased_before(d: number, s: number, h: symbol)
+.decl conditional_alt(x: node, a: node)
+.decl conditional_alt_at(x: node, a: node, i: number)
+.decl conditional_alt_between(x: node, i: number, j: number)
+.decl conditional_always_raises(m: node)
+.decl conditional_arm(s: node, c: node, i: number)
+.decl conditional_assigned(t: node, v: node)
+.decl conditional_ast_name(n: node, x: symbol)
+.decl conditional_async_for(f: node)
+.decl conditional_attr_chain(kind: symbol)
+.decl conditional_backend_attrs(s: symbol)
+.decl conditional_backend_selection(f: node)
+.decl conditional_barrier(b: node, i: number)
+.decl conditional_barrier_at(b: node, j: number)
+.decl conditional_barriers(kind: symbol)
+.decl conditional_base(c: node, h: symbol, r: symbol)
+.decl conditional_bc_attr(d: number, a: node, s: number, e: number)
+.decl conditional_bc_in(x: node, a: node)
+.decl conditional_bc_nested(x: node, a: node)
+.decl conditional_branch_iter(s: symbol)
+.decl conditional_branch_name(m: node, v: number, x: symbol)
+.decl conditional_call_context_name(c: node, s: symbol)
+.decl conditional_callable_param(m: node, nm: symbol)
+.decl conditional_callee(c: node, f: node)
+.decl conditional_callee_name(c: node, s: symbol)
+.decl conditional_case(x: number)
+.decl conditional_case_count(s: node, k: number)
+.decl conditional_case_next(s: node, c1: node, c2: node)
+.decl conditional_case_raises(c: node)
+.decl conditional_cases_upto(s: node, c: node)
+.decl conditional_chain(kind: symbol)
+.decl conditional_class_def(c: node, nm: symbol, x: number)
+.decl conditional_cls(n: node, c: node)
+.decl conditional_cn(e: node, h: symbol, r: symbol)
+.decl conditional_cn_bottom(e: node)
+.decl conditional_compile_delegates(c: node)
+.decl conditional_compiler_call(f: node, l: number)
+.decl conditional_compiler_param(f: node)
+.decl conditional_compiler_strategy(f: node, l: number)
+.decl conditional_compiler_valid(f: node)
+.decl conditional_const_kinds(k: symbol)
+.decl conditional_controls(kind: symbol)
+.decl conditional_declared_target(t: node)
+.decl conditional_def_kinds(k: symbol)
+.decl conditional_defname(f: node, s: symbol)
+.decl conditional_derived(qn: symbol)
+.decl conditional_derived_class(c: node)
+.decl conditional_doc(d: number, p: symbol)
+.decl conditional_finding(p: symbol, l: number)
+.decl conditional_first(nm: symbol, h: symbol)
+.decl conditional_fn(n: node, f: node)
+.decl conditional_from_module(i: node, m: symbol)
+.decl conditional_gate(d: number)
+.decl conditional_has_class(qn: symbol)
+.decl conditional_has_function(qn: symbol)
+.decl conditional_if_raises(x: node)
+.decl conditional_impl_prefixes(s: symbol)
+.decl conditional_import_alias(d: number, s: number, local: symbol, origin: symbol)
+.decl conditional_import_kinds(k: symbol)
+.decl conditional_in_compile(n: node)
+.decl conditional_in_def(n: node, f: node)
+.decl conditional_l0_impl(i: node)
+.decl conditional_l0_sql(i: node)
+.decl conditional_l2_cs(d: number, x: number)
+.decl conditional_l2_has_compile(d: number)
+.decl conditional_l2_last_cs(d: number, s: number)
+.decl conditional_l2_names(d: number, x: symbol)
+.decl conditional_l3_call(d: number, c: node)
+.decl conditional_l3_init(d: number, s: number)
+.decl conditional_l3_inits(d: number, x: number)
+.decl conditional_l3_line(d: number, l: number)
+.decl conditional_l3_validations(d: number, k: number)
+.decl conditional_last_class(d: number, nm: symbol, s: number)
+.decl conditional_last_method(c: node, nm: symbol, s: number)
+.decl conditional_level_some(c: node)
+.decl conditional_level_zero(c: node)
+.decl conditional_ln(e: node, h: symbol, r: symbol)
+.decl conditional_ln_bottom(e: node)
+.decl conditional_local_name(e: node, s: symbol)
+.decl conditional_loop_target(m: node, v: number, t: node)
+.decl conditional_lowers(c: node)
+.decl conditional_match_raises(s: node)
+.decl conditional_mcand(m: node, n: node)
+.decl conditional_method(c: node, nm: symbol, m: node)
+.decl conditional_method_node(m: node, n: node)
+.decl conditional_mevent(c: node, x: symbol, f: node)
+.decl conditional_mlater(m: node, n: node)
+.decl conditional_mnode(m: node, n: node)
+.decl conditional_module(p: symbol, m: symbol)
+.decl conditional_module_def(d: number, nm: symbol, x: number)
+.decl conditional_named_class(d: number, nm: symbol, x: number)
+.decl conditional_named_param(p: node, nm: symbol, t: node)
+.decl conditional_not_name(n: node)
+.decl conditional_num_types(t: symbol)
+.decl conditional_numconst(v: node)
+.decl conditional_numret(m: node, r: node)
+.decl conditional_numret_count(m: node, k: number)
+.decl conditional_numzero(v: node)
+.decl conditional_orelse_raises(a: node)
+.decl conditional_owner(n: node, o: node)
+.decl conditional_param_name(p: node, nm: symbol)
+.decl conditional_param_parents(kind: symbol)
+.decl conditional_patkinds(k: symbol)
+.decl conditional_pattern_name(n: node)
+.decl conditional_phys_contract(c: node)
+.decl conditional_pred(x: node, t: node)
+.decl conditional_present(x: number)
+.decl conditional_raises(b: node)
+.decl conditional_raises_type_error(m: node)
+.decl conditional_raising(s: node)
+.decl conditional_rel_named(r: node)
+.decl conditional_resolve(d: number, s: number, h: symbol, o: symbol)
+.decl conditional_resolve_at(d: number, s: number, h: symbol)
+.decl conditional_resolved_base(c: node, base: symbol)
+.decl conditional_return(m: node, r: node, v: node)
+.decl conditional_role_sql(c: node)
+.decl conditional_scope_stmts(kind: symbol)
+.decl conditional_self_store(m: node, x: symbol, n: node)
+.decl conditional_sem_compiles(c: node)
+.decl conditional_sem_contract(c: node)
+.decl conditional_shared_class(c: node, qn: symbol)
+.decl conditional_shared_function(f: node, qn: symbol)
+.decl conditional_splats(kind: symbol)
+.decl conditional_step_param(f: node, h: symbol, r: symbol)
+.decl conditional_store(t: node)
+.decl conditional_strategy_before(f: node, l: number)
+.decl conditional_target_lists(k: symbol)
+.decl conditional_tparam(t: node)
+.decl conditional_tparams(tp: node)
+.decl conditional_type_error_raise(r: node)
+.decl conditional_unparen(e: node, m: node)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl out_scope(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl visit_index(n: node, i: number)
+.input doc, node, child, field, text, name, node_text, line, visit_index, value, value_type_of, cpython_syntax_error
+.output violation
+conditional_attr_chain("identifier").
+conditional_attr_chain("attribute").
+conditional_attr_chain("parenthesized_expression").
+conditional_backend_attrs("backend_type").
+conditional_backend_attrs("is_sql_backend").
+conditional_backend_attrs("dialect").
+conditional_barriers("raise_statement").
+conditional_barriers("return_statement").
+conditional_chain("identifier").
+conditional_chain("attribute").
+conditional_chain("call").
+conditional_chain("parenthesized_expression").
+conditional_const_kinds("integer").
+conditional_const_kinds("true").
+conditional_const_kinds("false").
+conditional_controls("if_statement").
+conditional_controls("elif_clause").
+conditional_controls("conditional_expression").
+conditional_controls("match_statement").
+conditional_def_kinds("function_definition").
+conditional_def_kinds("class_definition").
+conditional_derived("l2070_batching.conditional_step.ConditionalStep").
+conditional_impl_prefixes("impl.common.l2100_sql_grammar").
+conditional_impl_prefixes("impl.common.l2070_server_plan").
+conditional_import_kinds("import_statement").
+conditional_import_kinds("import_from_statement").
+conditional_import_kinds("future_import_statement").
+conditional_num_types("int").
+conditional_num_types("bool").
+conditional_param_parents("parameters").
+conditional_param_parents("lambda_parameters").
+conditional_param_parents("typed_parameter").
+conditional_patkinds("pattern_list").
+conditional_patkinds("tuple_pattern").
+conditional_patkinds("list_pattern").
+conditional_patkinds("list_splat_pattern").
+conditional_patkinds("parenthesized_expression").
+conditional_patkinds("tuple").
+conditional_patkinds("list").
+conditional_patkinds("expression_list").
+conditional_scope_stmts("global_statement").
+conditional_scope_stmts("nonlocal_statement").
+conditional_splats("list_splat_pattern").
+conditional_splats("dictionary_splat_pattern").
+conditional_target_lists("pattern_list").
+conditional_target_lists("tuple_pattern").
+conditional_target_lists("list_pattern").
+conditional_target_lists("tuple").
+conditional_target_lists("list").
+conditional_target_lists("parenthesized_expression").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
 in_scope(d) :- doc(d, p, _), glob("l2070_batching/conditional_step.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/_conditional_compile.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/sql_conditional.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/sql_backend_executor.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p).
-.output violation
+conditional_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !cpython_syntax_error(d, _, _).
+conditional_gate(d) :- conditional_doc(d, _), !conditional_case(1), node(d, m, "module", _, _), node_text(m, s), (contains(".compile(", s) ; contains("ConditionalStep", s) ; contains("compile_conditional_step", s) ; contains("not ctx.backend_type.is_sql_backend", s) ; contains("not ctx.supports_data_modifying_ctes", s)).
+conditional_case(1) :- option_value("entryPoint", "conditional_architecture_findings").
+conditional_owner(n, o) :- nearest(n, o, conditional_frames), !node(_, o, "decorator", _, _).
+conditional_owner(n, o) :- nearest(n, dc, conditional_frames), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", o).
+conditional_fn(n, o) :- conditional_owner(n, o), node(_, o, "function_definition", _, _).
+conditional_fn(n, f) :- conditional_owner(n, o), node(_, o, "class_definition", _, _), conditional_fn(o, f).
+conditional_cls(n, o) :- conditional_owner(n, o), node(_, o, "class_definition", _, _).
+conditional_cls(n, c) :- conditional_owner(n, o), node(_, o, "function_definition", _, _), conditional_cls(o, c).
+conditional_defname(f, s) :- field(f, "name", nm), text(nm, s).
+conditional_in_def(n, f) :- inside(n, f, conditional_defs).
+conditional_in_def(n, f) :- inside(n, dd, conditional_decorated), field(dd, "definition", f), node(_, f, "function_definition", _, _), n != f.
+conditional_unparen(e, e) :- node(_, e, _, _, _), !node(_, e, "parenthesized_expression", _, _).
+conditional_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), conditional_unparen(i, m).
+conditional_callee(c, f) :- node(_, c, "call", _, _), field(c, "function", f0), conditional_unparen(f0, f).
+conditional_callee_name(c, s) :- conditional_callee(c, f), node(_, f, "identifier", _, _), text(f, s).
+conditional_callee_name(c, s) :- conditional_callee(c, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s).
+conditional_not_name(n) :- field(_, "attribute", n).
+conditional_not_name(n) :- field(_, "name", n).
+conditional_not_name(n) :- child(p, n, _), node(_, p, k, _, _), conditional_param_parents(k).
+conditional_not_name(n) :- child(p, n, _), node(_, p, k, _, _), conditional_splats(k), child(q, p, _), node(_, q, k2, _, _), conditional_param_parents(k2).
+conditional_not_name(n) :- inside(n, _, conditional_imports).
+conditional_not_name(n) :- child(g, n, _), node(_, g, k, _, _), conditional_scope_stmts(k).
+conditional_not_name(n) :- node(_, x, "except_clause", _, _), child(x, ap, _), node(_, ap, "as_pattern", _, _), field(ap, "alias", t), child(t, n, _).
+conditional_not_name(n) :- inside(n, cp, conditional_pattern_kinds), node(_, cp, "case_pattern", _, _), !conditional_pattern_name(n).
+conditional_not_name(n) :- conditional_tparam(t), child(t, n, 0), node(_, n, "identifier", _, _).
+conditional_not_name(n) :- conditional_tparam(t), child(t, ct, 0), node(_, ct, "constrained_type", _, _), child(ct, t2, 0), child(t2, n, 0), node(_, n, "identifier", _, _).
+conditional_not_name(n) :- conditional_tparam(t), child(t, st, 0), node(_, st, "splat_type", _, _), child(st, n, _), node(_, n, "identifier", _, _).
+conditional_pattern_name(n) :- child(dn, n, 0), node(_, dn, "dotted_name", _, _), child(cp, dn, _), node(_, cp, "class_pattern", _, _).
+conditional_pattern_name(n) :- child(dn, n, 0), node(_, dn, "dotted_name", _, _), child(dn, _, 1).
+conditional_tparams(tp) :- node(_, o, k, _, _), conditional_def_kinds(k), field(o, "type_parameters", tp).
+conditional_tparams(tp) :- node(_, s, "type_alias_statement", _, _), field(s, "left", t), child(t, g, 0), node(_, g, "generic_type", _, _), child(g, tp, _), node(_, tp, "type_parameter", _, _).
+conditional_tparam(t) :- conditional_tparams(tp), child(tp, t, _), node(_, t, "type", _, _).
+conditional_tparam(t) :- conditional_tparams(tp), child(tp, e, _), node(_, e, "type_default", _, _), field(e, "name", t).
+conditional_ast_name(n, x) :- node(_, n, "identifier", _, _), text(n, x), !conditional_not_name(n).
+conditional_alias(i, a, nm, "") :- node(_, i, k, _, _), conditional_import_kinds(k), field(i, "name", a), node(_, a, "dotted_name", _, _), name(a, nm).
+conditional_alias(i, a, nm, asn) :- node(_, i, k, _, _), conditional_import_kinds(k), field(i, "name", a), node(_, a, "aliased_import", _, _), field(a, "name", dn), name(dn, nm), field(a, "alias", al), text(al, asn).
+conditional_from_module(i, m) :- node(_, i, "import_from_statement", _, _), field(i, "module_name", n), node(_, n, "dotted_name", _, _), name(n, m).
+conditional_from_module(i, m) :- node(_, i, "import_from_statement", _, _), field(i, "module_name", r), node(_, r, "relative_import", _, _), child(r, n, _), node(_, n, "dotted_name", _, _), name(n, m).
+conditional_from_module(i, "") :- node(_, i, "import_from_statement", _, _), field(i, "module_name", r), node(_, r, "relative_import", _, _), !conditional_rel_named(r).
+conditional_rel_named(r) :- node(_, r, "relative_import", _, _), child(r, n, _), node(_, n, "dotted_name", _, _).
+conditional_in_compile(n) :- conditional_cls(n, c), conditional_defname(c, "ConditionalStep"), conditional_fn(n, f), conditional_defname(f, "compile").
+conditional_l0_impl(i) :- conditional_from_module(i, m), conditional_impl_prefixes(p), prefix(p, m).
+conditional_l0_sql(i) :- node(_, i, "import_from_statement", _, _), conditional_alias(i, _, nm, _), prefix("Sql", nm).
+violation("data-layer-conditional-architecture", "conditional-local-0", "CONDA-001", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), node(d, i, "import_from_statement", _, _), conditional_l0_impl(i), conditional_in_compile(i), line(i, l).
+violation("data-layer-conditional-architecture", "conditional-local-0", "CONDA-001", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), node(d, i, "import_from_statement", _, _), conditional_l0_sql(i), conditional_in_compile(i), line(i, l).
+violation("data-layer-conditional-architecture", "conditional-local-0", "CONDA-002", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), node(d, i, "import_from_statement", _, _), conditional_l0_impl(i), !conditional_in_compile(i), line(i, l).
+violation("data-layer-conditional-architecture", "conditional-local-0", "CONDA-002", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), node(d, i, "import_from_statement", _, _), conditional_l0_sql(i), !conditional_in_compile(i), line(i, l).
+violation("data-layer-conditional-architecture", "conditional-local-1", "CONDA-002", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), node(d, i, "import_statement", _, _), conditional_alias(i, _, nm, _), conditional_impl_prefixes(x), prefix(x, nm), line(i, l).
+violation("data-layer-conditional-architecture", "conditional-local-1", "CONDA-001", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), node(d, i, "import_statement", _, _), conditional_alias(i, _, nm, _), prefix("Sql", nm), conditional_in_compile(i), line(i, l).
+violation("data-layer-conditional-architecture", "conditional-local-1", "CONDA-001", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), node(d, c, "call", _, _), conditional_in_compile(c), conditional_callee_name(c, "compile"), line(c, l).
+violation("data-layer-conditional-architecture", "conditional-local-1", "CONDA-001", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), node(d, c, "call", _, _), conditional_in_compile(c), conditional_callee_name(c, s), prefix("Sql", s), line(c, l).
+violation("data-layer-conditional-architecture", "conditional-local-2", "CONDA-001", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), node(d, c, "call", _, _), conditional_in_compile(c), conditional_callee_name(c, "CompiledStep"), field(c, "arguments", args), child(args, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", kn), text(kn, "grammar"), line(c, l).
+violation("data-layer-conditional-architecture", "conditional-local-2", "CONDA-003", p, l) :- conditional_doc(d, p), p = "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", conditional_gate(d), node(d, c, "call", _, _), conditional_callee(c, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "compile"), field(f, "object", r0), conditional_unparen(r0, r), node(_, r, "identifier", _, _), text(r, rn), (rn = "cs" ; rn = "conditional" ; rn = "conditional_step"), line(c, l).
+conditional_l2_cs(d, x) :- node(d, c, "class_definition", _, _), conditional_defname(c, "ConditionalStep"), visit_index(c, x).
+conditional_l2_last_cs(d, s) :- conditional_l2_cs(d, _), s = max x : { conditional_l2_cs(d, x) }.
+conditional_l2_has_compile(d) :- node(d, f, "function_definition", _, _), conditional_defname(f, "compile"), conditional_cls(f, c), conditional_defname(c, "ConditionalStep").
+violation("data-layer-conditional-architecture", "conditional-local-2", "CONDA-001", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), conditional_l2_last_cs(d, s), node(d, c, "class_definition", _, _), visit_index(c, s), !conditional_l2_has_compile(d), line(c, l).
+conditional_l2_names(d, x) :- node(d, n, "identifier", _, _), conditional_ast_name(n, x), (x = "_DDL_TAGS" ; x = "_UNGATABLE_TAG").
+violation("data-layer-conditional-architecture", "conditional-local-2", "CONDA-004", p, 1) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), !conditional_l2_names(d, "_DDL_TAGS").
+violation("data-layer-conditional-architecture", "conditional-local-2", "CONDA-004", p, 1) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), !conditional_l2_names(d, "_UNGATABLE_TAG").
+conditional_l3_call(d, c) :- node(d, c, "call", _, _), conditional_callee_name(c, "_validate_branch_content"), conditional_fn(c, f), conditional_defname(f, "__init__"), conditional_cls(c, cl), conditional_defname(cl, "ConditionalStep").
+conditional_l3_validations(d, k) :- conditional_doc(d, _), k = count : { conditional_l3_call(d, _) }.
+conditional_l3_inits(d, x) :- node(d, f, "function_definition", _, _), conditional_defname(f, "__init__"), conditional_cls(f, c), conditional_defname(c, "ConditionalStep"), visit_index(f, x).
+conditional_l3_init(d, s) :- conditional_l3_inits(d, _), s = max x : { conditional_l3_inits(d, x) }.
+conditional_l3_line(d, l) :- conditional_l3_init(d, s), node(d, f, "function_definition", _, _), visit_index(f, s), line(f, l).
+conditional_l3_line(d, 1) :- conditional_doc(d, _), !conditional_l3_init(d, _).
+violation("data-layer-conditional-architecture", "conditional-local-3", "CONDA-004", p, l) :- conditional_doc(d, p), p = "l2070_batching/conditional_step.py", conditional_gate(d), conditional_l3_validations(d, k), k < 2, conditional_l3_line(d, l).
+conditional_module(p, g) :- conditional_doc(_, p), match("(?s:.*)(?:(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$)(?s:.*)", p), x = @rx_replace(p, "^(?s:.*?)(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$", "$1"), g = @rx_replace(x, "/", ".").
+conditional_module(p, g) :- conditional_doc(_, p), !match("(?s:.*)(?:(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$)(?s:.*)", p), match("(?s:.*)(?:(?:^|/)([^/]+)\\.py$)(?s:.*)", p), x = @rx_replace(p, "^(?s:.*?)(?:^|/)([^/]+)\\.py$", "$1"), g = @rx_replace(x, "/", ".").
+conditional_named_class(d, nm, x) :- conditional_doc(d, _), node(d, c, "class_definition", _, _), conditional_defname(c, nm), visit_index(c, x).
+conditional_last_class(d, nm, s) :- conditional_named_class(d, nm, _), s = max x : { conditional_named_class(d, nm, x) }.
+conditional_shared_class(c, qn) :- conditional_last_class(d, nm, s), node(d, c, "class_definition", _, _), visit_index(c, s), conditional_doc(d, p), conditional_module(p, m), qn = @concat(m, @concat(".", nm)).
+conditional_class_def(c, nm, x) :- conditional_mevent(c, nm, f), visit_index(f, x).
+conditional_last_method(c, nm, s) :- conditional_class_def(c, nm, _), s = max x : { conditional_class_def(c, nm, x) }.
+conditional_method(c, nm, m) :- conditional_last_method(c, nm, s), conditional_mevent(c, nm, m), visit_index(m, s).
+conditional_mevent(c, x, f) :- conditional_shared_class(c, _), conditional_defname(c, cn), node(d, c, _, _, _), visit_index(c, vc), node(d, f, "function_definition", _, _), visit_index(f, vf), vf > vc, conditional_cls(f, o), conditional_defname(o, cn), conditional_defname(f, x).
+conditional_mcand(m, n) :- conditional_mevent(c, x, m), conditional_defname(c, cn), node(d, c, _, _, _), visit_index(c, vc), visit_index(m, vm), node(d, n, _, _, _), conditional_fn(n, o), conditional_defname(o, x), conditional_cls(n, l), conditional_defname(l, cn), visit_index(n, vn), vn >= vc, vn >= vm.
+conditional_mlater(m, n) :- conditional_mcand(m, n), conditional_mcand(m2, n), conditional_mevent(c, x, m), conditional_mevent(c, x, m2), visit_index(m, v1), visit_index(m2, v2), v2 > v1.
+conditional_mnode(m, n) :- conditional_mcand(m, n), !conditional_mlater(m, n).
+conditional_method_node(m, n) :- conditional_mnode(m, n), conditional_method(_, _, m).
+conditional_ln(e, x, "") :- node(_, e, "identifier", _, _), text(e, x).
+conditional_ln(e, h, @concat(r, @concat(".", a))) :- node(_, e, "attribute", _, _), field(e, "object", o), conditional_ln(o, h, r), field(e, "attribute", an), text(an, a).
+conditional_ln(e, h, r) :- node(_, e, "call", _, _), field(e, "function", f), conditional_ln(f, h, r).
+conditional_ln(e, h, r) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), conditional_ln(i, h, r).
+conditional_ln(e, a, "") :- node(_, e, "attribute", _, _), field(e, "object", o), conditional_ln_bottom(o), field(e, "attribute", an), text(an, a).
+conditional_ln_bottom(e) :- field(_, "object", e), node(_, e, k, _, _), !conditional_chain(k).
+conditional_ln_bottom(e) :- field(_, "function", e), node(_, e, k, _, _), !conditional_chain(k).
+conditional_ln_bottom(e) :- node(_, p, "parenthesized_expression", _, _), child(p, e, 0), node(_, e, k, _, _), !conditional_chain(k).
+conditional_ln_bottom(e) :- node(_, e, "call", _, _), field(e, "function", f), conditional_ln_bottom(f).
+conditional_ln_bottom(e) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), conditional_ln_bottom(i).
+conditional_local_name(e, @concat(h, r)) :- conditional_ln(e, h, r).
+conditional_cn(e, x, "") :- node(_, e, "identifier", _, _), text(e, x).
+conditional_cn(e, h, @concat(r, @concat(".", a))) :- node(_, e, "attribute", _, _), field(e, "object", o), conditional_cn(o, h, r), field(e, "attribute", an), text(an, a).
+conditional_cn(e, h, r) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), conditional_cn(i, h, r).
+conditional_cn(e, a, "") :- node(_, e, "attribute", _, _), field(e, "object", o), conditional_cn_bottom(o), field(e, "attribute", an), text(an, a).
+conditional_cn_bottom(e) :- field(_, "object", e), node(_, e, k, _, _), !conditional_attr_chain(k).
+conditional_cn_bottom(e) :- node(_, p, "parenthesized_expression", _, _), child(p, e, 0), node(_, e, k, _, _), !conditional_attr_chain(k).
+conditional_cn_bottom(e) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), conditional_cn_bottom(i).
+conditional_call_context_name(c, @concat(h, r)) :- conditional_callee(c, f), conditional_cn(f, h, r).
+conditional_type_error_raise(r) :- node(_, r, "raise_statement", _, _), child(r, e, 0), !field(r, "cause", e), conditional_local_name(e, "TypeError").
+conditional_barrier_at(b, j) :- node(_, b, "block", _, _), child(b, s, j), node(_, s, k, _, _), conditional_barriers(k).
+conditional_barrier(b, i) :- conditional_barrier_at(b, _), i = min j : { conditional_barrier_at(b, j) }.
+conditional_raises(b) :- node(_, b, "block", _, _), child(b, s, i), conditional_barrier(b, k), i <= k, conditional_raising(s).
+conditional_raises(b) :- node(_, b, "block", _, _), child(b, s, _), !conditional_barrier(b, _), conditional_raising(s).
+conditional_raising(s) :- conditional_type_error_raise(s).
+conditional_raising(s) :- node(_, s, "if_statement", _, _), conditional_if_raises(s).
+conditional_raising(s) :- node(_, s, "match_statement", _, _), conditional_match_raises(s).
+conditional_alt_at(x, a, i) :- node(_, x, "if_statement", _, _), field(x, "alternative", a), child(x, a, i).
+conditional_alt_between(x, i, j) :- conditional_alt_at(x, _, i), conditional_alt_at(x, _, j), conditional_alt_at(x, _, k), i < k, k < j.
+conditional_alt(x, a) :- conditional_alt_at(x, a, i), i = min j : { conditional_alt_at(x, _, j) }.
+conditional_alt(e, a) :- conditional_alt_at(x, e, i), node(_, e, "elif_clause", _, _), conditional_alt_at(x, a, j), i < j, !conditional_alt_between(x, i, j).
+conditional_if_raises(x) :- field(x, "consequence", b), conditional_raises(b), conditional_alt(x, a), conditional_orelse_raises(a).
+conditional_orelse_raises(a) :- node(_, a, "else_clause", _, _), field(a, "body", b), conditional_raises(b).
+conditional_orelse_raises(a) :- node(_, a, "elif_clause", _, _), conditional_if_raises(a).
+conditional_arm(s, c, i) :- node(_, s, "match_statement", _, _), field(s, "body", mb), child(mb, c, i), node(_, c, "case_clause", _, _).
+conditional_case_raises(c) :- node(_, c, "case_clause", _, _), field(c, "consequence", b), conditional_raises(b).
+conditional_case_next(s, c1, c2) :- conditional_arm(s, c1, i), conditional_arm(s, c2, j), j = @add(i, 1).
+conditional_cases_upto(s, c) :- conditional_arm(s, c, 0), conditional_case_raises(c).
+conditional_cases_upto(s, c2) :- conditional_cases_upto(s, c1), conditional_case_next(s, c1, c2), conditional_case_raises(c2).
+conditional_case_count(s, k) :- conditional_arm(s, _, _), k = count : { conditional_arm(s, _, _) }.
+conditional_match_raises(s) :- conditional_case_count(s, k), k >= 1, rr_t1 = @sub(k, 1), conditional_arm(s, c, rr_t1), conditional_cases_upto(s, c).
+conditional_always_raises(m) :- node(_, m, "function_definition", _, _), field(m, "body", b), conditional_raises(b).
+conditional_raises_type_error(m) :- conditional_method_node(m, n), conditional_type_error_raise(n).
+conditional_backend_selection(f) :- node(_, f, "function_definition", _, _), conditional_in_def(n, f), conditional_ast_name(n, "BackendType").
+conditional_backend_selection(f) :- node(_, f, "function_definition", _, _), conditional_in_def(a, f), node(_, a, "attribute", _, _), field(a, "attribute", an), text(an, s), conditional_backend_attrs(s), conditional_in_def(x, f), node(_, x, k, _, _), conditional_controls(k).
+conditional_import_alias(d, s, local, nm) :- node(d, i, "import_statement", _, _), conditional_alias(i, a, nm, asn), visit_index(a, s), asn != "", local = asn.
+conditional_import_alias(d, s, local, nm) :- node(d, i, "import_statement", _, _), conditional_alias(i, a, nm, ""), visit_index(a, s), conditional_first(nm, local).
+conditional_import_alias(d, s, asn, @concat(m, @concat(".", nm))) :- node(d, i, "import_from_statement", _, _), conditional_from_module(i, m), m != "", conditional_alias(i, a, nm, asn), visit_index(a, s), asn != "".
+conditional_import_alias(d, s, nm, @concat(m, @concat(".", nm))) :- node(d, i, "import_from_statement", _, _), conditional_from_module(i, m), m != "", conditional_alias(i, a, nm, ""), visit_index(a, s).
+conditional_first(nm, h) :- node(_, i, "import_statement", _, _), conditional_alias(i, a, nm, _), node(_, a, "dotted_name", _, _), child(a, h0, 0), text(h0, h).
+conditional_first(nm, h) :- node(_, i, "import_statement", _, _), conditional_alias(i, a, nm, _), node(_, a, "aliased_import", _, _), field(a, "name", dn), child(dn, h0, 0), text(h0, h).
+conditional_resolve(d, s, h, o) :- conditional_resolve_at(d, s, h), conditional_import_alias(d, t, h, o), t < s, !conditional_alias_between(d, h, t, s).
+conditional_alias_between(d, h, t, s) :- conditional_resolve_at(d, s, h), conditional_import_alias(d, t, h, _), t < s, conditional_import_alias(d, x, h, _), t < x, x < s.
+conditional_resolve(d, s, h, h) :- conditional_resolve_at(d, s, h), !conditional_aliased_before(d, s, h).
+conditional_aliased_before(d, s, h) :- conditional_resolve_at(d, s, h), conditional_import_alias(d, x, h, _), x < s.
+conditional_resolve_at(d, s, h) :- conditional_base(c, h, _), node(d, c, _, _, _), visit_index(c, s).
+conditional_resolve_at(d, s, h) :- conditional_step_param(f, h, _), node(d, f, _, _, _), visit_index(f, s).
+conditional_base(c, h, r) :- conditional_shared_class(c, _), field(c, "superclasses", al), child(al, b0, _), !node(_, b0, "keyword_argument", _, _), conditional_unparen(b0, b), conditional_ln(b, h, r).
+conditional_resolved_base(c, @concat(o, r)) :- conditional_base(c, h, r), node(d, c, _, _, _), visit_index(c, s), conditional_resolve(d, s, h, o).
+conditional_derived(qn) :- conditional_derived(b), conditional_resolved_base(c, b), conditional_shared_class(c, qn).
+conditional_module_def(d, nm, x) :- conditional_doc(d, _), node(d, g, "function_definition", _, _), !conditional_cls(g, _), conditional_defname(g, nm), visit_index(g, x).
+conditional_shared_function(f, qn) :- conditional_doc(d, p), conditional_module(p, m), conditional_module_def(d, nm, _), s = max x : { conditional_module_def(d, nm, x) }, node(d, f, "function_definition", _, _), visit_index(f, s), qn = @concat(m, @concat(".", nm)).
+conditional_present(1) :- conditional_shared_class(_, "impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor").
+conditional_present(1) :- conditional_shared_class(_, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep").
+conditional_present(1) :- conditional_shared_class(_, "l2070_batching.conditional_step.ConditionalStep").
+conditional_present(1) :- conditional_shared_function(_, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step").
+conditional_sem_compiles(c) :- conditional_method(c, "compile", m), conditional_raises_type_error(m).
+conditional_finding(p, l) :- conditional_shared_class(c, "l2070_batching.conditional_step.ConditionalStep"), !conditional_sem_compiles(c), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_finding(p, l) :- conditional_shared_class(c, "impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor"), !conditional_method(c, "_lower_conditional_step", _), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_sem_contract(c) :- conditional_method(c, "require_sql_physical_conditional", m), conditional_always_raises(m).
+conditional_finding(p, l) :- conditional_shared_class(c, "l2070_batching.conditional_step.ConditionalStep"), !conditional_sem_contract(c), conditional_present(1), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_has_class(qn) :- conditional_shared_class(_, qn).
+conditional_finding("l2070_batching/conditional_step.py", 1) :- conditional_present(1), !conditional_has_class("l2070_batching.conditional_step.ConditionalStep").
+conditional_phys_contract(c) :- conditional_method(c, "require_sql_physical_conditional", m), !conditional_always_raises(m), !conditional_backend_selection(m).
+conditional_finding(p, l) :- conditional_shared_class(c, qn), qn = "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep", !conditional_derived(qn), conditional_present(1), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_finding(p, l) :- conditional_shared_class(c, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"), !conditional_phys_contract(c), conditional_present(1), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_finding("impl/common/l2070_server_plan/steps/sql_conditional.py", 1) :- conditional_present(1), !conditional_has_class("impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep").
+conditional_lowers(c) :- conditional_method(c, "_lower_conditional_step", m), conditional_method_node(m, n), node(_, n, "call", _, _), conditional_call_context_name(n, s), suffix("SqlConditionalStep.from_semantic", s).
+conditional_finding(p, l) :- conditional_shared_class(c, "impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor"), !conditional_lowers(c), conditional_present(1), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_finding("impl/common/l2070_server_plan/sql_backend_executor.py", 1) :- conditional_present(1), !conditional_has_class("impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor").
+conditional_step_param(f, h, r) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, p, _), conditional_named_param(p, "step", t), child(t, e0, 0), conditional_unparen(e0, e), conditional_ln(e, h, r).
+conditional_named_param(p, nm, t) :- node(_, p, "typed_parameter", _, _), child(p, i, 0), node(_, i, "identifier", _, _), text(i, nm), field(p, "type", t).
+conditional_named_param(p, nm, t) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", i), text(i, nm), field(p, "type", t).
+conditional_compiler_param(f) :- conditional_step_param(f, h, r), node(d, f, _, _, _), visit_index(f, s), conditional_resolve(d, s, h, o), @concat(o, r) = "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep".
+conditional_compiler_call(f, l) :- node(_, f, "function_definition", _, _), conditional_in_def(c, f), node(_, c, "call", _, _), conditional_callee(c, g), conditional_local_name(g, "step.require_sql_physical_conditional"), line(c, l).
+conditional_compiler_strategy(f, l) :- node(_, f, "function_definition", _, _), conditional_in_def(c, f), node(_, c, "call", _, _), conditional_callee(c, g), conditional_local_name(g, s), suffix("_conditional_strategy", s), line(c, l).
+conditional_compiler_valid(f) :- conditional_compiler_param(f), !conditional_backend_selection(f), conditional_compiler_call(f, l), !conditional_strategy_before(f, l).
+conditional_strategy_before(f, l) :- conditional_compiler_call(f, l), conditional_compiler_strategy(f, k), k <= l.
+conditional_finding(p, l) :- conditional_shared_function(f, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), !conditional_compiler_valid(f), conditional_present(1), node(d, f, _, _, _), doc(d, p, _), line(f, l).
+conditional_has_function(qn) :- conditional_shared_function(_, qn).
+conditional_finding("impl/common/l2070_server_plan/steps/_conditional_compile.py", 1) :- conditional_present(1), !conditional_has_function("impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step").
+violation("data-layer-conditional-architecture", "conditional-structural-contracts", "CONDA-005", p, l) :- conditional_finding(p, l).
+conditional_derived_class(c) :- conditional_shared_class(c, qn), conditional_derived(qn).
+conditional_return(m, r, v) :- conditional_method_node(m, r), node(_, r, "return_statement", _, _), child(r, v0, 0), conditional_unparen(v0, v).
+conditional_numconst(v) :- node(_, v, k, _, _), conditional_const_kinds(k), value_type_of(v, t), conditional_num_types(t).
+conditional_numzero(v) :- conditional_numconst(v), value(v, s), (s = "0" ; s = "False").
+conditional_numret(m, r) :- conditional_return(m, r, v), conditional_numconst(v).
+conditional_numret_count(m, k) :- conditional_numret(m, _), k = count : { conditional_numret(m, _) }.
+conditional_level_some(c) :- conditional_method(c, "level", m), conditional_numret(m, _).
+conditional_finding(p, l) :- conditional_case(1), conditional_shared_class(c, "l2070_batching.conditional_step.ConditionalStep"), !conditional_level_some(c), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_finding(p, l) :- conditional_case(1), conditional_shared_class(c, "l2070_batching.conditional_step.ConditionalStep"), conditional_method(c, "level", m), conditional_return(m, _, v), conditional_numzero(v), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_level_zero(c) :- conditional_method(c, "level", m), conditional_numret_count(m, 1), conditional_return(m, _, v), conditional_numzero(v).
+conditional_finding(p, l) :- conditional_case(1), conditional_shared_class(c, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"), !conditional_level_zero(c), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_role_sql(c) :- conditional_method(c, "execution_role", m), conditional_return(m, _, v), conditional_local_name(v, "StepExecutionRole.SQL").
+conditional_finding(p, l) :- conditional_case(1), conditional_shared_class(c, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"), !conditional_role_sql(c), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_compile_delegates(c) :- conditional_method(c, "compile", m), conditional_method_node(m, n), node(_, n, "call", _, _), conditional_call_context_name(n, s), suffix("compile_sql_conditional_step", s).
+conditional_finding(p, l) :- conditional_case(1), conditional_shared_class(c, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"), !conditional_compile_delegates(c), node(d, c, _, _, _), doc(d, p, _), line(c, l).
+conditional_store(l) :- node(_, a, "assignment", _, _), field(a, "left", l).
+conditional_store(l) :- node(_, a, "augmented_assignment", _, _), field(a, "left", l).
+conditional_store(l) :- node(_, a, "for_statement", _, _), field(a, "left", l).
+conditional_store(l) :- node(_, a, "for_in_clause", _, _), field(a, "left", l).
+conditional_store(t) :- node(_, t, "as_pattern_target", _, _).
+conditional_store(c) :- conditional_store(t), node(_, t, k, _, _), conditional_patkinds(k), child(t, c, _).
+conditional_store(c) :- conditional_store(t), node(_, t, "as_pattern_target", _, _), child(t, c, _).
+conditional_self_store(m, x, n) :- conditional_mevent(c, x, m), conditional_derived_class(c), conditional_mnode(m, n), node(_, n, "attribute", _, _), conditional_store(n), field(n, "object", o0), conditional_unparen(o0, o), conditional_ast_name(o, "self").
+conditional_finding(p, l) :- conditional_case(1), conditional_self_store(_, x, n), x != "__init__", node(d, n, _, _, _), doc(d, p, _), line(n, l).
+conditional_assigned(t, v) :- node(_, a, "assignment", _, _), field(a, "left", t), field(a, "right", v0), !node(_, v0, "assignment", _, _), conditional_unparen(v0, v).
+conditional_assigned(t, v) :- node(_, a, "assignment", _, _), field(a, "left", t), field(a, "right", a2), node(_, a2, "assignment", _, _), field(a2, "left", t2), conditional_assigned(t2, v).
+conditional_param_name(p, nm) :- node(_, p, "typed_parameter", _, _), child(p, i, 0), node(_, i, "identifier", _, _), text(i, nm).
+conditional_param_name(p, nm) :- node(_, p, "typed_parameter", _, _), child(p, s, 0), node(_, s, k, _, _), conditional_splats(k), child(s, i, 0), text(i, nm).
+conditional_param_name(p, nm) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", i), text(i, nm).
+conditional_callable_param(m, nm) :- node(_, m, "function_definition", _, _), field(m, "parameters", ps), child(ps, p, _), conditional_param_name(p, nm), field(p, "type", t), inside(a, t, conditional_type_kinds), conditional_ast_name(a, "Callable").
+conditional_finding(p, l) :- conditional_case(1), conditional_self_store(_, "__init__", n), conditional_assigned(n, v), node(_, v, "lambda", _, _), node(d, n, _, _, _), doc(d, p, _), line(n, l).
+conditional_finding(p, l) :- conditional_case(1), conditional_self_store(m, "__init__", n), conditional_assigned(n, v), conditional_ast_name(v, x), conditional_callable_param(m, x), node(d, n, _, _, _), doc(d, p, _), line(n, l).
+conditional_finding(p, l) :- conditional_case(1), node(d, n, "assignment", _, _), field(n, "type", _), !conditional_fn(n, _), conditional_cls(n, c), conditional_derived_class(c), field(n, "left", t0), conditional_unparen(t0, t), conditional_declared_target(t), inside(a, n, conditional_assign_kinds), conditional_ast_name(a, "Callable"), doc(d, p, _), line(n, l).
+conditional_declared_target(t) :- node(_, t, "identifier", _, _).
+conditional_declared_target(t) :- node(_, t, "attribute", _, _), field(t, "object", o0), conditional_unparen(o0, o), conditional_ast_name(o, "self").
+conditional_branch_iter(s) :- conditional_local_name(_, s), (contains("then_plan.steps", s) ; contains("else_plan.steps", s) ; contains("conditional_branch_steps", s) ; contains("then_steps", s) ; contains("else_steps", s)).
+conditional_async_for(f) :- node(_, f, "for_statement", _, _), node_text(f, s), prefix("async", s).
+conditional_loop_target(m, s, t0) :- conditional_mnode(m, f), node(_, f, "for_statement", _, _), visit_index(f, s), !conditional_async_for(f), field(f, "right", it0), conditional_unparen(it0, it), conditional_local_name(it, q), conditional_branch_iter(q), field(f, "left", t0).
+conditional_loop_target(m, s, c) :- conditional_loop_target(m, s, t), node(_, t, k, _, _), conditional_target_lists(k), child(t, c, _).
+conditional_branch_name(m, s, x) :- conditional_loop_target(m, s, t), node(_, t, "identifier", _, _), text(t, x).
+conditional_finding(p, l) :- conditional_case(1), conditional_mevent(c, _, m), conditional_derived_class(c), conditional_mnode(m, n), conditional_callee(n, f), node(_, f, "attribute", _, _), field(f, "attribute", an), text(an, "compile"), field(f, "object", r0), conditional_unparen(r0, r), node(_, r, "identifier", _, _), text(r, x), conditional_branch_name(m, s, x), node(d, n, _, _, _), visit_index(n, sn), s < sn, doc(d, p, _), line(n, l).
+conditional_pred(x, t) :- node(_, x, "if_statement", _, _), field(x, "condition", t).
+conditional_pred(x, t) :- node(_, x, "elif_clause", _, _), field(x, "condition", t).
+conditional_pred(x, t) :- node(_, x, "conditional_expression", _, _), child(x, t, 1).
+conditional_pred(x, t) :- node(_, x, "match_statement", _, _), field(x, "subject", t).
+conditional_bc_attr(d, a, s, e) :- node(d, a, "attribute", s, e), field(a, "attribute", an), text(an, x), (x = "backend_type" ; x = "is_sql_backend").
+conditional_bc_in(x, a) :- conditional_pred(x, t), node(d, t, _, ts, te), conditional_bc_attr(d, a, as, ae), as >= ts, ae <= te.
+conditional_bc_nested(x, a) :- conditional_bc_in(x, a), conditional_pred(x, t), node(d, t, _, ts, te), conditional_bc_in(y, a), y != x, node(d, y, _, ys, ye), ys >= ts, ye <= te.
+conditional_finding(p, l) :- conditional_case(1), conditional_mevent(c, _, m), conditional_derived_class(c), conditional_mnode(m, n), conditional_bc_in(n, a), !conditional_bc_nested(n, a), node(d, n, _, _, _), doc(d, p, _), line(n, l).

@@ -1,0 +1,129 @@
+// data-layer-sync-async-signatures: transaction-connection by hand, exact under the default options. The converter
+// gaps it on the `later-signature` utility call with arguments (`layout.before` to the capture $CURRENT) and on
+// `compare` ($SYNC_NAME eq the transform's $BASE).
+//
+// The clause: an `X_async` def whose first positional parameter is annotated with a connection type, while the
+// module also defines `X` whose first positional parameter is annotated with a transaction type; each def the
+// last one of its name that takes a positional parameter (no such def of that name starts at or after its end:
+// `later-signature`'s `layout.before` to $CURRENT, `breaks.min 0`, which holds whenever $CURRENT ends before the
+// other def starts).
+// Options: `sourceGate` gates on the module's text matching `_async|Transaction|Connection` (`(?s).*` when false);
+// the async def's own name ends `_async`, so the gate always holds: left out. `oracleAnalyzer` is read by no clause.
+// A string annotation (`string` or `concatenated_string`) is read through W's `value` as the policy's
+// `value: {regex: ^(?:…)$}` reads it: a str value (`value_type_of(n, "str")`), the whole value one of the names.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- pos-param: a positional parameter other than self ------------------------------------------------------------
+.decl sas_named_param(q: node)
+sas_named_param(q) :- node(_, q, "identifier", _, _), text(q, s), s != "self".
+sas_named_param(q) :- node(_, q, "typed_parameter", _, _), child(q, x, _), node(_, x, "identifier", _, _), text(x, s), s != "self".
+sas_named_param(q) :- node(_, q, "default_parameter", _, _), field(q, "name", x), node(_, x, "identifier", _, _), text(x, s), s != "self".
+sas_named_param(q) :- node(_, q, "typed_default_parameter", _, _), field(q, "name", x), node(_, x, "identifier", _, _), text(x, s),
+    s != "self".
+.decl sas_splat(q: node)
+sas_splat(q) :- sas_splat_kind(q).
+sas_splat(q) :- node(_, q, "typed_parameter", _, _), child(q, x, _), sas_splat_kind(x).
+.decl sas_splat_kind(x: node)
+sas_splat_kind(x) :- node(_, x, "list_splat_pattern", _, _).
+sas_splat_kind(x) :- node(_, x, "dictionary_splat_pattern", _, _).
+// A later `/` sibling (positional-only before it), an earlier `*` or `*args` sibling (keyword-only after it).
+.decl sas_before_slash(q: node)
+sas_before_slash(q) :- child(ps, q, i), child(ps, z, j), j > i, node(_, z, "positional_separator", _, _).
+.decl sas_star(z: node)
+sas_star(z) :- node(_, z, "keyword_separator", _, _).
+sas_star(z) :- node(_, z, "list_splat_pattern", _, _).
+sas_star(z) :- node(_, z, "typed_parameter", _, _), child(z, x, _), node(_, x, "list_splat_pattern", _, _).
+.decl sas_after_star(q: node)
+sas_after_star(q) :- child(ps, q, i), child(ps, z, j), j < i, sas_star(z).
+.decl sas_pos_param(ps: node, q: node, i: number)
+sas_pos_param(ps, q, i) :- node(_, ps, "parameters", _, _), child(ps, q, i), sas_named_param(q), !sas_splat(q),
+    !sas_before_slash(q), !sas_after_star(q).
+// has-param: a function whose parameters hold a pos-param; the first pos-param (none before it).
+.decl sas_has_param(f: node)
+sas_has_param(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), sas_pos_param(ps, _, _).
+.decl sas_later_pos(q: node)
+sas_later_pos(q) :- sas_pos_param(ps, q, i), sas_pos_param(ps, _, j), j < i.
+.decl sas_first_param(f: node, q: node)
+sas_first_param(f, q) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), sas_pos_param(ps, q, _), !sas_later_pos(q).
+
+// ---- annotations ---------------------------------------------------------------------------------------------------
+.decl sas_conn_name(s: symbol)
+sas_conn_name("Connection"). sas_conn_name("SyncDatabaseConnection"). sas_conn_name("SyncVersionedDatabaseConnection").
+sas_conn_name("VersionedConnection").
+.decl sas_txn_name(s: symbol)
+sas_txn_name("LazyVersionedReadTransaction"). sas_txn_name("LazyVersionedWriteTransaction"). sas_txn_name("ReadTransaction").
+sas_txn_name("SchemaTransaction"). sas_txn_name("Transaction"). sas_txn_name("WriteTransaction").
+.decl sas_any_name(s: symbol)
+sas_any_name(s) :- sas_conn_name(s).
+sas_any_name(s) :- sas_txn_name(s).
+
+// A name leaf: an identifier, `x.NAME`, or a string or concatenated_string whose str value is the name.
+.decl sas_leaf(n: node, s: symbol)
+sas_leaf(n, s) :- node(_, n, "identifier", _, _), text(n, s).
+sas_leaf(n, s) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, s).
+sas_leaf(n, s) :- sas_string_kind(n), value(n, s), value_type_of(n, "str").
+.decl sas_string_kind(n: node)
+sas_string_kind(n) :- node(_, n, "string", _, _).
+sas_string_kind(n) :- node(_, n, "concatenated_string", _, _).
+// generic_type's first named child.
+.decl sas_first_child(g: node, c: node)
+sas_first_child(g, c) :- node(_, g, "generic_type", _, _), child(g, c, i), !sas_earlier_child(g, i).
+.decl sas_earlier_child(g: node, i: number)
+sas_earlier_child(g, i) :- node(_, g, "generic_type", _, _), child(g, _, i), child(g, _, j), j < i.
+
+// annotation-interesting (its binary_operator case is `left or (not left and right)`, which is left or right).
+.decl sas_ann_any(n: node)
+sas_ann_any(n) :- sas_leaf(n, s), sas_any_name(s).
+sas_ann_any(n) :- node(_, n, "type", _, _), child(n, c, _), sas_ann_any(c).
+sas_ann_any(n) :- sas_first_child(n, c), sas_ann_any(c).
+sas_ann_any(n) :- node(_, n, "subscript", _, _), field(n, "value", c), sas_ann_any(c).
+sas_ann_any(n) :- node(_, n, "binary_operator", _, _), field(n, "left", c), sas_ann_any(c).
+sas_ann_any(n) :- node(_, n, "binary_operator", _, _), field(n, "right", c), sas_ann_any(c).
+.decl sas_left_any(n: node)
+sas_left_any(n) :- node(_, n, "binary_operator", _, _), field(n, "left", c), sas_ann_any(c).
+// annotation-conn and annotation-txn: a binary_operator's right side counts only where its left is uninteresting.
+.decl sas_ann_conn(n: node)
+sas_ann_conn(n) :- sas_leaf(n, s), sas_conn_name(s).
+sas_ann_conn(n) :- node(_, n, "type", _, _), child(n, c, _), sas_ann_conn(c).
+sas_ann_conn(n) :- sas_first_child(n, c), sas_ann_conn(c).
+sas_ann_conn(n) :- node(_, n, "subscript", _, _), field(n, "value", c), sas_ann_conn(c).
+sas_ann_conn(n) :- node(_, n, "binary_operator", _, _), field(n, "left", c), sas_ann_conn(c).
+sas_ann_conn(n) :- node(_, n, "binary_operator", _, _), !sas_left_any(n), field(n, "right", c), sas_ann_conn(c).
+.decl sas_ann_txn(n: node)
+sas_ann_txn(n) :- sas_leaf(n, s), sas_txn_name(s).
+sas_ann_txn(n) :- node(_, n, "type", _, _), child(n, c, _), sas_ann_txn(c).
+sas_ann_txn(n) :- sas_first_child(n, c), sas_ann_txn(c).
+sas_ann_txn(n) :- node(_, n, "subscript", _, _), field(n, "value", c), sas_ann_txn(c).
+sas_ann_txn(n) :- node(_, n, "binary_operator", _, _), field(n, "left", c), sas_ann_txn(c).
+sas_ann_txn(n) :- node(_, n, "binary_operator", _, _), !sas_left_any(n), field(n, "right", c), sas_ann_txn(c).
+
+// ---- the defs ------------------------------------------------------------------------------------------------------
+.decl sas_def(d: number, f: node, name: symbol, s: number, e: number)
+sas_def(d, f, t, s, e) :- node(d, f, "function_definition", s, e), sas_has_param(f), field(f, "name", nm), text(nm, t).
+// later-signature: another def of the name with a positional parameter, starting at or after this one's end.
+.decl sas_superseded(f: node)
+sas_superseded(f) :- sas_def(d, f, t, _, e), sas_def(d, _, t, s2, _), s2 >= e.
+.decl sas_last(d: number, f: node, name: symbol)
+sas_last(d, f, t) :- sas_def(d, f, t, _, _), !sas_superseded(f).
+// The sync side: `X` taking a transaction first; its key is `X_async`.
+.decl sas_sync_key(d: number, k: symbol)
+sas_sync_key(d, k) :- sas_last(d, f, b), sas_first_param(f, q), field(q, "type", t), sas_ann_txn(t), k = cat(b, "_async").
+
+violation("data-layer-sync-async-signatures", "transaction-connection", "sync_async_signature_mismatch", p, l) :-
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), sas_last(d, f, k), sas_sync_key(d, k),
+    field(f, "name", nm), node_text(nm, s), match(".*_async", s),
+    sas_first_param(f, q), field(q, "type", t), sas_ann_conn(t), line(f, l).

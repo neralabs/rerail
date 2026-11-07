@@ -8,7 +8,7 @@
 //!   renamed in order are one relation; readers read the first. Repeated to a fixpoint, so relations over merged
 //!   ones merge too. Outputs, inputs, lattices, relations with facts and demanded relations are kept as they are.
 
-use super::front::{Atom, Literal, Program, Rule, Term};
+use super::front::{AggOp, Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// What was simplified.
@@ -142,7 +142,11 @@ fn canonical(rule: &Rule) -> String {
             Literal::Agg { var, op, over, atom: a } => {
                 let var = name(var);
                 let over = over.as_ref().map(|o| name(o));
-                Literal::Agg { var, op: op.clone(), over, atom: atom(a, &mut name) }
+                let op = match op {
+                    AggOp::Join { by, sep } => AggOp::Join { by: by.iter().map(|k| name(k)).collect(), sep: sep.clone() },
+                    op => op.clone(),
+                };
+                Literal::Agg { var, op, over, atom: atom(a, &mut name) }
             }
             Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n), a: name(a), kindset: kindset.clone() },
             Literal::Ast { document, node, matcher, captures } => Literal::Ast {

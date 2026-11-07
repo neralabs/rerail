@@ -1,0 +1,80 @@
+// data-layer-dynamic-module-loading: every clause, by hand (decision 0043). The policy is
+// candidates/rules-ast/data-layer-dynamic-module-loading.json; it declares no options and no syntax gate.
+// pattern-0, pattern-3 and pattern-4 are the converter's gaps; pattern-1 and pattern-2 are authored too, so that
+// the TYPE_CHECKING condition and the `globals()` arguments are read from their text as W reads them (the
+// converter read them as names: `^\(\s*\)$` on an argument list never held).
+//
+// Notes against W:
+// - `layout.line` is the regex on the node's first line in W's layout numbering (`tape_line`: \r\n, \r, \n).
+// - `\b` in `match` is the engine's (ASCII word boundary); W's regex crate's is Unicode.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: loc, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl tape_line(d: number, l: number, sp: span)
+.decl op(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- shared: inside the consequence block of an `if` whose condition's text holds TYPE_CHECKING ----
+.decl pattern_block(kind: symbol)
+pattern_block("block").
+.decl pattern_tc_block(b: node)
+pattern_tc_block(b) :- node(_, b, "block", _, _), field(i, "consequence", b), node(_, i, "if_statement", _, _),
+  field(i, "condition", c), node_text(c, s), contains("TYPE_CHECKING", s).
+.decl pattern_in_tc(n: node)
+pattern_in_tc(n) :- inside(n, b, pattern_block), pattern_tc_block(b).
+
+// ---- pattern-0: a module-level `def __getattr__` (not async) ----
+// Its parent is the module (or a decorated definition at the module), so it is in no block: the policy's
+// `not inside` the TYPE_CHECKING block holds of every such definition.
+.decl pattern_0_top(n: node)
+pattern_0_top(n) :- child(m, n, _), node(_, m, "module", _, _).
+pattern_0_top(n) :- child(w, n, _), node(_, w, "decorated_definition", _, _), child(m, w, _), node(_, m, "module", _, _).
+violation("data-layer-dynamic-module-loading", "pattern-0", "DML001", p, l) :-
+  node(d, n, "function_definition", _, _), field(n, "name", x), node_text(x, "__getattr__"), !op(n, "async"),
+  pattern_0_top(n), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- pattern-1: `globals()[…]` as an assignment's target (or the value of a subscript that is one) ----
+.decl pattern_1_target(s: node)
+pattern_1_target(s) :- field(a, "left", s), node(_, a, "assignment", _, _).
+pattern_1_target(s) :- field(t, "value", s), node(_, t, "subscript", _, _), field(a, "left", t), node(_, a, "assignment", _, _).
+violation("data-layer-dynamic-module-loading", "pattern-1", "DML001", p, l) :-
+  node(d, n, "subscript", _, _), field(n, "value", c), node(_, c, "call", _, _),
+  field(c, "function", f), node_text(f, "globals"), field(c, "arguments", g), node_text(g, t), match("\(\s*\)", t),
+  pattern_1_target(n), !pattern_in_tc(n), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- shared by pattern-2 and pattern-4: a name as a callee (bare or an attribute) or a definition's name ----
+.decl pattern_site(n: node)
+pattern_site(n) :- field(c, "function", n), node(_, c, "call", _, _).
+pattern_site(n) :- field(a, "attribute", n), node(_, a, "attribute", _, _), field(c, "function", a), node(_, c, "call", _, _).
+pattern_site(n) :- field(f, "name", n), node(_, f, "function_definition", _, _).
+
+// ---- pattern-2: __import__ ----
+violation("data-layer-dynamic-module-loading", "pattern-2", "DML001", p, l) :-
+  node(d, n, "identifier", _, _), node_text(n, "__import__"), pattern_site(n), !pattern_in_tc(n),
+  in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- shared by pattern-3 and pattern-4: the lines `layout.line` matches ----
+.decl pattern_layout_line(d: number, l: number)
+pattern_layout_line(d, l) :- tape_line(d, l, sp), text(sp, s),
+  match("(?s:.*)(?:(?:^def\s+__getattr__\s*\()|(?:\bglobals\s*\(\s*\)\s*\[.*\]\s*=)|(?:\b__import__\s*\())(?s:.*)", s).
+
+// ---- pattern-3: importlib.import_module(…) ----
+violation("data-layer-dynamic-module-loading", "pattern-3", "DML001", p, l) :-
+  node(d, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _),
+  node_text(f, s), suffix("importlib.import_module", s),
+  !pattern_in_tc(n), line(n, l), !pattern_layout_line(d, l),
+  in_scope(d), !out_scope(d), doc(d, p, _).
+
+// ---- pattern-4: import_module ----
+violation("data-layer-dynamic-module-loading", "pattern-4", "DML001", p, l) :-
+  node(d, n, "identifier", _, _), node_text(n, "import_module"), pattern_site(n),
+  !pattern_in_tc(n), line(n, l), !pattern_layout_line(d, l),
+  in_scope(d), !out_scope(d), doc(d, p, _).

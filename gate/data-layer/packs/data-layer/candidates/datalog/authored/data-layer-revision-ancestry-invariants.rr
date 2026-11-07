@@ -1,0 +1,93 @@
+// data-layer-revision-ancestry-invariants: every clause is a `forbid.regex` over `file.content` (W: eval/query.rs,
+// query/mod.rs `regex_query_matches`): the file must match each `content.include` regex, its path the clause's
+// `paths`, and each match of the pattern (`find_iter`, leftmost-first, non-overlapping) is a finding at its anchor's
+// line. Here each is W's whole-file regex exactly: `source(d, sp)`, `match_all("re", sp, m)`, `line(m, l)` (or the
+// capture's span from `match_group` for a `capture.NAME` anchor), every pattern the policy's verbatim.
+//
+// Options: `oracleAnalyzer` (`option_on("oracleAnalyzer")`). Off (the default): `content.include` is
+// `revision|ancestry|stmt_ancestry_chain` and the descriptor and removed-surface anchors are their captures
+// (`capture.DESCRIPTOR`, `capture.SURFACE`). On: `content.include` is `(?s).*`, which every file matches, and those
+// anchors are `file.start`, line 1. The cast clauses anchor at `witness.span`, the match, either way.
+//
+// Not followed: a replay event's `path_skip_override` (the replay drops the clauses' `paths` from the policy
+// document); the authored file has no fact saying so, so the `paths` below always apply.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_on(name: symbol)
+.decl source(d: number, sp: span)
+.decl line(n: loc, l: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- shared: the files every clause reads and the content gate ----------------------------------------------------
+
+// In scope and in every clause's `paths`: include `**/*.py`, exclude `**/tests/**`, `**/test_*.py`; its text.
+.decl revision_ancestry_file(d: number, p: symbol, sp: span)
+revision_ancestry_file(d, p, sp) :- doc(d, p, _), in_scope(d), !out_scope(d), glob("**/*.py", p), !glob("**/tests/**", p), !glob("**/test_*.py", p), source(d, sp).
+
+// `content.include`, every clause's: `revision|ancestry|stmt_ancestry_chain` off, `(?s).*` (every file) on.
+.decl revision_ancestry_content(d: number)
+revision_ancestry_content(d) :- revision_ancestry_file(d, _, sp), !option_on("oracleAnalyzer"), match_all("revision|ancestry|stmt_ancestry_chain", sp, _).
+revision_ancestry_content(d) :- revision_ancestry_file(d, _, _), option_on("oracleAnalyzer").
+
+// ---- descriptor-*: `\A[\s\S]*?(?P<DESCRIPTOR>(?m:^class\s+NAME\b))` -----------------------------------------------
+// `\A` lets `find_iter` match at most once per file. descriptor_capture(d, name, k): the match's DESCRIPTOR at line k.
+.decl descriptor_capture(d: number, c: symbol, k: number)
+descriptor_capture(d, "SqlAncestryChainCte", k) :- revision_ancestry_file(d, _, sp),
+  match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlAncestryChainCte\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "SqlNativeRevisionValue", k) :- revision_ancestry_file(d, _, sp),
+  match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlNativeRevisionValue\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "SqlRevisionAncestryDefinition", k) :- revision_ancestry_file(d, _, sp),
+  match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlRevisionAncestryDefinition\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "SqlRevisionInAncestryCondition", k) :- revision_ancestry_file(d, _, sp),
+  match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlRevisionInAncestryCondition\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "_SparseRowVisibleAtRevisionCondition", k) :- revision_ancestry_file(d, _, sp),
+  match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+_SparseRowVisibleAtRevisionCondition\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "_SqlCopyVisibleSparseAncestors", k) :- revision_ancestry_file(d, _, sp),
+  match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+_SqlCopyVisibleSparseAncestors\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "_SqlVisibleAncestorsDefinition", k) :- revision_ancestry_file(d, _, sp),
+  match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+_SqlVisibleAncestorsDefinition\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+
+// The finding's line: the capture's (off) or line 1, `file.start` (on).
+.decl descriptor_found(d: number, c: symbol, l: number)
+descriptor_found(d, c, k) :- descriptor_capture(d, c, k), revision_ancestry_content(d), !option_on("oracleAnalyzer").
+descriptor_found(d, c, 1) :- descriptor_capture(d, c, _), revision_ancestry_content(d), option_on("oracleAnalyzer").
+
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlAncestryChainCte", "forbidden_descriptor", p, l) :-
+  descriptor_found(d, "SqlAncestryChainCte", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlNativeRevisionValue", "forbidden_descriptor", p, l) :-
+  descriptor_found(d, "SqlNativeRevisionValue", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlRevisionAncestryDefinition", "forbidden_descriptor", p, l) :-
+  descriptor_found(d, "SqlRevisionAncestryDefinition", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlRevisionInAncestryCondition", "forbidden_descriptor", p, l) :-
+  descriptor_found(d, "SqlRevisionInAncestryCondition", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SparseRowVisibleAtRevisionCondition", "forbidden_descriptor", p, l) :-
+  descriptor_found(d, "_SparseRowVisibleAtRevisionCondition", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlCopyVisibleSparseAncestors", "forbidden_descriptor", p, l) :-
+  descriptor_found(d, "_SqlCopyVisibleSparseAncestors", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlVisibleAncestorsDefinition", "forbidden_descriptor", p, l) :-
+  descriptor_found(d, "_SqlVisibleAncestorsDefinition", l), revision_ancestry_file(d, p, _).
+
+// ---- removed-surface: `\A[\s\S]*?(?P<SURFACE>stmt_ancestry_chain)`, at most one match per file --------------------
+.decl removed_surface_capture(d: number, k: number)
+removed_surface_capture(d, k) :- revision_ancestry_file(d, _, sp),
+  match_group("\\A[\\s\\S]*?(?P<SURFACE>stmt_ancestry_chain)", sp, _, "SURFACE", g), line(g, k).
+
+violation("data-layer-revision-ancestry-invariants", "removed-surface", "removed_surface", p, l) :-
+  removed_surface_capture(d, l), revision_ancestry_content(d), !option_on("oracleAnalyzer"), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "removed-surface", "removed_surface", p, 1) :-
+  removed_surface_capture(d, _), revision_ancestry_content(d), option_on("oracleAnalyzer"), revision_ancestry_file(d, p, _).
+
+// ---- stored-text-cast-0: a finding at each match's line (`witness.span`) ------------------------------------------
+violation("data-layer-revision-ancestry-invariants", "stored-text-cast-0", "stored_revision_text_cast", p, l) :-
+  revision_ancestry_file(d, p, sp), revision_ancestry_content(d),
+  match_all("(?i)(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}::\\s*text", sp, m),
+  line(m, l).
+
+// ---- stored-text-cast-1: a finding at each match's line (`witness.span`) ------------------------------------------
+violation("data-layer-revision-ancestry-invariants", "stored-text-cast-1", "stored_revision_text_cast", p, l) :-
+  revision_ancestry_file(d, p, sp), revision_ancestry_content(d),
+  match_all("(?i)CAST\\([\\s\\S]{0,160}?(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}?\\s+AS\\s+(?:TEXT|CHAR(?:\\s*\\(\\s*\\d+\\s*\\))?)\\s*\\)", sp, m),
+  line(m, l).

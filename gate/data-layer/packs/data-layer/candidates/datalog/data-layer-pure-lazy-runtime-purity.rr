@@ -1,8 +1,321 @@
+.decl prs_assignk(kind: symbol)
+prs_assignk("assignment").
+.decl prs_cdk(kind: symbol)
+prs_cdk("class_definition").
+.decl prs_defk(kind: symbol)
+prs_defk("function_definition"). prs_defk("class_definition").
+.decl prs_fdk(kind: symbol)
+prs_fdk("function_definition").
+.decl prs_lambdak(kind: symbol)
+prs_lambdak("lambda").
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl prs_active(d: number, f: node)
+.decl prs_admitted(d: number)
+.decl prs_allname(d: number, v: symbol)
+.decl prs_allowcall(c: node)
+.decl prs_allowcallee(s: symbol)
+.decl prs_amanaged(a: node, mg: number)
+.decl prs_ann(f: node, x: node)
+.decl prs_anyadm(z: number)
+.decl prs_anyprimary(z: number)
+.decl prs_arg(d: number, c: node, a: node, pos: number, s: number, e: number)
+.decl prs_arg0(d: number, c: node, a: node, s: number, e: number)
+.decl prs_argle(d: number, c: node, s: number, s2: number)
+.decl prs_argskip(k: symbol)
+.decl prs_asg(d: number, a: node, s: number, e: number, t: node, tk: symbol, tt: symbol)
+.decl prs_asgv(a: node, v: node, vk: symbol, vs: number, ve: number)
+.decl prs_attr(d: number, a: node, s: number, e: number, at: symbol, o: node, ot: symbol)
+.decl prs_base(c: node, p: node, o: number)
+.decl prs_basehd(nm: symbol, cl: node, o: number)
+.decl prs_baseq(d: number, c: node, o: number, q: symbol)
+.decl prs_basex(d: number, c: node, b: node, o: number, bk: symbol)
+.decl prs_bname(d: number, a: node, nm: symbol)
+.decl prs_body(x: node, bs: number, be: number)
+.decl prs_bound(a: node, x: node)
+.decl prs_bval(a: node, v: node, vk: symbol)
+.decl prs_bvmanaged(a: node)
+.decl prs_bvw(a: node, v: node)
+.decl prs_c1(c: node)
+.decl prs_c3(f: node, c: node)
+.decl prs_call(d: number, c: node, s: number, e: number, f: node, fk: symbol, full: symbol, callee: symbol)
+.decl prs_cast2(c: node)
+.decl prs_cedge(d: number, o: node, d2: number, t: node)
+.decl prs_cg(d: number, f: node, c: node, cs: number, ce: number, cn: symbol, nm: symbol, mg: number)
+.decl prs_cgok(d: number, c: node, cn: symbol, nm: symbol, mg: number)
+.decl prs_cin(d: number, f: node, c: node, cs: number, ce: number, fk: symbol, cn: symbol)
+.decl prs_cloc(d: number, c: node, o: node, loc: symbol, sfx: symbol)
+.decl prs_cls(d: number, c: node, q: symbol)
+.decl prs_col(d: number, f: node, col: symbol)
+.decl prs_contract(d: number, f: node)
+.decl prs_cown(d: number, c: node, f: node)
+.decl prs_ctxvar(d: number, nm: symbol)
+.decl prs_dcol(d: number, f: node, col: symbol)
+.decl prs_decl(d: number, x: node, k: symbol, nm: symbol, s: number, e: number)
+.decl prs_declk(k: symbol)
+.decl prs_decname(d: number, f: node, dec: node, nm: symbol)
+.decl prs_decorated(x: node, w: node, ws: number)
+.decl prs_decw(d: number, f: node, dec: node, x: node)
+.decl prs_defines(cl: node, nm: symbol, f: node)
+.decl prs_defnm(cl: node, nm: symbol)
+.decl prs_demand(d: number, o: node, nm: symbol, cl: node)
+.decl prs_dn(t: symbol)
+.decl prs_dname(nm: symbol)
+.decl prs_dndot(t: symbol, i: number)
+.decl prs_dnhead(t: symbol, h: symbol)
+.decl prs_dnsuf(t: symbol, s: symbol)
+.decl prs_doc(d: number, p: symbol, m: symbol)
+.decl prs_dyn(d: number, f: node, c: node)
+.decl prs_effect(s: symbol)
+.decl prs_en(d: number, m: symbol, nm: symbol)
+.decl prs_ent(m: symbol, nm: symbol, tm: symbol, tn: symbol)
+.decl prs_ev(d: number, f: node, x: node, s: number, e: number)
+.decl prs_exp(m: symbol, nm: symbol)
+.decl prs_explicit(f: node)
+.decl prs_fasg(d: number, f: node, a: node, s: number)
+.decl prs_fattr(d: number, f: node, x: node, xs: number, xe: number)
+.decl prs_fattrex(f: node, x: node)
+.decl prs_fbase(d: number, n: node, b: symbol)
+.decl prs_fbound(d: number, f: node, nm: symbol)
+.decl prs_fimp(d: number, f: node, loc: symbol)
+.decl prs_find(nm: symbol, cl: node, f: node)
+.decl prs_first(p: node, c: node)
+.decl prs_firstbase(nm: symbol, cl: node, b: node)
+.decl prs_firstimp(d: number, ik: symbol, loc: symbol, tg: symbol)
+.decl prs_flag(d: number, f: node)
+.decl prs_free(d: number, o: node, rn: symbol)
+.decl prs_frozen(d: number, nm: symbol)
+.decl prs_ga(d: number, c: node, x: node)
+.decl prs_globalfn(d: number, nm: symbol)
+.decl prs_gr(d: number, f: node, x: node, nm: symbol, mg: number)
+.decl prs_gs(d: number, nm: symbol, mu: number, mg: number)
+.decl prs_gsexempt(d: number, v: node)
+.decl prs_gu(d: number, f: node, n: node, s: number, e: number, nm: symbol, mu: number)
+.decl prs_handlef(s: symbol)
+.decl prs_hasall(d: number)
+.decl prs_hasanc(d: number, f: node, x: node, s: number, e: number)
+.decl prs_hasdef(nm: symbol, cl: node)
+.decl prs_ident(d: number, n: node, s: number, e: number, t: symbol)
+.decl prs_ikey(d: number, o: node, key: symbol)
+.decl prs_imp(d: number, n: node, ik: symbol, loc: symbol, tg: symbol, xs: number)
+.decl prs_impfrom(d: number, n: node, ms: symbol)
+.decl prs_impown(n: node, f: node)
+.decl prs_impx(d: number, n: node, loc: symbol, nm: symbol, xs: number)
+.decl prs_incast(d: number, s: number, e: number)
+.decl prs_inlambda(c: node)
+.decl prs_iss(d: number, f: node, x: node, s: number, e: number, code: symbol)
+.decl prs_kid(p: node, c: node, i: number)
+.decl prs_kw(d: number, c: node, ks: number, nm: symbol, v: node, vs: number, ve: number, vk: symbol)
+.decl prs_kwnn(c: node, nm: symbol)
+.decl prs_later(f: node)
+.decl prs_ledge(d: number, o: node, t: node)
+.decl prs_legacy(f: node)
+.decl prs_legacyname(s: symbol)
+.decl prs_lp(x: node, lp: node)
+.decl prs_managed(c: node)
+.decl prs_managedm(s: symbol)
+.decl prs_mb(d: number, a: node, nm: symbol)
+.decl prs_mcall(d: number, o: node, c: node, cn: symbol, fk: symbol, cl: node)
+.decl prs_mgcond(c: node)
+.decl prs_mm(d: number, mm: symbol)
+.decl prs_modimp(d: number, ik: symbol, loc: symbol, tg: symbol, xs: number)
+.decl prs_modimpl(d: number, loc: symbol)
+.decl prs_mutated(d: number, nm: symbol)
+.decl prs_mutk(k: symbol)
+.decl prs_mutm(s: symbol)
+.decl prs_n(d: number, n: node, k: symbol, s: number, e: number)
+.decl prs_nameslot(n: node)
+.decl prs_nonfactory(s: symbol)
+.decl prs_oploc(d: number, f: node, nm: symbol, since: number)
+.decl prs_opq(d: number, c: node)
+.decl prs_opv(d: number, x: node)
+.decl prs_ownerparam(s: symbol)
+.decl prs_pact(d: number, f: node, x: node, xs: number, xe: number, at: symbol, rn: symbol, tc: number)
+.decl prs_param(d: number, f: node, nm: symbol)
+.decl prs_paramk(k: symbol)
+.decl prs_pathok(d: number)
+.decl prs_pattr(d: number, x: node, xs: number, xe: number, at: symbol, rn: symbol, tc: number)
+.decl prs_pedge(d: number, o: node, d2: number, t: node)
+.decl prs_policytext(v: node, t: symbol)
+.decl prs_prot(d: number, f: node, x: node, xs: number, xe: number, tc: number)
+.decl prs_protattr(s: symbol)
+.decl prs_purecol(f: node)
+.decl prs_qf(d: number, t: node, q: symbol)
+.decl prs_qual(d: number, x: node, q: symbol)
+.decl prs_r1(r: node, v: node)
+.decl prs_r2(r: node, v: node)
+.decl prs_r3(f: node, r: node, v: node)
+.decl prs_r4(f: node, r: node, v: node)
+.decl prs_r5(f: node, r: node, v: node)
+.decl prs_r6(f: node, r: node, v: node)
+.decl prs_r7(f: node, r: node, v: node)
+.decl prs_recv(c: node, r: node, rk: symbol, rt: symbol)
+.decl prs_region(x: node, rs: number)
+.decl prs_ret(d: number, r: node, rs: number, re: number, v: node)
+.decl prs_rin(d: number, f: node, r: node, rs: number, re: number, v: node, vs: number, ve: number, vk: symbol, pv: node)
+.decl prs_root(e: node, nm: symbol, tc: number)
+.decl prs_rsplace(n: node)
+.decl prs_rtcall(d: number, c: node)
+.decl prs_rtname(s: symbol)
+.decl prs_rts(d: number, nm: symbol)
+.decl prs_rwmfalse(c: node)
+.decl prs_scansource(z: number)
+.decl prs_seed(d: number, f: node, col: symbol)
+.decl prs_selfcls(s: symbol)
+.decl prs_shadow(d: number, f: node, nm: symbol)
+.decl prs_shallow(s: symbol)
+.decl prs_sinkkw(s: symbol)
+.decl prs_skipk(k: symbol)
+.decl prs_slotk(k: symbol)
+.decl prs_srcgate(d: number)
+.decl prs_step(n: node, c: node)
+.decl prs_str(d: number, s: number, e: number, v: symbol)
+.decl prs_strict(f: node)
+.decl prs_surface(f: node)
+.decl prs_surfcls(c: node)
+.decl prs_sval(n: node, v: symbol)
+.decl prs_taint(d: number, f: node, nm: symbol, since: number)
+.decl prs_thru(x: node, y: node)
+.decl prs_tuplek(k: symbol)
+.decl prs_typesub(x: node)
+.decl prs_vis(d: number, x: node, code: symbol)
+.decl prs_walk(e: node, x: node, tc: number)
+.decl prs_wrapm(s: symbol)
+.decl prs_wrapper(v: node)
+.decl strprefix(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, child, node_text, field, value, strprefix, line
+.output violation
+option_value("entryPoint", "scan_paths").
+prs_allowcallee("build_internal_permission_query_request").
+prs_allowcallee("enqueue_lazy_plan_intent").
+prs_allowcallee("next_lazy_plan_ref").
+prs_allowcallee("publish_pending_lazy_ref").
+prs_allowcallee("publish_pending_lazy_ref_for_txn").
+prs_argskip("keyword_argument").
+prs_argskip("list_splat").
+prs_argskip("dictionary_splat").
+prs_declk("function_definition").
+prs_declk("class_definition").
+prs_effect("ddl_effect_lazy").
+prs_effect("grammar_effect_lazy").
+prs_effect("grammar_row_lazy").
+prs_effect("grammar_rows_lazy").
+prs_effect("grammar_value_lazy").
+prs_handlef("conn").
+prs_handlef("connection").
+prs_handlef("context").
+prs_handlef("fn").
+prs_handlef("handle").
+prs_handlef("tx").
+prs_handlef("txn").
+prs_legacyname("legacy_sync").
+prs_legacyname("legacy_async").
+prs_legacyname("legacy_module_sync").
+prs_legacyname("legacy_module_async").
+prs_managedm("get").
+prs_managedm("get_for_key").
+prs_managedm("get_or_compute").
+prs_managedm("get_with_generation").
+prs_managedm("set").
+prs_managedm("set_for_key").
+prs_managedm("token_for").
+prs_mutk("dictionary").
+prs_mutk("dictionary_comprehension").
+prs_mutk("list").
+prs_mutk("list_comprehension").
+prs_mutk("set").
+prs_mutk("set_comprehension").
+prs_mutk("generator_expression").
+prs_mutm("add").
+prs_mutm("append").
+prs_mutm("clear").
+prs_mutm("discard").
+prs_mutm("extend").
+prs_mutm("pop").
+prs_mutm("popitem").
+prs_mutm("remove").
+prs_mutm("set").
+prs_mutm("setdefault").
+prs_mutm("update").
+prs_nonfactory("MappingProxyType").
+prs_nonfactory("NewType").
+prs_nonfactory("ParamSpec").
+prs_nonfactory("TypeVar").
+prs_nonfactory("TypeVarTuple").
+prs_nonfactory("frozenset").
+prs_nonfactory("load_python_module").
+prs_nonfactory("tuple").
+prs_ownerparam("conn").
+prs_ownerparam("connection").
+prs_ownerparam("owner").
+prs_ownerparam("session").
+prs_ownerparam("tx").
+prs_ownerparam("txn").
+prs_paramk("typed_parameter").
+prs_paramk("default_parameter").
+prs_paramk("typed_default_parameter").
+prs_protattr("_base_txn").
+prs_protattr("_conn").
+prs_protattr("_cursor").
+prs_protattr("_read_txn").
+prs_protattr("_schema_txn").
+prs_protattr("_session").
+prs_protattr("_sql_conn").
+prs_protattr("_transaction").
+prs_protattr("_tx").
+prs_protattr("_txn").
+prs_protattr("_write_txn").
+prs_rtname("BatchContext").
+prs_rtname("ReadTransaction").
+prs_rtname("SyncDatabaseConnection").
+prs_rtname("SyncSqlConnection").
+prs_rtname("WriteTransaction").
+prs_selfcls("self").
+prs_selfcls("cls").
+prs_shallow("PLP-001").
+prs_shallow("PLP-002").
+prs_shallow("PLP-003").
+prs_shallow("PLP-004").
+prs_shallow("PLP-005").
+prs_sinkkw("conn").
+prs_sinkkw("connection").
+prs_sinkkw("context").
+prs_sinkkw("cursor").
+prs_sinkkw("session").
+prs_sinkkw("tx").
+prs_sinkkw("txn").
+prs_skipk("comment").
+prs_skipk("string_start").
+prs_skipk("string_content").
+prs_skipk("string_end").
+prs_skipk("escape_sequence").
+prs_skipk("line_continuation").
+prs_slotk("attribute").
+prs_slotk("keyword_argument").
+prs_slotk("function_definition").
+prs_slotk("class_definition").
+prs_slotk("default_parameter").
+prs_slotk("typed_parameter").
+prs_slotk("typed_default_parameter").
+prs_tuplek("tuple").
+prs_tuplek("list").
+prs_tuplek("pattern_list").
+prs_tuplek("tuple_pattern").
+prs_tuplek("list_pattern").
+prs_wrapm("of").
+prs_wrapm("from_value").
+prs_wrapm("resolved").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -18,4 +331,272 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-.output violation
+prs_sinkkw(s) :- prs_protattr(s).
+prs_doc(d, p, m) :- doc(d, p, m), in_scope(d), !out_scope(d), !syntax_error(d).
+prs_n(d, n, k, s, e) :- prs_doc(d, _, _), node(d, n, k, s, e), !prs_skipk(k).
+prs_kid(p, c, i) :- child(p, c, i), prs_n(_, c, _, _, _).
+prs_first(p, c) :- prs_kid(p, c, i), i = min j : { prs_kid(p, _, j) }.
+prs_ident(d, n, s, e, t) :- prs_n(d, n, "identifier", s, e), node_text(n, t).
+prs_inlambda(c) :- prs_n(_, c, _, _, _), inside(c, l, prs_lambdak), prs_n(_, l, _, _, _).
+prs_rsplace(n) :- prs_n(_, n, "string", _, _), inside(n, _, prs_fdk).
+prs_rsplace(n) :- prs_n(_, n, "concatenated_string", _, _), inside(n, _, prs_fdk).
+prs_rsplace(n) :- prs_n(_, n, "string", _, _), inside(n, a, prs_assignk), field(a, "left", t), prs_ident(_, t, _, _, "__all__").
+prs_rsplace(n) :- prs_n(_, n, "concatenated_string", _, _), inside(n, a, prs_assignk), field(a, "left", t), prs_ident(_, t, _, _, "__all__").
+prs_sval(n, v) :- prs_rsplace(n), value(n, v).
+prs_sval(n, "") :- prs_rsplace(n), !value(n, _).
+prs_str(d, s, e, v) :- prs_rsplace(n), prs_n(d, n, "string", s, e), strprefix(n, p), match("[ru]*", p), prs_sval(n, v).
+prs_str(d, s, e, v) :- prs_rsplace(n), prs_n(d, n, "concatenated_string", s, e), prs_first(n, c), strprefix(c, p), match("[ru]*", p), prs_sval(n, v).
+prs_attr(d, a, s, e, at, o, ot) :- prs_n(d, a, "attribute", s, e), field(a, "attribute", x), node_text(x, at), field(a, "object", o), node_text(o, ot).
+prs_call(d, c, s, e, f, fk, ft, ft) :- prs_n(d, c, "call", s, e), field(c, "function", f), prs_n(d, f, fk, _, _), fk != "attribute", node_text(f, ft).
+prs_call(d, c, s, e, f, "attribute", ft, at) :- prs_n(d, c, "call", s, e), field(c, "function", f), prs_n(d, f, "attribute", _, _), node_text(f, ft), field(f, "attribute", a), node_text(a, at).
+prs_recv(c, r, rk, rt) :- prs_call(d, c, _, _, f, "attribute", _, _), field(f, "object", r), prs_n(d, r, rk, _, _), node_text(r, rt).
+prs_cown(d, c, f) :- prs_call(d, c, _, _, _, _, _, _), nearest(c, f, prs_fdk).
+prs_arg0(d, c, a, s, e) :- prs_call(d, c, _, _, _, _, _, _), field(c, "arguments", al), prs_n(d, al, ak, _, _), ak != "generator_expression", prs_kid(al, a, _), prs_n(d, a, k, s, e), !prs_argskip(k).
+prs_arg0(d, c, g, s, e) :- prs_call(d, c, _, _, _, _, _, _), field(c, "arguments", g), prs_n(d, g, "generator_expression", s, e).
+prs_argle(d, c, s, s2) :- prs_arg0(d, c, _, s, _), prs_arg0(d, c, _, s2, _), s2 <= s.
+prs_arg(d, c, a, @sub(k, 1), s, e) :- prs_arg0(d, c, a, s, e), k = count : { prs_argle(d, c, s, _) }.
+prs_kw(d, c, ks, nm, v, vs, ve, vk) :- prs_call(d, c, _, _, _, _, _, _), field(c, "arguments", al), prs_kid(al, k, _), prs_n(d, k, "keyword_argument", ks, _), field(k, "name", kn), node_text(kn, nm), field(k, "value", v), prs_n(d, v, vk, vs, ve).
+prs_ret(d, r, rs, re, v) :- prs_n(d, r, "return_statement", rs, re), prs_kid(r, v, _).
+prs_asg(d, a, s, e, t, tk, tt) :- prs_n(d, a, "assignment", s, e), field(a, "left", t), prs_n(d, t, tk, _, _), node_text(t, tt).
+prs_asgv(a, v, vk, vs, ve) :- prs_asg(d, a, _, _, _, _, _), field(a, "right", v), prs_n(d, v, vk, vs, ve).
+prs_bound(a, t) :- prs_asg(_, a, _, _, t, _, _).
+prs_bound(a, c) :- prs_bound(a, x), prs_n(_, x, k, _, _), prs_tuplek(k), prs_kid(x, c, _).
+prs_bname(d, a, nm) :- prs_bound(a, x), prs_ident(d, x, _, _, nm).
+prs_param(d, f, nm) :- prs_n(d, f, "function_definition", _, _), field(f, "parameters", ps), prs_kid(ps, p, _), prs_ident(d, p, _, _, nm).
+prs_param(d, f, nm) :- prs_n(d, f, "function_definition", _, _), field(f, "parameters", ps), prs_kid(ps, p, _), prs_n(d, p, pk, _, _), prs_paramk(pk), prs_first(p, x), prs_ident(d, x, _, _, nm).
+prs_fbound(d, f, nm) :- prs_bname(d, a, nm), nearest(a, f, prs_fdk).
+prs_shadow(d, f, nm) :- prs_param(d, f, nm).
+prs_shadow(d, f, nm) :- prs_fbound(d, f, nm).
+prs_decl(d, x, k, nm, s, e) :- prs_n(d, x, k, s, e), prs_declk(k), field(x, "name", y), node_text(y, nm).
+prs_decorated(x, w, ws) :- prs_decl(d, x, _, _, _, _), child(w, x, _), prs_n(d, w, "decorated_definition", ws, _).
+prs_region(x, ws) :- prs_decorated(x, _, ws).
+prs_region(x, s) :- prs_decl(_, x, _, _, s, _), !prs_decorated(x, _, _).
+prs_body(x, bs, be) :- prs_decl(d, x, _, _, _, _), field(x, "body", b), prs_n(d, b, _, bs, be).
+prs_lp(x, lp) :- prs_decl(_, x, _, _, _, _), nearest(x, lp, prs_defk).
+prs_qual(d, x, nm) :- prs_decl(d, x, _, nm, _, _), !prs_lp(x, _).
+prs_qual(d, x, @concat(@concat(q, "."), nm)) :- prs_qual(d, lp, q), prs_lp(x, lp), prs_decl(d, x, _, nm, _, _).
+prs_decw(d, f, dec, x) :- prs_decorated(f, w, _), prs_kid(w, dec, _), prs_n(d, dec, "decorator", _, _), prs_kid(dec, x, _).
+prs_decw(d, f, dec, y) :- prs_decw(d, f, dec, x), prs_call(d, x, _, _, y, _, _, _).
+prs_decname(d, f, dec, nm) :- prs_decw(d, f, dec, x), prs_ident(d, x, _, _, nm).
+prs_decname(d, f, dec, nm) :- prs_decw(d, f, dec, x), prs_attr(d, x, _, _, nm, _, _).
+prs_step(n, c) :- prs_n(_, n, "attribute", _, _), field(n, "object", c), prs_n(_, c, _, _, _).
+prs_step(n, c) :- prs_n(_, n, "subscript", _, _), field(n, "value", c), prs_n(_, c, _, _, _).
+prs_step(n, c) :- prs_n(_, n, "call", _, _), field(n, "function", c), prs_n(_, c, _, _, _).
+prs_step(n, c) :- prs_n(_, n, "parenthesized_expression", _, _), prs_first(n, c).
+prs_step(n, c) :- prs_n(_, n, "type", _, _), prs_first(n, c).
+prs_walk(e, e, 0) :- prs_n(_, e, _, _, _).
+prs_walk(e, c, 1) :- prs_walk(e, x, _), prs_step(x, c), prs_n(_, x, "call", _, _).
+prs_walk(e, c, tc) :- prs_walk(e, x, tc), prs_step(x, c), !prs_n(_, x, "call", _, _).
+prs_root(e, nm, tc) :- prs_walk(e, x, tc), prs_ident(_, x, _, _, nm).
+prs_free(d, o, rn) :- prs_cown(d, c, o), prs_call(d, c, _, _, fi, _, _, _), prs_root(fi, rn, _), prs_selfcls(rn).
+prs_free(d, o, rn) :- prs_cown(d, c, o), prs_call(d, c, _, _, fi, _, _, _), prs_root(fi, rn, _), !prs_shadow(d, o, rn).
+prs_ledge(d, o, t) :- prs_call(d, c, _, _, fi, "identifier", _, cn), prs_cown(d, c, o), prs_decl(d, t, "function_definition", cn, _, _), !prs_lp(t, _), !prs_inlambda(c), prs_root(fi, rn, _), prs_free(d, o, rn).
+prs_ledge(d, o, t) :- prs_call(d, c, _, _, fi, "identifier", _, cn), prs_cown(d, c, o), prs_decl(d, t, "function_definition", cn, _, _), prs_lp(t, lp), prs_lp(o, lp), !prs_inlambda(c), prs_root(fi, rn, _), prs_free(d, o, rn).
+prs_ledge(d, o, t) :- prs_call(d, c, _, _, fi, "attribute", _, cn), prs_cown(d, c, o), prs_root(fi, rn, _), prs_selfcls(rn), prs_decl(d, t, "function_definition", cn, _, _), prs_lp(t, lp), prs_lp(o, lp), !prs_inlambda(c).
+prs_impfrom(d, n, ms) :- prs_n(d, n, "import_from_statement", _, _), field(n, "module_name", mn), node_text(mn, ms).
+prs_impx(d, n, t, t, xs) :- prs_impfrom(d, n, _), field(n, "module_name", mn), prs_kid(n, x, _), x != mn, prs_n(d, x, "dotted_name", xs, _), node_text(x, t).
+prs_impx(d, n, al, nm, xs) :- prs_impfrom(d, n, _), field(n, "module_name", mn), prs_kid(n, x, _), x != mn, prs_n(d, x, "aliased_import", xs, _), field(x, "name", y), node_text(y, nm), field(x, "alias", z), node_text(z, al).
+prs_mm(d, @concat(m, ".__init__")) :- prs_doc(d, p, m), suffix("/__init__.py", p).
+prs_mm(d, m) :- prs_doc(d, p, m), !suffix("/__init__.py", p).
+prs_fbase(d, n, ms) :- prs_impfrom(d, n, ms), !prefix(".", ms).
+prs_fbase(d, n, b) :- prs_impfrom(d, n, ms), prefix(".", ms), prs_mm(d, mm), r = @rx_replace(ms, "^\\.+", ""), k = @sub(@strlen(ms), @strlen(r)), st = @rx_replace(mm, @concat(@concat("(?:\\.[^.]+){", @to_string(k)), "}$"), ""), b = @concat(@concat(st, "."), r).
+prs_dn(t) :- prs_n(d, n, "import_statement", _, _), prs_kid(n, x, _), prs_n(d, x, "dotted_name", _, _), node_text(x, t).
+prs_dnsuf(t, t) :- prs_dn(t).
+prs_dnsuf(t, @substr(s, 1, @sub(@strlen(s), 1))) :- prs_dnsuf(t, s), @strlen(s) > 1.
+prs_dndot(t, i) :- prs_dnsuf(t, s), @substr(s, 0, 1) = ".", i = @sub(@strlen(t), @strlen(s)).
+prs_dnhead(t, @substr(t, 0, i)) :- prs_dndot(t, _), i = min j : { prs_dndot(t, j) }.
+prs_dnhead(t, t) :- prs_dn(t), !prs_dndot(t, _).
+prs_imp(d, n, "import_from_statement", loc, @concat(@concat(b, "."), nm), xs) :- prs_fbase(d, n, b), prs_impx(d, n, loc, nm, xs).
+prs_imp(d, n, "import_statement", h, t, xs) :- prs_n(d, n, "import_statement", _, _), prs_kid(n, x, _), prs_n(d, x, "dotted_name", xs, _), node_text(x, t), prs_dnhead(t, h).
+prs_imp(d, n, "import_statement", al, t, xs) :- prs_n(d, n, "import_statement", _, _), prs_kid(n, x, _), prs_n(d, x, "aliased_import", xs, _), field(x, "name", y), node_text(y, t), field(x, "alias", z), node_text(z, al).
+prs_impown(n, f) :- prs_imp(_, n, _, _, _, _), nearest(n, f, prs_fdk).
+prs_modimp(d, ik, loc, tg, xs) :- prs_imp(d, n, ik, loc, tg, xs), !prs_impown(n, _).
+prs_modimpl(d, loc) :- prs_modimp(d, _, loc, _, _).
+prs_fimp(d, f, loc) :- prs_imp(d, n, _, loc, _, _), prs_impown(n, f).
+prs_qf(d, t, @concat(@concat(m, "."), q)) :- prs_decl(d, t, "function_definition", _, _, _), prs_qual(d, t, q), prs_doc(d, _, m).
+prs_cloc(d, c, o, cn, "") :- prs_call(d, c, _, _, _, "identifier", _, cn), prs_cown(d, c, o), !prs_inlambda(c).
+prs_cloc(d, c, o, rt, @concat(".", cn)) :- prs_call(d, c, _, _, _, "attribute", _, cn), prs_recv(c, _, "identifier", rt), prs_cown(d, c, o), !prs_inlambda(c).
+prs_ikey(d, o, @concat(tg, sfx)) :- prs_cloc(d, _, o, loc, sfx), !prs_shadow(d, o, loc), prs_imp(d, n, _, loc, tg, _), prs_impown(n, o).
+prs_ikey(d, o, @concat(tg, sfx)) :- prs_cloc(d, _, o, loc, sfx), !prs_shadow(d, o, loc), prs_modimp(d, _, loc, tg, _), !prs_fimp(d, o, loc).
+prs_pedge(d, o, d, t) :- prs_ledge(d, o, t).
+prs_pedge(d, o, d2, t) :- prs_ikey(d, o, key), prs_qf(d2, t, key).
+prs_later(f) :- prs_decl(d, f, "function_definition", _, s, _), prs_qual(d, f, q), prs_qual(d, g, q), prs_decl(d, g, "function_definition", _, s2, _), s2 > s.
+prs_flag(d, f) :- prs_decl(d, f, "function_definition", _, _, _), prs_qual(d, f, _), !prs_later(f).
+prs_explicit(f) :- prs_decname(_, f, _, nm), (nm = "pure_lazy" ; nm = "lazy").
+prs_legacy(f) :- prs_decname(_, f, _, nm), prs_legacyname(nm).
+prs_surfcls(c) :- prs_asg(d, a, _, _, _, "identifier", "__pure_lazy_surface__"), prs_asgv(a, _, "true", _, _), child(e, a, _), child(b, e, _), field(c, "body", b), prs_n(d, c, "class_definition", _, _).
+prs_surface(f) :- prs_flag(_, f), nearest(f, c, prs_cdk), prs_surfcls(c).
+prs_seed(d, f, "pure") :- prs_flag(d, f), prs_explicit(f).
+prs_seed(d, f, "owner") :- prs_flag(d, f), prs_decl(d, f, _, nm, _, _), suffix("_lazy", nm), prs_param(d, f, pn), prs_ownerparam(pn), prs_body(f, bs, be), prs_call(d, _, cs, ce, _, _, _, cn), prs_effect(cn), cs >= bs, ce <= be.
+prs_dcol(d, f, col) :- prs_seed(d, f, col).
+prs_dcol(d2, t, col) :- prs_dcol(d, f, col), prs_pedge(d, f, d2, t), prs_flag(d2, t), !prs_legacy(t).
+prs_admitted(d) :- prs_dcol(d, _, _).
+prs_admitted(d) :- prs_n(d, m, "module", _, _), node_text(m, t), contains("_lazy", t).
+prs_admitted(d) :- prs_decl(d, _, _, nm, _, _), (nm = "create_embedding_ref_class" ; nm = "create_embedding_vector_class" ; nm = "register_permissions" ; nm = "register_table").
+prs_anyadm(0) :- prs_admitted(_).
+prs_cls(d, c, @concat(@concat(m, "."), q)) :- prs_decl(d, c, "class_definition", _, _, _), prs_qual(d, c, q), prs_doc(d, _, m), prs_admitted(d).
+prs_cls(d, c, @concat(@concat(m, "."), q)) :- prs_decl(d, c, "class_definition", _, _, _), prs_qual(d, c, q), prs_doc(d, _, m), !prs_anyadm(0).
+prs_basex(d, c, b, o, "identifier") :- prs_cls(d, c, _), prs_kid(c, al, _), prs_n(d, al, "argument_list", _, _), prs_kid(al, b, o), prs_n(d, b, "identifier", _, _).
+prs_basex(d, c, b, o, "attribute") :- prs_cls(d, c, _), prs_kid(c, al, _), prs_n(d, al, "argument_list", _, _), prs_kid(al, b, o), prs_n(d, b, "attribute", _, _).
+prs_firstimp(d, ik, loc, tg) :- prs_modimp(d, ik, loc, tg, xs), xs = min s : { prs_modimp(d, ik, loc, _, s) }.
+prs_baseq(d, c, o, tg) :- prs_basex(d, c, b, o, "identifier"), node_text(b, bt), prs_firstimp(d, "import_from_statement", bt, tg).
+prs_baseq(d, c, o, @concat(@concat(m, "."), bt)) :- prs_basex(d, c, b, o, "identifier"), node_text(b, bt), !prs_firstimp(d, "import_from_statement", bt, _), prs_doc(d, _, m).
+prs_baseq(d, c, o, @concat(@concat(tg, "."), at)) :- prs_basex(d, c, b, o, "attribute"), prs_attr(d, b, _, _, at, _, ot), prs_firstimp(d, "import_statement", ot, tg).
+prs_baseq(d, c, o, q) :- prs_basex(d, c, b, o, "attribute"), prs_attr(d, b, _, _, _, _, ot), !prs_firstimp(d, "import_statement", ot, _), node_text(b, t), q = @rx_replace(t, "\\s+", "").
+prs_base(c, p, o) :- prs_baseq(_, c, o, q), prs_cls(_, p, q).
+prs_mcall(d, o, c, cn, fk, cl) :- prs_call(d, c, cs, ce, _, fk, _, cn), prs_cown(d, c, o), prs_flag(d, o), prs_lp(o, cl), prs_cls(d, cl, _), prs_body(o, bs, be), cs >= bs, ce <= be, !prs_inlambda(c).
+prs_globalfn(d, nm) :- prs_flag(d, g), !prs_lp(g, _), prs_decl(d, g, _, nm, _, _).
+prs_demand(d, o, cn, cl) :- prs_mcall(d, o, c, cn, "attribute", cl), prs_recv(c, _, "identifier", rt), prs_selfcls(rt).
+prs_demand(d, o, cn, cl) :- prs_mcall(d, o, _, cn, "identifier", cl), !prs_globalfn(d, cn), !prs_modimpl(d, cn), !prs_fimp(d, o, cn), !prs_shadow(d, o, cn).
+prs_defines(cl, nm, f) :- prs_flag(d, f), prs_lp(f, cl), prs_cls(d, cl, _), prs_decl(d, f, _, nm, _, _).
+prs_dname(nm) :- prs_demand(_, _, nm, _).
+prs_defnm(cl, nm) :- prs_dname(nm), prs_defines(cl, nm, _).
+prs_hasdef(nm, cl) :- prs_defnm(cl, nm).
+prs_hasdef(nm, cl) :- prs_dname(nm), prs_base(cl, b, _), !prs_defnm(cl, nm), prs_hasdef(nm, b).
+prs_basehd(nm, cl, o) :- prs_base(cl, b, o), prs_hasdef(nm, b).
+prs_firstbase(nm, cl, b) :- prs_hasdef(nm, cl), !prs_defnm(cl, nm), prs_base(cl, b, o), prs_hasdef(nm, b), o = min o2 : { prs_basehd(nm, cl, o2) }.
+prs_find(nm, cl, f) :- prs_defnm(cl, nm), prs_defines(cl, nm, f).
+prs_find(nm, cl, f) :- prs_firstbase(nm, cl, b), prs_find(nm, b, f).
+prs_cedge(d, o, d2, t) :- prs_pedge(d, o, d2, t).
+prs_cedge(d, o, d2, t) :- prs_demand(d, o, nm, cl), prs_find(nm, cl, t), prs_flag(d2, t).
+prs_col(d, f, col) :- prs_seed(d, f, col).
+prs_col(d2, t, col) :- prs_col(d, f, col), prs_cedge(d, f, d2, t), prs_flag(d2, t), !prs_legacy(t).
+prs_scansource(0) :- option_value("entryPoint", "scan_source").
+prs_anyprimary(0) :- option_item("primaryPaths", _, _).
+prs_pathok(d) :- prs_doc(d, _, _), !prs_anyprimary(0).
+prs_pathok(d) :- prs_doc(d, p, _), option_item("primaryPaths", _, p).
+prs_active(d, f) :- prs_col(d, f, _), prs_pathok(d), !prs_scansource(0).
+prs_purecol(f) :- prs_col(_, f, "pure"), !prs_scansource(0).
+prs_strict(f) :- prs_active(_, f), !prs_explicit(f), !prs_scansource(0).
+prs_srcgate(d) :- prs_n(d, m, "module", _, _), node_text(m, t), (contains("pure_lazy", t) ; contains("@lazy", t)).
+prs_active(d, f) :- prs_scansource(0), prs_flag(d, f), prs_region(f, fr), prs_decl(d, f, _, _, _, fe), prs_flag(d, a), prs_region(a, ar), prs_decl(d, a, _, _, _, ae), ar <= fr, ae >= fe, prs_decname(d, a, _, "pure_lazy"), prs_doc(d, p, _), !contains("/tests/", p), prs_srcgate(d).
+prs_purecol(f) :- prs_scansource(0), prs_active(_, f).
+prs_typesub(x) :- prs_n(_, x, "generic_type", _, _), node_text(x, t), match("(?:type|Type)\\s*\\[[\\s\\S]*", t).
+prs_typesub(x) :- prs_n(_, x, "subscript", _, _), node_text(x, t), match("(?:type|Type)\\s*\\[[\\s\\S]*", t).
+prs_ann(f, x) :- prs_n(d, f, "function_definition", _, _), field(f, "return_type", x), prs_n(d, x, _, _, _).
+prs_ann(f, y) :- prs_ann(f, x), !prs_typesub(x), prs_kid(x, y, _).
+prs_contract(d, f) :- prs_ann(f, x), prs_ident(d, x, _, _, t), prs_rtname(t).
+prs_contract(d, f) :- prs_ann(f, x), prs_attr(d, x, _, _, t, _, _), prs_rtname(t).
+prs_cast2(c) :- prs_call(d, c, _, _, _, "identifier", _, "cast"), k = count : { prs_arg0(d, c, _, _, _) }, k = 2.
+prs_thru(c, v) :- prs_cast2(c), prs_arg(_, c, v, 1, _, _).
+prs_thru(c, c) :- prs_call(_, c, _, _, _, _, _, _), !prs_cast2(c).
+prs_thru(x, x) :- prs_n(_, x, k, _, _), k != "call".
+prs_mb(d, a, nm) :- prs_asg(d, a, _, _, _, _, _), child(e, a, _), prs_n(d, e, "expression_statement", _, _), child(m, e, _), prs_n(d, m, "module", _, _), prs_bname(d, a, nm).
+prs_bvw(a, v) :- prs_mb(_, a, _), prs_asgv(a, v, _, _, _).
+prs_bvw(a, y) :- prs_bvw(a, x), prs_n(_, x, "parenthesized_expression", _, _), prs_first(x, y).
+prs_bval(a, v, vk) :- prs_bvw(a, v), prs_n(_, v, vk, _, _), vk != "parenthesized_expression".
+prs_ctxvar(d, nm) :- prs_mb(d, a, nm), prs_bval(a, v, _), prs_call(d, v, _, _, _, _, _, "ContextVar").
+prs_rts(d, nm) :- prs_contract(d, f), prs_decl(d, f, _, nm, _, _).
+prs_rts(d, nm) :- prs_ret(d, r, _, _, v), prs_thru(v, pv), prs_call(d, pv, _, _, fi, _, _, "get"), prs_root(fi, rn, _), prs_ctxvar(d, rn), nearest(r, f, prs_fdk), prs_decl(d, f, _, nm, _, _).
+prs_rts(d, nm) :- prs_ret(d, r, _, _, v), prs_call(d, v, _, _, _, _, _, cn), prs_rts(d, cn), nearest(r, f, prs_fdk), prs_decl(d, f, _, nm, _, _).
+prs_rtcall(d, c) :- prs_call(d, c, _, _, fi, _, _, "get"), prs_root(fi, rn, _), prs_ctxvar(d, rn).
+prs_rtcall(d, c) :- prs_call(d, c, _, _, fi, "identifier", _, cn), prs_root(fi, _, _), prs_rts(d, cn).
+prs_rtcall(d, c) :- prs_call(d, c, _, _, fi, _, _, cn), prs_root(fi, rn, _), prs_selfcls(rn), prs_rts(d, cn).
+prs_opq(d, c) :- prs_call(d, c, _, _, _, _, _, "_queue_handle_entry_lazy").
+prs_opq(d, c) :- prs_call(d, c, _, _, _, _, _, "LazyOperation"), prs_kw(d, c, _, "payload", pv, _, _, _), prs_call(d, pv, _, _, _, _, _, _), prs_kw(d, pv, _, fnm, _, _, _, _), prs_handlef(fnm).
+prs_oploc(d, f, nm, s) :- prs_asgv(a, v, _, _, _), prs_thru(v, pv), prs_opq(d, pv), prs_asg(d, a, s, _, _, _, _), nearest(a, f, prs_fdk), prs_bname(d, a, nm).
+prs_oploc(d, f, nm, s) :- prs_oploc(d, f, vt, s0), prs_asgv(a, v, "identifier", _, _), node_text(v, vt), prs_asg(d, a, s, _, _, _, _), s0 < s, nearest(a, f, prs_fdk), prs_bname(d, a, nm).
+prs_opv(d, c) :- prs_opq(d, c).
+prs_opv(d, n) :- prs_oploc(d, f, nm, s0), prs_ident(d, n, s, _, nm), s0 < s, nearest(n, f, prs_fdk).
+prs_opv(d, c) :- prs_oploc(d, f, nm, s0), prs_ident(d, a, _, _, nm), prs_arg(d, c, a, 0, _, _), prs_call(d, c, cs, _, _, _, _, cn), (cn = "queue_single" ; cn = "queue_sequence"), s0 < cs, nearest(c, f, prs_fdk).
+prs_fasg(d, f, a, s) :- prs_asg(d, a, s, e, _, _, _), inside(a, f, prs_fdk), prs_active(d, f), prs_body(f, bs, be), s >= bs, e <= be.
+prs_ga(d, c, x) :- prs_call(d, c, _, _, _, "identifier", _, "getattr"), prs_arg(d, c, x, 0, _, _), prs_arg(d, c, _, 1, ys, _), prs_str(d, ys, _, v), prs_protattr(v).
+prs_pattr(d, x, xs, xe, at, rn, tc) :- prs_attr(d, x, xs, xe, at, o, _), prs_protattr(at), prs_root(o, rn, tc).
+prs_taint(d, f, nm, s) :- prs_fasg(d, f, a, s), prs_asgv(a, _, _, rs, re), prs_pattr(d, _, xs, xe, _, rn, _), xs >= rs, xe <= re, prs_param(d, f, rn), !prs_surface(f), prs_bname(d, a, nm).
+prs_taint(d, f, nm, s) :- prs_fasg(d, f, a, s), prs_asgv(a, _, _, rs, re), prs_pattr(d, _, xs, xe, _, rn, _), xs >= rs, xe <= re, prs_param(d, f, rn), rn != "self", prs_bname(d, a, nm).
+prs_taint(d, f, nm, s) :- prs_fasg(d, f, a, s), prs_asgv(a, c, _, _, _), prs_ga(d, c, x), prs_root(x, rn, _), prs_param(d, f, rn), !prs_surface(f), prs_bname(d, a, nm).
+prs_taint(d, f, nm, s) :- prs_fasg(d, f, a, s), prs_asgv(a, c, _, _, _), prs_ga(d, c, x), prs_root(x, rn, _), prs_param(d, f, rn), rn != "self", prs_bname(d, a, nm).
+prs_taint(d, f, nm, s) :- prs_fasg(d, f, a, s), prs_asgv(a, v, _, _, _), prs_rtcall(d, v), prs_bname(d, a, nm).
+prs_taint(d, f, nm, s) :- prs_fasg(d, f, a, s), prs_asgv(a, v, _, _, _), prs_opv(d, v), prs_bname(d, a, nm).
+prs_taint(d, f, nm, s) :- prs_taint(d, f, tn, s0), prs_fasg(d, f, a, s), s > s0, prs_asgv(a, _, _, rs, re), prs_ident(d, _, ns, ne, tn), ns >= rs, ne <= re, prs_bname(d, a, nm).
+prs_pact(d, f, x, xs, xe, at, rn, tc) :- prs_pattr(d, x, xs, xe, at, rn, tc), inside(x, f, prs_fdk), prs_active(d, f), prs_body(f, bs, be), xs >= bs, xe <= be.
+prs_prot(d, f, x, xs, xe, tc) :- prs_pact(d, f, x, xs, xe, _, rn, tc), !prs_surface(f), prs_param(d, f, rn).
+prs_prot(d, f, x, xs, xe, tc) :- prs_pact(d, f, x, xs, xe, _, rn, tc), rn != "self", prs_param(d, f, rn).
+prs_prot(d, f, x, xs, xe, tc) :- prs_pact(d, f, x, xs, xe, _, rn, tc), !prs_surface(f), prs_taint(d, f, rn, s0), s0 < xs.
+prs_prot(d, f, x, xs, xe, tc) :- prs_pact(d, f, x, xs, xe, _, rn, tc), rn != "self", prs_taint(d, f, rn, s0), s0 < xs.
+prs_cin(d, f, c, cs, ce, fk, cn) :- prs_call(d, c, cs, ce, _, fk, _, cn), inside(c, f, prs_fdk), prs_active(d, f), prs_body(f, bs, be), cs >= bs, ce <= be.
+prs_dyn(d, f, c) :- prs_ga(d, c, x), prs_cin(d, f, c, _, _, _, _), prs_root(x, _, _), prs_strict(f).
+prs_dyn(d, f, c) :- prs_ga(d, c, x), prs_cin(d, f, c, _, _, _, _), prs_root(x, rn, _), !prs_surface(f), prs_param(d, f, rn).
+prs_dyn(d, f, c) :- prs_ga(d, c, x), prs_cin(d, f, c, _, _, _, _), prs_root(x, rn, _), rn != "self", prs_param(d, f, rn).
+prs_dyn(d, f, c) :- prs_ga(d, c, x), prs_cin(d, f, c, cs, _, _, _), prs_root(x, rn, _), !prs_surface(f), prs_taint(d, f, rn, s0), s0 < cs.
+prs_dyn(d, f, c) :- prs_ga(d, c, x), prs_cin(d, f, c, cs, _, _, _), prs_root(x, rn, _), rn != "self", prs_taint(d, f, rn, s0), s0 < cs.
+prs_frozen(d, nm) :- prs_decname(d, cl, dec, "dataclass"), prs_decl(d, cl, "class_definition", nm, _, _), prs_kid(dec, k, _), prs_kw(d, k, _, "frozen", _, _, _, "true").
+prs_rwmfalse(c) :- prs_kw(_, c, _, "register_with_manager", _, _, _, "false").
+prs_kwnn(c, nm) :- prs_kw(_, c, _, nm, _, _, _, vk), vk != "none".
+prs_policytext(v, at) :- prs_attr(_, v, _, _, at, _, _).
+prs_policytext(v, t) :- prs_kw(_, _, _, "invalidation_policy", v, _, _, vk), vk != "attribute", node_text(v, t).
+prs_mgcond(c) :- prs_call(_, c, _, _, _, _, _, "ObjectCache"), prs_kwnn(c, "max_entries").
+prs_mgcond(c) :- prs_call(_, c, _, _, _, _, _, cn), (cn = "LocalMetadataCache" ; cn = "WeakLocalMetadataCache"), prs_kwnn(c, "max_entries").
+prs_mgcond(c) :- prs_call(_, c, _, _, _, _, _, cn), (cn = "LocalMetadataCache" ; cn = "WeakLocalMetadataCache"), prs_kw(_, c, _, "invalidation_policy", v, _, _, "identifier"), prs_policytext(v, t), t != "MANUAL".
+prs_mgcond(c) :- prs_call(_, c, _, _, _, _, _, cn), (cn = "LocalMetadataCache" ; cn = "WeakLocalMetadataCache"), prs_kw(_, c, _, "invalidation_policy", v, _, _, "attribute"), prs_policytext(v, t), t != "MANUAL".
+prs_mgcond(c) :- prs_call(_, c, _, _, _, _, _, "IdentityTokenCache"), prs_kwnn(c, "max_strong_entries"), prs_kw(_, c, _, "invalidation_policy", v, _, _, _), prs_attr(_, v, _, _, "BOUNDED_IDENTITY_TOKENS", _, _).
+prs_managed(c) :- prs_kw(_, c, _, "name", _, _, _, _), !prs_rwmfalse(c), prs_mgcond(c).
+prs_mutated(d, nm) :- prs_mb(d, _, nm), prs_call(d, c, _, _, _, _, _, cn), prs_mutm(cn), prs_recv(c, _, "identifier", nm).
+prs_mutated(d, nm) :- prs_mb(d, _, nm), prs_asg(d, _, _, _, t, "subscript", _), prs_root(t, nm, _).
+prs_mutated(d, nm) :- prs_mb(d, _, nm), prs_asg(d, _, _, _, t, "attribute", _), prs_root(t, nm, _).
+prs_bvmanaged(a) :- prs_bval(a, v, _), prs_managed(v).
+prs_amanaged(a, 1) :- prs_bvmanaged(a).
+prs_amanaged(a, 0) :- prs_mb(_, a, _), !prs_bvmanaged(a).
+prs_gsexempt(d, v) :- prs_call(d, v, _, _, _, _, _, cn), prs_nonfactory(cn).
+prs_gsexempt(d, v) :- prs_call(d, v, _, _, _, _, full, "compile"), (prefix("re.", full) ; prefix("_re.", full)).
+prs_gsexempt(d, v) :- prs_call(d, v, _, _, _, "attribute", _, "getLogger").
+prs_gsexempt(d, v) :- prs_call(d, v, _, _, _, _, _, cn), prs_frozen(d, cn).
+prs_gs(d, nm, 1, mg) :- prs_mb(d, a, nm), prs_mutated(d, nm), prs_amanaged(a, mg).
+prs_gs(d, nm, 1, mg) :- prs_mb(d, a, nm), prs_bval(a, _, vk), prs_mutk(vk), prs_amanaged(a, mg).
+prs_gs(d, nm, 0, mg) :- prs_mb(d, a, nm), prs_bval(a, v, _), prs_call(d, v, _, _, _, _, _, _), !prs_gsexempt(d, v), !prs_mutated(d, nm), prs_amanaged(a, mg).
+prs_nameslot(n) :- field(p, "name", n), prs_n(_, p, pk, _, _), prs_slotk(pk).
+prs_nameslot(n) :- field(p, "attribute", n), prs_n(_, p, "attribute", _, _).
+prs_gu(d, f, n, s, e, nm, mu) :- prs_gs(d, nm, mu, _), prs_ident(d, n, s, e, nm), inside(n, f, prs_fdk), prs_active(d, f), prs_body(f, bs, be), s >= bs, e <= be, !prs_nameslot(n), !prs_shadow(d, f, nm).
+prs_gr(d, f, x, nm, mg) :- prs_gs(d, nm, _, mg), prs_root(x, nm, 0), prs_n(d, x, _, xs, xe), inside(x, f, prs_fdk), prs_active(d, f), prs_body(f, bs, be), xs >= bs, xe <= be, !prs_shadow(d, f, nm).
+prs_rin(d, f, r, rs, re, v, vs, ve, vk, pv) :- prs_ret(d, r, rs, re, v), inside(r, f, prs_fdk), prs_active(d, f), prs_body(f, bs, be), rs >= bs, re <= be, prs_n(d, v, vk, vs, ve), prs_thru(v, pv).
+prs_allowcall(c) :- prs_call(_, c, _, _, _, "identifier", _, cn), prs_allowcallee(cn).
+prs_r1(r, v) :- prs_rin(_, _, r, _, _, v, _, _, _, pv), prs_allowcall(pv).
+prs_r2(r, v) :- prs_rin(d, _, r, _, _, v, _, _, _, pv), prs_opv(d, pv).
+prs_r3(f, r, v) :- prs_rin(d, f, r, _, _, v, _, _, _, _), prs_dyn(d, f, v).
+prs_r4(f, r, v) :- prs_rin(d, f, r, _, _, v, _, _, _, pv), prs_contract(d, f), prs_rtcall(d, pv).
+prs_wrapper(v) :- prs_call(_, v, _, _, _, _, full, cn), prs_wrapm(cn), (prefix("LazyResult.", full) ; prefix("LazySeq.", full)).
+prs_r5(f, r, v) :- prs_rin(d, f, r, _, _, v, vs, ve, _, _), prs_prot(d, f, _, xs, xe, _), xs >= vs, xe <= ve.
+prs_r5(f, r, v) :- prs_rin(d, f, r, _, _, v, vs, ve, _, _), prs_wrapper(v), prs_rtcall(d, c), prs_n(d, c, _, cs, ce), cs >= vs, ce <= ve.
+prs_r6(f, r, v) :- prs_rin(d, f, r, _, _, v, vs, ve, _, _), prs_taint(d, f, tn, s0), prs_ident(d, _, ns, ne, tn), ns > s0, ns >= vs, ne <= ve.
+prs_r7(f, r, v) :- prs_rin(d, f, r, _, _, v, vs, ve, vk, _), vk != "call", vk != "subscript", prs_gu(d, f, _, gs, ge, _, _), gs >= vs, ge <= ve.
+prs_ev(d, f, r, rs, re) :- prs_rin(d, f, r, rs, re, v, _, _, _, _), prs_r1(r, v).
+prs_iss(d, f, r, rs, re, "PLP-010") :- prs_rin(d, f, r, rs, re, v, _, _, _, _), !prs_r1(r, v), prs_r2(r, v).
+prs_iss(d, f, r, rs, re, "PLP-002") :- prs_rin(d, f, r, rs, re, v, _, _, _, _), !prs_r1(r, v), !prs_r2(r, v), prs_r3(f, r, v).
+prs_iss(d, f, r, rs, re, "PLP-003") :- prs_rin(d, f, r, rs, re, v, _, _, _, _), !prs_r1(r, v), !prs_r2(r, v), !prs_r3(f, r, v), prs_r4(f, r, v).
+prs_iss(d, f, r, rs, re, "PLP-004") :- prs_rin(d, f, r, rs, re, v, _, _, _, _), !prs_r1(r, v), !prs_r2(r, v), !prs_r3(f, r, v), !prs_r4(f, r, v), prs_r5(f, r, v), prs_wrapper(v).
+prs_iss(d, f, r, rs, re, "PLP-003") :- prs_rin(d, f, r, rs, re, v, _, _, _, _), !prs_r1(r, v), !prs_r2(r, v), !prs_r3(f, r, v), !prs_r4(f, r, v), prs_r5(f, r, v), !prs_wrapper(v).
+prs_iss(d, f, r, rs, re, "PLP-005") :- prs_rin(d, f, r, rs, re, v, _, _, _, _), !prs_r1(r, v), !prs_r2(r, v), !prs_r3(f, r, v), !prs_r4(f, r, v), !prs_r5(f, r, v), prs_r6(f, r, v).
+prs_iss(d, f, r, rs, re, "PLP-008") :- prs_rin(d, f, r, rs, re, v, _, _, _, _), !prs_r1(r, v), !prs_r2(r, v), !prs_r3(f, r, v), !prs_r4(f, r, v), !prs_r5(f, r, v), !prs_r6(f, r, v), prs_r7(f, r, v).
+prs_c1(c) :- prs_cin(_, _, c, _, _, "identifier", cn), prs_allowcallee(cn).
+prs_c3(f, c) :- prs_cin(d, f, c, _, _, _, _), prs_kw(d, c, _, kn, _, vs, ve, _), prs_sinkkw(kn), prs_gu(d, f, _, gs, ge, _, _), gs >= vs, ge <= ve.
+prs_cg(d, f, c, cs, ce, cn, nm, mg) :- prs_cin(d, f, c, cs, ce, _, cn), prs_recv(c, r, _, _), prs_gr(d, f, r, nm, mg).
+prs_cgok(d, c, cn, nm, 1) :- prs_cg(d, _, c, _, _, cn, nm, 1), prs_managedm(cn).
+prs_cgok(d, c, cn, "_callback_registry", mg) :- prs_cg(d, _, c, _, _, cn, "_callback_registry", mg), prs_doc(d, "l1000_cache/schema_generation.py", _), (cn = "contains" ; cn = "register" ; cn = "version").
+prs_ev(d, f, c, cs, ce) :- prs_cin(d, f, c, cs, ce, _, _), prs_c1(c).
+prs_ev(d, f, c, cs, ce) :- prs_cg(d, f, c, cs, ce, _, _, _).
+prs_iss(d, f, c, cs, ce, "PLP-002") :- prs_cin(d, f, c, cs, ce, _, _), !prs_c1(c), prs_dyn(d, f, c).
+prs_iss(d, f, c, cs, ce, "PLP-008") :- prs_cin(d, f, c, cs, ce, _, _), !prs_c1(c), !prs_dyn(d, f, c), prs_c3(f, c).
+prs_iss(d, f, c, cs, ce, "PLP-008") :- prs_cg(d, f, c, cs, ce, _, nm, _), !prs_c1(c), !prs_dyn(d, f, c), !prs_c3(f, c), prs_ctxvar(d, nm).
+prs_iss(d, f, c, cs, ce, "PLP-009") :- prs_cg(d, f, c, cs, ce, cn, nm, mg), !prs_c1(c), !prs_dyn(d, f, c), !prs_c3(f, c), !prs_ctxvar(d, nm), !prs_cgok(d, c, cn, nm, mg).
+prs_fattr(d, f, x, xs, xe) :- prs_attr(d, x, xs, xe, at, _, _), prs_protattr(at), inside(x, f, prs_fdk), prs_active(d, f), prs_body(f, bs, be), xs >= bs, xe <= be.
+prs_fattrex(f, x) :- prs_fattr(d, f, x, _, _), prs_surface(f), prs_attr(d, x, _, _, at, _, "self"), (at = "_base_txn" ; at = "_plan" ; at = "_plan_mixin" ; at = "_txn").
+prs_iss(d, f, x, xs, xe, "PLP-001") :- prs_fattr(d, f, x, xs, xe), !prs_fattrex(f, x), prs_strict(f).
+prs_iss(d, f, x, xs, xe, "PLP-001") :- prs_fattr(d, f, x, xs, xe), !prs_fattrex(f, x), prs_prot(d, f, x, _, _, 0).
+prs_iss(d, f, n, s, e, "PLP-009") :- prs_gu(d, f, n, s, e, _, 1).
+prs_iss(d, f, x, s, e, "PLP-009") :- prs_n(d, x, "subscript", s, e), prs_first(x, v), prs_gr(d, f, v, _, _).
+prs_ev(d, f, x, s, e) :- prs_iss(d, f, x, s, e, _).
+prs_hasanc(d, f, x, s, e) :- prs_iss(d, f, x, s, e, _), prs_ev(d, f, y, ys, ye), y != x, ys <= s, ye >= e.
+prs_incast(d, s, e) :- prs_iss(d, _, _, s, e, _), prs_cast2(c), prs_arg(d, c, _, 0, ts, te), ts <= s, te >= e.
+prs_vis(d, x, code) :- prs_iss(d, f, x, s, e, code), prs_purecol(f), !prs_hasanc(d, f, x, s, e), !prs_incast(d, s, e).
+prs_vis(d, x, code) :- prs_iss(d, f, x, s, e, code), prs_shallow(code), !prs_hasanc(d, f, x, s, e), !prs_incast(d, s, e).
+violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", code, p, l) :- prs_vis(d, x, code), prs_doc(d, p, _), line(x, l).
+violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", "PLP-006", p, l) :- prs_active(d, f), prs_purecol(f), prs_contract(d, f), prs_doc(d, p, _), line(f, l).
+prs_ent(m, loc, ms, nm) :- prs_impfrom(d, n, ms), child(mo, n, _), prs_n(d, mo, "module", _, _), prs_impx(d, n, loc, nm, _), prs_doc(d, _, m).
+prs_en(d, m, loc) :- prs_impfrom(d, n, _), child(mo, n, _), prs_n(d, mo, "module", _, _), prs_impx(d, n, loc, _, _), prs_doc(d, _, m).
+prs_en(d, m, nm) :- prs_flag(d, f), !prs_lp(f, _), prs_decl(d, f, _, nm, _, _), prs_doc(d, _, m).
+prs_hasall(d) :- prs_mb(d, _, "__all__").
+prs_allname(d, v) :- prs_mb(d, a, "__all__"), prs_asgv(a, _, _, rs, re), prs_str(d, s, e, v), s >= rs, e <= re.
+prs_exp(m, nm) :- prs_en(d, m, nm), prs_doc(d, p, _), glob("data_layer/*.py", p), !prefix("_", nm), !prs_hasall(d).
+prs_exp(m, nm) :- prs_en(d, m, nm), prs_doc(d, p, _), glob("data_layer/*.py", p), !prefix("_", nm), prs_allname(d, nm).
+prs_exp(tm, tn) :- prs_exp(m, nm), prs_ent(m, nm, tm, tn).
+violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", "PLP-007", p, l) :- !prs_scansource(0), prs_exp(m, nm), prs_doc(d, p, m), prs_pathok(d), prs_flag(d, f), !prs_lp(f, _), prs_decl(d, f, _, nm, _, _), suffix("_lazy", nm), !prefix("_", nm), !prs_explicit(f), line(f, l).

@@ -8,7 +8,8 @@
 //! - `translate`: the earlier `.rdl` dialect's text in `.rr`, comments kept, for the move and for the converter.
 //!
 //! `#include "x.rr"` reads `docs/rule-syntax/lib/x.rr`, or else `x.rr` beside the including file; each file once.
-//! A file read with `parse_file` has `core.rr` before it, included or not.
+//! A file read with `parse_file` has `core.rr` before it, included or not. An included file's `.output`s are its own,
+//! not the program's: they are left out (`python/calls.rr`'s).
 
 mod check;
 mod lower;
@@ -23,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
+pub(in crate::code_rule_dsl) use lower::is_core;
 pub(in crate::code_rule_dsl) use print::print;
 pub(in crate::code_rule_dsl) use syntax::quote;
 #[cfg(test)]
@@ -105,9 +107,9 @@ fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
 type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 
 /// A file and everything it includes, each once, includes first: (path, statements without the
-/// includes); and every library file read or probed, in reading order.
+/// includes, the included files' `.output`s left out); and every library file read or probed, in reading order.
 fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
-    fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>) -> Result<(), Error> {
+    fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
         let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
         if seen.contains(&path) {
             return Ok(());
@@ -115,7 +117,10 @@ fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
         seen.push(path.clone());
         let (statements, file) = read(&path)?;
         read_files.push(file);
-        let (includes, rest): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+        let (includes, mut rest): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+        if included {
+            rest.retain(|(item, _)| !matches!(item, syntax::Item::Io { output: true, .. }));
+        }
         for (item, line) in includes {
             let syntax::Item::Include(name) = item else { unreachable!("an include") };
             let in_library = library().join(&name);
@@ -129,15 +134,30 @@ fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
             if !found.exists() {
                 return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
             }
-            visit(&found, out, read_files, seen)?;
+            visit(&found, out, read_files, seen, true)?;
         }
         out.push((path, rest));
         Ok(())
     }
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
     // `core.rr` is every program's prelude (the base relations and built-ins), included or not.
-    visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new())?;
+    visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new(), false)?;
     let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
-    visit(path, &mut out, &mut read_files, &mut seen)?;
+    visit(path, &mut out, &mut read_files, &mut seen, false)?;
+    // A relation the program declares itself is its own (an authored overlay's `syntax_error(d: number)`, the
+    // converter's option facts): core.rr's `.input` of it goes with core.rr's declaration, which it replaces.
+    let own: std::collections::BTreeSet<String> = out[1..]
+        .iter()
+        .flat_map(|(_, statements)| statements)
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Decl { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    for (item, _) in &mut out[0].1 {
+        if let syntax::Item::Io { output: false, names, .. } = item {
+            names.retain(|n| !own.contains(n));
+        }
+    }
     Ok((out, read_files))
 }

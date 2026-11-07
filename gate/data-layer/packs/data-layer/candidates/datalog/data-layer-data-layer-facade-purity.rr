@@ -1,31 +1,39 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl end_line(n: node, l: number)
+.decl facade_anon(p: node, st: number)
+.decl facade_anon_line(p: node, st: number, l: number)
+.decl facade_bad_assignment(n: node)
+.decl facade_bad_entry(c: node)
+.decl facade_definition(n: node)
+.decl facade_entry(c: node)
+.decl facade_expression_ok(n: node)
+.decl facade_fstring(n: node)
+.decl facade_gate(d: number)
+.decl facade_impl_import(n: node)
+.decl facade_named_at(p: node, st: number, en: number)
+.decl facade_nsa(n: node)
+.decl facade_nsv(n: node)
+.decl facade_statement_allowed(n: node)
+.decl facade_sv_node(n: node)
+.decl facade_top(n: node)
+.decl facade_top_parent(p: node)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.input doc, node, child, field, text, name, strprefix
 .decl in_scope(d: number)
-.decl m1(n: node)
-.decl m12(n: node)
-.decl m16(n: node)
-.decl m22(n: node)
-.decl m25(n: node)
-.decl m30(n: node)
-.decl m32(n: node)
-.decl m35(n: node)
-.decl m36(n: node)
-.decl m39(n: node)
-.decl m43(n: node)
-.decl m44(n: node)
-.decl m46(n: node)
-.decl m5(n: node)
-.decl m50(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl u26(n: node)
-.decl u29(n: node)
+.decl rr_agg1(p: node, st: number, x: number)
+.decl rr_ctx2(st: number)
+.decl syntax_error(d: number)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, line, syntax_error, node_text, value_type_of, token, end_line
+.output violation
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("data_layer/_file_locking.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/_mime_sniffing.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/rippling.py", p).
@@ -37,37 +45,73 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-m1(n) :- node(_, n, "function_definition", _, _).
-m1(n) :- node(_, n, "class_definition", _, _).
-m5(n) :- child(v2, n, _), node(_, v2, "module", _, _).
-m5(n) :- child(v3, n, _), node(_, v3, "decorated_definition", _, _), child(v4, v3, _), node(_, v4, "module", _, _).
-m12(n) :- child(v9, n, _), node(_, v9, "module", _, _).
-m12(n) :- child(v10, n, _), node(_, v10, "decorated_definition", _, _), child(v11, v10, _), node(_, v11, "module", _, _).
-m16(n) :- child(v13, n, _), node(_, v13, "module", _, _).
-m16(n) :- child(v14, n, _), node(_, v14, "decorated_definition", _, _), child(v15, v14, _), node(_, v15, "module", _, _).
-m22(n) :- node(_, n, "dotted_name", _, _), text(n, v18), prefix("impl.", v18).
-m22(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v19), name(v19, v21), prefix("impl.", v21).
-m25(n) :- node(_, n, "assignment", _, _).
-m25(n) :- node(_, n, "augmented_assignment", _, _).
-m30(n) :- node(_, n, "string", _, _).
-m30(n) :- node(_, n, "concatenated_string", _, _).
-m32(n) :- strprefix(n, v31), contains("f", v31).
-m35(n) :- child(n, v33, _), node(_, v33, "string", _, _), strprefix(v33, v34), contains("f", v34).
-m36(n) :- node(_, n, "integer", _, _).
-m36(n) :- node(_, n, "float", _, _).
-m36(n) :- node(_, n, "true", _, _).
-m36(n) :- node(_, n, "false", _, _).
-m36(n) :- node(_, n, "none", _, _).
-m36(n) :- node(_, n, "ellipsis", _, _).
-m36(n) :- m30(n), !m32(n), !m35(n).
-m39(n) :- node(_, n, "list", _, _).
-m39(n) :- node(_, n, "tuple", _, _).
-m39(n) :- node(_, n, "set", _, _).
-m43(n) :- node(_, n, "assignment", _, _).
-m43(n) :- node(_, n, "augmented_assignment", _, _).
-m44(n) :- child(n, v42, _), m43(v42).
-m46(n) :- node(_, n, "string", _, _).
-m46(n) :- node(_, n, "concatenated_string", _, _).
-m50(n) :- child(v47, n, _), node(_, v47, "module", _, _).
-m50(n) :- child(v48, n, _), node(_, v48, "decorated_definition", _, _), child(v49, v48, _), node(_, v49, "module", _, _).
-.output violation
+facade_gate(d) :- node(d, m, "module", _, _), option_on("sourceGate"), node_text(m, s), (contains("def ", s) ; contains("class ", s) ; contains("impl.", s) ; contains("=", s) ; contains("(", s)).
+facade_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
+facade_top(n) :- child(m, n, _), node(_, m, "module", _, _).
+facade_top(n) :- child(w, n, _), node(_, w, "decorated_definition", _, _), child(m, w, _), node(_, m, "module", _, _).
+facade_sv_node(n) :- node(_, n, "integer", _, _).
+facade_sv_node(n) :- node(_, n, "float", _, _).
+facade_sv_node(n) :- node(_, n, "true", _, _).
+facade_sv_node(n) :- node(_, n, "false", _, _).
+facade_sv_node(n) :- node(_, n, "none", _, _).
+facade_sv_node(n) :- node(_, n, "ellipsis", _, _).
+facade_sv_node(n) :- node(_, n, "string", _, _).
+facade_sv_node(n) :- node(_, n, "concatenated_string", _, _).
+facade_sv_node(n) :- node(_, n, "identifier", _, _).
+facade_sv_node(n) :- node(_, n, "attribute", _, _).
+facade_sv_node(n) :- node(_, n, "parenthesized_expression", _, _).
+facade_sv_node(n) :- node(_, n, "list", _, _).
+facade_sv_node(n) :- node(_, n, "tuple", _, _).
+facade_sv_node(n) :- node(_, n, "set", _, _).
+facade_sv_node(n) :- node(_, n, "dictionary", _, _).
+facade_fstring(n) :- node(_, n, "string", _, _), node_text(n, s), match("(?is)[rub]*f.*", s).
+facade_fstring(n) :- node(_, n, "concatenated_string", _, _), node_text(n, s), match("(?is)[rub]*f.*", s).
+facade_nsv(n) :- node(_, n, _, _, _), !facade_sv_node(n).
+facade_nsv(n) :- facade_fstring(n).
+facade_nsv(n) :- node(_, n, "concatenated_string", _, _), child(n, c, _), node(_, c, "string", _, _), facade_fstring(c).
+facade_nsv(n) :- node(_, n, "attribute", _, _), field(n, "object", o), facade_nsv(o).
+facade_nsv(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), facade_nsv(c).
+facade_nsv(n) :- node(_, n, "list", _, _), child(n, c, _), facade_nsv(c).
+facade_nsv(n) :- node(_, n, "tuple", _, _), child(n, c, _), facade_nsv(c).
+facade_nsv(n) :- node(_, n, "set", _, _), child(n, c, _), facade_nsv(c).
+facade_nsv(n) :- node(_, n, "dictionary", _, _), child(n, c, _), facade_bad_entry(c).
+facade_entry(c) :- node(_, c, "pair", _, _).
+facade_entry(c) :- node(_, c, "dictionary_splat", _, _).
+facade_bad_entry(c) :- node(_, c, _, _, _), !facade_entry(c).
+facade_bad_entry(c) :- node(_, c, "pair", _, _), field(c, "key", x), facade_nsv(x).
+facade_bad_entry(c) :- node(_, c, "pair", _, _), field(c, "value", x), facade_nsv(x).
+facade_bad_entry(c) :- node(_, c, "dictionary_splat", _, _), child(c, x, _), facade_nsv(x).
+facade_nsa(n) :- node(_, n, "assignment", _, _), field(n, "left", x), !node(_, x, "identifier", _, _).
+facade_nsa(n) :- node(_, n, "assignment", _, _), field(n, "right", r), facade_nsv(r), !node(_, r, "assignment", _, _).
+facade_nsa(n) :- node(_, n, "assignment", _, _), field(n, "right", r), facade_nsa(r).
+facade_definition(n) :- node(_, n, "function_definition", _, _).
+facade_definition(n) :- node(_, n, "class_definition", _, _).
+violation("data-layer-data-layer-facade-purity", "definition", "FAC001", p, l) :- facade_definition(n), facade_top(n), node(d, n, _, _, _), facade_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-data-layer-facade-purity", "impl-from", "FAC003", p, l) :- node(d, n, "import_from_statement", _, _), field(n, "module_name", m), node_text(m, s), prefix("impl.", s), facade_top(n), facade_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+facade_impl_import(n) :- child(n, c, _), node(_, c, "dotted_name", _, _), node_text(c, s), prefix("impl.", s).
+facade_impl_import(n) :- child(n, c, _), node(_, c, "aliased_import", _, _), field(c, "name", x), node_text(x, s), prefix("impl.", s).
+violation("data-layer-data-layer-facade-purity", "impl-import", "FAC003", p, l) :- node(d, n, "import_statement", _, _), facade_top(n), facade_impl_import(n), facade_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+facade_bad_assignment(n) :- child(n, c, _), node(_, c, "augmented_assignment", _, _).
+facade_bad_assignment(n) :- child(n, c, _), facade_nsa(c).
+violation("data-layer-data-layer-facade-purity", "assignment", "FAC004", p, l) :- node(d, n, "expression_statement", _, _), child(m, n, _), node(_, m, "module", _, _), facade_bad_assignment(n), facade_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "assignment", _, _).
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "augmented_assignment", _, _).
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "string", _, _), value_type_of(c, "str").
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "concatenated_string", _, _), value_type_of(c, "str").
+violation("data-layer-data-layer-facade-purity", "expression", "FAC002", p, l) :- node(d, n, "expression_statement", _, _), child(m, n, _), node(_, m, "module", _, _), !facade_expression_ok(n), facade_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+facade_statement_allowed(n) :- node(_, n, "expression_statement", _, _).
+facade_statement_allowed(n) :- node(_, n, "import_statement", _, _).
+facade_statement_allowed(n) :- node(_, n, "import_from_statement", _, _).
+facade_statement_allowed(n) :- node(_, n, "future_import_statement", _, _).
+facade_statement_allowed(n) :- node(_, n, "function_definition", _, _).
+facade_statement_allowed(n) :- node(_, n, "class_definition", _, _).
+facade_statement_allowed(n) :- node(_, n, "decorated_definition", _, _).
+violation("data-layer-data-layer-facade-purity", "statement", "FAC002", p, l) :- facade_top(n), !facade_statement_allowed(n), node(d, n, _, _, _), facade_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+facade_top_parent(m) :- node(_, m, "module", _, _).
+facade_top_parent(w) :- node(_, w, "decorated_definition", _, _), child(m, w, _), node(_, m, "module", _, _).
+facade_named_at(p, st, en) :- facade_top_parent(p), child(p, c, _), node(_, c, _, st, en).
+facade_anon(p, st) :- facade_top_parent(p), token(p, _, s, st, en), !match("#(?s:.*)", s), !facade_named_at(p, st, en).
+rr_ctx2(st) :- facade_anon(p, st), child(p, c, _), node(_, c, _, _, e), end_line(c, l).
+rr_agg1(p, st, x) :- rr_ctx2(st), facade_named_at(p, _, x), x <= st.
+facade_anon_line(p, st, l) :- facade_anon(p, st), e = max x : { rr_agg1(p, st, x) }, child(p, c, _), node(_, c, _, _, e), end_line(c, l).
+violation("data-layer-data-layer-facade-purity", "statement", "FAC002", p, l) :- facade_anon_line(t, _, l), node(d, t, _, _, _), facade_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).

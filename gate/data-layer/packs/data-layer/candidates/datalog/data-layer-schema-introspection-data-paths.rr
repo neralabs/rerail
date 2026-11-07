@@ -1,8 +1,169 @@
+.decl introspection_deco(kind: symbol)
+introspection_deco("decorator").
+.decl introspection_fdef(kind: symbol)
+introspection_fdef("function_definition").
+.decl introspection_frame_mark(kind: symbol)
+introspection_frame_mark("function_definition"). introspection_frame_mark("decorator").
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl end_line(n: node, l: number)
+.decl field(p: node, f: symbol, c: node)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl in_scope(d: number)
+.decl introspection_after(e: node, o: number, b: number)
+.decl introspection_allowed(s: symbol)
+.decl introspection_authority(n: node)
+.decl introspection_callee(c: node, x: symbol)
+.decl introspection_const(n: node, v: symbol)
+.decl introspection_data_path(d: number)
+.decl introspection_doc(d: number, p: symbol)
+.decl introspection_f(e: node)
+.decl introspection_fconst(e: node, v: symbol, l: number)
+.decl introspection_fhost(e: node)
+.decl introspection_field(e: node, f: node, b: number, fe: number)
+.decl introspection_flush(x: symbol)
+.decl introspection_forbidden(x: symbol)
+.decl introspection_ford(e: node, b: number, j: number)
+.decl introspection_fpart(s: node)
+.decl introspection_frame(n: node, f: node)
+.decl introspection_gate(d: number, p: symbol)
+.decl introspection_in_run(s: node)
+.decl introspection_item(e: node, o: number, l: number)
+.decl introspection_later(e: node, i: number)
+.decl introspection_lit(e: node)
+.decl introspection_marked(d: number)
+.decl introspection_not_next(e: node, o: number, b: number)
+.decl introspection_owner(n: node, f: node)
+.decl introspection_part(e: node, s: node)
+.decl introspection_peel(c: node, e: node)
+.decl introspection_pord(e: node, i: number, j: number)
+.decl introspection_prefix(s: symbol)
+.decl introspection_primitive(p: symbol, f: symbol, x: symbol)
+.decl introspection_primitive_call(c: node)
+.decl introspection_rooted(s: symbol)
+.decl introspection_run(e: node, k: number, l: number)
+.decl introspection_run_line(e: node, k: number, l: number)
+.decl introspection_slice(e: node, a: number, l: number)
+.decl introspection_sql_marker(m: symbol, re: symbol)
+.decl introspection_stmt_peel(st: node, e: node)
+.decl introspection_stmt_string(n: node)
+.decl introspection_text_doc(d: number)
+.decl introspection_trigger(s: symbol)
+.decl introspection_word(s: symbol)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(b: number, b2: number, e: node)
+.decl rr_agg3(e: node, i: number, i2: number)
+.decl rr_ctx2(b: number)
+.decl rr_ctx4(i: number)
+.decl strprefix(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, node_text, syntax_error, child, field, text, line, strprefix, token, value_type_of, value, end_line, fstring_piece
+.output violation
+introspection_allowed("/schema/").
+introspection_allowed("_schema/").
+introspection_allowed("/schema_").
+introspection_allowed("/metadata/").
+introspection_allowed("_metadata").
+introspection_allowed("/migration").
+introspection_allowed("/migrations/").
+introspection_allowed("/introspector").
+introspection_allowed("_introspector").
+introspection_allowed("/validator").
+introspection_allowed("_validator").
+introspection_allowed("/capabilit").
+introspection_allowed("/bootstrap").
+introspection_allowed("/tests/").
+introspection_flush("flush_schema_plan").
+introspection_flush("flush_schema_plan_async").
+introspection_forbidden("SqlTableExists").
+introspection_forbidden("TableExistsIntent").
+introspection_forbidden("TableExistsStep").
+introspection_forbidden("_column_exists_uncached").
+introspection_forbidden("_fetch_table_columns").
+introspection_forbidden("_fetch_table_columns_async").
+introspection_forbidden("_table_exists_uncached").
+introspection_forbidden("column_exists").
+introspection_forbidden("column_exists_async").
+introspection_forbidden("get_table_columns").
+introspection_forbidden("get_table_schema").
+introspection_forbidden("inspect").
+introspection_forbidden("list_collection_names").
+introspection_forbidden("table_exists").
+introspection_forbidden("table_exists_async").
+introspection_forbidden("table_exists_lazy").
+introspection_prefix("l2050_transaction/").
+introspection_prefix("l2055_lazy_result/").
+introspection_prefix("l2060_query_builder/").
+introspection_prefix("l2070_batching/").
+introspection_prefix("l4000_permissions/").
+introspection_prefix("l7000_versioned_schema/").
+introspection_prefix("l7200_versioned_transactions/").
+introspection_prefix("impl/common/l2070_server_plan/").
+introspection_prefix("impl/common/l4100_queue/").
+introspection_prefix("impl/common/l5150_fts_polyfill/").
+introspection_prefix("impl/common/l5200_sql_query/").
+introspection_prefix("impl/common/l5350_hybrid_search/").
+introspection_prefix("impl/common/l7245_versioned_backends/").
+introspection_prefix("impl/common/l7300_sql_versioned_transactions/").
+introspection_prefix("impl/common/l7350_sparse_versioned_transactions/").
+introspection_prefix("impl/common/l9700_sql_graph_query/").
+introspection_primitive("impl/common/l2070_server_plan/steps/table_exists.py", "compile", "SqlTableExists").
+introspection_primitive("impl/common/l5150_fts_polyfill/manager.py", "execute_async", "table_exists_async").
+introspection_primitive("impl/common/l5150_fts_polyfill/manager.py", "execute_sync", "table_exists").
+introspection_rooted("schema/").
+introspection_rooted("schema_").
+introspection_rooted("metadata/").
+introspection_rooted("migration").
+introspection_rooted("migrations/").
+introspection_rooted("introspector").
+introspection_rooted("validator").
+introspection_rooted("capabilit").
+introspection_rooted("bootstrap").
+introspection_rooted("tests/").
+introspection_sql_marker("information_schema", "(?s:.*)(?i-u:information_schema)(?s:.*)").
+introspection_sql_marker("pragma table_info", "(?s:.*)(?i-u:pragma table_info)(?s:.*)").
+introspection_sql_marker("show columns", "(?s:.*)(?i-u:show columns)(?s:.*)").
+introspection_sql_marker("show tables", "(?s:.*)(?i-u:show tables)(?s:.*)").
+introspection_sql_marker("sqlite_master", "(?s:.*)(?i-u:sqlite_master)(?s:.*)").
+introspection_trigger("SqlTableExists").
+introspection_trigger("TableExistsIntent").
+introspection_trigger("TableExistsStep").
+introspection_trigger("_column_exists_uncached").
+introspection_trigger("_fetch_table_columns").
+introspection_trigger("_table_exists_uncached").
+introspection_trigger("column_exists").
+introspection_trigger("flush_schema_plan").
+introspection_trigger("get_table_columns").
+introspection_trigger("get_table_schema").
+introspection_trigger("information_schema").
+introspection_trigger("inspect").
+introspection_trigger("list_collection_names").
+introspection_trigger("pragma table_info").
+introspection_trigger("show columns").
+introspection_trigger("show tables").
+introspection_trigger("sqlite_master").
+introspection_trigger("table_exists").
+introspection_word("bootstrap").
+introspection_word("create").
+introspection_word("drop").
+introspection_word("ensure").
+introspection_word("evolve").
+introspection_word("migration").
+introspection_word("rename").
+introspection_word("reconcile").
+introspection_word("schema").
+introspection_word("verify").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
 in_scope(d) :- doc(d, p, _), glob("l2050_transaction/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l2055_lazy_result/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l2060_query_builder/**/*.py", p).
@@ -26,4 +187,62 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-.output violation
+introspection_text_doc(d) :- node(d, m, "module", _, _), node_text(m, s), introspection_trigger(x), contains(x, s).
+introspection_gate(d, p) :- option_value("entryPoint", "_collect_violations"), node(d, _, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _).
+introspection_gate(d, p) :- option_value("entryPoint", v), v != "_collect_violations", node(d, _, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), introspection_text_doc(d).
+introspection_marked(d) :- doc(d, p, _), introspection_allowed(m), contains(m, p).
+introspection_marked(d) :- doc(d, p, _), introspection_rooted(m), prefix(m, p).
+introspection_data_path(d) :- doc(d, p, _), introspection_prefix(x), prefix(x, p), !introspection_marked(d).
+introspection_doc(d, p) :- introspection_gate(d, p), option_value("entryPoint", "_collect_violations").
+introspection_doc(d, p) :- introspection_gate(d, p), option_value("entryPoint", v), v != "_collect_violations", introspection_data_path(d).
+introspection_owner(n, f) :- inside(n, f, introspection_fdef).
+introspection_owner(n, f) :- inside(n, dc, introspection_deco), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+introspection_frame(n, f) :- nearest(n, f, introspection_frame_mark), node(_, f, "function_definition", _, _).
+introspection_frame(n, f) :- nearest(n, dc, introspection_frame_mark), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+introspection_frame(n, f) :- nearest(n, dc, introspection_frame_mark), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", k), node(_, k, "class_definition", _, _), nearest(dc, f, introspection_fdef).
+introspection_authority(n) :- introspection_owner(n, f), field(f, "name", nm), text(nm, x), introspection_word(w), icontains(w, x).
+introspection_peel(c, g) :- node(d, c, "call", _, _), introspection_doc(d, _), field(c, "function", g).
+introspection_peel(c, i) :- introspection_peel(c, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+introspection_callee(c, x) :- introspection_peel(c, u), node(_, u, "identifier", _, _), text(u, x).
+introspection_callee(c, x) :- introspection_peel(c, u), node(_, u, "attribute", _, _), field(u, "attribute", a), text(a, x).
+introspection_primitive_call(c) :- introspection_callee(c, x), node(d, c, _, _, _), doc(d, p, _), introspection_frame(c, f), field(f, "name", nm), text(nm, y), introspection_primitive(p, y, x).
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :- introspection_callee(c, x), introspection_flush(x), node(d, c, _, _, _), introspection_doc(d, p), prefix("impl/common/l7245_versioned_backends/", p), line(c, l).
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :- introspection_callee(c, x), introspection_forbidden(x), !introspection_authority(c), !introspection_primitive_call(c), node(d, c, _, _, _), introspection_doc(d, p), line(c, l).
+introspection_in_run(s) :- node(_, c, "concatenated_string", _, _), child(c, s, _).
+introspection_lit(s) :- node(d, s, "string", _, _), introspection_doc(d, _), !introspection_in_run(s).
+introspection_lit(c) :- node(d, c, "concatenated_string", _, _), introspection_doc(d, _).
+introspection_fpart(s) :- node(_, s, "string", _, _), strprefix(s, p), contains("f", p).
+introspection_f(s) :- introspection_lit(s), introspection_fpart(s).
+introspection_f(c) :- introspection_lit(c), child(c, s, _), introspection_fpart(s).
+introspection_stmt_peel(st, e) :- node(_, st, "expression_statement", _, _), child(st, e, 0), !child(st, _, 1), !token(st, _, ",", _, _).
+introspection_stmt_peel(st, i) :- introspection_stmt_peel(st, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+introspection_stmt_string(n) :- introspection_stmt_peel(_, n).
+introspection_const(e, v) :- introspection_lit(e), !introspection_f(e), value_type_of(e, "str"), value(e, v), !introspection_stmt_string(e).
+introspection_fhost(e) :- introspection_lit(e), introspection_f(e).
+introspection_fhost(s) :- node(d, s, "format_specifier", _, _), introspection_doc(d, _).
+introspection_part(s, s) :- introspection_fhost(s), node(_, s, "string", _, _).
+introspection_part(e, s) :- introspection_fhost(e), node(_, e, "concatenated_string", _, _), child(e, s, _), node(_, s, "string", _, _).
+introspection_field(e, f, b, fe) :- introspection_part(e, s), child(s, f, _), node(_, f, "interpolation", b, fe).
+introspection_field(e, f, b, fe) :- introspection_fhost(e), node(_, e, "format_specifier", _, _), child(e, f, _), node(_, f, "format_expression", b, fe).
+introspection_item(e, o, l) :- introspection_part(e, s), introspection_fpart(s), child(s, c, _), node(_, c, "string_content", o, _), line(c, l).
+introspection_item(e, o, l) :- introspection_part(e, s), !introspection_fpart(s), node(_, s, _, o, _), line(s, l).
+introspection_item(e, o, l) :- introspection_field(e, f, b, _), token(f, _, "=", _, _), o = @add(b, 1), line(f, l).
+introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", s, _), a = @add(s, 1), line(e, l).
+introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", _, _), introspection_field(e, f, _, a), end_line(f, l).
+introspection_item(e, a, l) :- introspection_slice(e, a, l), node(_, e, _, _, k), a < k, !introspection_field(e, _, a, _).
+introspection_after(e, o, b) :- introspection_item(e, o, _), introspection_field(e, _, b, fe), fe > o.
+introspection_not_next(e, o, b) :- introspection_after(e, o, b), introspection_after(e, o, b2), b2 < b.
+introspection_run(e, k, l) :- introspection_item(e, o, l), introspection_after(e, o, k), !introspection_not_next(e, o, k).
+introspection_run(e, k, l) :- introspection_item(e, o, l), !introspection_after(e, o, _), node(_, e, _, _, k).
+introspection_run_line(e, k, l) :- introspection_run(e, k, _), l = min l2 : { introspection_run(e, k, l2) }.
+rr_ctx2(b) :- introspection_field(e, _, b, _).
+rr_agg1(b, b2, e) :- rr_ctx2(b), introspection_field(e, _, b2, _), b2 < b.
+introspection_ford(e, b, j) :- introspection_field(e, _, b, _), j = count : { rr_agg1(b, _, e) }.
+rr_ctx4(i) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _).
+rr_agg3(e, i, i2) :- rr_ctx4(i), fstring_piece(e, i2, "interpolation", _), i2 < i.
+introspection_pord(e, i, j) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _), j = count : { rr_agg3(e, i, _) }.
+introspection_later(e, i) :- introspection_fhost(e), fstring_piece(e, i, _, _), fstring_piece(e, i2, _, _), i2 > i.
+introspection_fconst(e, v, l) :- introspection_ford(e, b, j), introspection_pord(e, i, j), fstring_piece(e, h, "literal", v), i = @add(h, 1), introspection_run_line(e, b, l).
+introspection_fconst(e, v, l) :- introspection_fhost(e), node(_, e, _, _, k), fstring_piece(e, h, "literal", v), !introspection_later(e, h), introspection_run_line(e, k, l).
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :- introspection_const(n, v), introspection_sql_marker(_, re), match(re, v), !introspection_authority(n), node(d, n, _, _, _), introspection_doc(d, p), line(n, l).
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :- introspection_fconst(n, v, l), introspection_sql_marker(_, re), match(re, v), !introspection_authority(n), node(d, n, _, _, _), introspection_doc(d, p).

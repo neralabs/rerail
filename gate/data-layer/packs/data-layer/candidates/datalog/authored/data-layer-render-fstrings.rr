@@ -1,0 +1,47 @@
+// data-layer-render-fstrings, hand-written (decision 0043): the clause `fstring` of
+// candidates/rules-ast/data-layer-render-fstrings.json, for every value of its options (oracleAnalyzer is not read;
+// sourceGate, below).
+//
+// An f-string literal (a `string` whose prefix matches `(?i)^[rub]*f`, not a part of a concatenated_string), a
+// concatenated_string with an f-string part, or a format_specifier, inside (to the end) a function_definition whose
+// name matches `^render(?:_|$)`, in a module whose text matches `render|f"|f'` (sourceGate on) or `(?s).*` (off).
+//
+// The module gate holds under either value of sourceGate, so it is not tested: the enclosing definition's name is
+// an identifier of the module's text that starts with `render`, so the module's text always matches `render`, and
+// `(?s).*` matches every text.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// The kinds `inside` looks for: the render function.
+.decl fstring_defs(kind: symbol)
+fstring_defs("function_definition").
+
+// A `string` whose prefix (lowercased) matches `^[rub]*f`: its letters are r, u, b, f only, so it holds an `f`.
+.decl fstring_f(n: node)
+fstring_f(n) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p).
+
+// `not inside concatenated_string (stopBy neighbor)`: the parent is not a concatenated_string.
+.decl fstring_part(n: node)
+fstring_part(n) :- child(c, n, _), node(_, c, "concatenated_string", _, _).
+
+.decl fstring_hit(n: node)
+fstring_hit(n) :- fstring_f(n), !fstring_part(n).
+fstring_hit(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), fstring_f(s).
+fstring_hit(n) :- node(_, n, "format_specifier", _, _).
+
+// The enclosing function's name: `render`, or `render_…`.
+.decl fstring_render(n: node)
+fstring_render(n) :- fstring_hit(n), inside(n, f, fstring_defs), field(f, "name", m), text(m, s), (s = "render" ; prefix("render_", s)).
+
+violation("data-layer-render-fstrings", "fstring", "render_fstring", p, l) :-
+    fstring_render(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).

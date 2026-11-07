@@ -162,6 +162,7 @@ best(n, @dot("a", x)) :- name(n, x).
         r.body.iter().filter_map(|l| if let Literal::Agg { atom, .. } = l { Some(format!("{atom}")) } else { None }).collect()
     };
     assert_eq!(helper("kinds"), vec!["rr_agg1(_, $n)".to_owned()]);
+    assert_eq!(p.decls["rr_agg1"].len(), 2);
     let first = helper("first");
     assert_eq!(first.len(), 2);
     assert!(first[0].contains("$j") && first[0].contains("$n") && !first[0].contains("$x"), "{first:?}");
@@ -337,6 +338,32 @@ fn rr_programs_print_as_themselves() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// A regex test prints back as written: `match("X", s)` lowers to the engine's search of `^(?:X)$` and prints as
+/// `match("X", s)` again, never under a leading `(?s)` that would give X's own `.` newlines; a search built another
+/// way prints with the flag on its dots only.
+#[test]
+fn regex_tests_print_back_exactly() {
+    let src = r#"
+.decl t(s: symbol)
+.input t
+.decl a(s: symbol)
+a(s) :- t(s), match("WHEN.*BEGIN", s).
+.decl b(s: symbol)
+b(s) :- t(s), !match("(?i)x(y)", s).
+.output a, b
+"#;
+    let prog = parse(src).unwrap();
+    let text = print(&prog).unwrap();
+    assert!(text.contains(r#"match("WHEN.*BEGIN", s)"#), "{text}");
+    assert!(text.contains(r#"!match("(?i)x(y)", s)"#), "{text}");
+    assert!(!text.contains("(?s)"), "{text}");
+    assert_eq!(difference(&prog, &parse(&text).unwrap()), None);
+    assert_eq!(super::print::search("rx", "a.b"), "(?s:.*)(?:a.b)(?s:.*)");
+    assert_eq!(super::print::search("irx", "a"), "(?i:(?s:.*)(?:a)(?s:.*))");
+    assert_eq!(super::print::search("rx", "^(?:a)|(?:b)$"), "(?s:.*)(?:^(?:a)|(?:b)$)(?s:.*)");
+    assert_eq!(super::print::search("rx", r"^(?:a\)[)]b)$"), r"a\)[)]b");
+}
+
 /// Writes each authored program's `.rr` beside it (run once per change of an `.rdl`).
 #[test]
 #[ignore = "writes files: the .rr translations of the authored .rdl programs"]
@@ -366,9 +393,10 @@ fn hand_written_rules_lowering_report() {
 
 // ---- aggregates ----
 
-/// `sum` and `join` over one atom read it in place: the body's own variables are `_`, and join's keys are the
-/// atom's columns. A value or key that is an expression, or an atom that repeats a body variable, is a helper
-/// relation that keeps every variable (a multiset), with the computed value typed by what computes it.
+/// `sum` and `join` over one atom read it in place: the body's own variables are `_`, and join's keys are variables
+/// of the atom. A value or key that is an expression, or an atom that repeats a body variable, is a helper relation
+/// (sum's keeps every variable, a multiset), with the computed value typed by what computes it. Without `sep`, join
+/// joins the texts as they are.
 #[test]
 fn sum_and_join_lower() {
     let p = parse(concat!(
@@ -387,10 +415,10 @@ fn sum_and_join_lower() {
     let (op, over, atom) = agg("s");
     assert_eq!((op, over.as_deref(), atom.to_string()), (front::AggOp::Sum, Some("i"), "arg($c, _, $i)".to_owned()));
     let (op, over, atom) = agg("j");
-    assert_eq!((op, over.as_deref(), atom.to_string()), (front::AggOp::Join { by: vec![2], sep: ", ".to_owned() }, Some("t"), "arg($c, $t, _)".to_owned()));
+    assert_eq!((op, over.as_deref(), atom.to_string()), (front::AggOp::Join { by: vec!["i".to_owned()], sep: ", ".to_owned() }, Some("t"), "arg($c, $t, $i)".to_owned()));
     // Keys (n, i): the helper's columns in order c, i, n, t.
     let (op, _, atom) = agg("k");
-    assert_eq!(op, front::AggOp::Join { by: vec![2, 1], sep: String::new() });
+    assert_eq!(op, front::AggOp::Join { by: vec!["n".to_owned(), "i".to_owned()], sep: String::new() });
     let types: Vec<&str> = p.decls[&atom.rel].iter().map(|(_, t)| t.as_str()).collect();
     assert_eq!(types, ["node", "int", "int", "sym"], "{atom}");
     let (op, over, atom) = agg("g");
@@ -401,12 +429,11 @@ fn sum_and_join_lower() {
     assert!(cols.contains(&(over.clone(), "int".to_owned())), "{cols:?}");
     let (_, _, atom) = agg("r");
     assert_ne!(atom.rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
-    for e in [
-        ".decl a(x: symbol)\na(x) :- a(y), x = join z : { a(z) }.",
-        ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.",
-    ] {
-        assert!(matches!(parse(e), Err(front::Error::Syntax(_))), "{e}");
-    }
+    let e = ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.";
+    assert!(matches!(parse(e), Err(front::Error::Syntax(_))), "{e}");
+    let p = parse(".decl b(z: symbol)\n.input b\n.decl a(x: symbol)\na(x) :- x = join z : { b(z) }.\n").unwrap();
+    let r = p.rules.iter().find(|r| r.head.rel == "a").unwrap();
+    assert!(r.body.iter().any(|l| matches!(l, Literal::Agg { op: front::AggOp::Join { by, sep }, .. } if by.is_empty() && sep.is_empty())), "{r}");
 }
 
 /// An aggregate inside a term, in a head or a comparison, is an aggregate of its own whose value the term uses.
@@ -547,24 +574,27 @@ s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
     let near: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "rr_near_blk").map(ToString::to_string).collect();
     assert_eq!(near, ["rr_near_blk($n, $a) :- child($a, $n, _), blk($a)", "rr_near_blk($n, $a) :- child($p, $n, _), !blk($p), rr_near_blk($p, $a)"]);
     assert!(rules[1].body.iter().any(|l| l.to_string() == "rr_near_blk($n, $a)"), "{}", rules[1]);
-    assert!(p.rules.iter().any(|r| r.head.rel == "next_sibling") && !p.inputs.contains(&"next_sibling".to_owned()));
+    // `next_sibling` is core.rr's, written out over `child` in the rule (`rr::lower::core`): no relation of the program.
+    assert!(!p.rules.iter().any(|r| r.head.rel == "next_sibling") && !p.inputs.contains(&"next_sibling".to_owned()));
     let again = parse(&print(&p).unwrap()).unwrap();
     assert_eq!(difference(&p, &again), None);
 }
 
-/// What the axes still refuse says so by name.
+/// What the axes still refuse says so by name; core.rr's `within` and `earlier` negate with a node unnamed, through
+/// their relations (`rr::lower::core`): n has no ancestor, n has nothing after it.
 #[test]
 fn axes_refuse_by_name() {
     let decls = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl tape(n: number, par: number, size: number, depth: number)\n.input node, tape\n.decl a(n: node, m: node)\n.decl q(s: symbol)\n.decl fn(kind: symbol)\nfn(\"f\").\n";
     for (body, what) in [
-        ("a(n, n) :- a(n, _), !within(n, _).", "`!within` with its ancestor unnamed"),
         ("a(n, n) :- a(n, _), !within_stop(n, _, fn).", "`!within_stop` with its ancestor unnamed"),
-        ("a(n, n) :- a(n, _), !earlier(n, _).", "`!earlier` with a node unnamed"),
         ("q(s) :- q(s), !split_dot(s, _, \"x\").", "`!split_dot` with a column unnamed"),
         ("a(n, n) :- a(n, _), !precedes_stop(n, _, fn).", "`!precedes_stop` with a node unnamed"),
     ] {
         let e = parse(&format!("{decls}{body}")).unwrap_err().to_string();
         assert!(e.contains("not lowered yet") && e.contains(what), "{body}: {e}");
+    }
+    for body in ["a(n, n) :- a(n, _), !within(n, _).", "a(n, n) :- a(n, _), !earlier(n, _)."] {
+        parse(&format!("{decls}{body}")).unwrap_or_else(|e| panic!("{body}: {e}"));
     }
 }
 

@@ -1,8 +1,17 @@
+.decl descriptor_capture(d: number, c: symbol, k: number)
+.decl descriptor_found(d: number, c: symbol, l: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
+.decl removed_surface_capture(d: number, k: number)
+.decl revision_ancestry_content(d: number)
+.decl revision_ancestry_file(d: number, p: symbol, sp: node)
+.decl source(d: number, sp: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, source, line
+.output violation
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/domain/versioning/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
@@ -15,4 +24,27 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
-.output violation
+revision_ancestry_file(d, p, sp) :- doc(d, p, _), in_scope(d), !out_scope(d), glob("**/*.py", p), !glob("**/tests/**", p), !glob("**/test_*.py", p), source(d, sp).
+revision_ancestry_content(d) :- revision_ancestry_file(d, _, sp), !option_on("oracleAnalyzer"), match_all("revision|ancestry|stmt_ancestry_chain", sp, _).
+revision_ancestry_content(d) :- revision_ancestry_file(d, _, _), option_on("oracleAnalyzer").
+descriptor_capture(d, "SqlAncestryChainCte", k) :- revision_ancestry_file(d, _, sp), match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlAncestryChainCte\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "SqlNativeRevisionValue", k) :- revision_ancestry_file(d, _, sp), match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlNativeRevisionValue\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "SqlRevisionAncestryDefinition", k) :- revision_ancestry_file(d, _, sp), match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlRevisionAncestryDefinition\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "SqlRevisionInAncestryCondition", k) :- revision_ancestry_file(d, _, sp), match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlRevisionInAncestryCondition\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "_SparseRowVisibleAtRevisionCondition", k) :- revision_ancestry_file(d, _, sp), match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+_SparseRowVisibleAtRevisionCondition\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "_SqlCopyVisibleSparseAncestors", k) :- revision_ancestry_file(d, _, sp), match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+_SqlCopyVisibleSparseAncestors\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_capture(d, "_SqlVisibleAncestorsDefinition", k) :- revision_ancestry_file(d, _, sp), match_group("\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+_SqlVisibleAncestorsDefinition\\b))", sp, _, "DESCRIPTOR", g), line(g, k).
+descriptor_found(d, c, k) :- descriptor_capture(d, c, k), revision_ancestry_content(d), !option_on("oracleAnalyzer").
+descriptor_found(d, c, 1) :- descriptor_capture(d, c, _), revision_ancestry_content(d), option_on("oracleAnalyzer").
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlAncestryChainCte", "forbidden_descriptor", p, l) :- descriptor_found(d, "SqlAncestryChainCte", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlNativeRevisionValue", "forbidden_descriptor", p, l) :- descriptor_found(d, "SqlNativeRevisionValue", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlRevisionAncestryDefinition", "forbidden_descriptor", p, l) :- descriptor_found(d, "SqlRevisionAncestryDefinition", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlRevisionInAncestryCondition", "forbidden_descriptor", p, l) :- descriptor_found(d, "SqlRevisionInAncestryCondition", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SparseRowVisibleAtRevisionCondition", "forbidden_descriptor", p, l) :- descriptor_found(d, "_SparseRowVisibleAtRevisionCondition", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlCopyVisibleSparseAncestors", "forbidden_descriptor", p, l) :- descriptor_found(d, "_SqlCopyVisibleSparseAncestors", l), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlVisibleAncestorsDefinition", "forbidden_descriptor", p, l) :- descriptor_found(d, "_SqlVisibleAncestorsDefinition", l), revision_ancestry_file(d, p, _).
+removed_surface_capture(d, k) :- revision_ancestry_file(d, _, sp), match_group("\\A[\\s\\S]*?(?P<SURFACE>stmt_ancestry_chain)", sp, _, "SURFACE", g), line(g, k).
+violation("data-layer-revision-ancestry-invariants", "removed-surface", "removed_surface", p, l) :- removed_surface_capture(d, l), revision_ancestry_content(d), !option_on("oracleAnalyzer"), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "removed-surface", "removed_surface", p, 1) :- removed_surface_capture(d, _), revision_ancestry_content(d), option_on("oracleAnalyzer"), revision_ancestry_file(d, p, _).
+violation("data-layer-revision-ancestry-invariants", "stored-text-cast-0", "stored_revision_text_cast", p, l) :- revision_ancestry_file(d, p, sp), revision_ancestry_content(d), match_all("(?i)(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}::\\s*text", sp, m), line(m, l).
+violation("data-layer-revision-ancestry-invariants", "stored-text-cast-1", "stored_revision_text_cast", p, l) :- revision_ancestry_file(d, p, sp), revision_ancestry_content(d), match_all("(?i)CAST\\([\\s\\S]{0,160}?(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}?\\s+AS\\s+(?:TEXT|CHAR(?:\\s*\\(\\s*\\d+\\s*\\))?)\\s*\\)", sp, m), line(m, l).

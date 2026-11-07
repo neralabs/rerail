@@ -1,0 +1,65 @@
+// data-layer-unknown-contract-defaults: the clauses the converter does not convert (decision 0043): or-empty, bool.
+// Policy: gate/data-layer/packs/data-layer/candidates/rules/data-layer-unknown-contract-defaults.json (no options).
+// `has` without stopBy is W's default, neighbor: a field child (`field`) or a named child (`child`).
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl node_text(n: node, s: symbol)
+.input node_text, value, value_type_of
+
+// ---- or-empty (UNKNOWN_DEFAULTED): `<x>.auxiliary_query or <empty>` ----
+// boolean_operator whose operator token is `or` (op: the operator field's token), whose left is an attribute
+// `.auxiliary_query` / `.relation_role` / `.source_tables`, and whose right is an empty display, an empty string or an
+// empty constructor call.
+.decl or_empty_field(s: symbol)
+or_empty_field("auxiliary_query"). or_empty_field("relation_role"). or_empty_field("source_tables").
+.decl or_empty_ctor(s: symbol)
+or_empty_ctor("dict"). or_empty_ctor("frozenset"). or_empty_ctor("list"). or_empty_ctor("set"). or_empty_ctor("tuple").
+.decl or_empty_left(n: node)
+or_empty_left(n) :- node(_, n, "boolean_operator", _, _), op(n, "or"), field(n, "left", a), node(_, a, "attribute", _, _),
+    field(a, "attribute", x), node(_, x, "identifier", _, _), text(x, s), or_empty_field(s).
+// The right side: W's regexes are searches over the node's whole text; each is anchored, so a whole-string match is
+// the same: only whitespace and comments between the brackets.
+.decl or_empty_right(r: node)
+or_empty_right(r) :- node(_, r, "tuple", _, _), node_text(r, s), match("\\((?:\\s|#[^\\n]*(?:\\n|$))*\\)", s).
+or_empty_right(r) :- node(_, r, "list", _, _), node_text(r, s), match("\\[(?:\\s|#[^\\n]*(?:\\n|$))*\\]", s).
+or_empty_right(r) :- node(_, r, "dictionary", _, _), node_text(r, s), match("\\{(?:\\s|#[^\\n]*(?:\\n|$))*\\}", s).
+// `value: {regex: ^(?:)$}` on a string: W's value of the literal is a str and the regex (anchored, `$` the text's
+// end) matches it: the empty str (`""`, `''`, `""""""`, a backslash-newline continuation alone, an f-string with
+// no interpolation and no text). A bytes literal's value is no str (W's value regex reads strings only). Exact.
+or_empty_right(r) :- node(_, r, "string", _, _), value(r, ""), value_type_of(r, "str").
+// `dict()`, `list()` … : the function an identifier of the set (the second `has` requires an identifier, so the
+// attribute alternative of the first never holds), the arguments only brackets, whitespace and comments.
+or_empty_right(r) :- node(_, r, "call", _, _), field(r, "function", f), node(_, f, "identifier", _, _), text(f, s),
+    or_empty_ctor(s), field(r, "arguments", g), node_text(g, t), match("\\((?:\\s|#[^\\n]*(?:\\n|$))*\\)", t).
+violation("data-layer-unknown-contract-defaults", "or-empty", "UNKNOWN_DEFAULTED", p, l) :- or_empty_left(n),
+    field(n, "right", r), or_empty_right(r), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d),
+    doc(d, p, _), line(n, l).
+
+// ---- bool (UNKNOWN_AS_FALSY): `bool(<x>.auxiliary_query)` with exactly one argument ----
+// The arguments node has a child attribute `.auxiliary_query` / … and `count {has: …, min: 1, max: 1}`: exactly one of
+// its children is not a keyword argument, a comment or a `(`, `)`, `,` token. Those are the only tokens an argument
+// list (or a generator expression's own children) holds, so the count is its named non-comment children (child)
+// that are not keyword_argument: exact.
+.decl bool_field(s: symbol)
+bool_field("auxiliary_query"). bool_field("relation_role"). bool_field("source_tables").
+.decl bool_counted(g: node, c: node)
+bool_counted(g, c) :- node(_, x, "call", _, _), field(x, "arguments", g), child(g, c, _), !node(_, c, "keyword_argument", _, _).
+.decl bool_args(g: node)
+bool_args(g) :- node(_, x, "call", _, _), field(x, "arguments", g), child(g, a, _), node(_, a, "attribute", _, _),
+    field(a, "attribute", y), node(_, y, "identifier", _, _), text(y, s), bool_field(s),
+    k = count : { bool_counted(g, _) }, k = 1.
+violation("data-layer-unknown-contract-defaults", "bool", "UNKNOWN_AS_FALSY", p, l) :- node(_, n, "call", _, _),
+    field(n, "function", f), node(_, f, "identifier", _, _), text(f, "bool"), field(n, "arguments", g), bool_args(g),
+    node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

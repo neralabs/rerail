@@ -546,6 +546,34 @@ pub(crate) struct ReferenceRows {
     pub(crate) incomplete: BTreeSet<Arc<str>>,
 }
 
+/// What a reference of a definition's body names, as `link_python` reads the name the summary recorded
+/// (`Summary::references`), in its order: a method of a parameter's declared type (`param_type`: `m.<type>.T.x`), a
+/// member of a `self`/`cls` field's type (`field`: `C.<field>.f.x`, constructor fields included), a bare name at
+/// module level (`bare`: declared re-exports, imports, then the name), a bare name in a method (`unqualified`: the
+/// class's member first), `self.x`/`cls.x` (`self`: the class's bases breadth first, then a sibling base of a
+/// subclass), `super().x` (`super`), a late-bound name (`late`: `C.m^`), and any other qualified name (`name`: a
+/// definition, an import or re-export of one, a module or class member).
+pub(crate) fn reference_via(name: &str) -> &'static str {
+    let marked = |marker: &str, rest: char| name.split_once(marker).is_some_and(|(_, tail)| tail.contains(rest));
+    if marked(".<type>.", '.') {
+        "param_type"
+    } else if marked(".<field>.", '.') {
+        "field"
+    } else if !name.contains(".<unqualified>.") && name.split_once(".<bare>.").is_some_and(|(_, tail)| tail.contains("=>")) {
+        "bare"
+    } else if name.split_once(".<unqualified>.").is_some_and(|(_, tail)| tail.contains("=>")) {
+        "unqualified"
+    } else if name.contains(".<self>.") {
+        "self"
+    } else if name.contains(".<super>.") {
+        "super"
+    } else if name.ends_with('^') {
+        "late"
+    } else {
+        "name"
+    }
+}
+
 impl Graph {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reference_rows(&self) -> ReferenceRows {
@@ -553,35 +581,92 @@ impl Graph {
             edges: Vec::new(),
             incomplete: BTreeSet::new(),
         };
-        for file in self.slots.iter().flatten() {
-            if !file
-                .summary
-                .names
-                .first()
-                .is_some_and(|name| name.family() == Family::Python)
-            {
-                continue;
-            }
+        for file in self.python_files() {
             if file.summary.open {
                 rows.incomplete.insert(Arc::clone(&file.path));
             }
             for (owner, target) in &file.edges {
-                let source = file.summary.defs[*owner as usize];
-                let target_file = self.slots[target.file as usize]
-                    .as_ref()
-                    .expect("linked target file");
-                let target = target_file.summary.defs[target.local as usize];
-                rows.edges.push(ReferenceEdge {
-                    path: Arc::clone(&file.path),
-                    source,
-                    source_name: file.summary.interned(source.name).clone(),
-                    target_path: Arc::clone(&target_file.path),
-                    target,
-                    target_name: target_file.summary.interned(target.name).clone(),
-                });
+                rows.edges.push(self.reference_edge(file, *owner, *target));
             }
         }
         rows
+    }
+
+    /// `reference_rows`' edges, each with what made it: the form of a reference that links to its target
+    /// (`reference_via`), or `sibling` for an authored sibling link (`contracts::Contracts::sibling`). An edge made
+    /// several ways has a row for each; the rows' (source, target) pairs are `reference_rows`' edges.
+    pub(crate) fn labelled_reference_rows(&self) -> Vec<(ReferenceEdge, &'static str)> {
+        let contracts = super::contracts::get(self.reference_contracts);
+        let mut rows = Vec::new();
+        for file in self.python_files() {
+            let summary = &file.summary;
+            let siblings: HashSet<(u32, String)> = summary
+                .reference_decorators
+                .chunk_by(|left, right| left.0 == right.0)
+                .filter_map(|group| {
+                    let owner = group[0].0;
+                    let decorators = group.iter().map(|(_, name)| summary.name(*name)).collect::<Vec<_>>();
+                    contracts.sibling(summary.name(summary.defs[owner as usize].name), &decorators).map(|target| (owner, target))
+                })
+                .collect();
+            let referenced: HashSet<(u32, u32)> = summary.references.iter().copied().collect();
+            let mut labelled = Vec::new();
+            for &(owner, name) in &summary.edges {
+                let text = summary.name(name);
+                let vias = [
+                    referenced.contains(&(owner, name)).then(|| reference_via(text)),
+                    siblings.contains(&(owner, text.to_owned())).then_some("sibling"),
+                ];
+                for to in self.links[summary.interned(name)].defs.iter() {
+                    labelled.extend(vias.iter().flatten().map(|via| (owner, *to, *via)));
+                }
+            }
+            labelled.sort_unstable();
+            labelled.dedup();
+            rows.extend(labelled.into_iter().map(|(owner, to, via)| (self.reference_edge(file, owner, to), via)));
+        }
+        rows
+    }
+
+    /// The definitions of the reference graph's Python files that are open (`open_defs`), by file path.
+    pub(crate) fn reference_open(&self) -> Vec<(Arc<str>, super::summary::Def)> {
+        self.open_defs()
+            .filter_map(|def| {
+                let file = self.slots[def.file as usize].as_ref()?;
+                file.summary
+                    .names
+                    .first()
+                    .is_some_and(|name| name.family() == Family::Python)
+                    .then(|| (Arc::clone(&file.path), file.summary.defs[def.local as usize]))
+            })
+            .collect()
+    }
+
+    /// The linked files whose summaries are Python's.
+    fn python_files(&self) -> impl Iterator<Item = &GraphFile> {
+        self.slots.iter().flatten().filter(|file| {
+            file.summary
+                .names
+                .first()
+                .is_some_and(|name| name.family() == Family::Python)
+        })
+    }
+
+    /// `file`'s edge from its definition `owner` to `target`, as `reference_rows` gives it.
+    fn reference_edge(&self, file: &GraphFile, owner: u32, target: DefRef) -> ReferenceEdge {
+        let source = file.summary.defs[owner as usize];
+        let target_file = self.slots[target.file as usize]
+            .as_ref()
+            .expect("linked target file");
+        let target = target_file.summary.defs[target.local as usize];
+        ReferenceEdge {
+            path: Arc::clone(&file.path),
+            source,
+            source_name: file.summary.interned(source.name).clone(),
+            target_path: Arc::clone(&target_file.path),
+            target,
+            target_name: target_file.summary.interned(target.name).clone(),
+        }
     }
     /// Links every summary. Definitions are numbered by file path, so the result is independent
     /// of order.

@@ -1,51 +1,87 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, child, field, text, name, line, syntax_error
-.decl never(n: node)
 .decl k0(kind: symbol)
 k0("function_definition").
 .decl k1(kind: symbol)
 k1("class_definition"). k1("function_definition"). k1("lambda").
 .decl k2(kind: symbol)
-k2("return_statement").
+k2("aliased_import"). k2("argument_list"). k2("as_pattern"). k2("as_pattern_target"). k2("assert_statement"). k2("assignment"). k2("attribute"). k2("augmented_assignment"). k2("await"). k2("binary_operator"). k2("block"). k2("boolean_operator"). k2("break_statement"). k2("call"). k2("case_clause"). k2("case_pattern"). k2("chevron"). k2("class_definition"). k2("class_pattern"). k2("comparison_operator"). k2("complex_pattern"). k2("concatenated_string"). k2("conditional_expression"). k2("constrained_type"). k2("continue_statement"). k2("decorated_definition"). k2("decorator"). k2("default_parameter"). k2("delete_statement"). k2("dict_pattern"). k2("dictionary"). k2("dictionary_comprehension"). k2("dictionary_splat"). k2("dictionary_splat_pattern"). k2("dotted_name"). k2("elif_clause"). k2("ellipsis"). k2("else_clause"). k2("escape_interpolation"). k2("escape_sequence"). k2("except_clause"). k2("exec_statement"). k2("expression_list"). k2("expression_statement"). k2("false"). k2("finally_clause"). k2("float"). k2("for_in_clause"). k2("for_statement"). k2("format_expression"). k2("format_specifier"). k2("function_definition"). k2("future_import_statement"). k2("generator_expression"). k2("generic_type"). k2("global_statement"). k2("identifier"). k2("if_clause"). k2("if_statement"). k2("import_from_statement"). k2("import_prefix"). k2("import_statement"). k2("integer"). k2("interpolation"). k2("keyword_argument"). k2("keyword_pattern"). k2("keyword_separator"). k2("lambda"). k2("lambda_parameters"). k2("line_continuation"). k2("list"). k2("list_comprehension"). k2("list_pattern"). k2("list_splat"). k2("list_splat_pattern"). k2("match_statement"). k2("member_type"). k2("module"). k2("named_expression"). k2("none"). k2("nonlocal_statement"). k2("not_operator"). k2("pair"). k2("parameters"). k2("parenthesized_expression"). k2("parenthesized_list_splat"). k2("pass_statement"). k2("pattern_list"). k2("positional_separator"). k2("print_statement"). k2("raise_statement"). k2("relative_import"). k2("return_statement"). k2("set"). k2("set_comprehension"). k2("slice"). k2("splat_pattern"). k2("splat_type"). k2("string"). k2("string_content"). k2("string_end"). k2("string_start"). k2("subscript"). k2("true"). k2("try_statement"). k2("tuple"). k2("tuple_pattern"). k2("type"). k2("type_alias_statement"). k2("type_conversion"). k2("type_default"). k2("type_parameter"). k2("typed_default_parameter"). k2("typed_parameter"). k2("unary_operator"). k2("union_pattern"). k2("union_type"). k2("while_statement"). k2("wildcard_import"). k2("with_clause"). k2("with_item"). k2("with_statement"). k2("yield").
 .decl k3(kind: symbol)
 k3("class_definition").
 .decl k4(kind: symbol)
-k4("concatenated_string"). k4("string").
-.decl k5(kind: symbol)
-k5("module").
+k4("module").
+.decl rrs_k_concat(kind: symbol)
+rrs_k_concat("concatenated_string").
+.decl rrs_k_fn(kind: symbol)
+rrs_k_fn("function_definition").
+.decl rrs_k_fnlam(kind: symbol)
+rrs_k_fnlam("function_definition"). rrs_k_fnlam("lambda").
+.decl sc1_k0(kind: symbol)
+sc1_k0("function_definition").
+.decl sc1_k1(kind: symbol)
+sc1_k1("elif_clause"). sc1_k1("if_statement").
+.decl sc1_k2(kind: symbol)
+sc1_k2("call").
+.decl sc1_k3(kind: symbol)
+sc1_k3("raise_statement").
+.decl sc1_kcall(kind: symbol)
+sc1_kcall("call").
+.decl sc1_kfn(kind: symbol)
+sc1_kfn("function_definition").
+.decl sc2_k0(kind: symbol)
+sc2_k0("function_definition").
+.decl sc2_k_fn(kind: symbol)
+sc2_k_fn("function_definition").
+.decl sc2_k_type(kind: symbol)
+sc2_k_type("type").
+.decl sc3_k_call(kind: symbol)
+sc3_k_call("call").
+.decl sc3_k_fn(kind: symbol)
+sc3_k_fn("function_definition").
+.decl sc3_k_type(kind: symbol)
+sc3_k_type("type").
+.decl sc4_k2(kind: symbol)
+sc4_k2("call").
+.decl sc4_k4(kind: symbol)
+sc4_k4("class_definition").
+.decl sc4_k_fn(kind: symbol)
+sc4_k_fn("function_definition").
+.decl sc5_k0(kind: symbol)
+sc5_k0("function_definition").
+.decl sc5_k2(kind: symbol)
+sc5_k2("call").
+.decl sc5_k3(kind: symbol)
+sc5_k3("raise_statement").
+.decl sc5_k5(kind: symbol)
+sc5_k5("keyword_argument").
+.decl sc6_k2(kind: symbol)
+sc6_k2("call").
+.decl sc6_k_fn(kind: symbol)
+sc6_k_fn("function_definition").
+.decl sc6_k_module(kind: symbol)
+sc6_k_module("module").
+.decl side_effect_block(kind: symbol)
+side_effect_block("block").
 .decl blocked10(low: node, high: node)
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
 .decl m102(n: node)
 .decl m103(n: node)
 .decl m105(n: node)
-.decl m122(n: node)
-.decl m123(n: node)
-.decl m137(n: node)
-.decl m138(n: node)
-.decl m139(n: node)
-.decl m142(n: node)
-.decl m152(n: node)
-.decl m161(n: node)
-.decl m164(n: node)
-.decl m180(n: node)
-.decl m221(n: node)
-.decl m222(n: node)
+.decl m115(n: node)
+.decl m133(n: node)
+.decl m174(n: node)
+.decl m175(n: node)
+.decl m191(n: node)
+.decl m198(n: node)
+.decl m208(n: node)
+.decl m218(n: node)
+.decl m228(n: node)
 .decl m238(n: node)
-.decl m245(n: node)
+.decl m244(n: node)
 .decl m25(n: node)
-.decl m255(n: node)
 .decl m26(n: node)
-.decl m265(n: node)
-.decl m275(n: node)
-.decl m285(n: node)
-.decl m291(n: node)
 .decl m40(n: node)
 .decl m41(n: node)
 .decl m42(n: node)
@@ -57,8 +93,609 @@ k5("module").
 .decl m76(n: node)
 .decl m78(n: node)
 .decl m9(n: node)
+.decl name(n: node, s: symbol)
+.decl never(n: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(p: node, s: number, t: number)
+.decl rr_ctx2(s: number)
+.decl rrs_bindings(b: node, name: symbol, v: node)
+.decl rrs_calls(c: node)
+.decl rrs_calls_callee(c: node, callee: symbol)
+.decl rrs_calls_full_callee(c: node, full: symbol)
+.decl rrs_calls_refs(c: node)
+.decl rrs_calls_runtime_refs(c: node)
+.decl rrs_consumers(f: node, n: node)
+.decl rrs_container_edges(s: node, t: node)
+.decl rrs_container_kind(k: symbol)
+.decl rrs_contexts(n: node, f: node)
+.decl rrs_dictionary_edges(s: node, t: node)
+.decl rrs_edges(s: node, t: node)
+.decl rrs_empty_refs(n: node)
+.decl rrs_empty_str(n: node)
+.decl rrs_finding(n: node, code: symbol)
+.decl rrs_flows(f: node, s: node, t: node)
+.decl rrs_functions(f: node, name: symbol)
+.decl rrs_has_child(n: node)
+.decl rrs_has_local(f: node, name: symbol)
+.decl rrs_ident(n: node, s: symbol)
+.decl rrs_interpolated(c: node)
+.decl rrs_keyword_edges(s: node, t: node)
+.decl rrs_local_last(f: node, name: symbol, st: number)
+.decl rrs_local_row(f: node, name: symbol, st: number, v: node)
+.decl rrs_locals(f: node, name: symbol, v: node)
+.decl rrs_nodes(n: node)
+.decl rrs_positional_edges(s: node, t: node)
+.decl rrs_postop_call(v: node, c2: node)
+.decl rrs_postop_consumed(v: node, c2: node)
+.decl rrs_postops(v: node, kw: node, c: node)
+.decl rrs_refless(f: node, n: node)
+.decl rrs_refless_return(name: symbol, d: number)
+.decl rrs_refs_keyword(c: node, name: symbol)
+.decl rrs_refs_post_op(c: node)
+.decl rrs_returned_call(f: node, v: node, c: node)
+.decl rrs_returns(r: node, v: node, f: node)
+.decl rrs_splat_src(p: node, s: node)
+.decl rrs_splat_src_at(p: node, i: number)
+.decl rrs_spread_edges(s: node, t: node)
+.decl rrs_src_kind(k: symbol)
+.decl rrs_valid(d: number)
+.decl runtime_builder_callee(c: node, name: symbol)
+.decl runtime_builder_keyword(c: node, v: node)
+.decl runtime_builder_second(c: node)
+.decl runtime_builder_string(v: node)
+.decl runtime_builder_value(v: node)
+.decl sc1_alias(m: node, name: symbol, attr: symbol)
+.decl sc1_arg(c: node, a: node)
+.decl sc1_arg_before(a: node, b: node)
+.decl sc1_arg_later(a: node)
+.decl sc1_arg_pos(c: node, a: node, i: number)
+.decl sc1_assign(a: node, l: node)
+.decl sc1_assign_value(a: node, r: node)
+.decl sc1_attr(a: node, obj: symbol, attr: symbol)
+.decl sc1_bad_table_arg(a: node)
+.decl sc1_bad_table_string(s: node)
+.decl sc1_binding(f: node, name: symbol, a: node, s: number)
+.decl sc1_binding_last(f: node, name: symbol, s: number)
+.decl sc1_branch_kind(k: symbol)
+.decl sc1_builder_callee(s: symbol)
+.decl sc1_call(c: node)
+.decl sc1_callee(c: node, s: symbol)
+.decl sc1_cmt_fn(f: node)
+.decl sc1_comment_at(p: node, s: number, e: number)
+.decl sc1_compile_fn(f: node)
+.decl sc1_compile_surface(c: node)
+.decl sc1_compiled(c: node)
+.decl sc1_computed_kind(k: symbol)
+.decl sc1_cond(n: node, m: node, c: node, q: node)
+.decl sc1_cond_desc(q: node, x: node)
+.decl sc1_derived(x: node)
+.decl sc1_empty_method(m: node)
+.decl sc1_empty_seq(x: node)
+.decl sc1_empty_tables(m: node, c: node, name: symbol)
+.decl sc1_empty_value(v: node)
+.decl sc1_first(f: node, c: node, name: symbol)
+.decl sc1_first_start(c: node, name: symbol, s: number)
+.decl sc1_full_callee(c: node, s: symbol)
+.decl sc1_function(f: node, name: symbol)
+.decl sc1_grammar(c: node)
+.decl sc1_grammarless(c: node)
+.decl sc1_has_arg(c: node)
+.decl sc1_has_first(c: node, name: symbol)
+.decl sc1_has_kw(c: node)
+.decl sc1_has_postop(c: node)
+.decl sc1_has_read_problem(c: node)
+.decl sc1_has_table_problem(m: node)
+.decl sc1_io_kw(k: symbol)
+.decl sc1_is_attribute(v: node)
+.decl sc1_kw(c: node, name: symbol, v: node)
+.decl sc1_level0(c: node)
+.decl sc1_level_first(c: node, s: number)
+.decl sc1_level_int(c: node, x: node, s: number)
+.decl sc1_local_binding(f: node, name: symbol, v: node)
+.decl sc1_m103(n: node)
+.decl sc1_m104(n: node)
+.decl sc1_m114(n: node)
+.decl sc1_m122(n: node)
+.decl sc1_m128(n: node)
+.decl sc1_m135(n: node)
+.decl sc1_m143(n: node)
+.decl sc1_m145(n: node)
+.decl sc1_m153(n: node)
+.decl sc1_m158(n: node)
+.decl sc1_m164(n: node)
+.decl sc1_m172(n: node)
+.decl sc1_m20(n: node)
+.decl sc1_m30(n: node)
+.decl sc1_m36(n: node)
+.decl sc1_m4(n: node)
+.decl sc1_m43(n: node)
+.decl sc1_m45(n: node)
+.decl sc1_m52(n: node)
+.decl sc1_m61(n: node)
+.decl sc1_m67(n: node)
+.decl sc1_m68(n: node)
+.decl sc1_m8(n: node)
+.decl sc1_m85(n: node)
+.decl sc1_method_desc(m: node, x: node)
+.decl sc1_method_return(m: node, c: node, name: symbol, r: node, v: node)
+.decl sc1_method_start(c: node, name: symbol, s: number)
+.decl sc1_nonarg_kind(k: symbol)
+.decl sc1_none(v: node)
+.decl sc1_nonempty_kw(c: node, name: symbol, v: node)
+.decl sc1_owner(n: node, f: node)
+.decl sc1_postop_builder(c: node, b: node)
+.decl sc1_raises_type_error(r: node)
+.decl sc1_refs(c: node)
+.decl sc1_resolved(c: node, attr: symbol)
+.decl sc1_return(r: node, v: node)
+.decl sc1_returns_empty_tuple(m: node)
+.decl sc1_role(c: node, role: symbol)
+.decl sc1_row(code: symbol, n: node)
+.decl sc1_scalar_value(p: node)
+.decl sc1_sel_child(p: node)
+.decl sc1_sel_comment(p: node)
+.decl sc1_selected(n: node)
+.decl sc1_seq_kind(k: symbol)
+.decl sc1_sql_surface(c: node)
+.decl sc1_step_base(b: node)
+.decl sc1_step_class(c: node)
+.decl sc1_step_method(f: node, c: node, name: symbol)
+.decl sc1_string(v: node, s: symbol)
+.decl sc1_table_method(name: symbol)
+.decl sc1_table_problem(m: node, r: node)
+.decl sc1_table_problems(c: node, name: symbol, n: node)
+.decl sc1_tp_first(c: node, name: symbol, s: number)
+.decl sc1_tp_start(c: node, name: symbol, s: number)
+.decl sc1_type_error(t: symbol)
+.decl sc1_type_hints_call(n: node)
+.decl sc1_value_text(x: node)
+.decl sc1_zero_io(c: node)
+.decl sc1_zero_io_step(s: node)
+.decl sc2_argument_before(call: node, a: node, b: node)
+.decl sc2_argument_later(call: node, a: node)
+.decl sc2_argument_row(call: node, a: node, start: number)
+.decl sc2_arguments(call: node, a: node, position: number)
+.decl sc2_assignments(a: node, target: node)
+.decl sc2_assignments_value(a: node, value: node)
+.decl sc2_attribute_name(a: node, attr: symbol)
+.decl sc2_attributes(a: node, attr: symbol, object_text: symbol)
+.decl sc2_authority_parameters(fn: node, name: symbol)
+.decl sc2_authority_returns(d: number, name: symbol)
+.decl sc2_authority_type(s: symbol)
+.decl sc2_bad_callback_nodes(keyword: node, n: node)
+.decl sc2_bad_shadowed(keyword: node, n: node)
+.decl sc2_bad_span(keyword: node, n: node, start: number, end: number)
+.decl sc2_callback_carriers(keyword: node, name: symbol)
+.decl sc2_callback_keyword(name: symbol)
+.decl sc2_callback_links(method: node, keyword: node, kind: symbol, callback: node)
+.decl sc2_calls(d: number, c: node, callee_id: node)
+.decl sc2_calls_callee(c: node, callee: symbol)
+.decl sc2_calls_full(c: node, full_callee: symbol)
+.decl sc2_carrier_attr(a: symbol)
+.decl sc2_compile(d: number, m: node, start: number, end: number)
+.decl sc2_compile_aliases(method: node, name: symbol)
+.decl sc2_compiled(d: number, c: node, start: number, end: number)
+.decl sc2_functions(d: number, f: node, name: symbol)
+.decl sc2_is_attribute(n: node)
+.decl sc2_is_function(n: node)
+.decl sc2_keywords(call: node, keyword: node, name: symbol, value: node)
+.decl sc2_m176(n: node)
+.decl sc2_m180(n: node)
+.decl sc2_m206(n: node)
+.decl sc2_m210(n: node)
+.decl sc2_m220(n: node)
+.decl sc2_m224(n: node)
+.decl sc2_m235(n: node)
+.decl sc2_m239(n: node)
+.decl sc2_m251(n: node)
+.decl sc2_m255(n: node)
+.decl sc2_m260(n: node)
+.decl sc2_m266(n: node)
+.decl sc2_m273(n: node)
+.decl sc2_model_mutator(name: symbol)
+.decl sc2_newer_function(f: node, m: node)
+.decl sc2_non_argument(a: node)
+.decl sc2_ownership(n: node, fn: node)
+.decl sc2_parameter_before(fn: node, p: node, q: node)
+.decl sc2_parameter_kind(k: symbol)
+.decl sc2_parameter_later(fn: node, p: node)
+.decl sc2_parameter_row(fn: node, p: node, name: symbol, start: number)
+.decl sc2_parameters(fn: node, p: node, name: symbol, position: number)
+.decl sc2_post_op_keyword(name: symbol)
+.decl sc2_postop_callbacks(method: node, callback: node)
+.decl sc2_postop_nodes(method: node, n: node)
+.decl sc2_selected(n: node)
+.decl sc2_step019(n: node)
+.decl sc2_step_base(b: node)
+.decl sc2_step_classes(c: node)
+.decl sc2_step_methods(m: node, name: symbol)
+.decl sc2_trimmed_carrier(a: node)
+.decl sc2_type_names(t: node, s: symbol)
+.decl sc2_type_word(s: symbol)
+.decl sc3_arg(c: node, a: node)
+.decl sc3_arg0(c: node, a: node)
+.decl sc3_arg_later(c: node, a: node)
+.decl sc3_bad(n: node)
+.decl sc3_call(c: node, fnode: node)
+.decl sc3_call_callee(c: node, s: symbol)
+.decl sc3_call_full(c: node, s: symbol)
+.decl sc3_class(c: node, s: symbol)
+.decl sc3_fn_name(f: node, s: symbol)
+.decl sc3_has_literal_payload(c: node)
+.decl sc3_has_raw_param(f: node)
+.decl sc3_k_container(kind: symbol)
+.decl sc3_k_copy(name: symbol)
+.decl sc3_k_loop(kind: symbol)
+.decl sc3_k_nonarg(kind: symbol)
+.decl sc3_k_param(kind: symbol)
+.decl sc3_k_str(kind: symbol)
+.decl sc3_k_typed(kind: symbol)
+.decl sc3_kw(c: node, s: symbol, v: node)
+.decl sc3_kw_call(c: node)
+.decl sc3_m_region(n: node)
+.decl sc3_m_stmt(n: node)
+.decl sc3_method(f: node, c: node, s: symbol)
+.decl sc3_param(f: node, p: node)
+.decl sc3_param_earlier(p: node, i: number)
+.decl sc3_param_name(f: node, p: node, s: symbol)
+.decl sc3_payload(v: node)
+.decl sc3_raw_fn(f: node)
+.decl sc3_raw_param(f: node, s: symbol)
+.decl sc3_rawresult_param(x: node)
+.decl sc3_rawresult_type(t: node)
+.decl sc3_sel(n: node)
+.decl sc3_shaper(d: number, s: symbol)
+.decl sc3_shaping_cls(c: node)
+.decl sc4_arg(c: node, a: node)
+.decl sc4_arg_before(c: node, a: node, b: node)
+.decl sc4_arg_later(c: node, a: node)
+.decl sc4_argpos(c: node, a: node, p: number)
+.decl sc4_asg(n: node, l: node)
+.decl sc4_asg_value(n: node, r: node)
+.decl sc4_attr(a: node)
+.decl sc4_builder(c: node, s: symbol)
+.decl sc4_builder_kw(s: symbol, v: node)
+.decl sc4_call(c: node, f: node)
+.decl sc4_call_full(c: node, s: symbol)
+.decl sc4_callable_edge(s: node, t: node)
+.decl sc4_callee(c: node, s: symbol)
+.decl sc4_class(c: node, s: symbol)
+.decl sc4_direct_callable(n: node)
+.decl sc4_expr_edge(s: node, t: node)
+.decl sc4_fn_name(f: node, s: symbol)
+.decl sc4_hit(n: node)
+.decl sc4_k_builder(name: symbol)
+.decl sc4_k_callable_wrap(kind: symbol)
+.decl sc4_k_expr_container(kind: symbol)
+.decl sc4_k_mutable(kind: symbol)
+.decl sc4_k_named(kind: symbol)
+.decl sc4_k_nonarg(kind: symbol)
+.decl sc4_k_ordp(kind: symbol)
+.decl sc4_k_pair(kind: symbol)
+.decl sc4_k_str(kind: symbol)
+.decl sc4_k_target(kind: symbol)
+.decl sc4_key_builder(kn: node)
+.decl sc4_kind_member(n: node)
+.decl sc4_kw(c: node, s: symbol, v: node)
+.decl sc4_lambda_target(d: number, s: symbol)
+.decl sc4_literal_kwargs(v: node)
+.decl sc4_literal_pair(root: node, key: node, value: node)
+.decl sc4_m277(n: node)
+.decl sc4_m281(n: node)
+.decl sc4_m289(n: node)
+.decl sc4_m298(n: node)
+.decl sc4_m303(n: node)
+.decl sc4_m308(n: node)
+.decl sc4_m314(n: node)
+.decl sc4_m319(n: node)
+.decl sc4_m320(n: node)
+.decl sc4_mutable(n: node)
+.decl sc4_named2(n: node)
+.decl sc4_ord(n: node, o: number)
+.decl sc4_return_value(f: node, v: node)
+.decl sc4_sel_before(p: node, s: number)
+.decl sc4_sel_child(p: node, n: node, i: number)
+.decl sc4_sel_comment(p: node, s: number)
+.decl sc4_sel_start(p: node, s: number)
+.decl sc4_selected(n: node)
+.decl sc4_user_callable(n: node)
+.decl sc5_argument(d: number, c: node, a: node)
+.decl sc5_argument0(c: node, a: node)
+.decl sc5_argument_later(c: node, a: node)
+.decl sc5_assert_result_call(c: node)
+.decl sc5_attribute(n: node)
+.decl sc5_call_fn(d: number, c: node, f: node)
+.decl sc5_callee(c: node, s: symbol)
+.decl sc5_closed_post_op_value(d: number, v: node)
+.decl sc5_compiled(c: node)
+.decl sc5_fail_open(s: symbol)
+.decl sc5_fail_open_raised(e: node)
+.decl sc5_full_callee(c: node, s: symbol)
+.decl sc5_function_name(d: number, f: node, s: symbol)
+.decl sc5_functions(d: number, f: node)
+.decl sc5_has_argument(c: node)
+.decl sc5_keyword(d: number, c: node, name: symbol, v: node)
+.decl sc5_m324(n: node)
+.decl sc5_m328(n: node)
+.decl sc5_m333(n: node)
+.decl sc5_m338(n: node)
+.decl sc5_m339(n: node)
+.decl sc5_m341(n: node)
+.decl sc5_m347(n: node)
+.decl sc5_m352(n: node)
+.decl sc5_m353(n: node)
+.decl sc5_m355(n: node)
+.decl sc5_m362(n: node)
+.decl sc5_m367(n: node)
+.decl sc5_m368(n: node)
+.decl sc5_m370(n: node)
+.decl sc5_m378(n: node)
+.decl sc5_m383(n: node)
+.decl sc5_m384(n: node)
+.decl sc5_m386(n: node)
+.decl sc5_m387(n: node)
+.decl sc5_m400(n: node)
+.decl sc5_m418(n: node)
+.decl sc5_m424(n: node)
+.decl sc5_m426(n: node)
+.decl sc5_materialization_function(f: node)
+.decl sc5_materialize_call(c: node)
+.decl sc5_materializing_call(c: node)
+.decl sc5_nodes(d: number, n: node)
+.decl sc5_not_argument_kind(kind: symbol)
+.decl sc5_other_static_exception(spec: node)
+.decl sc5_parameter(d: number, f: node, p: node)
+.decl sc5_parameter_kind(k: symbol)
+.decl sc5_parameter_name(d: number, f: node, s: symbol)
+.decl sc5_parameter_part(d: number, p: node, n: node)
+.decl sc5_parameter_part_later(n: node)
+.decl sc5_post_op_keyword(s: symbol)
+.decl sc5_return_value(d: number, f: node, v: node)
+.decl sc5_row(d: number, n: node)
+.decl sc5_seed(c: node)
+.decl sc5_selected(n: node)
+.decl sc5_static_exception_function(d: number, name: symbol)
+.decl sc5_static_exception_post_op_call(c: node)
+.decl sc6_arg(c: node, a: node)
+.decl sc6_attr(a: node)
+.decl sc6_call(c: node, f: node)
+.decl sc6_call_full(c: node, s: symbol)
+.decl sc6_callable_edge(s: node, t: node)
+.decl sc6_callback_fn(f: node)
+.decl sc6_comment_at(p: node, s: number)
+.decl sc6_fn_name(f: node, s: symbol)
+.decl sc6_fn_newer(f: node)
+.decl sc6_has_before(p: node, s: number)
+.decl sc6_hit(n: node)
+.decl sc6_k_callable_wrap(kind: symbol)
+.decl sc6_k_nonarg(kind: symbol)
+.decl sc6_kw(c: node, s: symbol, v: node)
+.decl sc6_m430(n: node)
+.decl sc6_m434(n: node)
+.decl sc6_m439(n: node)
+.decl sc6_m444(n: node)
+.decl sc6_m445(n: node)
+.decl sc6_m447(n: node)
+.decl sc6_m453(n: node)
+.decl sc6_m458(n: node)
+.decl sc6_m459(n: node)
+.decl sc6_m461(n: node)
+.decl sc6_m468(n: node)
+.decl sc6_m473(n: node)
+.decl sc6_m474(n: node)
+.decl sc6_m476(n: node)
+.decl sc6_m484(n: node)
+.decl sc6_m489(n: node)
+.decl sc6_m490(n: node)
+.decl sc6_m492(n: node)
+.decl sc6_m493(n: node)
+.decl sc6_m499(n: node)
+.decl sc6_m504(n: node)
+.decl sc6_m505(n: node)
+.decl sc6_m508(n: node)
+.decl sc6_m515(n: node)
+.decl sc6_opt_in(d: number)
+.decl sc6_ord0(n: node)
+.decl sc6_postop(s: symbol, v: node)
+.decl sc6_sel(n: node)
+.decl sc6_sel_child(p: node, n: node, i: number)
+.decl sc6_sel_comment(p: node, s: number)
+.decl sc6_sel_start(p: node, s: number)
+.decl sc6_selected(n: node)
+.decl sc6_strict(n: node)
+.decl sc6_strict_selected(n: node)
+.decl sc6_strict_u516(n: node)
+.decl sc6_u494(n: node)
+.decl sc6_user_callable(n: node)
+.decl side_effect_kind(kind: symbol)
+.decl side_effect_value(n: node)
+.decl sps_entry(e: symbol)
+.decl sps_on(e: symbol)
+.decl sps_step_base(n: node)
+.decl sps_step_base_name(n: node)
+.decl sps_step_class(c: node)
+.decl sps_step_method(f: node)
+.decl sps_text(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, name, line, syntax_error, node_text, value, value_type_of, token
+.output violation
+option_on("strictModulesOnly").
+option_value("entryPoint", "all").
+rrs_container_kind("tuple").
+rrs_container_kind("list").
+rrs_container_kind("set").
+rrs_container_kind("expression_list").
+rrs_container_kind("parenthesized_expression").
+rrs_src_kind("identifier").
+rrs_src_kind("call").
+rrs_src_kind("tuple").
+rrs_src_kind("list").
+rrs_src_kind("set").
+rrs_src_kind("dictionary").
+rrs_src_kind("expression_list").
+rrs_src_kind("parenthesized_expression").
+sc1_branch_kind("if_statement").
+sc1_branch_kind("elif_clause").
+sc1_builder_callee("runtime_builder_post_op").
+sc1_builder_callee("RuntimeBuilderSpec").
+sc1_computed_kind("list_comprehension").
+sc1_computed_kind("set_comprehension").
+sc1_computed_kind("dictionary_comprehension").
+sc1_computed_kind("generator_expression").
+sc1_computed_kind("conditional_expression").
+sc1_io_kw("pre_op").
+sc1_io_kw("post_op").
+sc1_io_kw("on_commit").
+sc1_io_kw("on_rollback").
+sc1_nonarg_kind("keyword_argument").
+sc1_nonarg_kind("list_splat").
+sc1_nonarg_kind("dictionary_splat").
+sc1_seq_kind("list").
+sc1_seq_kind("tuple").
+sc1_seq_kind("set").
+sc1_table_method("tables_read").
+sc1_table_method("tables_written").
+sc1_type_error("TypeError").
+sc1_type_error("NotImplementedError").
+sc2_callback_keyword("post_op").
+sc2_callback_keyword("post_op_with_refs").
+sc2_callback_keyword("on_commit").
+sc2_callback_keyword("on_rollback").
+sc2_carrier_attr("_conn").
+sc2_carrier_attr("_serverplan_runtime_txn").
+sc2_carrier_attr("_serverplan_sql_conn").
+sc2_carrier_attr("_txn").
+sc2_carrier_attr("conn").
+sc2_carrier_attr("sql_conn").
+sc2_carrier_attr("txn").
+sc2_model_mutator("__setattr__").
+sc2_model_mutator("model_copy").
+sc2_model_mutator("model_dump").
+sc2_model_mutator("model_dump_json").
+sc2_parameter_kind("typed_parameter").
+sc2_parameter_kind("default_parameter").
+sc2_parameter_kind("typed_default_parameter").
+sc2_post_op_keyword("post_op").
+sc2_post_op_keyword("post_op_with_refs").
+sc2_type_word("DatabaseConnection").
+sc2_type_word("ReadTransaction").
+sc2_type_word("SqlConnection").
+sc2_type_word("SyncDatabaseConnection").
+sc2_type_word("SyncSqlConnection").
+sc2_type_word("WriteTransaction").
+sc2_type_word("Hydrator").
+sc3_k_container("tuple").
+sc3_k_container("list").
+sc3_k_container("set").
+sc3_k_container("dictionary").
+sc3_k_container("argument_list").
+sc3_k_container("keyword_argument").
+sc3_k_copy("list").
+sc3_k_copy("tuple").
+sc3_k_copy("dict").
+sc3_k_copy("set").
+sc3_k_copy("sorted").
+sc3_k_loop("for_statement").
+sc3_k_loop("for_in_clause").
+sc3_k_nonarg("keyword_argument").
+sc3_k_nonarg("list_splat").
+sc3_k_nonarg("dictionary_splat").
+sc3_k_param("identifier").
+sc3_k_param("typed_parameter").
+sc3_k_param("default_parameter").
+sc3_k_param("typed_default_parameter").
+sc3_k_str("string").
+sc3_k_str("concatenated_string").
+sc3_k_typed("typed_parameter").
+sc3_k_typed("typed_default_parameter").
+sc4_k_builder("RuntimeBuilderSpec").
+sc4_k_builder("runtime_builder_post_op").
+sc4_k_builder("runtime_op_post_op").
+sc4_k_callable_wrap("subscript").
+sc4_k_callable_wrap("parenthesized_expression").
+sc4_k_expr_container("tuple").
+sc4_k_expr_container("list").
+sc4_k_expr_container("set").
+sc4_k_expr_container("expression_list").
+sc4_k_expr_container("parenthesized_expression").
+sc4_k_expr_container("keyword_argument").
+sc4_k_expr_container("argument_list").
+sc4_k_mutable("list").
+sc4_k_mutable("dictionary").
+sc4_k_mutable("set").
+sc4_k_mutable("list_comprehension").
+sc4_k_mutable("dictionary_comprehension").
+sc4_k_mutable("set_comprehension").
+sc4_k_named("identifier").
+sc4_k_named("attribute").
+sc4_k_named("string").
+sc4_k_named("concatenated_string").
+sc4_k_nonarg("keyword_argument").
+sc4_k_nonarg("list_splat").
+sc4_k_nonarg("dictionary_splat").
+sc4_k_ordp("pair").
+sc4_k_ordp("tuple").
+sc4_k_ordp("list").
+sc4_k_ordp("subscript").
+sc4_k_ordp("parenthesized_expression").
+sc4_k_pair("pair").
+sc4_k_pair("tuple").
+sc4_k_pair("list").
+sc4_k_str("string").
+sc4_k_str("concatenated_string").
+sc4_k_target("identifier").
+sc4_k_target("attribute").
+sc5_fail_open("RuntimeError").
+sc5_fail_open("TypeError").
+sc5_fail_open("NotImplementedError").
+sc5_not_argument_kind("keyword_argument").
+sc5_not_argument_kind("list_splat").
+sc5_not_argument_kind("dictionary_splat").
+sc5_parameter_kind("identifier").
+sc5_parameter_kind("typed_parameter").
+sc5_parameter_kind("default_parameter").
+sc5_parameter_kind("typed_default_parameter").
+sc5_post_op_keyword("post_op").
+sc5_post_op_keyword("closed_post_op").
+sc5_post_op_keyword("post_op_with_refs").
+sc6_k_callable_wrap("subscript").
+sc6_k_callable_wrap("parenthesized_expression").
+sc6_k_nonarg("keyword_argument").
+sc6_k_nonarg("list_splat").
+sc6_k_nonarg("dictionary_splat").
+side_effect_kind("string").
+side_effect_kind("concatenated_string").
+sps_entry("check_side_effect_tag_allowlist").
+sps_entry("check_runtime_builder_names_are_enum_members").
+sps_entry("check_compile_must_not_raise").
+sps_entry("check_compile_no_data_branching").
+sps_entry("check_cte_type_hints_not_inferred_from_column_names").
+sps_entry("check_runtime_refs_without_sql_grammar_guardrail").
+sps_entry("check_sql_visible_steps_declare_cte_type_hints").
+sps_entry("check_step_role_contract_guardrails").
+sps_entry("check_virtual_execute_runtime_python_shaping_guardrail").
+sps_entry("check_virtual_execute_runtime_scalar_value_guardrail").
+sps_entry("check_zero_io_l0_execution_role_enum_semantics").
+sps_entry("check_zero_io_l0_execution_role_guardrail").
+sps_entry("check_compile_callbacks_no_runtime_authority").
+sps_entry("check_postop_no_resolved_data_manipulation").
+sps_entry("check_literal_payload_materializer_dispatch_guardrail").
+sps_entry("check_row_materializer_raw_row_shaping_guardrail").
+sps_entry("check_closed_post_op_runtime_builder_no_callable_escape_hatches").
+sps_entry("check_compiled_result_builders_do_not_fail_closed").
+sps_entry("check_legacy_postop_user_callable_escape_hatches").
+sps_entry("check_runtime_ref_closed_post_op_consumption_guardrail").
+sps_entry("check_helper_anchored_runtime_ref_post_op_guardrail").
+sps_entry("check_runtime_refs_post_op_requires_runtime_refs_guardrail").
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l7300_sql_versioned_transactions/steps/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l9700_sql_graph_query/steps/**/*.py", p).
@@ -110,52 +747,799 @@ m103(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v96), node(_, v9
 m103(n) :- node(_, n, "subscript", _, _), field(n, "value", v98), m102(v98).
 m105(n) :- field(n, "name", v104), node(_, v104, "identifier", _, _), never(v104).
 violation("data-layer-serverplan-steps", "runtime-state", "STEP-021", p, l) :- node(v83, n, _, _, _), doc(v83, v84, _), node(_, n, "attribute", _, _), field(n, "object", v85), node(_, v85, "identifier", _, _), text(v85, v86), v86 = "self", field(n, "attribute", v87), node(_, v87, "identifier", _, _), text(v87, v88), (v88 = "_conn" ; v88 = "_txn" ; v88 = "conn" ; v88 = "txn"), child(v89, n, _), node(_, v89, "assignment", _, _), field(v89, "left", v90), inside(n, v91, k3), node(_, v91, "class_definition", _, _), field(v91, "name", v92), field(v91, "superclasses", v93), child(v93, v94, _), m103(v94), !m105(v91), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m122(n) :- node(_, n, "identifier", _, _), text(n, v119), v119 = "ServerPlanStep".
-m122(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v120), node(_, v120, "identifier", _, _), text(v120, v121), v121 = "ServerPlanStep".
-m123(n) :- node(_, n, "identifier", _, _), text(n, v115), v115 = "ServerPlanStep".
-m123(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v116), node(_, v116, "identifier", _, _), text(v116, v117), v117 = "ServerPlanStep".
-m123(n) :- node(_, n, "subscript", _, _), field(n, "value", v118), m122(v118).
-m137(n) :- node(_, n, "identifier", _, _), text(n, v134), v134 = "ServerPlanStep".
-m137(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v135), node(_, v135, "identifier", _, _), text(v135, v136), v136 = "ServerPlanStep".
-m138(n) :- node(_, n, "identifier", _, _), text(n, v130), v130 = "ServerPlanStep".
-m138(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v131), node(_, v131, "identifier", _, _), text(v131, v132), v132 = "ServerPlanStep".
-m138(n) :- node(_, n, "subscript", _, _), field(n, "value", v133), m137(v133).
-m139(n) :- child(v110, n, _), node(_, v110, "block", _, _), child(v111, v110, _), node(_, v111, "class_definition", _, _), field(v111, "name", v112), field(v111, "superclasses", v113), child(v113, v114, _), m123(v114).
-m139(n) :- child(v124, n, _), node(_, v124, "decorated_definition", _, _), child(v125, v124, _), node(_, v125, "block", _, _), child(v126, v125, _), node(_, v126, "class_definition", _, _), field(v126, "name", v127), field(v126, "superclasses", v128), child(v128, v129, _), m138(v129).
-m142(n) :- node(_, n, "string", _, _).
-m142(n) :- node(_, n, "concatenated_string", _, _).
-violation("data-layer-serverplan-steps", "misc-runtime-member", "STEP-030", p, l) :- node(v143, n, _, _, _), doc(v143, v144, _), node(_, n, "attribute", _, _), field(n, "object", v145), node(_, v145, "identifier", _, _), text(v145, v146), v146 = "RuntimeBuilderKind", field(n, "attribute", v147), node(_, v147, "identifier", _, _), text(v147, v148), v148 = "MISC_RUNTIME", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m152(n) :- field(n, "type", v151).
-violation("data-layer-serverplan-steps", "misc-runtime-definition", "STEP-030", p, l) :- node(v149, n, _, _, _), doc(v149, v150, _), node(_, n, "assignment", _, _), !m152(n), field(n, "left", v153), node(_, v153, "identifier", _, _), text(v153, v154), v154 = "MISC_RUNTIME", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m161(n) :- node(_, n, "identifier", _, _), text(n, v158), v158 = "runtime_builder_post_op".
-m161(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v159), node(_, v159, "identifier", _, _), text(v159, v160), v160 = "runtime_builder_post_op".
-m164(n) :- node(_, n, "string", _, _).
-m164(n) :- node(_, n, "concatenated_string", _, _).
-m180(n) :- field(n, "arguments", v175), child(v175, v176, _), node(_, v176, "keyword_argument", _, _), field(v176, "name", v177), node(_, v177, "identifier", _, _), text(v177, v178), v178 = "grammar", field(v176, "value", v179), !node(_, v179, "none", _, _).
-violation("data-layer-serverplan-steps", "closed-migration-refs", "STEP-027", p, l) :- node(v165, n, _, _, _), doc(v165, v166, _), node(_, n, "call", _, _), field(n, "function", v167), node(_, v167, "identifier", _, _), text(v167, v168), v168 = "CompiledStep", inside(n, v169, k5), node(_, v169, "module", _, _), child(v169, v170, _), node(_, v170, "expression_statement", _, _), child(v170, v171, _), node(_, v171, "assignment", _, _), field(v171, "left", v172), node(_, v172, "identifier", _, _), text(v172, v173), v173 = "CLOSED_POST_OP_STRICT", field(v171, "right", v174), node(_, v174, "true", _, _), !m180(n), field(n, "arguments", v181), child(v181, v182, _), node(_, v182, "keyword_argument", _, _), field(v182, "name", v183), node(_, v183, "identifier", _, _), text(v183, v184), v184 = "runtime_ref_ids", field(v182, "value", v185), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v185, l).
-violation("data-layer-serverplan-steps", "closed-migration-with-refs", "STEP-027", p, l) :- node(v186, n, _, _, _), doc(v186, v187, _), node(_, n, "call", _, _), field(n, "function", v188), node(_, v188, "identifier", _, _), text(v188, v189), v189 = "CompiledStep", inside(n, v190, k5), node(_, v190, "module", _, _), child(v190, v191, _), node(_, v191, "expression_statement", _, _), child(v191, v192, _), node(_, v192, "assignment", _, _), field(v192, "left", v193), node(_, v193, "identifier", _, _), text(v193, v194), v194 = "CLOSED_POST_OP_STRICT", field(v192, "right", v195), node(_, v195, "true", _, _), field(n, "arguments", v196), child(v196, v197, _), node(_, v197, "keyword_argument", _, _), field(v197, "name", v198), node(_, v198, "identifier", _, _), text(v198, v199), v199 = "post_op_with_refs", field(v197, "value", v200), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v200, l).
-m221(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v217), name(v217, v219), (glob("*_post_op", v219) ; glob("assert_result", v219) ; glob("materialize", v219)).
-m221(n) :- node(_, n, "identifier", _, _), text(n, v220), suffix("_post_op", v220).
-m222(n) :- node(_, n, "call", _, _), field(n, "function", v216), m221(v216).
-violation("data-layer-serverplan-steps", "closed-migration-postop", "STEP-027", p, l) :- node(v201, n, _, _, _), doc(v201, v202, _), node(_, n, "call", _, _), field(n, "function", v203), node(_, v203, "identifier", _, _), text(v203, v204), v204 = "CompiledStep", inside(n, v205, k5), node(_, v205, "module", _, _), child(v205, v206, _), node(_, v206, "expression_statement", _, _), child(v206, v207, _), node(_, v207, "assignment", _, _), field(v207, "left", v208), node(_, v208, "identifier", _, _), text(v208, v209), v209 = "CLOSED_POST_OP_STRICT", field(v207, "right", v210), node(_, v210, "true", _, _), field(n, "arguments", v211), child(v211, v212, _), node(_, v212, "keyword_argument", _, _), field(v212, "name", v213), node(_, v213, "identifier", _, _), text(v213, v214), v214 = "post_op", field(v212, "value", v215), !m222(v215), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v215, l).
-violation("data-layer-serverplan-steps", "terminal-projection-dispatch", "STEP-037", p, l) :- node(v223, n, _, _, _), doc(v223, v224, _), node(_, n, "comparison_operator", _, _), node(v225, n, _, _, _), doc(v225, v226, _), glob("**/terminal_projection_builders.py", v226), child(n, v227, _), node(_, v227, "identifier", _, _), text(v227, v228), v228 = "projection_kind", inside(n, v229, k0), node(_, v229, "function_definition", _, _), field(v229, "name", v230), node(_, v230, "identifier", _, _), text(v230, v231), v231 = "materialize_terminal_projection", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m238(n) :- field(n, "arguments", v236), child(v236, v237, _).
-violation("data-layer-serverplan-steps", "empty-result-assertion", "STEP-038", p, l) :- node(v232, n, _, _, _), doc(v232, v233, _), node(_, n, "call", _, _), field(n, "function", v234), node(_, v234, "identifier", _, _), text(v234, v235), v235 = "ResultAssertionSpec", !m238(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m245(n) :- node(_, n, "identifier", _, _), text(n, v242), v242 = "ResultMaterializationSpec".
-m245(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v243), node(_, v243, "identifier", _, _), text(v243, v244), v244 = "ResultMaterializationSpec".
-m255(n) :- node(_, n, "identifier", _, _), text(n, v252), v252 = "ResultMaterializationSpec".
-m255(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v253), node(_, v253, "identifier", _, _), text(v253, v254), v254 = "ResultMaterializationSpec".
-m265(n) :- node(_, n, "identifier", _, _), text(n, v262), v262 = "ResultMaterializationSpec".
-m265(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v263), node(_, v263, "identifier", _, _), text(v263, v264), v264 = "ResultMaterializationSpec".
-m275(n) :- node(_, n, "identifier", _, _), text(n, v272), v272 = "runtime_refs_post_op".
-m275(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v273), node(_, v273, "identifier", _, _), text(v273, v274), v274 = "runtime_refs_post_op".
-m285(n) :- node(_, n, "identifier", _, _), text(n, v282), (v282 = "BatchChildResultSpec" ; v282 = "CompiledStep").
-m285(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v283), node(_, v283, "identifier", _, _), text(v283, v284), (v284 = "BatchChildResultSpec" ; v284 = "CompiledStep").
-m291(n) :- node(_, n, "call", _, _), field(n, "function", v241), m245(v241), field(n, "arguments", v246), child(v246, v247, _), node(_, v247, "keyword_argument", _, _), field(v247, "name", v248), node(_, v248, "identifier", _, _), text(v248, v249), v249 = "source_refs", field(v247, "value", v250).
-m291(n) :- node(_, n, "call", _, _), field(n, "function", v251), m255(v251), field(n, "arguments", v256), child(v256, v257, _), node(_, v257, "keyword_argument", _, _), field(v257, "name", v258), node(_, v258, "identifier", _, _), text(v258, v259), v259 = "source_names", field(v257, "value", v260).
-m291(n) :- node(_, n, "call", _, _), field(n, "function", v261), m265(v261), field(n, "arguments", v266), child(v266, v267, _), node(_, v267, "keyword_argument", _, _), field(v267, "name", v268), node(_, v268, "identifier", _, _), text(v268, v269), v269 = "source_materializer", field(v267, "value", v270).
-m291(n) :- node(_, n, "call", _, _), field(n, "function", v271), m275(v271), field(n, "arguments", v276), child(v276, v277, _), node(_, v277, "keyword_argument", _, _), field(v277, "name", v278), node(_, v278, "identifier", _, _), text(v278, v279), v279 = "source_refs", field(v277, "value", v280).
-m291(n) :- node(_, n, "call", _, _), field(n, "function", v281), m285(v281), field(n, "arguments", v286), child(v286, v287, _), node(_, v287, "keyword_argument", _, _), field(v287, "name", v288), node(_, v288, "identifier", _, _), text(v288, v289), v289 = "raw_payload_ref_id", field(v287, "value", v290).
-violation("data-layer-serverplan-steps", "source-ref-ingress", "STEP-042", p, l) :- node(v239, n, _, _, _), doc(v239, v240, _), m291(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-serverplan-steps", "parse-error", "PARSE", p, 1) :- node(v292, n, _, _, _), doc(v292, v293, _), node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
-.output violation
+violation("data-layer-serverplan-steps", "misc-runtime-member", "STEP-030", p, l) :- node(v106, n, _, _, _), doc(v106, v107, _), node(_, n, "attribute", _, _), field(n, "object", v108), node(_, v108, "identifier", _, _), text(v108, v109), v109 = "RuntimeBuilderKind", field(n, "attribute", v110), node(_, v110, "identifier", _, _), text(v110, v111), v111 = "MISC_RUNTIME", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m115(n) :- field(n, "type", v114).
+violation("data-layer-serverplan-steps", "misc-runtime-definition", "STEP-030", p, l) :- node(v112, n, _, _, _), doc(v112, v113, _), node(_, n, "assignment", _, _), !m115(n), field(n, "left", v116), node(_, v116, "identifier", _, _), text(v116, v117), v117 = "MISC_RUNTIME", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m133(n) :- field(n, "arguments", v128), child(v128, v129, _), node(_, v129, "keyword_argument", _, _), field(v129, "name", v130), node(_, v130, "identifier", _, _), text(v130, v131), v131 = "grammar", field(v129, "value", v132), !node(_, v132, "none", _, _).
+violation("data-layer-serverplan-steps", "closed-migration-refs", "STEP-027", p, l) :- node(v118, n, _, _, _), doc(v118, v119, _), node(_, n, "call", _, _), field(n, "function", v120), node(_, v120, "identifier", _, _), text(v120, v121), v121 = "CompiledStep", inside(n, v122, k4), node(_, v122, "module", _, _), child(v122, v123, _), node(_, v123, "expression_statement", _, _), child(v123, v124, _), node(_, v124, "assignment", _, _), field(v124, "left", v125), node(_, v125, "identifier", _, _), text(v125, v126), v126 = "CLOSED_POST_OP_STRICT", field(v124, "right", v127), node(_, v127, "true", _, _), !m133(n), field(n, "arguments", v134), child(v134, v135, _), node(_, v135, "keyword_argument", _, _), field(v135, "name", v136), node(_, v136, "identifier", _, _), text(v136, v137), v137 = "runtime_ref_ids", field(v135, "value", v138), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v138, l).
+violation("data-layer-serverplan-steps", "closed-migration-with-refs", "STEP-027", p, l) :- node(v139, n, _, _, _), doc(v139, v140, _), node(_, n, "call", _, _), field(n, "function", v141), node(_, v141, "identifier", _, _), text(v141, v142), v142 = "CompiledStep", inside(n, v143, k4), node(_, v143, "module", _, _), child(v143, v144, _), node(_, v144, "expression_statement", _, _), child(v144, v145, _), node(_, v145, "assignment", _, _), field(v145, "left", v146), node(_, v146, "identifier", _, _), text(v146, v147), v147 = "CLOSED_POST_OP_STRICT", field(v145, "right", v148), node(_, v148, "true", _, _), field(n, "arguments", v149), child(v149, v150, _), node(_, v150, "keyword_argument", _, _), field(v150, "name", v151), node(_, v151, "identifier", _, _), text(v151, v152), v152 = "post_op_with_refs", field(v150, "value", v153), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v153, l).
+m174(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v170), name(v170, v172), (glob("*_post_op", v172) ; glob("assert_result", v172) ; glob("materialize", v172)).
+m174(n) :- node(_, n, "identifier", _, _), text(n, v173), suffix("_post_op", v173).
+m175(n) :- node(_, n, "call", _, _), field(n, "function", v169), m174(v169).
+violation("data-layer-serverplan-steps", "closed-migration-postop", "STEP-027", p, l) :- node(v154, n, _, _, _), doc(v154, v155, _), node(_, n, "call", _, _), field(n, "function", v156), node(_, v156, "identifier", _, _), text(v156, v157), v157 = "CompiledStep", inside(n, v158, k4), node(_, v158, "module", _, _), child(v158, v159, _), node(_, v159, "expression_statement", _, _), child(v159, v160, _), node(_, v160, "assignment", _, _), field(v160, "left", v161), node(_, v161, "identifier", _, _), text(v161, v162), v162 = "CLOSED_POST_OP_STRICT", field(v160, "right", v163), node(_, v163, "true", _, _), field(n, "arguments", v164), child(v164, v165, _), node(_, v165, "keyword_argument", _, _), field(v165, "name", v166), node(_, v166, "identifier", _, _), text(v166, v167), v167 = "post_op", field(v165, "value", v168), !m175(v168), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v168, l).
+violation("data-layer-serverplan-steps", "terminal-projection-dispatch", "STEP-037", p, l) :- node(v176, n, _, _, _), doc(v176, v177, _), node(_, n, "comparison_operator", _, _), node(v178, n, _, _, _), doc(v178, v179, _), glob("**/terminal_projection_builders.py", v179), child(n, v180, _), node(_, v180, "identifier", _, _), text(v180, v181), v181 = "projection_kind", inside(n, v182, k0), node(_, v182, "function_definition", _, _), field(v182, "name", v183), node(_, v183, "identifier", _, _), text(v183, v184), v184 = "materialize_terminal_projection", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m191(n) :- field(n, "arguments", v189), child(v189, v190, _).
+violation("data-layer-serverplan-steps", "empty-result-assertion", "STEP-038", p, l) :- node(v185, n, _, _, _), doc(v185, v186, _), node(_, n, "call", _, _), field(n, "function", v187), node(_, v187, "identifier", _, _), text(v187, v188), v188 = "ResultAssertionSpec", !m191(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m198(n) :- node(_, n, "identifier", _, _), text(n, v195), v195 = "ResultMaterializationSpec".
+m198(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v196), node(_, v196, "identifier", _, _), text(v196, v197), v197 = "ResultMaterializationSpec".
+m208(n) :- node(_, n, "identifier", _, _), text(n, v205), v205 = "ResultMaterializationSpec".
+m208(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v206), node(_, v206, "identifier", _, _), text(v206, v207), v207 = "ResultMaterializationSpec".
+m218(n) :- node(_, n, "identifier", _, _), text(n, v215), v215 = "ResultMaterializationSpec".
+m218(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v216), node(_, v216, "identifier", _, _), text(v216, v217), v217 = "ResultMaterializationSpec".
+m228(n) :- node(_, n, "identifier", _, _), text(n, v225), v225 = "runtime_refs_post_op".
+m228(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v226), node(_, v226, "identifier", _, _), text(v226, v227), v227 = "runtime_refs_post_op".
+m238(n) :- node(_, n, "identifier", _, _), text(n, v235), (v235 = "BatchChildResultSpec" ; v235 = "CompiledStep").
+m238(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v236), node(_, v236, "identifier", _, _), text(v236, v237), (v237 = "BatchChildResultSpec" ; v237 = "CompiledStep").
+m244(n) :- node(_, n, "call", _, _), field(n, "function", v194), m198(v194), field(n, "arguments", v199), child(v199, v200, _), node(_, v200, "keyword_argument", _, _), field(v200, "name", v201), node(_, v201, "identifier", _, _), text(v201, v202), v202 = "source_refs", field(v200, "value", v203).
+m244(n) :- node(_, n, "call", _, _), field(n, "function", v204), m208(v204), field(n, "arguments", v209), child(v209, v210, _), node(_, v210, "keyword_argument", _, _), field(v210, "name", v211), node(_, v211, "identifier", _, _), text(v211, v212), v212 = "source_names", field(v210, "value", v213).
+m244(n) :- node(_, n, "call", _, _), field(n, "function", v214), m218(v214), field(n, "arguments", v219), child(v219, v220, _), node(_, v220, "keyword_argument", _, _), field(v220, "name", v221), node(_, v221, "identifier", _, _), text(v221, v222), v222 = "source_materializer", field(v220, "value", v223).
+m244(n) :- node(_, n, "call", _, _), field(n, "function", v224), m228(v224), field(n, "arguments", v229), child(v229, v230, _), node(_, v230, "keyword_argument", _, _), field(v230, "name", v231), node(_, v231, "identifier", _, _), text(v231, v232), v232 = "source_refs", field(v230, "value", v233).
+m244(n) :- node(_, n, "call", _, _), field(n, "function", v234), m238(v234), field(n, "arguments", v239), child(v239, v240, _), node(_, v240, "keyword_argument", _, _), field(v240, "name", v241), node(_, v241, "identifier", _, _), text(v241, v242), v242 = "raw_payload_ref_id", field(v240, "value", v243).
+violation("data-layer-serverplan-steps", "source-ref-ingress", "STEP-042", p, l) :- node(v192, n, _, _, _), doc(v192, v193, _), m244(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-steps", "parse-error", "PARSE", p, 1) :- node(v245, n, _, _, _), doc(v245, v246, _), node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
+sps_on(e) :- sps_entry(e), option_value("entryPoint", v), (v = "all" ; v = "_scan_source" ; v = "_scan_file").
+sps_on(e) :- sps_entry(e), option_value("entryPoint", e).
+sps_text(n, s) :- node_text(n, s).
+sps_step_base_name(n) :- node(_, n, "identifier", _, _), text(n, "ServerPlanStep").
+sps_step_base_name(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "ServerPlanStep").
+sps_step_base(n) :- sps_step_base_name(n).
+sps_step_base(n) :- node(_, n, "subscript", _, _), field(n, "value", v), sps_step_base_name(v).
+sps_step_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", _), field(c, "superclasses", s), child(s, b, _), sps_step_base(b).
+sps_step_method(f) :- node(_, f, "function_definition", _, _), child(b, f, _), node(_, b, "block", _, _), child(c, b, _), sps_step_class(c).
+sps_step_method(f) :- node(_, f, "function_definition", _, _), child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(b, dd, _), node(_, b, "block", _, _), child(c, b, _), sps_step_class(c).
+side_effect_value(n) :- node(_, n, k, _, _), side_effect_kind(k), value(n, "side_effect"), value_type_of(n, "str").
+violation("data-layer-serverplan-steps", "side-effect-tags", "STEP-022", p, l) :- node(d, n, "function_definition", _, _), field(n, "name", x), node(_, x, "identifier", _, _), text(x, "step_tags"), sps_step_method(n), field(n, "body", b), inside(s, b, side_effect_block), side_effect_value(s), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_side_effect_tag_allowlist").
+runtime_builder_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, s).
+runtime_builder_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s).
+runtime_builder_string(v) :- node(_, v, "string", _, _).
+runtime_builder_string(v) :- node(_, v, "concatenated_string", _, _).
+runtime_builder_keyword(c, v) :- field(c, "arguments", a), child(a, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", x), node(_, x, "identifier", _, _), text(x, "builder_name"), field(k, "value", v), runtime_builder_string(v).
+runtime_builder_second(c) :- field(c, "arguments", a), child(a, _, 1).
+runtime_builder_value(v) :- runtime_builder_callee(c, "runtime_builder_post_op"), field(c, "arguments", a), child(a, v, 1), runtime_builder_string(v).
+runtime_builder_value(v) :- runtime_builder_callee(c, "runtime_builder_post_op"), !runtime_builder_second(c), runtime_builder_keyword(c, v).
+runtime_builder_value(v) :- runtime_builder_callee(c, "RuntimeBuilderSpec"), runtime_builder_keyword(c, v).
+violation("data-layer-serverplan-steps", "runtime-builder-string-name", "STEP-031", p, l) :- runtime_builder_value(v), node(d, v, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v, l), sps_on("check_runtime_builder_names_are_enum_members").
+rrs_valid(d) :- doc(d, _, _), !syntax_error(d).
+rrs_functions(f, s) :- node(d, f, "function_definition", _, _), rrs_valid(d), field(f, "name", x), text(x, s).
+rrs_interpolated(c) :- node(_, i, "interpolation", _, _), inside(i, c, rrs_k_concat).
+rrs_empty_str(n) :- node(_, n, "string", _, _), sps_text(n, s), match("(?i:[ru]*[\"'])(?s:.*)", s).
+rrs_empty_str(n) :- node(_, n, "concatenated_string", _, _), !rrs_interpolated(n).
+rrs_has_child(n) :- child(n, _, _).
+rrs_empty_refs(n) :- node(_, n, "none", _, _).
+rrs_empty_refs(n) :- rrs_empty_str(n), value(n, ""), value_type_of(n, "str").
+rrs_empty_refs(n) :- node(_, n, "tuple", _, _), !rrs_has_child(n).
+rrs_empty_refs(n) :- node(_, n, "list", _, _), !rrs_has_child(n).
+rrs_empty_refs(n) :- node(_, n, "set", _, _), !rrs_has_child(n).
+rrs_empty_refs(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), rrs_empty_refs(c).
+rrs_refs_keyword(c, s) :- field(c, "arguments", a), child(a, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", x), node(_, x, "identifier", _, _), text(x, s), field(k, "value", v), !rrs_empty_refs(v).
+rrs_calls(c) :- node(d, c, "call", _, _), rrs_valid(d), field(c, "function", _).
+rrs_calls_callee(c, s) :- rrs_calls(c), field(c, "function", x), node(_, x, "identifier", _, _), text(x, s).
+rrs_calls_callee(c, s) :- rrs_calls(c), field(c, "function", x), node(_, x, "attribute", _, _), field(x, "attribute", t), text(t, s).
+rrs_calls_full_callee(c, s) :- rrs_calls(c), field(c, "function", x), node(_, x, "identifier", _, _), text(x, s).
+rrs_calls_refs(c) :- rrs_calls(c), rrs_refs_keyword(c, "runtime_ref_ids").
+rrs_calls_refs(c) :- rrs_calls(c), rrs_refs_keyword(c, "source_refs").
+rrs_calls_runtime_refs(c) :- rrs_calls(c), rrs_refs_keyword(c, "runtime_ref_ids").
+rrs_positional_edges(s, t) :- node(d, s, k, _, _), rrs_valid(d), rrs_src_kind(k), child(a, s, _), node(_, a, "argument_list", _, _), child(t, a, _), node(_, t, "call", _, _).
+rrs_keyword_edges(s, t) :- node(d, kw, "keyword_argument", _, _), rrs_valid(d), field(kw, "value", s), node(_, s, k, _, _), rrs_src_kind(k), child(a, kw, _), node(_, a, "argument_list", _, _), child(t, a, _), node(_, t, "call", _, _).
+rrs_container_edges(s, t) :- node(d, s, k, _, _), rrs_valid(d), rrs_src_kind(k), child(t, s, _), node(_, t, kt, _, _), rrs_container_kind(kt).
+rrs_dictionary_edges(s, t) :- node(d, p, "pair", _, _), rrs_valid(d), field(p, "value", s), node(_, s, k, _, _), rrs_src_kind(k), child(t, p, _), node(_, t, "dictionary", _, _).
+rrs_splat_src_at(p, i) :- node(_, p, "dictionary_splat", _, _), child(p, s, i), node(_, s, k, _, _), rrs_src_kind(k).
+rrs_splat_src(p, s) :- rrs_splat_src_at(p, _), i = min j : { rrs_splat_src_at(p, j) }, child(p, s, i).
+rrs_spread_edges(s, t) :- node(d, p, "dictionary_splat", _, _), rrs_valid(d), rrs_splat_src(p, s), child(a, p, _), node(_, a, "argument_list", _, _), child(t, a, _), node(_, t, "call", _, _).
+rrs_spread_edges(s, t) :- node(d, p, "dictionary_splat", _, _), rrs_valid(d), rrs_splat_src(p, s), child(t, p, _), node(_, t, "dictionary", _, _).
+rrs_returns(r, v, f) :- node(d, r, "return_statement", _, _), rrs_valid(d), child(r, v, 0), nearest(r, f, rrs_k_fnlam), node(_, f, "function_definition", _, _).
+rrs_bindings(b, s, v) :- node(d, b, "assignment", _, _), rrs_valid(d), field(b, "left", x), node(_, x, "identifier", _, _), text(x, s), field(b, "right", v).
+rrs_postops(v, kw, c) :- node(d, kw, "keyword_argument", _, _), rrs_valid(d), field(kw, "name", x), node(_, x, "identifier", _, _), text(x, "closed_post_op"), field(kw, "value", v), child(a, kw, _), node(_, a, "argument_list", _, _), child(c, a, _), node(_, c, "call", _, _).
+rrs_edges(s, t) :- rrs_positional_edges(s, t).
+rrs_edges(s, t) :- rrs_keyword_edges(s, t).
+rrs_edges(s, t) :- rrs_container_edges(s, t).
+rrs_edges(s, t) :- rrs_dictionary_edges(s, t).
+rrs_edges(s, t) :- rrs_spread_edges(s, t).
+rrs_nodes(s) :- rrs_edges(s, _).
+rrs_nodes(t) :- rrs_edges(_, t).
+rrs_nodes(c) :- rrs_calls(c).
+rrs_nodes(v) :- rrs_returns(_, v, _).
+rrs_nodes(v) :- rrs_bindings(_, _, v).
+rrs_ident(n, s) :- rrs_nodes(n), node(_, n, "identifier", _, _), text(n, s).
+rrs_contexts(n, f) :- rrs_nodes(n), inside(n, f, rrs_k_fn), rrs_functions(f, _).
+rrs_local_row(f, s, st, v) :- rrs_bindings(b, s, v), inside(b, f, rrs_k_fn), rrs_functions(f, _), node(_, b, _, st, _).
+rrs_local_last(f, s, st) :- rrs_local_row(f, s, _, _), st = max t : { rrs_local_row(f, s, t, _) }.
+rrs_locals(f, s, v) :- rrs_local_last(f, s, st), rrs_local_row(f, s, st, v).
+rrs_has_local(f, s) :- rrs_locals(f, s, _).
+rrs_flows(f, s, t) :- rrs_edges(s, t), rrs_contexts(t, f).
+rrs_flows(f, v, n) :- rrs_ident(n, s), rrs_contexts(n, f), rrs_locals(f, s, v).
+rrs_returned_call(f, v, c) :- rrs_returns(_, v, f), rrs_functions(f, s), node(d, f, _, _, _), rrs_calls_full_callee(c, s), node(d, c, _, _, _).
+rrs_consumers(f, c) :- rrs_calls_refs(c), rrs_contexts(c, f).
+rrs_consumers(f, t) :- rrs_consumers(f, s), rrs_flows(f, s, t).
+rrs_consumers(g, c) :- rrs_consumers(f, v), rrs_returned_call(f, v, c), rrs_contexts(c, g).
+rrs_refs_post_op(c) :- rrs_calls_callee(c, "runtime_refs_post_op").
+rrs_refless(f, c) :- rrs_refs_post_op(c), !rrs_calls_refs(c), rrs_contexts(c, f).
+rrs_refless(f, t) :- rrs_refless(f, s), rrs_flows(f, s, t), !rrs_refs_post_op(t).
+rrs_refless(g, c) :- rrs_refless(f, v), rrs_returned_call(f, v, c), rrs_contexts(c, g).
+rrs_refless(g, n) :- rrs_refless(f, v), rrs_returns(_, v, f), rrs_functions(f, s), node(d, f, _, _, _), rrs_ident(n, s), node(d, n, _, _, _), rrs_contexts(n, g), !rrs_has_local(g, s).
+rrs_postop_call(v, c2) :- rrs_postops(v, _, c), node(d, c, _, st, _), rrs_calls(c2), node(d, c2, _, st, _).
+rrs_postop_consumed(v, c2) :- rrs_postop_call(v, c2), rrs_contexts(v, f), rrs_consumers(f, v).
+rrs_finding(v, "STEP-033") :- rrs_postop_consumed(v, c2), rrs_calls_runtime_refs(c2), sps_on("check_runtime_ref_closed_post_op_consumption_guardrail").
+rrs_finding(v, "STEP-035") :- rrs_postop_consumed(v, c2), !rrs_calls_runtime_refs(c2), sps_on("check_helper_anchored_runtime_ref_post_op_guardrail").
+rrs_refless_return(s, d) :- rrs_functions(a, s), node(d, a, _, _, _), rrs_returns(_, v, a), rrs_refless(a, v).
+rrs_finding(f, "STEP-034") :- rrs_functions(f, s), node(d, f, _, _, _), rrs_refless_return(s, d), sps_on("check_runtime_refs_post_op_requires_runtime_refs_guardrail").
+violation("data-layer-serverplan-steps", "runtime-reference-summaries", code, p, l) :- rrs_finding(n, code), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+sc5_m324(n) :- child(v321, n, _), node(_, v321, "module", _, _).
+sc5_m324(n) :- child(v322, n, _), node(_, v322, "block", _, _), child(v323, v322, _), node(_, v323, "class_definition", _, _).
+sc5_m328(n) :- node(_, n, "module", _, _).
+sc5_m328(n) :- node(_, n, "expression_statement", _, _), sc5_m324(n).
+sc5_m328(n) :- node(_, n, "class_definition", _, _).
+sc5_m328(n) :- node(_, n, "function_definition", _, _).
+sc5_m328(n) :- node(_, n, "decorated_definition", _, _).
+sc5_m328(n) :- node(_, n, "argument_list", _, _), child(v325, n, _), node(_, v325, "class_definition", _, _).
+sc5_m328(n) :- child(v326, n, _), node(_, v326, "argument_list", _, _), child(v327, v326, _), node(_, v327, "class_definition", _, _).
+sc5_m333(n) :- node(_, n, "identifier", _, _), text(n, v330), v330 = "CompiledStep".
+sc5_m333(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v331), node(_, v331, "identifier", _, _), text(v331, v332), v332 = "CompiledStep".
+sc5_m338(n) :- node(_, n, "identifier", _, _), text(n, v335), (v335 = "ResultAssertionSpec" ; v335 = "ResultMaterializationSpec" ; v335 = "assert_result" ; v335 = "materialize" ; v335 = "static_exception_post_op").
+sc5_m338(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v336), node(_, v336, "identifier", _, _), text(v336, v337), (v337 = "ResultAssertionSpec" ; v337 = "ResultMaterializationSpec" ; v337 = "assert_result" ; v337 = "materialize" ; v337 = "static_exception_post_op").
+sc5_m339(n) :- node(_, n, "call", _, _), field(n, "function", v329), sc5_m333(v329).
+sc5_m339(n) :- node(_, n, "call", _, _), field(n, "function", v334), sc5_m338(v334).
+sc5_m341(n) :- sc5_m339(n).
+sc5_m341(n) :- node(_, n, "call", _, _), child(v340, n, _), node(_, v340, "return_statement", _, _).
+sc5_m347(n) :- node(_, n, "identifier", _, _), text(n, v344), v344 = "CompiledStep".
+sc5_m347(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v345), node(_, v345, "identifier", _, _), text(v345, v346), v346 = "CompiledStep".
+sc5_m352(n) :- node(_, n, "identifier", _, _), text(n, v349), (v349 = "ResultAssertionSpec" ; v349 = "ResultMaterializationSpec" ; v349 = "assert_result" ; v349 = "materialize" ; v349 = "static_exception_post_op").
+sc5_m352(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v350), node(_, v350, "identifier", _, _), text(v350, v351), (v351 = "ResultAssertionSpec" ; v351 = "ResultMaterializationSpec" ; v351 = "assert_result" ; v351 = "materialize" ; v351 = "static_exception_post_op").
+sc5_m353(n) :- node(_, n, "call", _, _), field(n, "function", v343), sc5_m347(v343).
+sc5_m353(n) :- node(_, n, "call", _, _), field(n, "function", v348), sc5_m352(v348).
+sc5_m355(n) :- sc5_m353(n).
+sc5_m355(n) :- node(_, n, "call", _, _), child(v354, n, _), node(_, v354, "return_statement", _, _).
+sc5_m362(n) :- node(_, n, "identifier", _, _), text(n, v359), v359 = "CompiledStep".
+sc5_m362(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v360), node(_, v360, "identifier", _, _), text(v360, v361), v361 = "CompiledStep".
+sc5_m367(n) :- node(_, n, "identifier", _, _), text(n, v364), (v364 = "ResultAssertionSpec" ; v364 = "ResultMaterializationSpec" ; v364 = "assert_result" ; v364 = "materialize" ; v364 = "static_exception_post_op").
+sc5_m367(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v365), node(_, v365, "identifier", _, _), text(v365, v366), (v366 = "ResultAssertionSpec" ; v366 = "ResultMaterializationSpec" ; v366 = "assert_result" ; v366 = "materialize" ; v366 = "static_exception_post_op").
+sc5_m368(n) :- node(_, n, "call", _, _), field(n, "function", v358), sc5_m362(v358).
+sc5_m368(n) :- node(_, n, "call", _, _), field(n, "function", v363), sc5_m367(v363).
+sc5_m370(n) :- sc5_m368(n).
+sc5_m370(n) :- node(_, n, "call", _, _), child(v369, n, _), node(_, v369, "return_statement", _, _).
+sc5_m378(n) :- node(_, n, "identifier", _, _), text(n, v375), v375 = "CompiledStep".
+sc5_m378(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v376), node(_, v376, "identifier", _, _), text(v376, v377), v377 = "CompiledStep".
+sc5_m383(n) :- node(_, n, "identifier", _, _), text(n, v380), (v380 = "ResultAssertionSpec" ; v380 = "ResultMaterializationSpec" ; v380 = "assert_result" ; v380 = "materialize" ; v380 = "static_exception_post_op").
+sc5_m383(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v381), node(_, v381, "identifier", _, _), text(v381, v382), (v382 = "ResultAssertionSpec" ; v382 = "ResultMaterializationSpec" ; v382 = "assert_result" ; v382 = "materialize" ; v382 = "static_exception_post_op").
+sc5_m384(n) :- node(_, n, "call", _, _), field(n, "function", v374), sc5_m378(v374).
+sc5_m384(n) :- node(_, n, "call", _, _), field(n, "function", v379), sc5_m383(v379).
+sc5_m386(n) :- sc5_m384(n).
+sc5_m386(n) :- node(_, n, "call", _, _), child(v385, n, _), node(_, v385, "return_statement", _, _).
+sc5_m387(n) :- sc5_m341(n).
+sc5_m387(n) :- child(v342, n, _), sc5_m355(v342).
+sc5_m387(n) :- child(v356, n, _), node(_, v356, "argument_list", _, _), child(v357, v356, _), sc5_m370(v357).
+sc5_m387(n) :- child(v371, n, _), node(_, v371, "keyword_argument", _, _), child(v372, v371, _), node(_, v372, "argument_list", _, _), child(v373, v372, _), sc5_m386(v373).
+sc5_m400(n) :- node(_, n, "identifier", _, _), text(n, v397), v397 = "ResultAssertionSpec".
+sc5_m400(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v398), node(_, v398, "identifier", _, _), text(v398, v399), v399 = "ResultAssertionSpec".
+sc5_m418(n) :- node(_, n, "identifier", _, _), text(n, v415), (v415 = "ResultAssertionSpec" ; v415 = "assert_result" ; v415 = "static_exception_post_op").
+sc5_m418(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v416), node(_, v416, "identifier", _, _), text(v416, v417), (v417 = "ResultAssertionSpec" ; v417 = "assert_result" ; v417 = "static_exception_post_op").
+sc5_m424(n) :- node(_, n, "identifier", _, _), text(n, v421), (v421 = "ResultAssertionSpec" ; v421 = "assert_result" ; v421 = "static_exception_post_op").
+sc5_m424(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v422), node(_, v422, "identifier", _, _), text(v422, v423), (v423 = "ResultAssertionSpec" ; v423 = "assert_result" ; v423 = "static_exception_post_op").
+sc5_m426(n) :- sc5_m328(n).
+sc5_m426(n) :- sc5_m387(n).
+sc5_m426(n) :- node(_, n, "return_statement", _, _), child(n, v388, _), node(_, v388, "call", _, _).
+sc5_m426(n) :- inside(n, v389, sc5_k0), field(v389, "parameters", v390), node(_, n, _, v391, v392), node(_, v390, _, v393, v394), v393 <= v391, v392 <= v394, node(_, v389, "function_definition", _, _), inside(v395, v389, sc5_k0), node(_, v395, "call", _, _), field(v395, "function", v396), sc5_m400(v396), field(v395, "arguments", v401), child(v401, v402, _), node(_, v402, "keyword_argument", _, _), field(v402, "name", v403), node(_, v403, "identifier", _, _), text(v403, v404), v404 = "static_exception", field(v402, "value", v405), node(_, v405, "identifier", _, _).
+sc5_m426(n) :- inside(n, v406, sc5_k5), field(v406, "value", v407), node(_, n, _, v408, v409), node(_, v407, _, v410, v411), v410 <= v408, v409 <= v411, node(_, v406, "keyword_argument", _, _), field(v406, "name", v412), node(_, v412, "identifier", _, _), text(v412, v413), v413 = "closed_post_op".
+sc5_m426(n) :- node(_, n, "call", _, _), field(n, "function", v414), sc5_m418(v414).
+sc5_m426(n) :- inside(n, v419, sc5_k2), node(_, v419, "call", _, _), field(v419, "function", v420), sc5_m424(v420).
+sc5_m426(n) :- node(_, n, "raise_statement", _, _).
+sc5_m426(n) :- inside(n, v425, sc5_k3), node(_, v425, "raise_statement", _, _).
+sc5_selected(n) :- sc5_m426(n).
+sc5_nodes(d, n) :- sc5_selected(n), node(d, n, _, _, _).
+sc5_functions(d, f) :- sc5_nodes(d, f), node(d, f, "function_definition", _, _).
+sc5_function_name(d, f, s) :- sc5_functions(d, f), field(f, "name", x), text(x, s).
+sc5_call_fn(d, c, f) :- sc5_nodes(d, c), node(d, c, "call", _, _), field(c, "function", f), sc5_nodes(d, f).
+sc5_attribute(n) :- node(_, n, "attribute", _, _).
+sc5_callee(c, s) :- sc5_call_fn(_, c, f), !sc5_attribute(f), sps_text(f, s).
+sc5_callee(c, s) :- sc5_call_fn(_, c, f), sc5_attribute(f), field(f, "attribute", a), sps_text(a, s).
+sc5_full_callee(c, s) :- sc5_call_fn(_, c, f), sps_text(f, s).
+sc5_static_exception_post_op_call(c) :- sc5_full_callee(c, s), match("(?is)^.*static.exception.post.op$", s).
+sc5_assert_result_call(c) :- sc5_full_callee(c, s), match("(?is)^.*CompiledPostOp\\.assert.result$", s).
+sc5_materialize_call(c) :- sc5_full_callee(c, s), match("(?is)^.*CompiledPostOp\\.materialize$", s).
+sc5_argument(d, c, a) :- sc5_call_fn(d, c, _), field(c, "arguments", l), child(l, a, _), sc5_nodes(d, a), node(d, a, k, _, _), !sc5_not_argument_kind(k).
+sc5_argument_later(c, a) :- sc5_argument(d, c, a), sc5_argument(d, c, b), node(d, a, _, sa, _), node(d, b, _, sb, _), sb < sa.
+sc5_argument0(c, a) :- sc5_argument(_, c, a), !sc5_argument_later(c, a).
+sc5_has_argument(c) :- sc5_argument(_, c, _).
+sc5_keyword(d, c, s, v) :- sc5_call_fn(d, c, _), field(c, "arguments", l), child(l, k, _), sc5_nodes(d, k), node(d, k, "keyword_argument", _, _), field(k, "name", kn), sc5_nodes(d, kn), text(kn, s), field(k, "value", v), sc5_nodes(d, v).
+sc5_return_value(d, f, v) :- sc5_nodes(d, r), node(d, r, "return_statement", _, _), child(r, v, _), sc5_nodes(d, v), nearest(r, f, sc5_k0), sc5_functions(d, f).
+sc5_parameter(d, f, p) :- sc5_functions(d, f), field(f, "parameters", l), child(l, p, _), sc5_nodes(d, p), node(d, p, k, _, _), sc5_parameter_kind(k).
+sc5_parameter_part(d, p, n) :- sc5_parameter(d, _, p), child(p, n, _), sc5_nodes(d, n).
+sc5_parameter_part_later(n) :- sc5_parameter_part(d, p, n), sc5_parameter_part(d, p, m), node(d, n, _, sn, _), node(d, m, _, sm, _), sm < sn.
+sc5_parameter_part_later(n) :- sc5_parameter_part(d, p, n), sc5_parameter_part(d, p, m), node(d, n, _, s, en), node(d, m, _, s, em), em < en.
+sc5_parameter_name(d, f, s) :- sc5_parameter(d, f, p), node(d, p, "identifier", _, _), text(p, s).
+sc5_parameter_name(d, f, s) :- sc5_parameter(d, f, p), sc5_parameter_part(d, p, n), node(d, n, "identifier", _, _), !sc5_parameter_part_later(n), text(n, s).
+sc5_compiled(c) :- sc5_full_callee(c, "CompiledStep").
+sc5_other_static_exception(s) :- sc5_keyword(_, s, "static_exception", v), node(_, v, "attribute", _, _), sps_text(v, x), !sc5_fail_open(x).
+sc5_other_static_exception(s) :- sc5_keyword(_, s, "static_exception", v), node(_, v, "identifier", _, _), sps_text(v, x), !sc5_fail_open(x).
+sc5_seed(c) :- sc5_static_exception_post_op_call(c), sc5_argument0(c, a), sps_text(a, x), sc5_fail_open(x).
+sc5_seed(c) :- sc5_assert_result_call(c), sc5_argument0(c, a), sc5_call_fn(_, a, _), !sc5_other_static_exception(a).
+sc5_seed(c) :- sc5_assert_result_call(c), sc5_keyword(_, c, "spec", a), sc5_call_fn(_, a, _), !sc5_has_argument(c), !sc5_other_static_exception(a).
+sc5_static_exception_function(d, s) :- sc5_function_name(d, f, s), inside(c, f, sc5_k0), sc5_nodes(d, c), sc5_callee(c, "ResultAssertionSpec"), sc5_keyword(d, c, "static_exception", v), node(d, v, "identifier", _, _), sps_text(v, x), sc5_parameter_name(d, f, x).
+sc5_static_exception_function(d, s) :- sc5_function_name(d, f, s), sc5_return_value(d, f, v), sc5_seed(v).
+sc5_static_exception_function(d, s) :- sc5_function_name(d, f, s), sc5_return_value(d, f, v), sc5_callee(v, e), sc5_static_exception_function(d, e).
+sc5_materializing_call(c) :- sc5_callee(c, "ResultMaterializationSpec").
+sc5_materializing_call(c) :- sc5_materialize_call(c).
+sc5_materializing_call(c) :- sc5_callee(c, "CompiledStep"), sc5_keyword(_, c, k, _), sc5_post_op_keyword(k).
+sc5_materialization_function(f) :- sc5_functions(d, f), inside(c, f, sc5_k0), sc5_nodes(d, c), sc5_materializing_call(c).
+sc5_fail_open_raised(e) :- node(_, e, "identifier", _, _), sps_text(e, x), sc5_fail_open(x).
+sc5_fail_open_raised(e) :- sc5_full_callee(e, x), sc5_fail_open(x).
+sc5_row(d, n) :- sc5_nodes(d, n), node(d, n, "raise_statement", _, _), nearest(n, f, sc5_k0), sc5_materialization_function(f), child(n, e, _), sc5_nodes(d, e), sc5_fail_open_raised(e).
+sc5_closed_post_op_value(d, v) :- sc5_keyword(d, c, "closed_post_op", v), sc5_compiled(c), nearest(c, f, sc5_k0), sc5_materialization_function(f).
+sc5_row(d, n) :- sc5_closed_post_op_value(d, n), sc5_seed(n).
+sc5_row(d, n) :- sc5_closed_post_op_value(d, n), sc5_callee(n, e), sc5_static_exception_function(d, e).
+violation("data-layer-serverplan-steps", "step-contracts-5", "STEP-041", p, l) :- sc5_row(d, n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_compiled_result_builders_do_not_fail_closed").
+sc2_m176(n) :- child(v173, n, _), node(_, v173, "module", _, _).
+sc2_m176(n) :- child(v174, n, _), node(_, v174, "block", _, _), child(v175, v174, _), node(_, v175, "class_definition", _, _).
+sc2_m180(n) :- node(_, n, "module", _, _).
+sc2_m180(n) :- node(_, n, "expression_statement", _, _), sc2_m176(n).
+sc2_m180(n) :- node(_, n, "class_definition", _, _).
+sc2_m180(n) :- node(_, n, "function_definition", _, _).
+sc2_m180(n) :- node(_, n, "decorated_definition", _, _).
+sc2_m180(n) :- node(_, n, "argument_list", _, _), child(v177, n, _), node(_, v177, "class_definition", _, _).
+sc2_m180(n) :- child(v178, n, _), node(_, v178, "argument_list", _, _), child(v179, v178, _), node(_, v179, "class_definition", _, _).
+sc2_m206(n) :- node(_, n, "identifier", _, _), text(n, v203), v203 = "CompiledStep".
+sc2_m206(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v204), node(_, v204, "identifier", _, _), text(v204, v205), v205 = "CompiledStep".
+sc2_m210(n) :- node(_, n, "call", _, _), inside(n, v198, sc2_k0), node(_, v198, "function_definition", _, _), inside(v198, v199, sc2_k0), node(_, v199, "function_definition", _, _), field(v199, "name", v200), node(_, v200, "identifier", _, _), text(v200, v201), v201 = "compile".
+sc2_m210(n) :- node(_, n, "call", _, _), field(n, "function", v202), sc2_m206(v202), inside(n, v207, sc2_k0), node(_, v207, "function_definition", _, _), field(v207, "name", v208), node(_, v208, "identifier", _, _), text(v208, v209), v209 = "compile".
+sc2_m220(n) :- node(_, n, "identifier", _, _), text(n, v217), v217 = "CompiledStep".
+sc2_m220(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v218), node(_, v218, "identifier", _, _), text(v218, v219), v219 = "CompiledStep".
+sc2_m224(n) :- node(_, n, "call", _, _), inside(n, v212, sc2_k0), node(_, v212, "function_definition", _, _), inside(v212, v213, sc2_k0), node(_, v213, "function_definition", _, _), field(v213, "name", v214), node(_, v214, "identifier", _, _), text(v214, v215), v215 = "compile".
+sc2_m224(n) :- node(_, n, "call", _, _), field(n, "function", v216), sc2_m220(v216), inside(n, v221, sc2_k0), node(_, v221, "function_definition", _, _), field(v221, "name", v222), node(_, v222, "identifier", _, _), text(v222, v223), v223 = "compile".
+sc2_m235(n) :- node(_, n, "identifier", _, _), text(n, v232), v232 = "CompiledStep".
+sc2_m235(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v233), node(_, v233, "identifier", _, _), text(v233, v234), v234 = "CompiledStep".
+sc2_m239(n) :- node(_, n, "call", _, _), inside(n, v227, sc2_k0), node(_, v227, "function_definition", _, _), inside(v227, v228, sc2_k0), node(_, v228, "function_definition", _, _), field(v228, "name", v229), node(_, v229, "identifier", _, _), text(v229, v230), v230 = "compile".
+sc2_m239(n) :- node(_, n, "call", _, _), field(n, "function", v231), sc2_m235(v231), inside(n, v236, sc2_k0), node(_, v236, "function_definition", _, _), field(v236, "name", v237), node(_, v237, "identifier", _, _), text(v237, v238), v238 = "compile".
+sc2_m251(n) :- node(_, n, "identifier", _, _), text(n, v248), v248 = "CompiledStep".
+sc2_m251(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v249), node(_, v249, "identifier", _, _), text(v249, v250), v250 = "CompiledStep".
+sc2_m255(n) :- node(_, n, "call", _, _), inside(n, v243, sc2_k0), node(_, v243, "function_definition", _, _), inside(v243, v244, sc2_k0), node(_, v244, "function_definition", _, _), field(v244, "name", v245), node(_, v245, "identifier", _, _), text(v245, v246), v246 = "compile".
+sc2_m255(n) :- node(_, n, "call", _, _), field(n, "function", v247), sc2_m251(v247), inside(n, v252, sc2_k0), node(_, v252, "function_definition", _, _), field(v252, "name", v253), node(_, v253, "identifier", _, _), text(v253, v254), v254 = "compile".
+sc2_m260(n) :- node(_, n, "identifier", _, _).
+sc2_m260(n) :- node(_, n, "attribute", _, _).
+sc2_m266(n) :- node(_, n, "identifier", _, _).
+sc2_m266(n) :- node(_, n, "attribute", _, _).
+sc2_m273(n) :- sc2_m180(n).
+sc2_m273(n) :- inside(n, v181, sc2_k0), field(v181, "parameters", v182), node(_, n, _, v183, v184), node(_, v182, _, v185, v186), v185 <= v183, v184 <= v186, node(_, v181, "function_definition", _, _), inside(v181, v187, sc2_k0), node(_, v187, "function_definition", _, _), field(v187, "name", v188), node(_, v188, "identifier", _, _), text(v188, v189), v189 = "compile".
+sc2_m273(n) :- inside(n, v190, sc2_k0), field(v190, "return_type", v191), node(_, n, _, v192, v193), node(_, v191, _, v194, v195), v194 <= v192, v193 <= v195, node(_, v190, "function_definition", _, _), field(v190, "return_type", v196), sps_text(v196, v197), (contains("DatabaseConnection", v197) ; contains("ReadTransaction", v197) ; contains("SqlConnection", v197) ; contains("WriteTransaction", v197)).
+sc2_m273(n) :- sc2_m210(n).
+sc2_m273(n) :- child(v211, n, _), sc2_m224(v211).
+sc2_m273(n) :- child(v225, n, _), node(_, v225, "argument_list", _, _), child(v226, v225, _), sc2_m239(v226).
+sc2_m273(n) :- child(v240, n, _), node(_, v240, "keyword_argument", _, _), child(v241, v240, _), node(_, v241, "argument_list", _, _), child(v242, v241, _), sc2_m255(v242).
+sc2_m273(n) :- node(_, n, "assignment", _, _), inside(n, v256, sc2_k0), node(_, v256, "function_definition", _, _), field(v256, "name", v257), node(_, v257, "identifier", _, _), text(v257, v258), v258 = "compile", field(n, "left", v259), sc2_m260(v259).
+sc2_m273(n) :- child(v261, n, _), node(_, v261, "assignment", _, _), inside(v261, v262, sc2_k0), node(_, v262, "function_definition", _, _), field(v262, "name", v263), node(_, v263, "identifier", _, _), text(v263, v264), v264 = "compile", field(v261, "left", v265), sc2_m266(v265).
+sc2_m273(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v267), node(_, v267, "identifier", _, _), text(v267, v268), (v268 = "_conn" ; v268 = "_serverplan_runtime_txn" ; v268 = "_serverplan_sql_conn" ; v268 = "_txn" ; v268 = "conn" ; v268 = "sql_conn" ; v268 = "txn"), inside(n, v269, sc2_k0), node(_, v269, "function_definition", _, _), inside(v269, v270, sc2_k0), node(_, v270, "function_definition", _, _), field(v270, "name", v271), node(_, v271, "identifier", _, _), text(v271, v272), v272 = "compile".
+sc2_selected(n) :- sc2_m273(n).
+sc2_functions(d, f, x) :- sc2_selected(f), node(d, f, "function_definition", _, _), field(f, "name", nm), text(nm, x).
+sc2_ownership(f, f) :- sc2_selected(f), node(_, f, "function_definition", _, _).
+sc2_ownership(n, f) :- sc2_selected(n), node(_, n, _, _, _), !sc2_is_function(n), nearest(n, f, sc2_k_fn).
+sc2_is_function(n) :- node(_, n, "function_definition", _, _).
+sc2_attribute_name(a, x) :- sc2_selected(a), node(_, a, "attribute", _, _), field(a, "attribute", ax), text(ax, x).
+sc2_attributes(a, x, ot) :- sc2_attribute_name(a, x), field(a, "object", o), sps_text(o, ot).
+sc2_calls(d, c, f) :- sc2_selected(c), node(d, c, "call", _, _), field(c, "function", f), sc2_selected(f), node(d, f, _, _, _).
+sc2_is_attribute(n) :- node(_, n, "attribute", _, _).
+sc2_calls_full(c, s) :- sc2_calls(_, c, f), sps_text(f, s).
+sc2_calls_callee(c, x) :- sc2_calls(_, c, f), sc2_attribute_name(f, x).
+sc2_calls_callee(c, s) :- sc2_calls(_, c, f), !sc2_is_attribute(f), sps_text(f, s).
+sc2_non_argument(a) :- node(_, a, "comment", _, _).
+sc2_non_argument(a) :- node(_, a, "keyword_argument", _, _).
+sc2_non_argument(a) :- node(_, a, "list_splat", _, _).
+sc2_non_argument(a) :- node(_, a, "dictionary_splat", _, _).
+sc2_argument_row(c, a, s) :- sc2_calls(d, c, _), field(c, "arguments", l), child(l, a, _), sc2_selected(a), node(d, a, _, s, _), !sc2_non_argument(a).
+sc2_argument_before(c, a, b) :- sc2_argument_row(c, a, s), sc2_argument_row(c, b, s2), s2 < s.
+sc2_argument_later(c, a) :- sc2_argument_before(c, a, _).
+sc2_arguments(c, a, 0) :- sc2_argument_row(c, a, _), !sc2_argument_later(c, a).
+sc2_arguments(c, a, i) :- sc2_argument_later(c, a), i = count : { sc2_argument_before(c, a, _) }.
+sc2_keywords(c, k, x, v) :- sc2_calls(d, c, _), field(c, "arguments", l), child(l, k, _), sc2_selected(k), node(d, k, "keyword_argument", _, _), field(k, "name", kn), sc2_selected(kn), node(d, kn, _, _, _), text(kn, x), field(k, "value", v), sc2_selected(v), node(d, v, _, _, _).
+sc2_step_base(b) :- sps_text(b, s), match("(?:[A-Za-z_]\\w*\\.)*ServerPlanStep(?:\\[.*\\])?", s).
+sc2_step_classes(c) :- sc2_selected(c), node(d, c, "class_definition", _, _), child(c, args, _), sc2_selected(args), node(d, args, "argument_list", _, _), child(args, b, _), sc2_selected(b), node(d, b, _, _, _), sc2_step_base(b).
+sc2_step_methods(f, x) :- sc2_functions(_, f, x), child(b, f, _), field(c, "body", b), sc2_step_classes(c).
+sc2_step_methods(f, x) :- sc2_functions(d, f, x), child(dd, f, _), sc2_selected(dd), node(d, dd, "decorated_definition", _, _), child(b, dd, _), field(c, "body", b), sc2_step_classes(c).
+sc2_compile(d, m, s, e) :- sc2_step_methods(m, "compile"), node(d, m, _, s, e).
+sc2_compiled(d, c, s, e) :- sc2_calls(d, c, _), sc2_calls_full(c, "CompiledStep"), node(d, c, _, s, e).
+sc2_assignments(a, l) :- sc2_selected(a), node(d, a, "assignment", _, _), field(a, "left", l), sc2_selected(l), node(d, l, _, _, _).
+sc2_assignments_value(a, r) :- sc2_assignments(a, _), field(a, "right", r), sc2_selected(r).
+sc2_compile_aliases(m, x) :- sc2_compile(_, m, _, _), sc2_assignments(a, l), node(_, l, "identifier", _, _), sc2_ownership(a, m), text(l, x), sc2_assignments_value(a, v), sc2_attributes(v, at, "self"), prefix("_", at).
+sc2_newer_function(f, m) :- sc2_compile(d, m, _, me), sc2_functions(d, f, x), node(d, f, _, fs, _), sc2_functions(d, g, x), node(d, g, _, gs, ge), gs > fs, ge <= me.
+sc2_callback_links(m, k, kw, f) :- sc2_compile(d, m, ms, me), sc2_compiled(d, c, cs, ce), cs > ms, ce <= me, sc2_ownership(c, m), sc2_keywords(c, k, kw, v), sc2_callback_keyword(kw), node(_, v, "identifier", _, _), text(v, x), sc2_functions(d, f, x), node(d, f, _, fs, fe), fs > ms, fe <= me, !sc2_newer_function(f, m).
+sc2_parameter_row(f, p, x, s) :- sc2_functions(d, f, _), field(f, "parameters", ps), child(ps, p, _), sc2_selected(p), node(d, p, "identifier", s, _), text(p, x).
+sc2_parameter_row(f, p, x, s) :- sc2_functions(d, f, _), field(f, "parameters", ps), child(ps, p, _), sc2_selected(p), node(d, p, k, s, _), sc2_parameter_kind(k), child(p, n, 0), sc2_selected(n), node(d, n, "identifier", _, _), text(n, x).
+sc2_parameter_before(f, p, q) :- sc2_parameter_row(f, p, _, s), sc2_parameter_row(f, q, _, s2), s2 < s.
+sc2_parameter_later(f, p) :- sc2_parameter_before(f, p, _).
+sc2_parameters(f, p, x, 0) :- sc2_parameter_row(f, p, x, _), !sc2_parameter_later(f, p).
+sc2_parameters(f, p, x, i) :- sc2_parameter_row(f, p, x, _), sc2_parameter_later(f, p), i = count : { sc2_parameter_before(f, p, _) }.
+sc2_authority_type(s) :- sc2_type_word(s), s != "Hydrator".
+sc2_type_names(t, s) :- sc2_selected(x), node(_, x, "identifier", _, _), text(x, s), sc2_type_word(s), inside(x, t, sc2_k_type), sc2_selected(t).
+sc2_authority_parameters(f, x) :- sc2_parameters(f, p, x, _), field(p, "type", t), sc2_type_names(t, s), sc2_authority_type(s).
+sc2_authority_returns(d, x) :- sc2_functions(d, f, x), field(f, "return_type", t), sc2_type_names(t, s), sc2_authority_type(s).
+sc2_callback_carriers(k, x) :- sc2_callback_links(_, k, kw, f), sc2_post_op_keyword(kw), sc2_parameters(f, _, x, 1).
+sc2_callback_carriers(k, x) :- sc2_callback_links(_, k, _, f), sc2_parameters(f, p, x, _), field(p, "type", t), sc2_type_names(t, "Hydrator").
+sc2_trimmed_carrier(a) :- sc2_arguments(_, a, 1), sps_text(a, s), match("[\"']*(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|sql_conn|txn)[\"']*", s).
+sc2_bad_callback_nodes(k, n) :- sc2_callback_links(_, k, _, f), sc2_ownership(n, f), sc2_attributes(n, at, ot), sc2_carrier_attr(at), sc2_callback_carriers(k, ot).
+sc2_bad_callback_nodes(k, n) :- sc2_callback_links(_, k, _, f), sc2_ownership(n, f), sc2_calls(_, n, ce), node(_, ce, "identifier", _, _), sc2_calls_callee(n, "active_pipeline_txn_for_callbacks").
+sc2_bad_callback_nodes(k, n) :- sc2_callback_links(_, k, _, f), sc2_ownership(n, f), sc2_calls(d, n, ce), node(_, ce, "identifier", _, _), sc2_calls_callee(n, x), sc2_authority_returns(d, x).
+sc2_bad_callback_nodes(k, n) :- sc2_callback_links(_, k, _, f), sc2_ownership(n, f), sc2_calls(_, n, _), sc2_arguments(n, a, _), node(_, a, "identifier", _, _), text(a, x), sc2_authority_parameters(f, x).
+sc2_bad_callback_nodes(k, n) :- sc2_callback_links(_, k, _, f), sc2_ownership(n, f), sc2_calls_full(n, "getattr"), sc2_arguments(n, a0, 0), node(_, a0, "identifier", _, _), text(a0, x), sc2_callback_carriers(k, x), sc2_arguments(n, a1, 1), sc2_trimmed_carrier(a1).
+sc2_postop_callbacks(m, f) :- sc2_compile(d, m, ms, me), sc2_functions(d, f, x), node(d, f, _, fs, fe), fs > ms, fe <= me, x != "on_commit", x != "on_rollback".
+sc2_postop_nodes(m, n) :- sc2_postop_callbacks(m, f), inside(n, f, sc2_k_fn), sc2_selected(n).
+sc2_bad_span(k, n, s, e) :- sc2_bad_callback_nodes(k, n), node(_, n, _, s, e).
+sc2_bad_shadowed(k, n) :- sc2_bad_span(k, n, s, _), sc2_bad_span(k, _, s2, _), s2 < s.
+sc2_bad_shadowed(k, n) :- sc2_bad_span(k, n, s, e), sc2_bad_span(k, _, s, e2), e2 > e.
+violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-026", p, l) :- sc2_bad_callback_nodes(k, n), !sc2_bad_shadowed(k, n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_compile_callbacks_no_runtime_authority").
+sc2_step019(n) :- sc2_postop_nodes(m, n), sc2_assignments(n, t), sc2_attributes(t, _, o), sc2_compile_aliases(m, o).
+sc2_step019(n) :- sc2_postop_nodes(m, n), sc2_calls(_, n, ci), sc2_calls_callee(n, x), sc2_model_mutator(x), sc2_attributes(ci, _, o), sc2_compile_aliases(m, o).
+sc2_step019(n) :- sc2_postop_nodes(m, n), sc2_calls(_, n, ce), node(_, ce, "attribute", _, _), sc2_calls_callee(n, "__setattr__"), sc2_arguments(n, a, 0), node(_, a, "identifier", _, _), text(a, x), sc2_compile_aliases(m, x).
+violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-019", p, l) :- sc2_step019(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_postop_no_resolved_data_manipulation").
+sc1_m4(n) :- child(v1, n, _), node(_, v1, "module", _, _).
+sc1_m4(n) :- child(v2, n, _), node(_, v2, "block", _, _), child(v3, v2, _), node(_, v3, "class_definition", _, _).
+sc1_m8(n) :- node(_, n, "module", _, _).
+sc1_m8(n) :- node(_, n, "expression_statement", _, _), sc1_m4(n).
+sc1_m8(n) :- node(_, n, "class_definition", _, _).
+sc1_m8(n) :- node(_, n, "function_definition", _, _).
+sc1_m8(n) :- node(_, n, "decorated_definition", _, _).
+sc1_m8(n) :- node(_, n, "argument_list", _, _), child(v5, n, _), node(_, v5, "class_definition", _, _).
+sc1_m8(n) :- child(v6, n, _), node(_, v6, "argument_list", _, _), child(v7, v6, _), node(_, v7, "class_definition", _, _).
+sc1_m20(n) :- node(_, n, "tuple", _, _).
+sc1_m20(n) :- node(_, n, "list", _, _).
+sc1_m20(n) :- node(_, n, "set", _, _).
+sc1_m30(n) :- node(_, n, "identifier", _, _), text(n, v27), v27 = "frozenset".
+sc1_m30(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v28), node(_, v28, "identifier", _, _), text(v28, v29), v29 = "frozenset".
+sc1_m36(n) :- node(_, n, "identifier", _, _), text(n, v33), v33 = "frozenset".
+sc1_m36(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v34), node(_, v34, "identifier", _, _), text(v34, v35), v35 = "frozenset".
+sc1_m43(n) :- node(_, n, "identifier", _, _), text(n, v40), v40 = "frozenset".
+sc1_m43(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v41), node(_, v41, "identifier", _, _), text(v41, v42), v42 = "frozenset".
+sc1_m45(n) :- node(_, n, "tuple", _, _).
+sc1_m45(n) :- node(_, n, "list", _, _).
+sc1_m45(n) :- node(_, n, "set", _, _).
+sc1_m52(n) :- node(_, n, "identifier", _, _), text(n, v49), v49 = "frozenset".
+sc1_m52(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v50), node(_, v50, "identifier", _, _), text(v50, v51), v51 = "frozenset".
+sc1_m61(n) :- node(_, n, "return_statement", _, _), inside(n, v12, sc1_k0), node(_, v12, "function_definition", _, _), field(v12, "name", v13), node(_, v13, "identifier", _, _), text(v13, v14), (v14 = "cte_column_type_hints" ; v14 = "cte_output_columns" ; v14 = "emits_sql_for_accounting" ; v14 = "execution_role" ; v14 = "is_executor_owned_runtime_step" ; v14 = "level" ; v14 = "step_tags" ; v14 = "supports_sql_batch_transport" ; v14 = "tables_read" ; v14 = "tables_written").
+sc1_m61(n) :- child(v15, n, _), node(_, v15, "return_statement", _, _), inside(v15, v16, sc1_k0), node(_, v16, "function_definition", _, _), field(v16, "name", v17), node(_, v17, "identifier", _, _), text(v17, v18), (v18 = "cte_column_type_hints" ; v18 = "cte_output_columns" ; v18 = "emits_sql_for_accounting" ; v18 = "execution_role" ; v18 = "is_executor_owned_runtime_step" ; v18 = "level" ; v18 = "step_tags" ; v18 = "supports_sql_batch_transport" ; v18 = "tables_read" ; v18 = "tables_written").
+sc1_m61(n) :- child(v19, n, _), sc1_m20(v19), child(v21, v19, _), node(_, v21, "return_statement", _, _), inside(v21, v22, sc1_k0), node(_, v22, "function_definition", _, _), field(v22, "name", v23), node(_, v23, "identifier", _, _), text(v23, v24), (v24 = "cte_column_type_hints" ; v24 = "cte_output_columns" ; v24 = "emits_sql_for_accounting" ; v24 = "execution_role" ; v24 = "is_executor_owned_runtime_step" ; v24 = "level" ; v24 = "step_tags" ; v24 = "supports_sql_batch_transport" ; v24 = "tables_read" ; v24 = "tables_written").
+sc1_m61(n) :- child(v25, n, _), node(_, v25, "call", _, _), field(v25, "function", v26), sc1_m30(v26).
+sc1_m61(n) :- node(_, n, "argument_list", _, _), child(v31, n, _), node(_, v31, "call", _, _), field(v31, "function", v32), sc1_m36(v32).
+sc1_m61(n) :- child(v37, n, _), node(_, v37, "argument_list", _, _), child(v38, v37, _), node(_, v38, "call", _, _), field(v38, "function", v39), sc1_m43(v39).
+sc1_m61(n) :- child(v44, n, _), sc1_m45(v44), child(v46, v44, _), node(_, v46, "argument_list", _, _), child(v47, v46, _), node(_, v47, "call", _, _), field(v47, "function", v48), sc1_m52(v48).
+sc1_m61(n) :- inside(n, v53, sc1_k0), field(v53, "return_type", v54), node(_, n, _, v55, v56), node(_, v54, _, v57, v58), v57 <= v55, v56 <= v58, node(_, v53, "function_definition", _, _), field(v53, "name", v59), node(_, v59, "identifier", _, _), text(v59, v60), (v60 = "cte_column_type_hints" ; v60 = "cte_output_columns" ; v60 = "emits_sql_for_accounting" ; v60 = "execution_role" ; v60 = "is_executor_owned_runtime_step" ; v60 = "level" ; v60 = "step_tags" ; v60 = "supports_sql_batch_transport" ; v60 = "tables_read" ; v60 = "tables_written").
+sc1_m67(n) :- node(_, n, "list_comprehension", _, _).
+sc1_m67(n) :- node(_, n, "set_comprehension", _, _).
+sc1_m67(n) :- node(_, n, "dictionary_comprehension", _, _).
+sc1_m67(n) :- node(_, n, "generator_expression", _, _).
+sc1_m67(n) :- node(_, n, "conditional_expression", _, _).
+sc1_m68(n) :- sps_text(n, v65), contains("cte_output_columns", v65).
+sc1_m68(n) :- inside(v66, n, sc1_k0), sc1_m67(v66).
+sc1_m85(n) :- node(_, n, "assignment", _, _), field(n, "left", v69), node(_, v69, "attribute", _, _), field(v69, "object", v70), node(_, v70, "identifier", _, _), text(v70, v71), v71 = "self", field(v69, "attribute", v72), name(v72, v74), prefix("_", v74).
+sc1_m85(n) :- node(_, n, "assignment", _, _), inside(n, v75, sc1_k0), node(_, v75, "function_definition", _, _), field(v75, "name", v76), node(_, v76, "identifier", _, _), text(v76, v77), v77 = "compile", field(n, "left", v78), node(_, v78, "identifier", _, _), field(n, "right", v79), node(_, v79, "attribute", _, _), field(v79, "object", v80), node(_, v80, "identifier", _, _), text(v80, v81), v81 = "self", field(v79, "attribute", v82), name(v82, v84), prefix("_", v84).
+sc1_m103(n) :- node(_, n, "assignment", _, _), field(n, "left", v87), node(_, v87, "attribute", _, _), field(v87, "object", v88), node(_, v88, "identifier", _, _), text(v88, v89), v89 = "self", field(v87, "attribute", v90), name(v90, v92), prefix("_", v92).
+sc1_m103(n) :- node(_, n, "assignment", _, _), inside(n, v93, sc1_k0), node(_, v93, "function_definition", _, _), field(v93, "name", v94), node(_, v94, "identifier", _, _), text(v94, v95), v95 = "compile", field(n, "left", v96), node(_, v96, "identifier", _, _), field(n, "right", v97), node(_, v97, "attribute", _, _), field(v97, "object", v98), node(_, v98, "identifier", _, _), text(v98, v99), v99 = "self", field(v97, "attribute", v100), name(v100, v102), prefix("_", v102).
+sc1_m104(n) :- node(_, n, "if_statement", _, _).
+sc1_m104(n) :- node(_, n, "elif_clause", _, _).
+sc1_m114(n) :- node(_, n, "if_statement", _, _).
+sc1_m114(n) :- node(_, n, "elif_clause", _, _).
+sc1_m122(n) :- node(_, n, "identifier", _, _), text(n, v119), v119 = "CompiledStep".
+sc1_m122(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v120), node(_, v120, "identifier", _, _), text(v120, v121), v121 = "CompiledStep".
+sc1_m128(n) :- node(_, n, "identifier", _, _), text(n, v125), v125 = "CompiledStep".
+sc1_m128(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v126), node(_, v126, "identifier", _, _), text(v126, v127), v127 = "CompiledStep".
+sc1_m135(n) :- node(_, n, "identifier", _, _), text(n, v132), v132 = "CompiledStep".
+sc1_m135(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v133), node(_, v133, "identifier", _, _), text(v133, v134), v134 = "CompiledStep".
+sc1_m143(n) :- node(_, n, "identifier", _, _), text(n, v140), v140 = "CompiledStep".
+sc1_m143(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v141), node(_, v141, "identifier", _, _), text(v141, v142), v142 = "CompiledStep".
+sc1_m145(n) :- node(_, n, "tuple", _, _).
+sc1_m145(n) :- node(_, n, "list", _, _).
+sc1_m145(n) :- node(_, n, "set", _, _).
+sc1_m153(n) :- node(_, n, "identifier", _, _), text(n, v150), v150 = "CompiledStep".
+sc1_m153(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v151), node(_, v151, "identifier", _, _), text(v151, v152), v152 = "CompiledStep".
+sc1_m158(n) :- node(_, n, "identifier", _, _), text(n, v155), (v155 = "RuntimeBuilderSpec" ; v155 = "runtime_builder_post_op" ; v155 = "scalar_column_post_op").
+sc1_m158(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v156), node(_, v156, "identifier", _, _), text(v156, v157), (v157 = "RuntimeBuilderSpec" ; v157 = "runtime_builder_post_op" ; v157 = "scalar_column_post_op").
+sc1_m164(n) :- node(_, n, "identifier", _, _), text(n, v161), (v161 = "RuntimeBuilderSpec" ; v161 = "runtime_builder_post_op" ; v161 = "scalar_column_post_op").
+sc1_m164(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v162), node(_, v162, "identifier", _, _), text(v162, v163), (v163 = "RuntimeBuilderSpec" ; v163 = "runtime_builder_post_op" ; v163 = "scalar_column_post_op").
+sc1_m172(n) :- sc1_m8(n).
+sc1_m172(n) :- inside(n, v9, sc1_k0), node(_, v9, "function_definition", _, _), field(v9, "name", v10), node(_, v10, "identifier", _, _), text(v10, v11), (v11 = "cte_column_type_hints" ; v11 = "cte_output_columns" ; v11 = "emits_sql_for_accounting" ; v11 = "execution_role" ; v11 = "is_executor_owned_runtime_step" ; v11 = "level" ; v11 = "step_tags" ; v11 = "supports_sql_batch_transport" ; v11 = "tables_read" ; v11 = "tables_written"), sc1_m61(n).
+sc1_m172(n) :- inside(n, v62, sc1_k0), node(_, v62, "function_definition", _, _), field(v62, "name", v63), node(_, v63, "identifier", _, _), text(v63, v64), v64 = "cte_column_type_hints", sc1_m68(v62).
+sc1_m172(n) :- sc1_m85(n).
+sc1_m172(n) :- child(v86, n, _), sc1_m103(v86).
+sc1_m172(n) :- sc1_m104(n), inside(n, v105, sc1_k0), node(_, v105, "function_definition", _, _), field(v105, "name", v106), node(_, v106, "identifier", _, _), text(v106, v107), v107 = "compile".
+sc1_m172(n) :- inside(n, v108, sc1_k1), field(v108, "condition", v109), node(_, n, _, v110, v111), node(_, v109, _, v112, v113), v112 <= v110, v111 <= v113, sc1_m114(v108), inside(v108, v115, sc1_k0), node(_, v115, "function_definition", _, _), field(v115, "name", v116), node(_, v116, "identifier", _, _), text(v116, v117), v117 = "compile".
+sc1_m172(n) :- node(_, n, "call", _, _), field(n, "function", v118), sc1_m122(v118).
+sc1_m172(n) :- child(v123, n, _), node(_, v123, "call", _, _), field(v123, "function", v124), sc1_m128(v124).
+sc1_m172(n) :- child(v129, n, _), node(_, v129, "argument_list", _, _), child(v130, v129, _), node(_, v130, "call", _, _), field(v130, "function", v131), sc1_m135(v131).
+sc1_m172(n) :- child(v136, n, _), node(_, v136, "keyword_argument", _, _), child(v137, v136, _), node(_, v137, "argument_list", _, _), child(v138, v137, _), node(_, v138, "call", _, _), field(v138, "function", v139), sc1_m143(v139).
+sc1_m172(n) :- child(v144, n, _), sc1_m145(v144), field(v146, "value", v144), node(_, v146, "keyword_argument", _, _), child(v147, v146, _), node(_, v147, "argument_list", _, _), child(v148, v147, _), node(_, v148, "call", _, _), field(v148, "function", v149), sc1_m153(v149).
+sc1_m172(n) :- node(_, n, "call", _, _), field(n, "function", v154), sc1_m158(v154).
+sc1_m172(n) :- inside(n, v159, sc1_k2), node(_, v159, "call", _, _), field(v159, "function", v160), sc1_m164(v160).
+sc1_m172(n) :- node(_, n, "raise_statement", _, _), inside(n, v165, sc1_k0), node(_, v165, "function_definition", _, _), field(v165, "name", v166), node(_, v166, "identifier", _, _), text(v166, v167), v167 = "compile".
+sc1_m172(n) :- inside(n, v168, sc1_k3), node(_, v168, "raise_statement", _, _), inside(v168, v169, sc1_k0), node(_, v169, "function_definition", _, _), field(v169, "name", v170), node(_, v170, "identifier", _, _), text(v170, v171), v171 = "compile".
+sc1_selected(n) :- sc1_m172(n).
+sc1_none(v) :- node(_, v, "none", _, _).
+sc1_sel_child(p) :- sc1_selected(x), child(p, x, _).
+sc1_cmt_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, s), (s = "cte_column_type_hints" ; s = "cte_output_columns" ; s = "emits_sql_for_accounting" ; s = "execution_role" ; s = "is_executor_owned_runtime_step" ; s = "level" ; s = "step_tags" ; s = "supports_sql_batch_transport" ; s = "tables_read" ; s = "tables_written").
+sc1_compile_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, "compile").
+sc1_comment_at(p, s, e) :- node(_, p, k, _, _), sc1_seq_kind(k), token(p, _, t, s, e), prefix("#", t).
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), child(r, p, _), node(_, r, "return_statement", _, _), inside(r, f, sc1_k0), sc1_cmt_fn(f).
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), child(a, p, _), node(_, a, "argument_list", _, _), child(c, a, _), node(_, c, "call", _, _), field(c, "function", x), sc1_m52(x), inside(p, f, sc1_k0), sc1_cmt_fn(f).
+sc1_sel_comment(p) :- sc1_comment_at(p, s, e), inside(p, f, sc1_k0), sc1_cmt_fn(f), field(f, "return_type", t), node(_, t, _, ts, te), ts <= s, e <= te.
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), inside(p, f, sc1_k0), field(f, "name", x), node(_, x, "identifier", _, _), text(x, "cte_column_type_hints"), sc1_m68(f).
+sc1_sel_comment(p) :- sc1_comment_at(p, s, e), inside(p, i, sc1_k1), field(i, "condition", c), node(_, c, _, cs, ce), cs <= s, e <= ce, sc1_m114(i), inside(i, f, sc1_k0), sc1_compile_fn(f).
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), field(w, "value", p), node(_, w, "keyword_argument", _, _), child(a, w, _), node(_, a, "argument_list", _, _), child(c, a, _), node(_, c, "call", _, _), field(c, "function", x), sc1_m153(x).
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), inside(p, c, sc1_k2), node(_, c, "call", _, _), field(c, "function", x), sc1_m164(x).
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), inside(p, r, sc1_k3), node(_, r, "raise_statement", _, _), inside(r, f, sc1_k0), sc1_compile_fn(f).
+sc1_empty_seq(x) :- sc1_selected(x), node(_, x, k, _, _), sc1_seq_kind(k), !sc1_sel_child(x), !sc1_sel_comment(x).
+sc1_string(v, s) :- node(_, v, "string", _, _), sps_text(v, s).
+sc1_string(v, s) :- node(_, v, "concatenated_string", _, _), sps_text(v, s).
+sc1_is_attribute(v) :- node(_, v, "attribute", _, _).
+sc1_function(f, s) :- sc1_selected(f), node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+sc1_owner(n, f) :- sc1_selected(n), nearest(n, f, sc1_kfn).
+sc1_step_base(b) :- sps_text(b, s), match("(?:[A-Za-z_]\\w*\\.)*ServerPlanStep(?:\\[.*\\])?", s).
+sc1_step_class(c) :- sc1_selected(c), node(_, c, "class_definition", _, _), child(c, a, _), node(_, a, "argument_list", _, _), sc1_selected(a), child(a, b, _), sc1_selected(b), sc1_step_base(b).
+sc1_step_method(f, c, s) :- sc1_function(f, s), child(b, f, _), field(c, "body", b), sc1_step_class(c).
+sc1_step_method(f, c, s) :- sc1_function(f, s), child(w, f, _), node(_, w, "decorated_definition", _, _), sc1_selected(w), child(b, w, _), field(c, "body", b), sc1_step_class(c).
+sc1_method_start(c, nm, s) :- sc1_step_method(f, c, nm), node(_, f, _, s, _).
+sc1_first_start(c, nm, s) :- sc1_method_start(c, nm, _), s = min t : { sc1_method_start(c, nm, t) }.
+sc1_first(f, c, nm) :- sc1_step_method(f, c, nm), node(_, f, _, s, _), sc1_first_start(c, nm, s).
+sc1_has_first(c, nm) :- sc1_first(_, c, nm).
+sc1_method_desc(m, x) :- sc1_selected(x), inside(x, m, sc1_kfn), sc1_step_method(m, _, _).
+sc1_return(r, v) :- sc1_selected(r), node(_, r, "return_statement", _, _), child(r, v, _), sc1_selected(v).
+sc1_method_return(m, c, nm, r, v) :- sc1_return(r, v), sc1_owner(r, m), sc1_first(m, c, nm).
+sc1_call(c) :- sc1_selected(c), node(_, c, "call", _, _), field(c, "function", f), sc1_selected(f).
+sc1_full_callee(c, s) :- sc1_call(c), field(c, "function", f), sps_text(f, s).
+sc1_callee(c, s) :- sc1_call(c), field(c, "function", f), !sc1_is_attribute(f), sps_text(f, s).
+sc1_callee(c, s) :- sc1_call(c), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s).
+sc1_arg(c, a) :- sc1_call(c), field(c, "arguments", l), child(l, a, _), sc1_selected(a), node(_, a, k, _, _), !sc1_nonarg_kind(k).
+sc1_arg_pos(c, a, 0) :- sc1_arg(c, a), !sc1_arg_later(a).
+sc1_arg_pos(c, a, i) :- sc1_arg(c, a), sc1_arg_later(a), i = count : { sc1_arg_before(a, _) }.
+sc1_arg_before(a, b) :- sc1_arg(c, a), sc1_arg(c, b), node(_, a, _, s, _), node(_, b, _, t, _), t < s.
+sc1_arg_later(a) :- sc1_arg_before(a, _).
+sc1_has_arg(c) :- sc1_arg(c, _).
+sc1_kw(c, s, v) :- sc1_call(c), field(c, "arguments", l), child(l, k, _), sc1_selected(k), node(_, k, "keyword_argument", _, _), field(k, "name", kn), sc1_selected(kn), text(kn, s), field(k, "value", v), sc1_selected(v).
+sc1_has_kw(c) :- sc1_kw(c, _, _).
+sc1_attr(a, o, s) :- sc1_selected(a), node(_, a, "attribute", _, _), field(a, "object", x), sps_text(x, o), field(a, "attribute", y), sps_text(y, s).
+sc1_assign(a, l) :- sc1_selected(a), node(_, a, "assignment", _, _), field(a, "left", l), sc1_selected(l).
+sc1_assign_value(a, r) :- sc1_assign(a, _), field(a, "right", r), sc1_selected(r).
+sc1_binding(f, nm, a, s) :- sc1_assign(a, l), node(_, l, "identifier", _, _), text(l, nm), sc1_assign_value(a, _), inside(a, f, sc1_kfn), node(_, a, _, s, _).
+sc1_binding_last(f, nm, s) :- sc1_binding(f, nm, _, _), s = max t : { sc1_binding(f, nm, _, t) }.
+sc1_local_binding(f, nm, v) :- sc1_binding_last(f, nm, s), sc1_binding(f, nm, a, s), sc1_assign_value(a, v).
+sc1_empty_tables(m, c, nm) :- sc1_method_return(m, c, nm, _, v), sc1_full_callee(v, "frozenset"), !sc1_has_kw(v), !sc1_has_arg(v).
+sc1_empty_tables(m, c, nm) :- sc1_method_return(m, c, nm, _, v), sc1_full_callee(v, "frozenset"), !sc1_has_kw(v), sc1_arg(v, a), sc1_empty_seq(a), k = count : { sc1_arg(v, _) }, k = 1.
+sc1_empty_method(m) :- sc1_empty_tables(m, _, _).
+sc1_role(c, "VIRTUAL") :- sc1_method_return(_, c, "execution_role", _, v), node(_, v, "attribute", _, _), sps_text(v, "StepExecutionRole.VIRTUAL").
+sc1_role(c, "VIRTUAL") :- sc1_method_return(_, c, "execution_role", _, v), !sc1_is_attribute(v), sps_text(v, s), match("['\"]*[vV][iI][rR][tT][uU][aA][lL]['\"]*", s).
+sc1_role(c, "SQL") :- sc1_method_return(_, c, "execution_role", _, v), node(_, v, "attribute", _, _), sps_text(v, "StepExecutionRole.SQL").
+sc1_role(c, "SQL") :- sc1_method_return(_, c, "execution_role", _, v), !sc1_is_attribute(v), sps_text(v, s), match("['\"]*[sS][qQ][lL]['\"]*", s).
+sc1_level_int(c, x, s) :- sc1_step_method(m, c, "level"), sc1_method_desc(m, x), node(_, x, "integer", s, _), sc1_return(_, x).
+sc1_level_first(c, s) :- sc1_level_int(c, _, _), s = min t : { sc1_level_int(c, _, t) }.
+sc1_level0(c) :- sc1_level_first(c, s), sc1_level_int(c, x, s), sps_text(x, t), match("0+(?:[^0-9](?s:.*))?", t).
+sc1_empty_value(v) :- sc1_kw(_, _, v), sc1_none(v).
+sc1_empty_value(v) :- sc1_kw(_, _, v), sc1_string(v, s), match("['\"]*", s).
+sc1_empty_value(v) :- sc1_kw(_, _, v), sc1_empty_seq(v).
+sc1_nonempty_kw(c, nm, v) :- sc1_kw(c, nm, v), !sc1_empty_value(v).
+sc1_compiled(c) :- sc1_full_callee(c, "CompiledStep").
+sc1_grammar(c) :- sc1_compiled(c), sc1_kw(c, "grammar", v), !sc1_none(v).
+sc1_grammarless(c) :- sc1_compiled(c), !sc1_grammar(c).
+sc1_refs(c) :- sc1_compiled(c), sc1_nonempty_kw(c, "runtime_ref_ids", _).
+sc1_refs(c) :- sc1_compiled(c), sc1_nonempty_kw(c, "source_refs", _).
+sc1_sql_surface(c) :- sc1_refs(c).
+sc1_sql_surface(c) :- sc1_compiled(c), sc1_nonempty_kw(c, "auxiliary_ctes", _).
+sc1_sql_surface(c) :- sc1_grammar(c).
+sc1_compile_surface(c) :- sc1_first(m, c, "compile"), sc1_method_desc(m, x), sc1_sql_surface(x).
+sc1_zero_io_step(s) :- sc1_compiled(s), !sc1_has_arg(s), !sc1_has_kw(s).
+sc1_zero_io_step(s) :- sc1_compiled(s), sc1_kw(s, k, v), sc1_io_kw(k), !sc1_none(v).
+sc1_zero_io(c) :- sc1_step_class(c), sc1_level0(c), sc1_empty_tables(_, c, "tables_read"), sc1_empty_tables(_, c, "tables_written"), sc1_first(m, c, "compile"), sc1_method_desc(m, s), sc1_zero_io_step(s).
+sc1_resolved(c, s) :- sc1_step_method(m, c, nm), nm != "__init__", sc1_method_desc(m, b), sc1_assign(b, t), sc1_attr(t, "self", s), prefix("_", s).
+sc1_alias(m, nm, s) :- sc1_step_method(m, _, "compile"), sc1_assign(a, l), sc1_owner(a, m), node(_, l, "identifier", _, _), text(l, nm), sc1_assign_value(a, v), sc1_attr(v, "self", s), prefix("_", s).
+sc1_derived(c) :- sc1_full_callee(c, s), match("(?s:.*)[cC][tT][eE](?s:.)[oO][uU][tT][pP][uU][tT](?s:.)[cC][oO][lL][uU][mM][nN][sS]", s).
+sc1_derived(p) :- sc1_derived(c), child(p, c, _).
+sc1_derived(n) :- sc1_derived(v), sc1_local_binding(f, nm, v), node(_, n, "identifier", _, _), text(n, nm), sc1_selected(n), sc1_owner(n, f).
+sc1_postop_builder(c, b) :- sc1_kw(c, "closed_post_op", v), node(d, v, _, vs, ve), sc1_callee(b, s), sc1_builder_callee(s), node(d, b, _, bs, be), vs <= bs, be <= ve.
+sc1_has_postop(c) :- sc1_postop_builder(c, b), sc1_callee(b, "runtime_builder_post_op"), sc1_arg_pos(b, a, 0), sc1_attr(a, "RuntimeBuilderKind", _).
+sc1_has_postop(c) :- sc1_postop_builder(c, b), sc1_callee(b, "runtime_builder_post_op"), sc1_arg_pos(b, a, 1), sc1_attr(a, "RuntimeBuilderName", _).
+sc1_has_postop(c) :- sc1_postop_builder(c, b), sc1_kw(b, "kind", a), sc1_attr(a, "RuntimeBuilderKind", _).
+sc1_has_postop(c) :- sc1_postop_builder(c, b), sc1_kw(b, "builder_name", a), sc1_attr(a, "RuntimeBuilderName", _).
+sc1_bad_table_string(s) :- sc1_string(s, t), !match("['\"]*\\*['\"]*", t).
+sc1_bad_table_arg(a) :- sc1_arg_pos(_, a, 0), node(_, a, k, _, _), !sc1_seq_kind(k).
+sc1_bad_table_arg(a) :- sc1_arg_pos(_, a, 0), child(a, s, _), sc1_selected(s), sc1_bad_table_string(s).
+sc1_table_problem(m, r) :- sc1_method_return(m, _, nm, r, v), sc1_table_method(nm), sc1_full_callee(v, "frozenset"), sc1_arg_pos(v, a, 0), sc1_bad_table_arg(a).
+sc1_has_table_problem(m) :- sc1_table_problem(m, _).
+sc1_tp_start(c, nm, s) :- sc1_table_problem(m, r), sc1_first(m, c, nm), node(_, r, _, s, _).
+sc1_tp_first(c, nm, s) :- sc1_tp_start(c, nm, _), s = min t : { sc1_tp_start(c, nm, t) }.
+sc1_table_problems(c, nm, r) :- sc1_table_problem(m, r), sc1_first(m, c, nm), node(_, r, _, s, _), sc1_tp_first(c, nm, s).
+sc1_table_problems(c, nm, m) :- sc1_first(m, c, nm), sc1_table_method(nm), !sc1_empty_method(m), !sc1_has_table_problem(m).
+sc1_has_read_problem(c) :- sc1_table_problems(c, "tables_read", _).
+sc1_raises_type_error(r) :- child(r, e, _), sc1_selected(e), sps_text(e, t), sc1_type_error(t).
+sc1_raises_type_error(r) :- child(r, e, _), sc1_full_callee(e, t), sc1_type_error(t).
+sc1_row("STEP-018", n) :- sps_on("check_compile_must_not_raise"), sc1_selected(n), node(_, n, "raise_statement", _, _), child(b, n, _), field(m, "body", b), sc1_step_method(m, c, "compile"), sc1_level0(c), sc1_raises_type_error(n).
+sc1_row("STEP-023", n) :- sps_on("check_zero_io_l0_execution_role_guardrail"), sc1_zero_io(n), !sc1_has_first(n, "execution_role").
+sc1_row("STEP-024", n) :- sps_on("check_zero_io_l0_execution_role_enum_semantics"), sc1_first(n, c, "execution_role"), sc1_zero_io(c), field(n, "return_type", t), sc1_selected(t), sps_text(t, s), (s = "str" ; s = "\"str\"" ; s = "'str'").
+sc1_row("STEP-025", n) :- sps_on("check_zero_io_l0_execution_role_enum_semantics"), sc1_first(n, c, "execution_role"), sc1_zero_io(c), sc1_method_return(n, _, _, _, v), sc1_string(v, s), match("['\"]*(?:sql|virtual|apply|control)['\"]*", s).
+sc1_returns_empty_tuple(m) :- sc1_first(m, _, "cte_output_columns"), sc1_method_desc(m, r), sc1_return(r, v), node(_, v, "tuple", _, _), !sc1_sel_child(v), !sc1_sel_comment(v).
+sc1_row("STEP-034", n) :- sps_on("check_sql_visible_steps_declare_cte_type_hints"), sc1_first(n, c, "cte_output_columns"), !sc1_has_first(c, "cte_column_type_hints"), !sc1_returns_empty_tuple(n).
+sc1_row("STEP-036", n) :- sps_on("check_virtual_execute_runtime_python_shaping_guardrail"), sc1_first(n, c, "execute_runtime"), sc1_role(c, "VIRTUAL"), sc1_first(m, c, "compile"), sc1_method_desc(m, s), sc1_grammarless(s).
+sc1_value_text(x) :- sps_text(x, s), match("['\"]*value['\"]*", s).
+sc1_scalar_value(p) :- sc1_arg_pos(p, a, 0), sc1_value_text(a).
+sc1_scalar_value(p) :- sc1_kw(p, "column_name", v), sc1_value_text(v).
+sc1_row("STEP-033", n) :- sps_on("check_virtual_execute_runtime_scalar_value_guardrail"), sc1_first(n, c, "compile"), sc1_role(c, "VIRTUAL"), sc1_has_first(c, "execute_runtime"), sc1_method_desc(n, s), sc1_grammarless(s), !sc1_refs(s), sc1_kw(s, "closed_post_op", p), sc1_full_callee(p, "scalar_column_post_op"), sc1_scalar_value(p).
+sc1_row("STEP-046", n) :- sps_on("check_step_role_contract_guardrails"), sc1_first(n, c, "compile"), sc1_role(c, "VIRTUAL"), sc1_compile_surface(c).
+sc1_row("STEP-046", n) :- sps_on("check_step_role_contract_guardrails"), sc1_step_class(n), sc1_role(n, "VIRTUAL"), sc1_has_first(n, "cte_publication_contract").
+sc1_row("STEP-046", n) :- sps_on("check_step_role_contract_guardrails"), sc1_step_class(n), sc1_role(n, "VIRTUAL"), sc1_has_first(n, "publication_contract").
+sc1_row("STEP-047", n) :- sps_on("check_step_role_contract_guardrails"), sc1_step_class(n), sc1_role(n, "VIRTUAL"), sc1_has_first(n, "execute_runtime").
+sc1_row("STEP-047", n) :- sps_on("check_step_role_contract_guardrails"), sc1_step_class(n), sc1_role(n, "VIRTUAL"), sc1_has_first(n, "execute_runtime_async").
+sc1_row("STEP-047", n) :- sps_on("check_step_role_contract_guardrails"), sc1_step_class(n), sc1_role(n, "VIRTUAL"), sc1_method_return(_, n, "is_executor_owned_runtime_step", _, v), node(_, v, "true", _, _).
+sc1_row("STEP-048", n) :- sps_on("check_step_role_contract_guardrails"), sc1_first(n, c, "step_tags"), sc1_role(c, "VIRTUAL"), sc1_method_desc(n, s), sc1_string(s, t), match("['\"]*(?:__exists|delete|grammar|insert|query|read|update|validation)['\"]*", t).
+sc1_row("STEP-049", n) :- sps_on("check_step_role_contract_guardrails"), sc1_first(n, c, "supports_sql_batch_transport"), !sc1_role(c, "SQL"), sc1_method_return(n, _, _, _, v), node(_, v, "true", _, _), !sc1_has_first(c, "cte_publication_contract"), !sc1_compile_surface(c).
+sc1_row("STEP-050", n) :- sps_on("check_step_role_contract_guardrails"), sc1_first(n, c, "emits_sql_for_accounting"), sc1_method_return(n, _, _, _, v), node(_, v, "false", _, _), sc1_compile_surface(c).
+sc1_cond(n, m, c, q) :- sc1_selected(n), node(_, n, k, _, _), sc1_branch_kind(k), sc1_owner(n, m), sc1_step_method(m, c, "compile"), field(n, "condition", q), sc1_selected(q).
+sc1_cond_desc(q, q) :- sc1_cond(_, _, _, q).
+sc1_cond_desc(q, x) :- sc1_cond_desc(q, y), child(y, x, _).
+sc1_row("STEP-016", n) :- sps_on("check_compile_no_data_branching"), sc1_cond(n, _, c, q), sc1_cond_desc(q, x), sc1_attr(x, "self", a), sc1_resolved(c, a).
+sc1_row("STEP-016", n) :- sps_on("check_compile_no_data_branching"), sc1_cond(n, m, c, q), sc1_cond_desc(q, x), sc1_selected(x), node(_, x, "identifier", _, _), sps_text(x, t), sc1_alias(m, t, a), sc1_resolved(c, a).
+sc1_type_hints_call(n) :- sc1_callee(n, "SqlColumnTypeHints"), sc1_step_method(m, _, "cte_column_type_hints"), sc1_method_desc(m, n).
+sc1_row("STEP-040", n) :- sps_on("check_cte_type_hints_not_inferred_from_column_names"), sc1_type_hints_call(n), sc1_arg(n, a), sc1_derived(a).
+sc1_row("STEP-040", n) :- sps_on("check_cte_type_hints_not_inferred_from_column_names"), sc1_type_hints_call(n), sc1_kw(n, _, v), sc1_derived(v).
+sc1_row("STEP-040", n) :- sps_on("check_cte_type_hints_not_inferred_from_column_names"), sc1_type_hints_call(n), sc1_selected(x), node(_, x, k, _, _), sc1_computed_kind(k), inside(x, n, sc1_kcall).
+sc1_row("STEP-033", n) :- sps_on("check_runtime_refs_without_sql_grammar_guardrail"), sc1_grammarless(c), sc1_nonempty_kw(c, "runtime_ref_ids", n), !sc1_has_postop(c).
+sc1_row("STEP-045", n) :- sps_on("check_step_role_contract_guardrails"), sc1_table_problems(c, "tables_read", n), sc1_role(c, "VIRTUAL").
+sc1_row("STEP-045", n) :- sps_on("check_step_role_contract_guardrails"), sc1_table_problems(c, _, n), sc1_role(c, "VIRTUAL"), !sc1_has_read_problem(c).
+violation("data-layer-serverplan-steps", "step-contracts-1", code, p, l) :- sc1_row(code, n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+sc3_m_stmt(n) :- child(p, n, _), node(_, p, "module", _, _).
+sc3_m_stmt(n) :- child(b, n, _), node(_, b, "block", _, _), child(c, b, _), node(_, c, "class_definition", _, _).
+sc3_m_region(n) :- node(_, n, "module", _, _).
+sc3_m_region(n) :- node(_, n, "expression_statement", _, _), sc3_m_stmt(n).
+sc3_m_region(n) :- node(_, n, "class_definition", _, _).
+sc3_m_region(n) :- node(_, n, "function_definition", _, _).
+sc3_m_region(n) :- node(_, n, "decorated_definition", _, _).
+sc3_m_region(n) :- node(_, n, "argument_list", _, _), child(c, n, _), node(_, c, "class_definition", _, _).
+sc3_m_region(n) :- child(a, n, _), node(_, a, "argument_list", _, _), child(c, a, _), node(_, c, "class_definition", _, _).
+sc3_rawresult_param(x) :- node(_, x, k, _, _), sc3_k_typed(k), sps_text(x, s), contains("RawResult", s).
+sc3_raw_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, x, _), node(_, x, "identifier", _, _), text(x, s), (s = "raw" ; s = "raw_rows" ; s = "rows").
+sc3_raw_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, x, _), sc3_rawresult_param(x).
+sc3_raw_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, "materialize").
+sc3_kw_call(c) :- node(_, c, "call", _, _), field(c, "arguments", a), child(a, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", x), node(_, x, "identifier", _, _), text(x, s), (s = "literal_payload" ; s = "row_materializer" ; s = "terminal_literal").
+sc3_sel(n) :- sc3_m_region(n).
+sc3_sel(n) :- inside(n, f, sc3_k_fn), sc3_raw_fn(f).
+sc3_sel(n) :- sc3_kw_call(n).
+sc3_sel(n) :- inside(n, c, sc3_k_call), sc3_kw_call(c).
+sc3_fn_name(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+sc3_class(c, s) :- node(_, c, "class_definition", _, _), field(c, "name", x), text(x, s).
+sc3_method(f, c, s) :- sc3_fn_name(f, s), child(b, f, _), field(c, "body", b), node(_, c, "class_definition", _, _).
+sc3_method(f, c, s) :- sc3_fn_name(f, s), child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(b, dd, _), field(c, "body", b), node(_, c, "class_definition", _, _).
+sc3_call(c, f) :- sc3_sel(c), node(_, c, "call", _, _), field(c, "function", f), sc3_sel(f).
+sc3_call_full(c, s) :- sc3_call(c, f), sps_text(f, s).
+sc3_call_callee(c, s) :- sc3_call(c, f), node(_, f, "attribute", _, _), field(f, "attribute", x), text(x, s).
+sc3_call_callee(c, s) :- sc3_call(c, f), !node(_, f, "attribute", _, _), sps_text(f, s).
+sc3_arg(c, a) :- sc3_call(c, _), field(c, "arguments", l), child(l, a, _), sc3_sel(a), node(_, a, k, _, _), !sc3_k_nonarg(k).
+sc3_arg_later(c, a) :- sc3_arg(c, a), node(_, a, _, sa, _), sc3_arg(c, b), node(_, b, _, sb, _), sb < sa.
+sc3_arg0(c, a) :- sc3_arg(c, a), !sc3_arg_later(c, a).
+sc3_kw(c, s, v) :- sc3_call(c, _), field(c, "arguments", l), child(l, k, _), sc3_sel(k), node(_, k, "keyword_argument", _, _), field(k, "name", kn), sc3_sel(kn), text(kn, s), field(k, "value", v), sc3_sel(v).
+sc3_param(f, p) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, p, _), sc3_sel(p), node(_, p, k, _, _), sc3_k_param(k).
+sc3_param_earlier(p, i) :- sc3_param(_, p), child(p, _, i), child(p, m, j), j < i, sc3_sel(m).
+sc3_param_name(f, p, s) :- sc3_param(f, p), node(_, p, "identifier", _, _), text(p, s).
+sc3_param_name(f, p, s) :- sc3_param(f, p), child(p, n, i), sc3_sel(n), !sc3_param_earlier(p, i), node(_, n, "identifier", _, _), text(n, s).
+sc3_rawresult_type(t) :- inside(x, t, sc3_k_type), sc3_sel(x), node(_, x, "identifier", _, _), text(x, "RawResult").
+sc3_rawresult_type(t) :- inside(x, t, sc3_k_type), sc3_sel(x), node(_, x, k, _, _), sc3_k_str(k), sps_text(x, s), contains("RawResult", s).
+sc3_raw_param(f, s) :- sc3_param_name(f, _, s), (s = "raw" ; s = "raw_rows" ; s = "rows").
+sc3_raw_param(f, s) :- sc3_param_name(f, p, s), field(p, "type", t), sc3_sel(t), sc3_rawresult_type(t).
+sc3_has_raw_param(f) :- sc3_raw_param(f, _).
+sc3_shaper(d, s) :- sc3_fn_name(f, s), node(d, f, _, _, _), sc3_raw_param(f, pn), inside(n, f, sc3_k_fn), sc3_sel(n), node(_, n, k, _, _), sc3_k_loop(k), field(n, "right", rt), sc3_sel(rt), node(_, rt, _, rs, re), inside(r, f, sc3_k_fn), sc3_sel(r), node(_, r, "identifier", s1, e1), text(r, pn), rs <= s1, e1 <= re.
+sc3_shaper(d, s) :- sc3_fn_name(f, s), node(d, f, _, _, _), sc3_raw_param(f, pn), inside(c, f, sc3_k_fn), sc3_call_full(c, cs), sc3_k_copy(cs), sc3_arg0(c, a), node(_, a, _, ast, ae), inside(r, c, sc3_k_call), sc3_sel(r), node(_, r, "identifier", s1, e1), text(r, pn), ast <= s1, e1 <= ae.
+sc3_shaper(d, s) :- sc3_fn_name(f, s), node(d, f, _, _, _), sc3_has_raw_param(f), inside(c, f, sc3_k_fn), sc3_call_full(c, t), sc3_shaper(d, t).
+sc3_shaping_cls(c) :- sc3_method(m, c, "materialize"), node(d, m, _, _, _), sc3_shaper(d, "materialize").
+sc3_shaping_cls(c) :- sc3_method(m, c, "materialize"), node(d, m, _, _, _), inside(x, m, sc3_k_fn), sc3_call_full(x, t), sc3_shaper(d, t).
+sc3_bad(n) :- sc3_shaping_cls(c), sc3_class(c, s), node(d, c, _, _, _), node(d, n, "identifier", _, _), text(n, s), sc3_sel(n).
+sc3_bad(n) :- sc3_shaping_cls(c), sc3_class(c, s), node(d, c, _, _, _), sc3_call_callee(n, s), node(d, n, _, _, _).
+sc3_has_literal_payload(c) :- sc3_kw(c, "literal_payload", _).
+sc3_payload(v) :- sc3_kw(c, "literal_payload", v), sc3_call_callee(c, "ResultMaterializationSpec").
+sc3_payload(v) :- sc3_kw(c, "terminal_literal", v), sc3_call_callee(c, "ResultMaterializationSpec"), !sc3_has_literal_payload(c).
+sc3_payload(x) :- sc3_payload(n), sc3_sel(n), node(_, n, k, _, _), sc3_k_container(k), child(n, x, _), sc3_sel(x).
+sc3_payload(x) :- sc3_payload(n), sc3_kw(n, _, x).
+sc3_payload(x) :- sc3_payload(n), sc3_arg(n, x).
+sc3_payload(x) :- sc3_payload(n), sc3_sel(n), node(_, n, "pair", _, _), field(n, "value", x).
+violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :- sc3_kw(_, "row_materializer", n), sc3_bad(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_row_materializer_raw_row_shaping_guardrail").
+violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :- sc3_payload(n), sc3_sel(n), sc3_bad(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_literal_payload_materializer_dispatch_guardrail").
+sc4_m277(n) :- child(v274, n, _), node(_, v274, "module", _, _).
+sc4_m277(n) :- child(v275, n, _), node(_, v275, "block", _, _), child(v276, v275, _), node(_, v276, "class_definition", _, _).
+sc4_m281(n) :- node(_, n, "module", _, _).
+sc4_m281(n) :- node(_, n, "expression_statement", _, _), sc4_m277(n).
+sc4_m281(n) :- node(_, n, "class_definition", _, _).
+sc4_m281(n) :- node(_, n, "function_definition", _, _).
+sc4_m281(n) :- node(_, n, "decorated_definition", _, _).
+sc4_m281(n) :- node(_, n, "argument_list", _, _), child(v278, n, _), node(_, v278, "class_definition", _, _).
+sc4_m281(n) :- child(v279, n, _), node(_, v279, "argument_list", _, _), child(v280, v279, _), node(_, v280, "class_definition", _, _).
+sc4_m289(n) :- field(n, "right", v282), node(_, v282, "lambda", _, _).
+sc4_m289(n) :- field(n, "left", v283), sps_text(v283, v284), icontains("runtime", v284), sps_text(v283, v285), (icontains("callable", v285) ; icontains("callback", v285) ; icontains("effect", v285) ; icontains("function", v285) ; icontains("hook", v285)).
+sc4_m289(n) :- inside(n, v286, sc4_k4), node(_, v286, "class_definition", _, _), field(v286, "name", v287), node(_, v287, "identifier", _, _), text(v287, v288), v288 = "RuntimeBuilderKind".
+sc4_m298(n) :- field(n, "right", v291), node(_, v291, "lambda", _, _).
+sc4_m298(n) :- field(n, "left", v292), sps_text(v292, v293), icontains("runtime", v293), sps_text(v292, v294), (icontains("callable", v294) ; icontains("callback", v294) ; icontains("effect", v294) ; icontains("function", v294) ; icontains("hook", v294)).
+sc4_m298(n) :- inside(n, v295, sc4_k4), node(_, v295, "class_definition", _, _), field(v295, "name", v296), node(_, v296, "identifier", _, _), text(v296, v297), v297 = "RuntimeBuilderKind".
+sc4_m303(n) :- node(_, n, "identifier", _, _), text(n, v300), (v300 = "RuntimeBuilderSpec" ; v300 = "runtime_builder_post_op" ; v300 = "runtime_op_post_op").
+sc4_m303(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v301), node(_, v301, "identifier", _, _), text(v301, v302), (v302 = "RuntimeBuilderSpec" ; v302 = "runtime_builder_post_op" ; v302 = "runtime_op_post_op").
+sc4_m308(n) :- node(_, n, "call", _, _), field(n, "function", v299), sc4_m303(v299).
+sc4_m308(n) :- node(_, n, "call", _, _), field(n, "function", v304), sps_text(v304, v305), icontains("runtime", v305), sps_text(v304, v306), icontains("register", v306), sps_text(v304, v307), (icontains("callable", v307) ; icontains("callback", v307) ; icontains("effect", v307) ; icontains("function", v307) ; icontains("hook", v307) ; icontains("processor", v307) ; icontains("transform", v307)).
+sc4_m314(n) :- node(_, n, "identifier", _, _), text(n, v311), (v311 = "RuntimeBuilderSpec" ; v311 = "runtime_builder_post_op" ; v311 = "runtime_op_post_op").
+sc4_m314(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v312), node(_, v312, "identifier", _, _), text(v312, v313), (v313 = "RuntimeBuilderSpec" ; v313 = "runtime_builder_post_op" ; v313 = "runtime_op_post_op").
+sc4_m319(n) :- node(_, n, "call", _, _), field(n, "function", v310), sc4_m314(v310).
+sc4_m319(n) :- node(_, n, "call", _, _), field(n, "function", v315), sps_text(v315, v316), icontains("runtime", v316), sps_text(v315, v317), icontains("register", v317), sps_text(v315, v318), (icontains("callable", v318) ; icontains("callback", v318) ; icontains("effect", v318) ; icontains("function", v318) ; icontains("hook", v318) ; icontains("processor", v318) ; icontains("transform", v318)).
+sc4_m320(n) :- sc4_m281(n).
+sc4_m320(n) :- node(_, n, "assignment", _, _), sc4_m289(n).
+sc4_m320(n) :- child(v290, n, _), node(_, v290, "assignment", _, _), sc4_m298(v290).
+sc4_m320(n) :- sc4_m308(n).
+sc4_m320(n) :- inside(n, v309, sc4_k2), sc4_m319(v309).
+sc4_selected(n) :- sc4_m320(n).
+sc4_named2(n) :- sc4_selected(n), node(_, n, k, _, _), sc4_k_named(k), sps_text(n, s), match("(?s:.*)(?:[cC][aA][lL][lL][aA][bB][lL][eE]|[cC][aA][lL][lL][bB][aA][cC][kK]|[cC][lL][oO][sS][uU][rR][eE]|[fF][uU][nN][cC][tT][iI][oO][nN]|[lL][aA][mM][bB][dD][aA]|[pP][aA][rR][tT][iI][aA][lL])(?s:.*)", s).
+sc4_sel_child(p, n, i) :- child(p, n, i), sc4_selected(n), node(_, p, k, _, _), sc4_k_ordp(k).
+sc4_sel_comment(p, s) :- node(_, p, k, _, _), sc4_k_ordp(k), token(p, _, t, s, _), prefix("#", t), inside(p, c, sc4_k2), sc4_m319(c).
+sc4_sel_start(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _).
+sc4_sel_start(p, s) :- sc4_sel_comment(p, s).
+sc4_sel_before(p, s) :- sc4_sel_start(p, s), sc4_sel_start(p, t), t < s.
+sc4_ord(n, 0) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), !sc4_sel_before(p, s).
+rr_ctx2(s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s).
+rr_agg1(p, s, t) :- rr_ctx2(s), sc4_sel_start(p, t), t < s.
+sc4_ord(n, o) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s), o = count : { rr_agg1(p, s, _) }.
+sc4_fn_name(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+sc4_class(c, s) :- node(_, c, "class_definition", _, _), field(c, "name", x), text(x, s).
+sc4_attr(a) :- sc4_selected(a), node(_, a, "attribute", _, _).
+sc4_call(c, f) :- sc4_selected(c), node(_, c, "call", _, _), field(c, "function", f), sc4_selected(f).
+sc4_call_full(c, s) :- sc4_call(c, f), sps_text(f, s).
+sc4_callee(c, s) :- sc4_call(c, f), node(_, f, "attribute", _, _), field(f, "attribute", x), text(x, s).
+sc4_callee(c, s) :- sc4_call(c, f), !node(_, f, "attribute", _, _), sps_text(f, s).
+sc4_arg(c, a) :- sc4_call(c, _), field(c, "arguments", l), child(l, a, _), sc4_selected(a), node(_, a, k, _, _), !sc4_k_nonarg(k).
+sc4_arg_before(c, a, b) :- sc4_arg(c, a), node(_, a, _, sa, _), sc4_arg(c, b), node(_, b, _, sb, _), sb < sa.
+sc4_arg_later(c, a) :- sc4_arg_before(c, a, _).
+sc4_argpos(c, a, 0) :- sc4_arg(c, a), !sc4_arg_later(c, a).
+sc4_argpos(c, a, p) :- sc4_arg_later(c, a), p = count : { sc4_arg_before(c, a, _) }.
+sc4_kw(c, s, v) :- sc4_call(c, _), field(c, "arguments", l), child(l, k, _), sc4_selected(k), node(_, k, "keyword_argument", _, _), field(k, "name", kn), sc4_selected(kn), text(kn, s), field(k, "value", v), sc4_selected(v).
+sc4_return_value(f, v) :- sc4_selected(r), node(_, r, "return_statement", _, _), child(r, v, _), sc4_selected(v), nearest(r, f, sc4_k_fn).
+sc4_asg(n, l) :- sc4_selected(n), node(_, n, "assignment", _, _), field(n, "left", l), sc4_selected(l).
+sc4_asg_value(n, r) :- sc4_asg(n, _), field(n, "right", r), sc4_selected(r).
+sc4_expr_edge(c, p) :- sc4_selected(p), node(_, p, k, _, _), sc4_k_expr_container(k), child(p, c, _), sc4_selected(c).
+sc4_expr_edge(c, p) :- sc4_selected(p), node(_, p, "pair", _, _), child(p, c, _), sc4_ord(c, 1).
+sc4_expr_edge(c, p) :- sc4_selected(p), node(_, p, "dictionary", _, _), child(p, c, _), sc4_selected(c).
+sc4_expr_edge(a, c) :- sc4_arg(c, a).
+sc4_expr_edge(v, c) :- sc4_kw(c, _, v).
+sc4_expr_edge(v, c) :- sc4_call_full(c, t), node(d, c, _, _, _), sc4_fn_name(f, t), node(d, f, _, _, _), sc4_return_value(f, v).
+sc4_callable_edge(o, a) :- sc4_attr(a), field(a, "object", o).
+sc4_callable_edge(x, a) :- sc4_attr(a), field(a, "attribute", x).
+sc4_callable_edge(f, c) :- sc4_call(c, f).
+sc4_callable_edge(a, c) :- sc4_arg(c, a).
+sc4_callable_edge(v, c) :- sc4_kw(c, _, v).
+sc4_callable_edge(c, n) :- sc4_selected(n), node(_, n, k, _, _), sc4_k_callable_wrap(k), child(n, c, _), sc4_ord(c, 0).
+sc4_user_callable(n) :- sc4_selected(n), node(_, n, "lambda", _, _).
+sc4_user_callable(n) :- sc4_selected(n), node(_, n, "identifier", _, _), text(n, s), match("(?s:.*)(?:[cC][aA][lL][lL][aA][bB][lL][eE]|[cC][aA][lL][lL][bB][aA][cC][kK]|[dD][eE][cC][oO][dD][eE][rR]|[fF][nN]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK]|[mM][aA][pP][pP][eE][rR]|[pP][iI][cC][kK][eE][rR]|[pP][rR][oO][cC][eE][sS][sS][oO][rR]|[pP][rR][oO][jJ][eE][cC][tT][oO][rR]|[tT][rR][aA][nN][sS][fF][oO][rR][mM])(?s:.*)", s).
+sc4_user_callable(t) :- sc4_user_callable(s), sc4_callable_edge(s, t).
+sc4_lambda_target(d, s) :- sc4_asg_value(a, r), node(_, r, "lambda", _, _), sc4_asg(a, l), sps_text(l, s), node(d, a, _, _, _).
+sc4_direct_callable(n) :- sc4_selected(n), node(_, n, "lambda", _, _).
+sc4_direct_callable(n) :- sc4_selected(n), node(d, n, "identifier", _, _), text(n, s), sc4_fn_name(f, s), node(d, f, _, _, _).
+sc4_direct_callable(n) :- sc4_selected(n), node(d, n, "identifier", _, _), text(n, s), sc4_lambda_target(d, s).
+sc4_direct_callable(c) :- sc4_call_full(c, "partial").
+sc4_direct_callable(c) :- sc4_call_full(c, "functools.partial").
+sc4_direct_callable(t) :- sc4_direct_callable(s), sc4_expr_edge(s, t), sc4_selected(t), !node(_, t, "identifier", _, _).
+sc4_mutable(n) :- sc4_selected(n), node(_, n, k, _, _), sc4_k_mutable(k).
+sc4_mutable(p) :- sc4_mutable(m), child(p, m, _), node(_, p, "tuple", _, _), sc4_selected(p).
+sc4_builder(c, s) :- sc4_callee(c, s), sc4_k_builder(s).
+sc4_literal_kwargs(v) :- sc4_kw(c, "literal_kwargs", v), sc4_builder(c, "RuntimeBuilderSpec").
+sc4_literal_pair(v, kn, x) :- sc4_literal_kwargs(v), child(v, p, _), sc4_selected(p), node(_, p, pk, _, _), sc4_k_pair(pk), child(p, kn, _), sc4_ord(kn, 0), node(_, kn, kk, _, _), sc4_k_str(kk), child(p, x, _), sc4_ord(x, 1).
+sc4_key_builder(kn) :- sc4_literal_pair(_, kn, _), sps_text(kn, s), match("['\"]*[bB][uU][iI][lL][dD][eE][rR]['\"]*", s).
+sc4_hit(n) :- sc4_asg(n, l), node(_, l, k, _, _), sc4_k_target(k), sps_text(l, s), match("(?s:.*)[rR][uU][nN][tT][iI][mM][eE](?s:.*)", s), match("(?s:.*)(?:[cC][aA][lL][lL][bB][aA][cC][kK]|[cC][aA][lL][lL][aA][bB][lL][eE]|[eE][fF][fF][eE][cC][tT]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK])(?s:.*)", s).
+sc4_kind_member(n) :- sc4_asg(n, _), child(e, n, _), sc4_selected(e), node(_, e, "expression_statement", _, _), child(b, e, _), field(c, "body", b), sc4_class(c, "RuntimeBuilderKind").
+sc4_hit(n) :- sc4_kind_member(n), sc4_asg(n, l), node(_, l, "identifier", _, _), sc4_named2(l).
+sc4_hit(n) :- sc4_kind_member(n), sc4_asg_value(n, r), node(_, r, k, _, _), sc4_k_str(k), sc4_named2(r).
+sc4_hit(n) :- sc4_call_full(n, s), match("(?s:.*)[rR][uU][nN][tT][iI][mM][eE](?s:.*)", s), match("(?s:.*)[rR][eE][gG][iI][sS][tT][eE][rR](?s:.*)", s), match("(?s:.*)(?:[cC][aA][lL][lL][bB][aA][cC][kK]|[cC][aA][lL][lL][aA][bB][lL][eE]|[eE][fF][fF][eE][cC][tT]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK]|[pP][rR][oO][cC][eE][sS][sS][oO][rR]|[tT][rR][aA][nN][sS][fF][oO][rR][mM])(?s:.*)", s).
+sc4_hit(n) :- sc4_builder(n, "runtime_builder_post_op"), sc4_argpos(n, a, 0), node(_, a, k, _, _), sc4_k_target(k), sc4_named2(a).
+sc4_hit(n) :- sc4_builder(n, "runtime_builder_post_op"), sc4_argpos(n, a, 1), node(_, a, k, _, _), sc4_k_str(k), sc4_named2(a).
+sc4_hit(n) :- sc4_builder(n, "runtime_op_post_op"), sc4_argpos(n, a, 0), node(_, a, k, _, _), sc4_k_str(k), sc4_named2(a).
+sc4_hit(n) :- sc4_builder(n, e), e != "runtime_op_post_op", sc4_kw(n, "kind", v), node(_, v, k, _, _), sc4_k_target(k), sc4_named2(v).
+sc4_hit(n) :- sc4_builder(n, _), sc4_kw(n, "builder_name", v), node(_, v, k, _, _), sc4_k_str(k), sc4_named2(v).
+sc4_builder_kw(s, v) :- sc4_kw(c, s, v), sc4_builder(c, _).
+sc4_hit(n) :- sc4_builder_kw(s, n), match("[bB][uU][iI][lL][dD][eE][rR]", s).
+sc4_hit(n) :- sc4_builder_kw(s, n), match("(?s:.*)(?:[cC][aA][lL][lL][aA][bB][lL][eE]|[cC][aA][lL][lL][bB][aA][cC][kK]|[cC][lL][oO][sS][uU][rR][eE]|[dD][eE][cC][oO][dD][eE][rR]|[eE][fF][fF][eE][cC][tT]_[iI][dD]|[fF][nN]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK]|[lL][aA][mM][bB][dD][aA]|[mM][aA][pP][pP][eE][rR]|[pP][aA][rR][tT][iI][aA][lL]|[pP][iI][cC][kK][eE][rR]|[pP][rR][oO][cC][eE][sS][sS][oO][rR]|[pP][rR][oO][jJ][eE][cC][tT][oO][rR]|[rR][eE][gG][iI][sS][tT][rR][yY]_[iI][dD]|[tT][rR][aA][nN][sS][fF][oO][rR][mM])(?s:.*)", s).
+sc4_hit(n) :- sc4_builder_kw(_, n), sc4_user_callable(n).
+sc4_hit(n) :- sc4_builder_kw(_, n), sc4_direct_callable(n).
+sc4_hit(n) :- sc4_builder_kw(s, n), s != "literal_kwargs", sc4_mutable(n).
+sc4_hit(n) :- sc4_literal_pair(n, kn, _), sc4_named2(kn).
+sc4_hit(n) :- sc4_literal_pair(n, kn, _), sc4_key_builder(kn).
+sc4_hit(n) :- sc4_literal_pair(n, _, x), sc4_user_callable(x).
+sc4_hit(n) :- sc4_literal_kwargs(n), sc4_user_callable(n).
+sc4_hit(n) :- sc4_literal_pair(n, _, x), sc4_direct_callable(x).
+sc4_hit(n) :- sc4_literal_kwargs(n), sc4_direct_callable(n).
+sc4_hit(n) :- sc4_literal_kwargs(n), sc4_mutable(n).
+violation("data-layer-serverplan-steps", "step-contracts-4", "STEP-029", p, l) :- sc4_hit(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_closed_post_op_runtime_builder_no_callable_escape_hatches").
+sc6_m430(n) :- child(v427, n, _), node(_, v427, "module", _, _).
+sc6_m430(n) :- child(v428, n, _), node(_, v428, "block", _, _), child(v429, v428, _), node(_, v429, "class_definition", _, _).
+sc6_m434(n) :- node(_, n, "module", _, _).
+sc6_m434(n) :- node(_, n, "expression_statement", _, _), sc6_m430(n).
+sc6_m434(n) :- node(_, n, "class_definition", _, _).
+sc6_m434(n) :- node(_, n, "function_definition", _, _).
+sc6_m434(n) :- node(_, n, "decorated_definition", _, _).
+sc6_m434(n) :- node(_, n, "argument_list", _, _), child(v431, n, _), node(_, v431, "class_definition", _, _).
+sc6_m434(n) :- child(v432, n, _), node(_, v432, "argument_list", _, _), child(v433, v432, _), node(_, v433, "class_definition", _, _).
+sc6_m439(n) :- node(_, n, "identifier", _, _), text(n, v436), v436 = "CompiledStep".
+sc6_m439(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v437), node(_, v437, "identifier", _, _), text(v437, v438), v438 = "CompiledStep".
+sc6_m444(n) :- node(_, n, "identifier", _, _), text(n, v441), (v441 = "ResultAssertionSpec" ; v441 = "ResultMaterializationSpec" ; v441 = "assert_result" ; v441 = "materialize" ; v441 = "static_exception_post_op").
+sc6_m444(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v442), node(_, v442, "identifier", _, _), text(v442, v443), (v443 = "ResultAssertionSpec" ; v443 = "ResultMaterializationSpec" ; v443 = "assert_result" ; v443 = "materialize" ; v443 = "static_exception_post_op").
+sc6_m445(n) :- node(_, n, "call", _, _), field(n, "function", v435), sc6_m439(v435).
+sc6_m445(n) :- node(_, n, "call", _, _), field(n, "function", v440), sc6_m444(v440).
+sc6_m447(n) :- sc6_m445(n).
+sc6_m447(n) :- node(_, n, "call", _, _), child(v446, n, _), node(_, v446, "return_statement", _, _).
+sc6_m453(n) :- node(_, n, "identifier", _, _), text(n, v450), v450 = "CompiledStep".
+sc6_m453(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v451), node(_, v451, "identifier", _, _), text(v451, v452), v452 = "CompiledStep".
+sc6_m458(n) :- node(_, n, "identifier", _, _), text(n, v455), (v455 = "ResultAssertionSpec" ; v455 = "ResultMaterializationSpec" ; v455 = "assert_result" ; v455 = "materialize" ; v455 = "static_exception_post_op").
+sc6_m458(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v456), node(_, v456, "identifier", _, _), text(v456, v457), (v457 = "ResultAssertionSpec" ; v457 = "ResultMaterializationSpec" ; v457 = "assert_result" ; v457 = "materialize" ; v457 = "static_exception_post_op").
+sc6_m459(n) :- node(_, n, "call", _, _), field(n, "function", v449), sc6_m453(v449).
+sc6_m459(n) :- node(_, n, "call", _, _), field(n, "function", v454), sc6_m458(v454).
+sc6_m461(n) :- sc6_m459(n).
+sc6_m461(n) :- node(_, n, "call", _, _), child(v460, n, _), node(_, v460, "return_statement", _, _).
+sc6_m468(n) :- node(_, n, "identifier", _, _), text(n, v465), v465 = "CompiledStep".
+sc6_m468(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v466), node(_, v466, "identifier", _, _), text(v466, v467), v467 = "CompiledStep".
+sc6_m473(n) :- node(_, n, "identifier", _, _), text(n, v470), (v470 = "ResultAssertionSpec" ; v470 = "ResultMaterializationSpec" ; v470 = "assert_result" ; v470 = "materialize" ; v470 = "static_exception_post_op").
+sc6_m473(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v471), node(_, v471, "identifier", _, _), text(v471, v472), (v472 = "ResultAssertionSpec" ; v472 = "ResultMaterializationSpec" ; v472 = "assert_result" ; v472 = "materialize" ; v472 = "static_exception_post_op").
+sc6_m474(n) :- node(_, n, "call", _, _), field(n, "function", v464), sc6_m468(v464).
+sc6_m474(n) :- node(_, n, "call", _, _), field(n, "function", v469), sc6_m473(v469).
+sc6_m476(n) :- sc6_m474(n).
+sc6_m476(n) :- node(_, n, "call", _, _), child(v475, n, _), node(_, v475, "return_statement", _, _).
+sc6_m484(n) :- node(_, n, "identifier", _, _), text(n, v481), v481 = "CompiledStep".
+sc6_m484(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v482), node(_, v482, "identifier", _, _), text(v482, v483), v483 = "CompiledStep".
+sc6_m489(n) :- node(_, n, "identifier", _, _), text(n, v486), (v486 = "ResultAssertionSpec" ; v486 = "ResultMaterializationSpec" ; v486 = "assert_result" ; v486 = "materialize" ; v486 = "static_exception_post_op").
+sc6_m489(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v487), node(_, v487, "identifier", _, _), text(v487, v488), (v488 = "ResultAssertionSpec" ; v488 = "ResultMaterializationSpec" ; v488 = "assert_result" ; v488 = "materialize" ; v488 = "static_exception_post_op").
+sc6_m490(n) :- node(_, n, "call", _, _), field(n, "function", v480), sc6_m484(v480).
+sc6_m490(n) :- node(_, n, "call", _, _), field(n, "function", v485), sc6_m489(v485).
+sc6_m492(n) :- sc6_m490(n).
+sc6_m492(n) :- node(_, n, "call", _, _), child(v491, n, _), node(_, v491, "return_statement", _, _).
+sc6_m493(n) :- sc6_m447(n).
+sc6_m493(n) :- child(v448, n, _), sc6_m461(v448).
+sc6_m493(n) :- child(v462, n, _), node(_, v462, "argument_list", _, _), child(v463, v462, _), sc6_m476(v463).
+sc6_m493(n) :- child(v477, n, _), node(_, v477, "keyword_argument", _, _), child(v478, v477, _), node(_, v478, "argument_list", _, _), child(v479, v478, _), sc6_m492(v479).
+sc6_m499(n) :- field(n, "attribute", v496), name(v496, v497), (icontains("callable", v497) ; icontains("callback", v497) ; icontains("decoder", v497) ; icontains("fn", v497) ; icontains("function", v497) ; icontains("hook", v497) ; icontains("mapper", v497) ; icontains("picker", v497) ; icontains("processor", v497) ; icontains("projector", v497) ; icontains("row_decoder", v497) ; icontains("transform", v497)).
+sc6_m499(n) :- field(n, "object", v498), sc6_u494(v498).
+sc6_m504(n) :- sc6_u494(n).
+sc6_m504(n) :- node(_, n, "keyword_argument", _, _), field(n, "value", v503), sc6_u494(v503).
+sc6_m505(n) :- field(n, "function", v500), sc6_u494(v500).
+sc6_m505(n) :- field(n, "arguments", v501), child(v501, v502, _), sc6_m504(v502).
+sc6_m508(n) :- node(_, n, "lambda", _, _).
+sc6_m508(n) :- node(_, n, "identifier", _, _), text(n, v495), (icontains("callable", v495) ; icontains("callback", v495) ; icontains("decoder", v495) ; icontains("fn", v495) ; icontains("function", v495) ; icontains("hook", v495) ; icontains("mapper", v495) ; icontains("picker", v495) ; icontains("processor", v495) ; icontains("projector", v495) ; icontains("row_decoder", v495) ; icontains("transform", v495)).
+sc6_m508(n) :- node(_, n, "attribute", _, _), sc6_m499(n).
+sc6_m508(n) :- node(_, n, "call", _, _), sc6_m505(n).
+sc6_m508(n) :- node(_, n, "subscript", _, _), field(n, "value", v506), sc6_u494(v506).
+sc6_m508(n) :- node(_, n, "parenthesized_expression", _, _), child(n, v507, _), sc6_u494(v507).
+sc6_m515(n) :- sc6_m434(n).
+sc6_m515(n) :- sc6_m493(n).
+sc6_m515(n) :- node(_, n, "call", _, _), sc6_u494(n).
+sc6_m515(n) :- inside(n, v509, sc6_k2), node(_, v509, "call", _, _), sc6_u494(v509).
+sc6_m515(n) :- node(_, n, "assignment", _, _), field(n, "left", v510), node(_, v510, "identifier", _, _), text(v510, v511), v511 = "CLOSED_POST_OP_STRICT".
+sc6_m515(n) :- child(v512, n, _), node(_, v512, "assignment", _, _), field(v512, "left", v513), node(_, v513, "identifier", _, _), text(v513, v514), v514 = "CLOSED_POST_OP_STRICT".
+sc6_u494(n) :- sc6_m508(n).
+sc6_selected(n) :- sc6_m515(n).
+sc6_strict_u516(n) :- node(_, n, "module", _, _), child(n, v517, _), node(_, v517, "expression_statement", _, _), child(v517, v518, _), node(_, v518, "assignment", _, _), field(v518, "left", v519), node(_, v519, "identifier", _, _), text(v519, v520), v520 = "CLOSED_POST_OP_STRICT", field(v518, "right", v521), node(_, v521, "true", _, _).
+sc6_strict_selected(n) :- node(_, n, "module", _, _), sc6_strict_u516(n).
+sc6_strict(n) :- sc6_strict_selected(n).
+sc6_strict(n) :- inside(n, m, sc6_k_module), sc6_strict_selected(m).
+sc6_sel(n) :- sc6_selected(n), option_on("strictModulesOnly"), sc6_strict(n).
+sc6_sel(n) :- sc6_selected(n), !option_on("strictModulesOnly").
+sc6_sel_child(p, n, i) :- child(p, n, i), sc6_sel(n), node(_, p, k, _, _), sc6_k_callable_wrap(k).
+sc6_comment_at(p, s) :- node(_, p, k, _, _), sc6_k_callable_wrap(k), token(p, _, t, s, _), prefix("#", t), inside(p, c, sc6_k2), node(_, c, "call", _, _), sc6_u494(c).
+sc6_sel_comment(p, s) :- sc6_comment_at(p, s), option_on("strictModulesOnly"), sc6_strict(p).
+sc6_sel_comment(p, s) :- sc6_comment_at(p, s), !option_on("strictModulesOnly").
+sc6_sel_start(p, s) :- sc6_sel_child(p, n, _), node(_, n, _, s, _).
+sc6_sel_start(p, s) :- sc6_sel_comment(p, s).
+sc6_has_before(p, s) :- sc6_sel_start(p, s), sc6_sel_start(p, t), t < s.
+sc6_ord0(n) :- sc6_sel_child(p, n, _), node(_, n, _, s, _), !sc6_has_before(p, s).
+sc6_fn_name(f, s) :- sc6_sel(f), node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+sc6_attr(a) :- sc6_sel(a), node(_, a, "attribute", _, _).
+sc6_call(c, f) :- sc6_sel(c), node(_, c, "call", _, _), field(c, "function", f), sc6_sel(f).
+sc6_call_full(c, s) :- sc6_call(c, f), sps_text(f, s).
+sc6_arg(c, a) :- sc6_call(c, _), field(c, "arguments", l), child(l, a, _), sc6_sel(a), node(_, a, k, _, _), !sc6_k_nonarg(k).
+sc6_kw(c, s, v) :- sc6_call(c, _), field(c, "arguments", l), child(l, k, _), sc6_sel(k), node(_, k, "keyword_argument", _, _), field(k, "name", kn), sc6_sel(kn), text(kn, s), field(k, "value", v), sc6_sel(v).
+sc6_callable_edge(o, a) :- sc6_attr(a), field(a, "object", o).
+sc6_callable_edge(x, a) :- sc6_attr(a), field(a, "attribute", x).
+sc6_callable_edge(f, c) :- sc6_call(c, f).
+sc6_callable_edge(a, c) :- sc6_arg(c, a).
+sc6_callable_edge(v, c) :- sc6_kw(c, _, v).
+sc6_callable_edge(c, n) :- sc6_sel(n), node(_, n, k, _, _), sc6_k_callable_wrap(k), child(n, c, _), sc6_ord0(c).
+sc6_user_callable(n) :- sc6_sel(n), node(_, n, "lambda", _, _).
+sc6_user_callable(n) :- sc6_sel(n), node(_, n, "identifier", _, _), text(n, s), match("(?s:.*)(?:[cC][aA][lL][lL][aA][bB][lL][eE]|[cC][aA][lL][lL][bB][aA][cC][kK]|[dD][eE][cC][oO][dD][eE][rR]|[fF][nN]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK]|[mM][aA][pP][pP][eE][rR]|[pP][iI][cC][kK][eE][rR]|[pP][rR][oO][cC][eE][sS][sS][oO][rR]|[pP][rR][oO][jJ][eE][cC][tT][oO][rR]|[tT][rR][aA][nN][sS][fF][oO][rR][mM])(?s:.*)", s).
+sc6_user_callable(t) :- sc6_user_callable(s), sc6_callable_edge(s, t).
+sc6_opt_in(d) :- !option_on("strictModulesOnly"), node(d, _, "module", _, _), !syntax_error(d).
+sc6_opt_in(d) :- sc6_sel(a), node(d, a, "assignment", _, _), field(a, "left", l), sc6_sel(l), sps_text(l, "CLOSED_POST_OP_STRICT"), field(a, "right", r), sc6_sel(r), node(_, r, "true", _, _), !field(a, "type", _), child(p, a, _), sc6_sel(p), child(m, p, _), sc6_sel(m), node(_, m, "module", _, _).
+sc6_postop(s, v) :- sc6_kw(c, s, v), (s = "post_op" ; s = "post_op_with_refs"), sc6_call_full(c, "CompiledStep"), node(d, c, _, _, _), sc6_opt_in(d).
+sc6_fn_newer(f) :- sc6_fn_name(f, s), node(d, f, _, sf, _), sc6_fn_name(g, s), node(d, g, _, sg, _), sg > sf.
+sc6_callback_fn(f) :- sc6_postop(_, v), node(d, v, "identifier", _, _), sps_text(v, s), sc6_fn_name(f, s), node(d, f, _, _, _), !sc6_fn_newer(f).
+sc6_hit(n) :- sc6_postop(_, n), sc6_call_full(n, "partial"), sc6_user_callable(n).
+sc6_hit(n) :- sc6_postop("post_op_with_refs", n), sc6_call_full(n, t), t != "partial".
+sc6_hit(n) :- sc6_postop(_, n), !node(_, n, "call", _, _), sc6_user_callable(n).
+sc6_hit(n) :- sc6_callback_fn(f), inside(n, f, sc6_k_fn), sc6_call(n, _), sc6_user_callable(n).
+violation("data-layer-serverplan-steps", "step-contracts-6", "STEP-028", p, l) :- sc6_hit(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_legacy_postop_user_callable_escape_hatches").

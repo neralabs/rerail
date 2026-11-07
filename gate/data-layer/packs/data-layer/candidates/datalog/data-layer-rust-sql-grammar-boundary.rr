@@ -1,6 +1,67 @@
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl end_line(n: node, l: number)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl pattern_0_ident(n: node, s: symbol)
+.decl pattern_5_at_line(n: node, l: number)
+.decl pattern_5_first(n: node)
+.decl pattern_5_hit(d: number, n: node)
+.decl pattern_5_later(n: node, l: number)
+.decl pattern_5_middle(n: node, l: number)
+.decl pattern_5_string(d: number, n: node)
+.decl pattern_6_at_line(n: node, l: number)
+.decl pattern_6_first(n: node)
+.decl pattern_6_hit(d: number, n: node)
+.decl pattern_6_later(n: node, l: number)
+.decl pattern_6_middle(n: node, l: number)
+.decl pattern_7_at_line(n: node, l: number)
+.decl pattern_7_first(n: node)
+.decl pattern_7_hit(d: number, n: node)
+.decl pattern_7_later(n: node, l: number)
+.decl pattern_7_middle(n: node, l: number)
+.decl tape_line(d: number, l: number, sp: node)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-in_scope(d) :- doc(d, p, _), glob("rust/nera_compiler_sql/src/**/*.rs", p).
+.input doc, node, text, line, node_text, field, end_line, tape_line
 .output violation
+in_scope(d) :- doc(d, p, _), glob("rust/nera_compiler_sql/src/**/*.rs", p).
+pattern_0_ident(n, s) :- node(_, n, "identifier", _, _), text(n, s).
+pattern_0_ident(n, s) :- node(_, n, "type_identifier", _, _), text(n, s).
+pattern_0_ident(n, s) :- node(_, n, "field_identifier", _, _), text(n, s).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-0", "rust_sql_grammar_boundary", p, l) :- pattern_0_ident(n, "pyo3"), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-1", "rust_sql_grammar_boundary", p, l) :- pattern_0_ident(n, "pythonize"), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-2", "rust_sql_grammar_boundary", p, l) :- node(d, n, "generic_type", _, _), node_text(n, s), match("(?s).*\\bPython\\s*<\\s*'_?\\s*>", s), in_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-3", "rust_sql_grammar_boundary", p, l) :- pattern_0_ident(n, "PyResult"), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-4", "rust_sql_grammar_boundary", p, l) :- pattern_0_ident(n, s), match("Py[A-Z][A-Za-z0-9_]*", s), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
+pattern_5_string(d, n) :- node(d, n, "string_literal", _, _).
+pattern_5_string(d, n) :- node(d, n, "raw_string_literal", _, _).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-5", "rust_sql_grammar_boundary", p, l) :- node(d, n, "call_expression", _, _), field(n, "function", f), node_text(f, fs), match("(?s).*generated_value_is_truthy", fs), field(n, "arguments", a), node_text(a, at), match("(?s)\\(&runtime::string_value\\(.*", at), in_scope(d), doc(d, p, _), line(n, l).
+pattern_5_hit(d, n) :- pattern_5_string(d, n), node_text(n, s), match("(?s).*generated_value_is_truthy\\(&runtime::string_value\\(.*", s).
+pattern_5_first(n) :- pattern_5_hit(_, n), node_text(n, s), match("[^\\r\\n]*generated_value_is_truthy\\(&runtime::string_value\\((?s:.*)", s).
+pattern_5_middle(n, l) :- pattern_5_hit(d, n), !pattern_5_first(n), line(n, l0), end_line(n, le), tape_line(d, l, sp), l > l0, l < le, text(sp, t), match("(?s).*generated_value_is_truthy\\(&runtime::string_value\\(.*", t).
+pattern_5_later(n, l) :- pattern_5_middle(n, l), pattern_5_middle(n, k), k < l.
+pattern_5_at_line(n, l) :- pattern_5_first(n), line(n, l).
+pattern_5_at_line(n, l) :- pattern_5_middle(n, l), !pattern_5_later(n, l).
+pattern_5_at_line(n, l) :- pattern_5_hit(_, n), !pattern_5_first(n), !pattern_5_middle(n, _), end_line(n, l).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-5", "rust_sql_grammar_boundary", p, l) :- pattern_5_at_line(n, l), node(d, n, _, _, _), in_scope(d), doc(d, p, _).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-6", "rust_sql_grammar_boundary", p, l) :- node(d, n, "call_expression", _, _), field(n, "function", f), node_text(f, fs), match("(?s).*runtime::string_value", fs), field(n, "arguments", a), node_text(a, at), match("(?s)\\(\"self\\..*", at), in_scope(d), doc(d, p, _), line(n, l).
+pattern_6_hit(d, n) :- pattern_5_string(d, n), node_text(n, s), match("(?s).*runtime::string_value\\(\"self\\..*", s).
+pattern_6_first(n) :- pattern_6_hit(_, n), node_text(n, s), match("[^\\r\\n]*runtime::string_value\\(\"self\\.(?s:.*)", s).
+pattern_6_middle(n, l) :- pattern_6_hit(d, n), !pattern_6_first(n), line(n, l0), end_line(n, le), tape_line(d, l, sp), l > l0, l < le, text(sp, t), match("(?s).*runtime::string_value\\(\"self\\..*", t).
+pattern_6_later(n, l) :- pattern_6_middle(n, l), pattern_6_middle(n, k), k < l.
+pattern_6_at_line(n, l) :- pattern_6_first(n), line(n, l).
+pattern_6_at_line(n, l) :- pattern_6_middle(n, l), !pattern_6_later(n, l).
+pattern_6_at_line(n, l) :- pattern_6_hit(_, n), !pattern_6_first(n), !pattern_6_middle(n, _), end_line(n, l).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-6", "rust_sql_grammar_boundary", p, l) :- pattern_6_at_line(n, l), node(d, n, _, _, _), in_scope(d), doc(d, p, _).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-7", "rust_sql_grammar_boundary", p, l) :- node(d, n, "field_expression", _, _), node_text(n, s), match("(?s).*\\bast\\.dump", s), in_scope(d), doc(d, p, _), line(n, l).
+pattern_7_hit(d, n) :- pattern_5_string(d, n), node_text(n, s), match("(?s).*\\bast\\.dump\\b.*", s).
+pattern_7_first(n) :- pattern_7_hit(_, n), node_text(n, s), match("[^\\r\\n]*\\bast\\.dump\\b(?s:.*)", s).
+pattern_7_middle(n, l) :- pattern_7_hit(d, n), !pattern_7_first(n), line(n, l0), end_line(n, le), tape_line(d, l, sp), l > l0, l < le, text(sp, t), match("(?s).*\\bast\\.dump\\b.*", t).
+pattern_7_later(n, l) :- pattern_7_middle(n, l), pattern_7_middle(n, k), k < l.
+pattern_7_at_line(n, l) :- pattern_7_first(n), line(n, l).
+pattern_7_at_line(n, l) :- pattern_7_middle(n, l), !pattern_7_later(n, l).
+pattern_7_at_line(n, l) :- pattern_7_hit(_, n), !pattern_7_first(n), !pattern_7_middle(n, _), end_line(n, l).
+violation("data-layer-rust-sql-grammar-boundary", "pattern-7", "rust_sql_grammar_boundary", p, l) :- pattern_7_at_line(n, l), node(d, n, _, _, _), in_scope(d), doc(d, p, _).

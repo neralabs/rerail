@@ -1,6 +1,15 @@
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
 .decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl publication_line(d: number, l: number, s: symbol)
+.decl src_line(d: number, l: number, sp: node)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-in_scope(d) :- doc(d, p, _), glob("l2070_batching/executor.py", p).
+.input doc, src_line, text
 .output violation
+in_scope(d) :- doc(d, p, _), glob("l2070_batching/executor.py", p).
+publication_line(d, l, s) :- doc(d, _, _), in_scope(d), !out_scope(d), src_line(d, l, sp), text(sp, s).
+violation("data-layer-executor-publication-repairs", "cte_output_columns", "executor_publication_repair", p, l) :- publication_line(d, l, s), contains("_cte_output_columns", s), doc(d, p, _).
+violation("data-layer-executor-publication-repairs", "cte_column_type_hints", "executor_publication_repair", p, l) :- publication_line(d, l, s), contains("_cte_column_type_hints", s), doc(d, p, _).
+violation("data-layer-executor-publication-repairs", "publication_contract_cache", "executor_publication_repair", p, l) :- publication_line(d, l, s), contains("_publication_contract_cache", s), doc(d, p, _).
+violation("data-layer-executor-publication-repairs", "cte_publication_contract_cache", "executor_publication_repair", p, l) :- publication_line(d, l, s), contains("_cte_publication_contract_cache", s), doc(d, p, _).

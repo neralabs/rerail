@@ -142,12 +142,11 @@ pub(in crate::code_rule_dsl) enum AggOp {
     Count,
     Min,
     Max,
-    /// Soufflé's `sum`: of nothing, 0.
+    /// `sum x : { … }`: the sum of `x` over the body's rows, 0 when there are none.
     Sum,
-    /// `join $over by … sep "…"` (`core.rr`, addition 5): the text of every row's `$over`, ordered by the atom's
-    /// columns `by` and then by `$over` itself, separated by `sep`; "" of nothing. The `by` columns are positions
-    /// in the aggregate's atom, where the atom has `_` unless the rule shares the variable.
-    Join { by: Vec<usize>, sep: String },
+    /// `join x by (k, …) sep "s" : { … }`: the distinct `(k, …, x)` rows' `x` texts ordered by `k, …` then `x`
+    /// (symbols by code point, numbers by value), separated by `sep`; `""` when there are none.
+    Join { by: Vec<String>, sep: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -241,14 +240,18 @@ impl fmt::Display for Literal {
             Literal::Atom(a) => write!(f, "{a}"),
             Literal::Cmp { l, op, r } => write!(f, "{l} {op} {r}"),
             Literal::Agg { var, op: AggOp::Count, atom, .. } => write!(f, "${var} = count {{ {atom} }}"),
+            Literal::Agg { var, op: AggOp::Join { by, sep }, over, atom } => {
+                let by: Vec<String> = by.iter().map(|k| format!("${k}")).collect();
+                let sep = serde_json::to_string(sep).expect("a string serializes");
+                write!(f, "${var} = join ${} by ({}) sep {sep} : {{ {atom} }}", over.as_deref().unwrap_or_default(), by.join(", "))
+            }
             Literal::Agg { var, op, over, atom } => {
-                let over = over.as_deref().unwrap_or_default();
-                match op {
-                    AggOp::Join { by, sep } => {
-                        write!(f, "${var} = join ${over} by {by:?} sep {} : {{ {atom} }}", serde_json::to_string(sep).expect("a string serializes"))
-                    }
-                    op => write!(f, "${var} = {} ${over} : {{ {atom} }}", if *op == AggOp::Min { "min" } else if *op == AggOp::Max { "max" } else { "sum" }),
-                }
+                let op = match op {
+                    AggOp::Min => "min",
+                    AggOp::Sum => "sum",
+                    _ => "max",
+                };
+                write!(f, "${var} = {op} ${} : {{ {atom} }}", over.as_deref().unwrap_or_default())
             }
             Literal::Nearest { n, a, kindset } => write!(f, "nearest(${n}, ${a}, {kindset})"),
             Literal::Ast { document, node, matcher, captures } => {
@@ -342,6 +345,8 @@ pub(in crate::code_rule_dsl) enum Error {
     /// A component creates values (`@cat`, …) the data does not bound (`cycles`): `rule` is one it could not
     /// bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
+    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rr's, for `.rr`).
+    UndeclaredInput { relation: String },
 }
 
 impl Error {
@@ -372,6 +377,7 @@ impl fmt::Display for Error {
                 let component = component.iter().cloned().collect::<Vec<_>>().join(", ");
                 write!(f, "unbounded value cycle: {{{component}}} creates values the data does not bound ({rule})")
             }
+            Error::UndeclaredInput { relation } => write!(f, ".input {relation}: no .decl declares {relation}'s columns"),
         }
     }
 }
@@ -734,6 +740,10 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
             prog.inputs.push(rel);
         }
     }
+    // An input's columns are its declaration's: the planner reads them.
+    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(*rel)) {
+        return Err(Error::UndeclaredInput { relation: relation.clone() });
+    }
     cycles::check(&prog)?;
     Ok(prog)
 }
@@ -751,6 +761,10 @@ pub(in crate::code_rule_dsl) const HAS: &str = "inside_rr_has_";
 pub(in crate::code_rule_dsl) fn axis(rel: &str) -> Option<(&str, bool)> {
     rel.strip_prefix(HAS).map(|set| (set, true)).or_else(|| rel.strip_prefix(AXIS).map(|set| (set, false)))
 }
+
+/// A kind set's one member meaning every kind of the dialect: core.rr's `within(n, a)` is the tree axis over it
+/// (`rr::lower::core`); lowering for a dialect makes it the dialect's kinds (`plan::lower`).
+pub(in crate::code_rule_dsl) const EVERY_KIND: &str = "*";
 
 /// Dependency edges: head → {(dependency, negative)}; an aggregate's is negative, a gated negation's is not.
 pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, bool)>>;

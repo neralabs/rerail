@@ -18,13 +18,16 @@
 
 use super::{Error, Outcome, Result, lower};
 
-use crate::code_rule_dsl::facts::core::{self, Built};
+use crate::code_rule_dsl::facts::core;
 use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
+mod references;
 mod typing;
+#[cfg(test)]
+mod base_tests;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
 use crate::content_store::ContentStore;
@@ -211,14 +214,62 @@ fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty.
-const NOT_MADE: [(&str, &str); 2] = [
-    ("parsed", "strings are not parsed as code, so names in string annotations are not resolved"),
-    ("string_annotation", "read only with `parsed`"),
-];
+/// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty. None now:
+/// `parsed` and `string_annotation` are made (`facts::vtab::syntax::annotation`).
+const NOT_MADE: [(&str, &str); 0] = [];
 
 pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     run_typed(program, root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
+}
+
+/// The functors only CPython gives (core.rr): its printer and its dump of a tree.
+const CPYTHON_FUNCTORS: [&str; 2] = ["unparse", "ast_dump"];
+
+/// What the converter gives an authored file to read (`logic::convert`, test-only): the scope, the report gate and
+/// the options. Here so the runner, which is not test-only, can tell them from unbound core relations.
+pub(in crate::code_rule_dsl) const GIVEN: [&str; 7] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json"];
+
+/// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
+/// (`value`, `str_part`, …), or calls a functor only CPython gives: the planner would otherwise fail on its missing
+/// statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later), so
+/// are the facts the converter gives (`GIVEN`: core.rr's `option_item` among them, empty for an option of no items),
+/// and the relations not made yet are empty (`NOT_MADE`, O76).
+fn bound(prog: &front::Program) -> Result<()> {
+    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
+    let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
+    let given = |rel: &str| GIVEN.contains(&rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
+    for rule in &prog.rules {
+        for a in rule.body.iter().filter_map(front::Literal::atom) {
+            let rel = a.rel.as_str();
+            if derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || given(rel) {
+                continue;
+            }
+            let why = match rel {
+                "str_part" => format!("it needs {cpython}"),
+                "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
+                _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
+            };
+            return Err(Error::Plan(format!("{rel} is read, and nothing derives it or binds it: {why}")));
+        }
+        let mut calls = Vec::new();
+        for l in &rule.body {
+            match l {
+                front::Literal::Atom(a) | front::Literal::Agg { atom: a, .. } => calls.extend(&a.args),
+                front::Literal::Cmp { l, r, .. } => calls.extend([l, r]),
+                _ => {}
+            }
+        }
+        calls.extend(&rule.head.args);
+        while let Some(t) = calls.pop() {
+            if let front::Term::Call(f, args) = t {
+                if CPYTHON_FUNCTORS.contains(&f.as_str()) {
+                    return Err(Error::Plan(format!("@{f} is called, and it needs {cpython}")));
+                }
+                calls.extend(args);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
@@ -260,9 +311,12 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             (docs, first, rust)
         }
         None => {
-            let (python, rs) = corpus_files(root)?;
+            let (python, rs, text) = corpus_files(root)?;
             let rust = rs.len() > python.len();
-            let files = if rust { rs } else { python };
+            // The run's grammar files and the text-only documents, in path order.
+            let mut files = if rust { rs } else { python };
+            files.extend(text);
+            files.sort();
             (files.into_iter().enumerate().map(|(i, path)| (i as i64 + 1, path)).collect(), HashMap::new(), rust)
         }
     };
@@ -272,7 +326,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
     if prog.decls.contains_key("declared_ret") {
-        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
+        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             prog = crate::code_rule_dsl::logic::rr::parse(&format!("{program}\n{facts}"))?;
@@ -284,23 +338,34 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
     let path = out.join("store.sqlite");
     let cross_path = out.join("cross.sqlite");
-    for p in [&path, &cross_path] {
+    // A failed run leaves its write-ahead log beside the store; reopening a new store over it reads stale pages.
+    for p in [&path, &cross_path].into_iter().flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
         if p.exists() {
-            std::fs::remove_file(p).map_err(|e| Error::Plan(e.to_string()))?;
+            std::fs::remove_file(&p).map_err(|e| Error::Plan(e.to_string()))?;
         }
     }
     let store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
+    // The base relations it reads and does not derive are inputs, `.input` or not, as an authored file's are
+    // (`convert::overlay`): the batches bind them, where a relation of its own would be an empty table.
+    base_inputs(&mut prog);
     // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
     crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
     // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
     let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
-    let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
+    bound(&lowered.program)?;
     let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
+    // An input no rule reads is never bound or measured: it is not an input of what runs.
+    let outputs = lowered.program.outputs.clone();
+    lowered.program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
+    let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
+    // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
+    // built, and linked once they all are (`references`).
+    let references = if rust { None } else { references::Files::new(&prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect::<Vec<_>>())? };
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -346,7 +411,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     // read back, 0.75 s on Python.)
     let decodes = cross.program.outputs.iter().any(|o| o == "finding");
     let mut stored: Vec<(String, Vec<String>)> = Vec::new();
-    for rel in &split.base {
+    for rel in split.base.iter().filter(|rel| !references::RELATIONS.contains(&rel.as_str())) {
         let cols = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
             "node" if decodes => &["d", "n", "start"],
@@ -411,27 +476,47 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         let mut pending_nodes = 0;
         let mut at = docs.iter().peekable();
         let mut t = thread_usage();
-        let build = |d: &i64, path: &String| -> Result<syntax::Document> {
+        let keep_tapes = syntax::TAPED.iter().any(|rel| read.contains(*rel));
+        // A document's facts: a grammar file's tree, or a text file's text (`core::text`). A text file that is not
+        // UTF-8 (an image, an archive) is no document.
+        let build = |d: &i64, path: &String| -> Result<Option<syntax::Document>> {
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
             let read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
-            let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
+            let source = match std::fs::read_to_string(root.join(path)) {
+                Ok(source) => source,
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path) => return Ok(None),
+                Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
+            };
             drop(read);
+            if text_document(path) {
+                let facts = Arc::new(core::text(Arc::new(source)));
+                return Ok(Some(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts, tape: None }));
+            }
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
-            let facts = match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
-                Built::Facts(f) => Arc::new(f),
-                Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
+            let Some((facts, doc)) = core::build_with_tape(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? else {
+                return Err(Error::Plan(format!("{path} did not parse")));
             };
-            Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts })
+            let facts = Arc::new(facts);
+            if let Some(references) = &references {
+                references.add(*d as u32, path, &file.source, &facts)?;
+            }
+            // W's values and f-string trees are read off the tape, in the file's context: kept only for a program that
+            // reads them.
+            let tape = keep_tapes.then(|| (doc, file));
+            Ok(Some(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts, tape }))
         };
+        let mut sent = false;
         while let Some((d, path)) = at.next() {
             match build(d, path) {
-                Ok(doc) => {
+                Ok(Some(doc)) => {
                     pending_nodes += doc.facts.len();
                     pending.push(doc);
                 }
+                Ok(None) => {}
                 Err(e) => {
                     let _ = send.send(Err(e));
+                    sent = true;
                     break;
                 }
             }
@@ -441,14 +526,21 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             add(&mut parse, t);
             t = thread_usage();
             let batch_span = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
-            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding).map_err(|e| Error::Plan(e.to_string()));
+            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, &read, binding).map_err(|e| Error::Plan(e.to_string()));
             drop(batch_span);
             add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
+            sent = true;
             if send.send(built.map(|sources| (n, sources))).is_err() {
                 break;
             }
             t = thread_usage();
+        }
+        // A corpus with no document still runs, over empty base relations: its outputs are what the program derives
+        // from none (no rows, for a rule that reads a document), not an error.
+        if !sent {
+            let built = syntax::with_nearest(&store, Vec::new(), &sets, &vocabulary, &read, binding).map_err(|e| Error::Plan(e.to_string()));
+            let _ = send.send(built.map(|sources| (0, sources)));
         }
         drop(send);
         (parse, batch)
@@ -486,7 +578,13 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             let measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
             let measured = syntax::statistics(source.as_ref());
             drop(measure);
-            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
+            let made_here = |rel: &str| {
+                rel.starts_with("nearest_")
+                    || [crate::code_rule_dsl::logic::front::AXIS, crate::code_rule_dsl::logic::strings::RELATION, crate::code_rule_dsl::logic::strings::MATCHES, crate::code_rule_dsl::logic::strings::GROUPS]
+                        .iter()
+                        .any(|p| rel.starts_with(p))
+            };
+            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || made_here(&rel)) {
                 totals.add(&rel, source.len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
@@ -507,7 +605,13 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
             if kept.contains(rel) {
                 let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM set_derived WHERE rel = ?1"), [rel])?;
+                // `set_derived` gives the rows the engine derived beyond its table's; a relation of facts and rules
+                // has its facts there (the engine read them as stored rows), so they go first.
+                let mut inserted = 0;
+                if lowered.program.facts.get(rel).is_some_and(|f| !f.is_empty()) {
+                    inserted += db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM temp.{rel}"), [])?;
+                }
+                inserted += db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM set_derived WHERE rel = ?1"), [rel])?;
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
             } else {
@@ -530,6 +634,14 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     worker.join().map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
+    // The reference graph over every chunk's files, bound for the cross-file part with its statistics.
+    if let Some(references) = references {
+        for (rel, columns, values) in references.relations(&store, &read)? {
+            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+            totals.add(rel, source.len(), &syntax::statistics(source.as_ref()));
+            modules.bind(&db, rel, source)?;
+        }
+    }
     statements.enter("stats");
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
     let mut cross_stats = t_stats;
@@ -593,10 +705,11 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             .map(|row| {
                 row.split('\t')
                     .enumerate()
+                    // A node column holding no document's node (`unset`'s -1) is written as it is.
                     .map(|(i, v)| match v.parse::<i64>() {
                         Ok(v) if node_columns.contains(&i) && v < -1 => places[&v].clone(),
-                        Ok(v) if node_columns.contains(&i) && v >= 0 && own => format!("{}:{}", paths[&(v >> 32)], v & 0xffff_ffff),
-                        Ok(v) if node_columns.contains(&i) && v >= 0 => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
+                        Ok(v) if node_columns.contains(&i) && own && paths.contains_key(&(v >> 32)) => format!("{}:{}", paths[&(v >> 32)], v & 0xffff_ffff),
+                        Ok(v) if node_columns.contains(&i) && !own && first.contains_key(&(v >> 32)) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
                         _ => v.to_owned(),
                     })
                     .collect::<Vec<_>>()
@@ -932,10 +1045,22 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
 }
 
 
-/// The corpus's files under `root`, relative and in path order: Python's (`.py`) and Rust's (`.rs`), skipping
-/// hidden directories and `target`.
-fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
-    let (mut python, mut rust) = (Vec::new(), Vec::new());
+/// The suffixes of the files the corpus runner reads as text only (core.rr's `.scope text`): documentation and
+/// configuration, never a run's own outputs (`.csv`, `.sqlite`, which may lie under the root) or binaries.
+const TEXT_SUFFIXES: [&str; 9] = ["md", "markdown", "rst", "txt", "toml", "cfg", "ini", "yaml", "yml"];
+
+/// Whether the corpus runner reads the file at `path` as text only: no dialect has its suffix and it is one of
+/// `TEXT_SUFFIXES`, so it has `doc` and the source text's relations and no tree.
+fn text_document(path: &str) -> bool {
+    crate::code_rule_dsl::language::label_of_path(path).is_none()
+        && Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| TEXT_SUFFIXES.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and the text-only
+/// documents (`text_document`, hidden files left out), skipping hidden directories and `target`. A file of another
+/// grammar is none of them.
+fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
+    let (mut python, mut rust, mut text) = (Vec::new(), Vec::new(), Vec::new());
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))? {
@@ -947,23 +1072,47 @@ fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
                 }
                 continue;
             }
+            if !path.is_file() {
+                continue;
+            }
             let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
             match path.extension().and_then(|e| e.to_str()) {
                 Some("py") => python.push(relative),
                 Some("rs") => rust.push(relative),
+                _ if !name.starts_with('.') && text_document(&relative) => text.push(relative),
                 _ => {}
             }
         }
     }
     python.sort();
     rust.sort();
+    text.sort();
     // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
     if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
-        for files in [&mut python, &mut rust] {
+        for files in [&mut python, &mut rust, &mut text] {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
-    Ok((python, rust))
+    Ok((python, rust, text))
+}
+
+/// Makes the base relations `prog` reads and does not derive inputs (`select::input_columns` names a base relation).
+fn base_inputs(prog: &mut front::Program) {
+    let read: Vec<String> = {
+        let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
+        prog.rules
+            .iter()
+            .flat_map(|r| r.body.iter().filter_map(front::Literal::atom))
+            .map(|a| a.rel.as_str())
+            .filter(|rel| !derived.contains(rel) && prog.decls.contains_key(*rel) && super::super::sql::select::input_columns(rel).is_some())
+            .map(str::to_owned)
+            .collect()
+    };
+    for rel in read {
+        if !prog.inputs.contains(&rel) {
+            prog.inputs.push(rel);
+        }
+    }
 }
 
 /// The base relations' statistics a chunk measures as it binds them, beyond each column's moments

@@ -157,12 +157,6 @@ pub(in crate::code_rule_dsl) enum SqlExpression {
         name: &'static str,
         arguments: Vec<SqlExpression>,
     },
-    /// An aggregate over its rows in an order: `group_concat(x, ',' ORDER BY k, x)` (SQLite 3.44).
-    Ordered {
-        name: &'static str,
-        arguments: Vec<SqlExpression>,
-        order: Vec<SqlExpression>,
-    },
     Between {
         input: Box<SqlExpression>,
         low: Box<SqlExpression>,
@@ -269,11 +263,6 @@ impl SqlExpression {
             Self::Call { name, arguments } => {
                 format!("{name}({})", arguments.iter().map(Self::render).collect::<Vec<_>>().join(", "))
             }
-            Self::Ordered { name, arguments, order } => format!(
-                "{name}({} ORDER BY {})",
-                arguments.iter().map(Self::render).collect::<Vec<_>>().join(", "),
-                order.iter().map(Self::render).collect::<Vec<_>>().join(", ")
-            ),
             Self::Between { input, low, high } => {
                 format!("{} BETWEEN {} AND {}", input.render(), low.render(), high.render())
             }
@@ -294,7 +283,6 @@ impl SqlExpression {
             }
             Self::Unary { input, .. } => input.visit(f),
             Self::Function { arguments, .. } | Self::Call { arguments, .. } => arguments.iter().for_each(|argument| argument.visit(f)),
-            Self::Ordered { arguments, order, .. } => arguments.iter().chain(order).for_each(|argument| argument.visit(f)),
             Self::In { input, values } => {
                 input.visit(f);
                 values.iter().for_each(|value| value.visit(f));
@@ -325,7 +313,6 @@ impl SqlExpression {
             }
             Self::Unary { input, .. } => input.visit_mut(f),
             Self::Function { arguments, .. } | Self::Call { arguments, .. } => arguments.iter_mut().for_each(|argument| argument.visit_mut(f)),
-            Self::Ordered { arguments, order, .. } => arguments.iter_mut().chain(order.iter_mut()).for_each(|argument| argument.visit_mut(f)),
             Self::In { input, values } => {
                 input.visit_mut(f);
                 values.iter_mut().for_each(|value| value.visit_mut(f));

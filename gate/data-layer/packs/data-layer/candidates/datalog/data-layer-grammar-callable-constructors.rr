@@ -1,46 +1,41 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, child, field, text, name, op, line, syntax_error
+.decl constructor_fdef(kind: symbol)
+constructor_fdef("function_definition").
+.decl constructor_scope_kinds(kind: symbol)
+constructor_scope_kinds("function_definition"). constructor_scope_kinds("module").
 .decl k0(kind: symbol)
 k0("function_definition").
 .decl k1(kind: symbol)
 k1("class_definition").
-.decl k2(kind: symbol)
-k2("assignment").
-.decl k3(kind: symbol)
-k3("call").
+.decl untyped_class_kinds(kind: symbol)
+untyped_class_kinds("class_definition").
+.decl any_type(t: node)
+.decl child(p: node, c: node, i: number)
+.decl constructor_arg(n: node, x: symbol)
+.decl constructor_callee(f: node)
+.decl constructor_candidate(n: node, x: symbol)
+.decl constructor_climb(n: node, s: node)
+.decl constructor_def(f: node, x: symbol)
+.decl constructor_defines(b: node, x: symbol)
+.decl constructor_has_param(f: node)
+.decl constructor_ident(n: node, x: symbol)
+.decl constructor_name(f: node, x: symbol)
+.decl constructor_need(n: node)
+.decl constructor_param(p: node)
+.decl constructor_passes(s: node, x: symbol)
+.decl constructor_resolves(s: node, x: symbol)
+.decl constructor_seed(x: symbol)
+.decl constructor_stored(n: node)
+.decl constructor_stores(s: node, x: symbol)
+.decl constructor_want(s: node, x: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
 .decl m100(n: node)
-.decl m116(n: node)
-.decl m126(n: node)
 .decl m13(n: node)
-.decl m131(n: node)
-.decl m132(n: node)
-.decl m135(n: node)
-.decl m139(n: node)
-.decl m144(n: node)
-.decl m145(n: node)
-.decl m146(n: node)
-.decl m147(n: node)
-.decl m156(n: node)
 .decl m16(n: node)
 .decl m17(n: node)
-.decl m176(n: node)
-.decl m187(n: node)
-.decl m197(n: node)
-.decl m202(n: node)
-.decl m203(n: node)
-.decl m209(n: node)
-.decl m218(n: node)
 .decl m23(n: node)
-.decl m238(n: node)
 .decl m25(n: node)
 .decl m37(n: node)
 .decl m48(n: node)
@@ -51,10 +46,26 @@ k3("call").
 .decl m61(n: node)
 .decl m63(n: node)
 .decl m80(n: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl op(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl u19(n: node)
 .decl u57(n: node)
+.decl untyped_has_param(f: node, p: symbol)
+.decl untyped_param_kinds(kind: symbol)
+.decl untyped_param_named(q: node, p: symbol)
+.decl untyped_render(c: node, m: node)
+.decl untyped_render_calls(c: node, x: symbol)
+.decl untyped_stores(d: number, f: node, p: symbol)
+.decl untyped_typed(q: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, op, line, syntax_error
+.output violation
+untyped_param_kinds("typed_parameter").
+untyped_param_kinds("typed_default_parameter").
+untyped_param_kinds("default_parameter").
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/fragments.py", p).
@@ -91,51 +102,67 @@ m61(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v59), node(_, v59
 m63(n) :- m61(n).
 m63(n) :- child(n, v62, _), u57(v62).
 u57(n) :- m63(n).
-violation("data-layer-grammar-callable-constructors", "callable-field", "CALLABLE_FIELD", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v38), node(_, v38, "identifier", _, _), text(v38, v39), v39 = "__init__", !op(n, "async"), nearest(n, v40, k1), node(_, v40, "class_definition", _, _), field(v40, "body", v41), child(v41, v42, _), m48(v42), field(n, "parameters", v49), child(v49, v50, _), m55(v50), field(v50, "type", v56), u57(v56), inside(v64, n, k2), node(_, v64, "assignment", _, _), field(v64, "left", v65), node(_, v65, "attribute", _, _), field(v65, "object", v66), node(_, v66, "identifier", _, _), text(v66, v67), v67 = "self", field(v65, "attribute", v68), node(_, v68, "identifier", _, _), field(v64, "right", v69), node(_, v69, "identifier", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-grammar-callable-constructors", "callable-field", "CALLABLE_FIELD", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v38), node(_, v38, "identifier", _, _), text(v38, v39), v39 = "__init__", !op(n, "async"), nearest(n, v40, k1), node(_, v40, "class_definition", _, _), field(v40, "body", v41), child(v41, v42, _), m48(v42), field(n, "parameters", v49), child(v49, v50, _), m55(v50), field(v50, "type", v56), u57(v56), inside(v64, n, k0), node(_, v64, "assignment", _, _), field(v64, "left", v65), node(_, v65, "attribute", _, _), field(v65, "object", v66), node(_, v66, "identifier", _, _), text(v66, v67), v67 = "self", field(v65, "attribute", v68), node(_, v68, "identifier", _, _), field(v64, "right", v69), node(_, v69, "identifier", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m80(n) :- node(_, n, "function_definition", _, _), field(n, "name", v75), node(_, v75, "identifier", _, _), text(v75, v76), v76 = "render", !op(n, "async").
 m80(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v77), node(_, v77, "function_definition", _, _), field(v77, "name", v78), node(_, v78, "identifier", _, _), text(v78, v79), v79 = "render", !op(v77, "async").
-m100(n) :- node(_, n, "function_definition", _, _), field(n, "name", v83), node(_, v83, "identifier", _, _), text(v83, v84), v84 = "__init__", !op(n, "async"), inside(v85, n, k2), node(_, v85, "assignment", _, _), field(v85, "left", v86), node(_, v86, "attribute", _, _), field(v86, "object", v87), node(_, v87, "identifier", _, _), text(v87, v88), v88 = "self", field(v86, "attribute", v89), node(_, v89, "identifier", _, _), field(v85, "right", v90), node(_, v90, "identifier", _, _).
-m100(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v91), node(_, v91, "function_definition", _, _), field(v91, "name", v92), node(_, v92, "identifier", _, _), text(v92, v93), v93 = "__init__", !op(v91, "async"), inside(v94, v91, k2), node(_, v94, "assignment", _, _), field(v94, "left", v95), node(_, v95, "attribute", _, _), field(v95, "object", v96), node(_, v96, "identifier", _, _), text(v96, v97), v97 = "self", field(v95, "attribute", v98), node(_, v98, "identifier", _, _), field(v94, "right", v99), node(_, v99, "identifier", _, _).
-violation("data-layer-grammar-callable-constructors", "called-field", "CONSTRUCTOR_FIELD_CALLED_IN_RENDER", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v70), node(_, v70, "identifier", _, _), text(v70, v71), v71 = "render", !op(n, "async"), nearest(n, v72, k1), node(_, v72, "class_definition", _, _), field(v72, "body", v73), child(v73, v74, _), m80(v74), field(v72, "body", v81), child(v81, v82, _), m100(v82), inside(v101, n, k3), node(_, v101, "call", _, _), field(v101, "function", v102), node(_, v102, "attribute", _, _), field(v102, "object", v103), node(_, v103, "identifier", _, _), text(v103, v104), v104 = "self", field(v102, "attribute", v105), node(_, v105, "identifier", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m116(n) :- node(_, n, "function_definition", _, _), field(n, "name", v111), node(_, v111, "identifier", _, _), text(v111, v112), v112 = "render", !op(n, "async").
-m116(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v113), node(_, v113, "function_definition", _, _), field(v113, "name", v114), node(_, v114, "identifier", _, _), text(v114, v115), v115 = "render", !op(v113, "async").
-m126(n) :- node(_, n, "typed_parameter", _, _).
-m126(n) :- node(_, n, "typed_default_parameter", _, _).
-m126(n) :- node(_, n, "default_parameter", _, _).
-m131(n) :- field(n, "name", v127), text(v122, v128), text(v127, v128).
-m131(n) :- child(n, v129, _), node(_, v129, "identifier", _, _), text(v122, v130), text(v129, v130).
-m132(n) :- node(_, n, "identifier", _, _), text(v122, v125), text(n, v125).
-m132(n) :- m126(n), m131(n).
-m135(n) :- field(n, "type", v133), name(v133, v134), glob("*?*", v134).
-m139(n) :- node(_, n, "typed_parameter", _, _).
-m139(n) :- node(_, n, "typed_default_parameter", _, _).
-m139(n) :- node(_, n, "default_parameter", _, _).
-m144(n) :- field(n, "name", v140), text(v122, v141), text(v140, v141).
-m144(n) :- child(n, v142, _), node(_, v142, "identifier", _, _), text(v122, v143), text(v142, v143).
-m145(n) :- node(_, n, "identifier", _, _), text(v122, v138), text(n, v138).
-m145(n) :- m139(n), m144(n).
-m146(n) :- field(n, "parameters", v136), child(v136, v137, _), m145(v137).
-m147(n) :- field(n, "parameters", v123), child(v123, v124, _), m132(v124), !m135(v124).
-m147(n) :- node(_, n, _, _, _), !m146(n).
-m156(n) :- node(_, n, "function_definition", _, _), field(n, "name", v151), node(_, v151, "identifier", _, _), text(v151, v152), v152 = "render", !op(n, "async").
-m156(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v153), node(_, v153, "function_definition", _, _), field(v153, "name", v154), node(_, v154, "identifier", _, _), text(v154, v155), v155 = "render", !op(v153, "async").
-m176(n) :- node(_, n, "function_definition", _, _), field(n, "name", v159), node(_, v159, "identifier", _, _), text(v159, v160), v160 = "render", !op(n, "async"), inside(v161, n, k3), node(_, v161, "call", _, _), field(v161, "function", v162), node(_, v162, "attribute", _, _), field(v162, "object", v163), node(_, v163, "identifier", _, _), text(v163, v164), v164 = "self", field(v162, "attribute", v165), node(_, v165, "identifier", _, _), text(v121, v166), text(v165, v166).
-m176(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v167), node(_, v167, "function_definition", _, _), field(v167, "name", v168), node(_, v168, "identifier", _, _), text(v168, v169), v169 = "render", !op(v167, "async"), inside(v170, v167, k3), node(_, v170, "call", _, _), field(v170, "function", v171), node(_, v171, "attribute", _, _), field(v171, "object", v172), node(_, v172, "identifier", _, _), text(v172, v173), v173 = "self", field(v171, "attribute", v174), node(_, v174, "identifier", _, _), text(v121, v175), text(v174, v175).
-violation("data-layer-grammar-callable-constructors", "untyped-called-field", "UNTYPED_CALLED_CONSTRUCTOR_FIELD", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v106), node(_, v106, "identifier", _, _), text(v106, v107), v107 = "__init__", !op(n, "async"), nearest(n, v108, k1), node(_, v108, "class_definition", _, _), field(v108, "body", v109), child(v109, v110, _), m116(v110), inside(v117, n, k2), node(_, v117, "assignment", _, _), field(v117, "left", v118), node(_, v118, "attribute", _, _), field(v118, "object", v119), node(_, v119, "identifier", _, _), text(v119, v120), v120 = "self", field(v118, "attribute", v121), node(_, v121, "identifier", _, _), field(v117, "right", v122), node(_, v122, "identifier", _, _), m147(n), nearest(n, v148, k1), node(_, v148, "class_definition", _, _), field(v148, "body", v149), child(v149, v150, _), m156(v150), field(v148, "body", v157), child(v157, v158, _), m176(v158), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m187(n) :- node(_, n, "function_definition", _, _), field(n, "name", v182), node(_, v182, "identifier", _, _), text(v182, v183), v183 = "render", !op(n, "async").
-m187(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v184), node(_, v184, "function_definition", _, _), field(v184, "name", v185), node(_, v185, "identifier", _, _), text(v185, v186), v186 = "render", !op(v184, "async").
-m197(n) :- node(_, n, "typed_parameter", _, _).
-m197(n) :- node(_, n, "typed_default_parameter", _, _).
-m197(n) :- node(_, n, "default_parameter", _, _).
-m202(n) :- field(n, "name", v198), text(v193, v199), text(v198, v199).
-m202(n) :- child(n, v200, _), node(_, v200, "identifier", _, _), text(v193, v201), text(v200, v201).
-m203(n) :- node(_, n, "identifier", _, _), text(v193, v196), text(n, v196).
-m203(n) :- m197(n), m202(n).
-m209(n) :- node(_, n, "identifier", _, _), text(n, v206), v206 = "Any".
-m209(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v207), node(_, v207, "identifier", _, _), text(v207, v208), v208 = "Any".
-m218(n) :- node(_, n, "function_definition", _, _), field(n, "name", v213), node(_, v213, "identifier", _, _), text(v213, v214), v214 = "render", !op(n, "async").
-m218(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v215), node(_, v215, "function_definition", _, _), field(v215, "name", v216), node(_, v216, "identifier", _, _), text(v216, v217), v217 = "render", !op(v215, "async").
-m238(n) :- node(_, n, "function_definition", _, _), field(n, "name", v221), node(_, v221, "identifier", _, _), text(v221, v222), v222 = "render", !op(n, "async"), inside(v223, n, k3), node(_, v223, "call", _, _), field(v223, "function", v224), node(_, v224, "attribute", _, _), field(v224, "object", v225), node(_, v225, "identifier", _, _), text(v225, v226), v226 = "self", field(v224, "attribute", v227), node(_, v227, "identifier", _, _), text(v192, v228), text(v227, v228).
-m238(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v229), node(_, v229, "function_definition", _, _), field(v229, "name", v230), node(_, v230, "identifier", _, _), text(v230, v231), v231 = "render", !op(v229, "async"), inside(v232, v229, k3), node(_, v232, "call", _, _), field(v232, "function", v233), node(_, v233, "attribute", _, _), field(v233, "object", v234), node(_, v234, "identifier", _, _), text(v234, v235), v235 = "self", field(v233, "attribute", v236), node(_, v236, "identifier", _, _), text(v192, v237), text(v236, v237).
-violation("data-layer-grammar-callable-constructors", "any-called-field", "ANY_CALLED_CONSTRUCTOR_FIELD", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v177), node(_, v177, "identifier", _, _), text(v177, v178), v178 = "__init__", !op(n, "async"), nearest(n, v179, k1), node(_, v179, "class_definition", _, _), field(v179, "body", v180), child(v180, v181, _), m187(v181), inside(v188, n, k2), node(_, v188, "assignment", _, _), field(v188, "left", v189), node(_, v189, "attribute", _, _), field(v189, "object", v190), node(_, v190, "identifier", _, _), text(v190, v191), v191 = "self", field(v189, "attribute", v192), node(_, v192, "identifier", _, _), field(v188, "right", v193), node(_, v193, "identifier", _, _), field(n, "parameters", v194), child(v194, v195, _), m203(v195), field(v195, "type", v204), node(_, v204, "type", _, _), child(v204, v205, _), m209(v205), nearest(n, v210, k1), node(_, v210, "class_definition", _, _), field(v210, "body", v211), child(v211, v212, _), m218(v212), field(v210, "body", v219), child(v219, v220, _), m238(v220), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation
+m100(n) :- node(_, n, "function_definition", _, _), field(n, "name", v83), node(_, v83, "identifier", _, _), text(v83, v84), v84 = "__init__", !op(n, "async"), inside(v85, n, k0), node(_, v85, "assignment", _, _), field(v85, "left", v86), node(_, v86, "attribute", _, _), field(v86, "object", v87), node(_, v87, "identifier", _, _), text(v87, v88), v88 = "self", field(v86, "attribute", v89), node(_, v89, "identifier", _, _), field(v85, "right", v90), node(_, v90, "identifier", _, _).
+m100(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v91), node(_, v91, "function_definition", _, _), field(v91, "name", v92), node(_, v92, "identifier", _, _), text(v92, v93), v93 = "__init__", !op(v91, "async"), inside(v94, v91, k0), node(_, v94, "assignment", _, _), field(v94, "left", v95), node(_, v95, "attribute", _, _), field(v95, "object", v96), node(_, v96, "identifier", _, _), text(v96, v97), v97 = "self", field(v95, "attribute", v98), node(_, v98, "identifier", _, _), field(v94, "right", v99), node(_, v99, "identifier", _, _).
+violation("data-layer-grammar-callable-constructors", "called-field", "CONSTRUCTOR_FIELD_CALLED_IN_RENDER", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v70), node(_, v70, "identifier", _, _), text(v70, v71), v71 = "render", !op(n, "async"), nearest(n, v72, k1), node(_, v72, "class_definition", _, _), field(v72, "body", v73), child(v73, v74, _), m80(v74), field(v72, "body", v81), child(v81, v82, _), m100(v82), inside(v101, n, k0), node(_, v101, "call", _, _), field(v101, "function", v102), node(_, v102, "attribute", _, _), field(v102, "object", v103), node(_, v103, "identifier", _, _), text(v103, v104), v104 = "self", field(v102, "attribute", v105), node(_, v105, "identifier", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+constructor_def(f, x) :- node(_, f, "function_definition", _, _), !op(f, "async"), field(f, "name", i), text(i, x).
+constructor_defines(b, x) :- child(b, g, _), constructor_def(g, x).
+constructor_defines(b, x) :- child(b, g, _), node(_, g, "decorated_definition", _, _), field(g, "definition", f), constructor_def(f, x).
+constructor_seed(x) :- node(d, c, "class_definition", _, _), in_scope(d), !out_scope(d), !syntax_error(d), child(m, c, _), node(_, m, "module", _, _), field(c, "name", i), text(i, x), field(c, "body", b), constructor_defines(b, "render").
+constructor_seed(x) :- node(d, c, "class_definition", _, _), in_scope(d), !out_scope(d), !syntax_error(d), child(dd, c, _), node(_, dd, "decorated_definition", _, _), child(m, dd, _), node(_, m, "module", _, _), field(c, "name", i), text(i, x), field(c, "body", b), constructor_defines(b, "render").
+constructor_callee(f) :- node(_, k, "call", _, _), field(k, "function", f).
+constructor_callee(a) :- constructor_callee(f), node(_, f, "attribute", _, _), field(f, "attribute", a).
+constructor_callee(v) :- constructor_callee(f), node(_, f, "subscript", _, _), field(f, "value", v).
+constructor_callee(g) :- constructor_callee(f), node(_, f, "call", _, _), field(f, "function", g).
+constructor_name(f, x) :- constructor_callee(f), node(_, f, "identifier", _, _), text(f, x).
+constructor_name(f, x) :- constructor_callee(f), node(_, f, "attribute", _, _), field(f, "attribute", a), constructor_name(a, x).
+constructor_name(f, x) :- constructor_callee(f), node(_, f, "subscript", _, _), field(f, "value", v), constructor_name(v, x).
+constructor_name(f, x) :- constructor_callee(f), node(_, f, "call", _, _), field(f, "function", g), constructor_name(g, x).
+constructor_arg(n, x) :- child(a, n, _), node(_, a, "argument_list", _, _), child(k, a, _), node(_, k, "call", _, _), field(k, "function", f), constructor_name(f, x).
+constructor_arg(n, x) :- child(w, n, _), node(_, w, "keyword_argument", _, _), child(a, w, _), node(_, a, "argument_list", _, _), child(k, a, _), node(_, k, "call", _, _), field(k, "function", f), constructor_name(f, x).
+constructor_climb(n, s) :- constructor_need(n), nearest(n, s, constructor_scope_kinds), node(_, s, "module", _, _).
+constructor_climb(n, s) :- constructor_need(n), nearest(n, s, constructor_scope_kinds), node(_, s, "function_definition", _, _), !op(s, "async").
+constructor_climb(n, s) :- constructor_need(n), nearest(n, a, constructor_scope_kinds), op(a, "async"), constructor_climb(a, s).
+constructor_need(a) :- constructor_need(n), nearest(n, a, constructor_scope_kinds), op(a, "async").
+constructor_stored(n) :- field(p, "left", n), node(_, p, "assignment", _, _).
+constructor_stored(n) :- field(p, "left", n), node(_, p, "augmented_assignment", _, _).
+constructor_stored(n) :- field(p, "left", n), node(_, p, "for_statement", _, _).
+constructor_stored(n) :- field(p, "left", n), node(_, p, "for_in_clause", _, _).
+constructor_stored(n) :- child(q, n, _), node(_, q, "pattern_list", _, _), constructor_stored(q).
+constructor_stored(n) :- child(q, n, _), node(_, q, "tuple_pattern", _, _), constructor_stored(q).
+constructor_stored(n) :- child(q, n, _), node(_, q, "list_pattern", _, _), constructor_stored(q).
+constructor_param(p) :- node(_, p, "identifier", _, _).
+constructor_param(p) :- node(_, p, "default_parameter", _, _).
+constructor_param(p) :- node(_, p, "typed_default_parameter", _, _).
+constructor_param(p) :- node(_, p, "typed_parameter", _, _), child(p, i, _), node(_, i, "identifier", _, _).
+constructor_has_param(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, p, _), constructor_param(p).
+constructor_stores(s, x) :- node(_, s, "function_definition", _, _), constructor_stored(i), node(_, i, "identifier", _, _), inside(i, s, constructor_fdef), text(i, x).
+constructor_passes(s, x) :- constructor_want(s, x), node(_, s, "function_definition", _, _), !constructor_has_param(s), !constructor_stores(s, x).
+constructor_need(s) :- constructor_passes(s, _).
+constructor_want(t, x) :- constructor_passes(s, x), constructor_climb(s, t).
+constructor_resolves(s, x) :- constructor_want(s, x), node(_, s, "module", _, _), child(s, f, _), constructor_def(f, x).
+constructor_resolves(s, x) :- constructor_want(s, x), node(_, s, "function_definition", _, _), field(s, "body", b), constructor_defines(b, x).
+constructor_resolves(s, x) :- constructor_passes(s, x), constructor_climb(s, t), constructor_resolves(t, x).
+constructor_ident(n, x) :- constructor_arg(n, x), node(_, n, "identifier", _, _).
+constructor_need(n) :- constructor_ident(n, _).
+constructor_want(s, y) :- constructor_ident(n, _), text(n, y), constructor_climb(n, s).
+constructor_candidate(n, x) :- constructor_arg(n, x), node(_, n, "lambda", _, _).
+constructor_candidate(n, x) :- constructor_ident(n, x), text(n, y), constructor_climb(n, s), constructor_resolves(s, y).
+violation("data-layer-grammar-callable-constructors", "constructor-arg", "CALLABLE_CONSTRUCTOR_ARG", p, l) :- constructor_candidate(n, x), constructor_seed(x), node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).
+untyped_param_named(q, p) :- node(_, q, "identifier", _, _), text(q, p).
+untyped_param_named(q, p) :- node(_, q, k, _, _), untyped_param_kinds(k), field(q, "name", n), text(n, p).
+untyped_param_named(q, p) :- node(_, q, k, _, _), untyped_param_kinds(k), child(q, i, _), node(_, i, "identifier", _, _), text(i, p).
+untyped_has_param(f, p) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, q, _), untyped_param_named(q, p).
+untyped_typed(q) :- field(q, "type", _).
+untyped_render(c, m) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, m, _), constructor_def(m, "render").
+untyped_render(c, m) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, g, _), node(_, g, "decorated_definition", _, _), field(g, "definition", m), constructor_def(m, "render").
+untyped_render_calls(c, x) :- untyped_render(c, m), node(_, k, "call", _, _), inside(k, m, constructor_fdef), field(k, "function", g), node(_, g, "attribute", _, _), field(g, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(g, "attribute", a), node(_, a, "identifier", _, _), text(a, x).
+untyped_stores(d, f, p) :- constructor_def(f, "__init__"), node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), nearest(f, c, untyped_class_kinds), untyped_render(c, _), node(_, s, "assignment", _, _), inside(s, f, constructor_fdef), field(s, "left", l), node(_, l, "attribute", _, _), field(l, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(l, "attribute", a), node(_, a, "identifier", _, _), text(a, x), field(s, "right", r), node(_, r, "identifier", _, _), text(r, p), untyped_render_calls(c, x).
+violation("data-layer-grammar-callable-constructors", "untyped-called-field", "UNTYPED_CALLED_CONSTRUCTOR_FIELD", path, l) :- untyped_stores(d, f, p), field(f, "parameters", ps), child(ps, q, _), untyped_param_named(q, p), !untyped_typed(q), doc(d, path, _), line(f, l).
+violation("data-layer-grammar-callable-constructors", "untyped-called-field", "UNTYPED_CALLED_CONSTRUCTOR_FIELD", path, l) :- untyped_stores(d, f, p), !untyped_has_param(f, p), doc(d, path, _), line(f, l).
+any_type(t) :- node(_, t, "type", _, _), child(t, i, _), node(_, i, "identifier", _, _), text(i, "Any").
+any_type(t) :- node(_, t, "type", _, _), child(t, i, _), node(_, i, "attribute", _, _), field(i, "attribute", a), node(_, a, "identifier", _, _), text(a, "Any").
+violation("data-layer-grammar-callable-constructors", "any-called-field", "ANY_CALLED_CONSTRUCTOR_FIELD", path, l) :- untyped_stores(d, f, p), field(f, "parameters", ps), child(ps, q, _), untyped_param_named(q, p), field(q, "type", t), any_type(t), doc(d, path, _), line(f, l).

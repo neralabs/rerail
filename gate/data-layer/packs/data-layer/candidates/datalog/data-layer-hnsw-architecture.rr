@@ -1,8 +1,102 @@
+.decl hnsw_architecture_imports(kind: symbol)
+hnsw_architecture_imports("import_statement"). hnsw_architecture_imports("import_from_statement").
+.decl hnsw_architecture_patterns(kind: symbol)
+hnsw_architecture_patterns("case_pattern").
+.decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl end_line(n: node, l: number)
+.decl field(p: node, f: symbol, c: node)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+.decl hnsw_architecture_algorithm(d: number)
+.decl hnsw_architecture_alias(i: node, s: symbol)
+.decl hnsw_architecture_body(b: node)
+.decl hnsw_architecture_const(c: node, v: symbol)
+.decl hnsw_architecture_docstring(c: node)
+.decl hnsw_architecture_forbidden(s: symbol)
+.decl hnsw_architecture_found(d: number, l: number, issue: symbol)
+.decl hnsw_architecture_fpart(h: node, p: node)
+.decl hnsw_architecture_frag(h: node, f: node, s: number)
+.decl hnsw_architecture_fstring(n: node)
+.decl hnsw_architecture_gate(d: number)
+.decl hnsw_architecture_generated(d: number)
+.decl hnsw_architecture_hi(h: node, i: number, b: number)
+.decl hnsw_architecture_host(h: node)
+.decl hnsw_architecture_host_spec(h: node)
+.decl hnsw_architecture_host_str(h: node)
+.decl hnsw_architecture_import_token(d: number, i: node, s: symbol)
+.decl hnsw_architecture_imported(d: number, i: node, s: symbol)
+.decl hnsw_architecture_interp(h: node, x: node, s: number)
+.decl hnsw_architecture_interp_k(h: node, x: node, k: number)
+.decl hnsw_architecture_lit(h: node, i: number, v: symbol)
+.decl hnsw_architecture_lo(h: node, i: number, a: number)
+.decl hnsw_architecture_mixed(q: node)
+.decl hnsw_architecture_module(d: number)
+.decl hnsw_architecture_not_name(n: node)
+.decl hnsw_architecture_params(p: node)
+.decl hnsw_architecture_part_of(h: node)
+.decl hnsw_architecture_piece_const(d: number, l: number, v: symbol)
+.decl hnsw_architecture_piece_node(h: node, i: number, x: node)
+.decl hnsw_architecture_plain(n: node)
+.decl hnsw_architecture_ref(d: number, n: node, s: symbol)
+.decl hnsw_architecture_row(d: number, n: node, issue: symbol)
+.decl hnsw_architecture_run(h: node, i: number, f: node, s: number)
+.decl hnsw_architecture_run_line(h: node, i: number, l: number)
+.decl hnsw_architecture_splat(s: node)
+.decl hnsw_architecture_tinner(i: node)
+.decl hnsw_architecture_tparam(p: node)
+.decl hnsw_architecture_unparen(o: node, x: node)
+.decl hnsw_entry(e: symbol)
+.decl hnsw_forbidden_path(p: symbol)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(h: node, s: number, t: number)
+.decl rr_agg3(h: node, i: number, j: number)
+.decl rr_ctx2(s: number)
+.decl rr_ctx4(i: number)
+.decl strprefix(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, node_text, syntax_error, cpython_syntax_error, field, child, text, strprefix, value, fstring_piece, line, end_line, name, op
+.output violation
+hnsw_architecture_forbidden("SqlHnswBeamLayerSearch").
+hnsw_architecture_forbidden("SqlHnswBeamLayerTrace").
+hnsw_architecture_forbidden("SqlHnswEpochRecoveryStep").
+hnsw_architecture_forbidden("SqlHnswFrontierAdvance").
+hnsw_architecture_forbidden("SqlHnswFrontierTickInsert").
+hnsw_architecture_forbidden("SqlHnswIncrementalMutationProgram").
+hnsw_architecture_forbidden("SqlTableHnswIncrementalUpperEdges").
+hnsw_architecture_forbidden("SqlTableHnswRepairContentOrphanNeighbors").
+hnsw_architecture_forbidden("SqlTableHnswRepairSourceNeighbors").
+hnsw_architecture_forbidden("SqlTableHnswScopedRebuild").
+hnsw_architecture_forbidden("_SqlHnswEpochLayerEdges").
+hnsw_architecture_forbidden("hnsw_flat_walk_neighbor_limit").
+hnsw_architecture_forbidden("hnsw_flat_walk_recursion_limit").
+hnsw_architecture_forbidden("hnsw_flat_walk_visited_budget").
+hnsw_architecture_forbidden("hnsw_insertion_recursive_iteration_limit").
+hnsw_architecture_forbidden("hnsw_recovery_diversity_candidate_limit").
+hnsw_architecture_forbidden("hnsw_recovery_exhaustive_candidate_limit").
+hnsw_architecture_forbidden("hnsw_recovery_initial_neighbor_limit").
+hnsw_architecture_forbidden("hnsw_recovery_pruning_candidate_limit").
+hnsw_architecture_forbidden("hnsw_recovery_route_partition_count").
+hnsw_architecture_forbidden("hnsw_search_frontier_iteration_limit").
+hnsw_architecture_forbidden("scored_pairs_query").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/normalized_vectors.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/recovery_schema.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/search_program.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sqlite_construction.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sqlite_frontier.py").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
 in_scope(d) :- doc(d, p, _), glob("impl/common/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l5200_vector_index/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("vector_types.py", p).
@@ -13,4 +107,101 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-.output violation
+hnsw_entry(e) :- option_value("entryPoint", e).
+hnsw_architecture_gate(d) :- hnsw_entry(e), e != "find_hnsw_architecture_findings", node(d, m, "module", _, _), node_text(m, s), !syntax_error(d), !cpython_syntax_error(d, _, _), (contains("HNSW", s) ; contains("Hnsw", s) ; contains("JSON", s) ; contains("Json", s) ; contains("hnsw", s) ; contains("json", s)).
+hnsw_architecture_gate(d) :- hnsw_entry("find_hnsw_architecture_findings"), node(d, _, "module", _, _), !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), !hnsw_forbidden_path(p).
+hnsw_architecture_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
+hnsw_architecture_not_name(n) :- node(_, p, "function_definition", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "class_definition", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "keyword_argument", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "default_parameter", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "except_clause", _, _), field(p, "alias", n).
+hnsw_architecture_not_name(n) :- hnsw_architecture_params(p), child(p, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_params(p), child(p, s, _), hnsw_architecture_splat(s), child(s, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, s, _), hnsw_architecture_splat(s), child(s, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- node(_, p, "global_statement", _, _), child(p, n, _).
+hnsw_architecture_not_name(n) :- node(_, p, "nonlocal_statement", _, _), child(p, n, _).
+hnsw_architecture_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, hnsw_architecture_imports).
+hnsw_architecture_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, hnsw_architecture_patterns).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(n), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(i), node(_, i, "splat_type", _, _), child(i, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(i), node(_, i, "constrained_type", _, _), child(i, n, 0), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(i), node(_, i, "constrained_type", _, _), child(i, t, 0), node(_, t, "type", _, _), child(t, n, 0), node(_, n, "identifier", _, _).
+hnsw_architecture_tparam(p) :- node(_, l, "type_parameter", _, _), child(l, p, _), !node(_, p, "type_default", _, _).
+hnsw_architecture_tparam(p) :- node(_, l, "type_parameter", _, _), child(l, t, _), node(_, t, "type_default", _, _), field(t, "name", p).
+hnsw_architecture_tinner(i) :- hnsw_architecture_tparam(p), node(_, p, "type", _, _), child(p, i, 0).
+hnsw_architecture_tinner(p) :- hnsw_architecture_tparam(p), !node(_, p, "type", _, _).
+hnsw_architecture_params(p) :- node(_, p, "parameters", _, _).
+hnsw_architecture_params(p) :- node(_, p, "lambda_parameters", _, _).
+hnsw_architecture_splat(s) :- node(_, s, "list_splat_pattern", _, _).
+hnsw_architecture_splat(s) :- node(_, s, "dictionary_splat_pattern", _, _).
+hnsw_architecture_ref(d, n, s) :- node(d, n, "identifier", _, _), text(n, s), !hnsw_architecture_not_name(n).
+hnsw_architecture_ref(d, a, s) :- node(d, a, "attribute", _, _), field(a, "attribute", x), text(x, s).
+hnsw_architecture_plain(n) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p), !contains("b", p).
+hnsw_architecture_fstring(n) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p).
+hnsw_architecture_const(c, v) :- hnsw_architecture_plain(c), child(q, c, _), !node(_, q, "concatenated_string", _, _), value(c, v).
+hnsw_architecture_const(q, v) :- node(_, q, "concatenated_string", _, _), !hnsw_architecture_mixed(q), value(q, v).
+hnsw_architecture_mixed(q) :- node(_, q, "concatenated_string", _, _), child(q, c, _), hnsw_architecture_fstring(c).
+hnsw_architecture_part_of(h) :- child(q, h, _), node(_, q, "concatenated_string", _, _).
+hnsw_architecture_host_str(h) :- hnsw_architecture_fstring(h), !hnsw_architecture_part_of(h).
+hnsw_architecture_host_str(q) :- hnsw_architecture_mixed(q).
+hnsw_architecture_host_spec(h) :- node(_, h, "format_specifier", _, _).
+hnsw_architecture_fpart(h, h) :- hnsw_architecture_host_str(h), hnsw_architecture_fstring(h).
+hnsw_architecture_fpart(q, p) :- hnsw_architecture_mixed(q), child(q, p, _), hnsw_architecture_fstring(p).
+hnsw_architecture_interp(h, x, s) :- hnsw_architecture_fpart(h, p), child(p, x, _), node(_, x, "interpolation", s, _).
+hnsw_architecture_interp(h, x, s) :- hnsw_architecture_host_spec(h), child(h, x, _), node(_, x, "format_expression", s, _).
+rr_ctx2(s) :- hnsw_architecture_interp(h, x, s).
+rr_agg1(h, s, t) :- rr_ctx2(s), hnsw_architecture_interp(h, _, t), t < s.
+hnsw_architecture_interp_k(h, x, k) :- hnsw_architecture_interp(h, x, s), k = count : { rr_agg1(h, s, _) }.
+hnsw_architecture_host(h) :- hnsw_architecture_host_str(h).
+hnsw_architecture_host(h) :- hnsw_architecture_host_spec(h).
+rr_ctx4(i) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), hnsw_architecture_interp_k(h, x, k).
+rr_agg3(h, i, j) :- rr_ctx4(i), fstring_piece(h, j, "interpolation", _), j < i.
+hnsw_architecture_piece_node(h, i, x) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), k = count : { rr_agg3(h, i, _) }, hnsw_architecture_interp_k(h, x, k).
+hnsw_architecture_lit(h, i, v) :- hnsw_architecture_host(h), fstring_piece(h, i, "literal", v).
+hnsw_architecture_frag(q, p, s) :- hnsw_architecture_mixed(q), child(q, p, _), node(_, p, "string", s, _), !hnsw_architecture_fstring(p).
+hnsw_architecture_frag(h, f, s) :- hnsw_architecture_fpart(h, p), child(p, f, _), node(_, f, k, s, _), k != "interpolation", k != "string_start", k != "string_end".
+hnsw_architecture_lo(h, 0, a) :- hnsw_architecture_lit(h, 0, _), hnsw_architecture_host_str(h), node(_, h, _, a, _).
+hnsw_architecture_lo(h, i, a) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), i > 0, j = @sub(i, 1), hnsw_architecture_piece_node(h, j, x), node(_, x, _, _, a).
+hnsw_architecture_hi(h, i, b) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = @add(i, 1), hnsw_architecture_piece_node(h, j, x), node(_, x, _, b, _).
+hnsw_architecture_hi(h, i, b) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = @add(i, 1), !fstring_piece(h, j, _, _), node(_, h, _, _, b).
+hnsw_architecture_run(h, i, f, s) :- hnsw_architecture_lo(h, i, a), hnsw_architecture_hi(h, i, b), hnsw_architecture_frag(h, f, s), s >= a, s < b.
+hnsw_architecture_run(h, i, x, s) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = @add(i, 1), fstring_piece(h, j, "debug", _), hnsw_architecture_piece_node(h, j, x), node(_, x, _, s, _).
+hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_run(h, i, f, s), s = min t : { hnsw_architecture_run(h, i, _, t) }, line(f, l).
+hnsw_architecture_run_line(h, 0, l) :- hnsw_architecture_lit(h, 0, _), hnsw_architecture_host_spec(h), line(h, l).
+hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_spec(h), i > 0, j = @sub(i, 1), hnsw_architecture_piece_node(h, j, x), end_line(x, l).
+hnsw_architecture_piece_const(d, l, v) :- hnsw_architecture_lit(h, i, v), hnsw_architecture_run_line(h, i, l), node(d, h, _, _, _).
+hnsw_architecture_unparen(x, x) :- node(_, x, _, _, _), !node(_, x, "parenthesized_expression", _, _).
+hnsw_architecture_unparen(o, x) :- node(_, o, "parenthesized_expression", _, _), child(o, i, 0), !child(o, _, 1), hnsw_architecture_unparen(i, x).
+hnsw_architecture_docstring(c) :- hnsw_architecture_const(c, _), hnsw_architecture_unparen(w, c), child(e, w, 0), node(_, e, "expression_statement", _, _), !child(e, _, 1), child(b, e, 0), hnsw_architecture_body(b).
+hnsw_architecture_body(b) :- node(_, b, "module", _, _).
+hnsw_architecture_body(b) :- node(_, o, "class_definition", _, _), field(o, "body", b).
+hnsw_architecture_body(b) :- node(_, o, "function_definition", _, _), field(o, "body", b).
+hnsw_architecture_alias(i, s) :- field(i, "name", x), node(_, x, "dotted_name", _, _), name(x, s).
+hnsw_architecture_alias(i, s) :- field(i, "name", x), node(_, x, "aliased_import", _, _), field(x, "name", dn), name(dn, s).
+hnsw_architecture_imported(d, i, s) :- node(d, i, "import_statement", _, _), hnsw_architecture_alias(i, s).
+hnsw_architecture_imported(d, i, s) :- node(d, i, "import_from_statement", _, _), field(i, "module_name", m), node(_, m, "dotted_name", _, _), name(m, s).
+hnsw_architecture_imported(d, i, s) :- node(d, i, "import_from_statement", _, _), field(i, "module_name", r), node(_, r, "relative_import", _, _), child(r, m, _), node(_, m, "dotted_name", _, _), name(m, s).
+hnsw_architecture_import_token(d, i, s) :- hnsw_architecture_imported(d, i, s).
+hnsw_architecture_import_token(d, i, s) :- hnsw_architecture_imported(d, i, _), hnsw_architecture_alias(i, s).
+hnsw_architecture_module(d) :- doc(d, p, _), match("(?i)(?:.*/)?[^/]*hnsw[^/]*", p).
+hnsw_architecture_module(d) :- doc(d, p, _), match("(?:.*/)?sql_table_hnsw(?:/.*)?", p).
+hnsw_architecture_algorithm(d) :- doc(d, p, _), match("(?:.*/)?algorithm\\.py", p).
+hnsw_architecture_row(d, n, "HNSW007") :- hnsw_architecture_ref(d, n, s), hnsw_architecture_module(d), match("(?s:.*)(?i:sqljson\\w*|\\bjsonb?(?:_\\w+)?\\b)(?s:.*)", s).
+hnsw_architecture_row(d, c, "HNSW007") :- hnsw_architecture_const(c, s), !hnsw_architecture_docstring(c), node(d, c, _, _, _), hnsw_architecture_module(d), match("(?s:.*)(?i:sqljson\\w*|\\bjsonb?(?:_\\w+)?\\b)(?s:.*)", s).
+hnsw_architecture_row(d, i, "HNSW007") :- hnsw_architecture_import_token(d, i, s), hnsw_architecture_module(d), match("(?s:.*)(?i:sqljson\\w*|\\bjsonb?(?:_\\w+)?\\b)(?s:.*)", s).
+hnsw_architecture_row(d, n, "HNSW001") :- hnsw_architecture_ref(d, n, s), hnsw_architecture_forbidden(s).
+hnsw_architecture_row(d, n, "HNSW001") :- node(d, n, "class_definition", _, _), field(n, "name", x), text(x, s), hnsw_architecture_forbidden(s).
+hnsw_architecture_row(d, n, "HNSW001") :- node(d, n, "function_definition", _, _), field(n, "name", x), text(x, s), hnsw_architecture_forbidden(s).
+hnsw_architecture_row(d, i, "HNSW003") :- hnsw_architecture_imported(d, i, s), hnsw_architecture_algorithm(d), (contains(".sqlite", s) ; contains("sql_dialect", s) ; contains("backend_type", s)).
+hnsw_architecture_row(d, f, "HNSW004") :- node(d, f, "function_definition", _, _), !op(f, "async"), field(f, "name", x), text(x, "render"), hnsw_architecture_algorithm(d).
+hnsw_architecture_row(d, c, "HNSW005") :- node(d, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "object", w), hnsw_architecture_unparen(w, o), node(_, o, "identifier", _, _), text(o, "SqlFragment"), hnsw_architecture_algorithm(d).
+hnsw_architecture_row(d, c, "HNSW002") :- hnsw_architecture_const(c, s), node(d, c, _, _, _), (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).
+hnsw_architecture_found(d, l, issue) :- hnsw_architecture_row(d, n, issue), line(n, l).
+hnsw_architecture_found(d, l, "HNSW007") :- hnsw_architecture_piece_const(d, l, s), hnsw_architecture_module(d), match("(?s:.*)(?i:sqljson\\w*|\\bjsonb?(?:_\\w+)?\\b)(?s:.*)", s).
+hnsw_architecture_found(d, l, "HNSW002") :- hnsw_architecture_piece_const(d, l, s), (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).
+hnsw_architecture_generated(d) :- doc(d, p, _), match("(?:.*/)?rust_bridge/(?:.*/)?generated_[^/]*", p).
+violation("data-layer-hnsw-architecture", "hnsw-architecture", issue, p, l) :- hnsw_architecture_found(d, l, issue), hnsw_architecture_gate(d), !hnsw_architecture_generated(d), in_scope(d), !out_scope(d), doc(d, p, _).
+violation("data-layer-hnsw-architecture", "hnsw-forbidden-files", "HNSW006", p, 1) :- hnsw_entry("find_hnsw_architecture_findings"), doc(d, p, _), hnsw_forbidden_path(p), in_scope(d), !out_scope(d).

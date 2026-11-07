@@ -40,7 +40,7 @@ mod run;
 mod semantic;
 #[cfg(test)]
 mod tests;
-mod transform;
+pub(in crate::code_rule_dsl) mod transform;
 mod util;
 mod value;
 
@@ -119,7 +119,8 @@ use util::{
     UTIL_STEPS_LEFT, stack_address,
 };
 use util::{THREE_VALUED, UNKNOWN};
-pub(super) use value::{Bound, Reading, ValueTest};
+pub(super) use value::{Bound, Reading, ValueTest, file_values};
+pub(super) use util::is_comment_kind;
 
 #[derive(Clone)]
 pub(super) struct GrammarMatcher {

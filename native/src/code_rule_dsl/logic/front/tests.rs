@@ -151,6 +151,67 @@ fn named_errors() {
     assert!(matches!(computed, Err(Error::Syntax(m)) if m.contains("computed term")));
 }
 
+/// O11 through derived relations that are themselves recursive, and along a node's children: names built up an
+/// attribute chain through `unparen` (at or below its node, by induction over its rules: matching-architecture's
+/// `qual`, bootstrap-cache-health's `qualified`), and a node's parts joined in child order. Still refused: a move
+/// that may stay at the node, a relation with facts or an input (rows no rule made), a recursive relation over a
+/// graph, counting with no child bound, and a position whose node changes.
+#[test]
+fn value_cycles_bounded_through_derived_relations_and_positions() {
+    let decls = "\
+.decl field(p: node, f: symbol, c: node)
+.decl child(p: node, c: node, i: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl e(a: node, b: node)
+.input field, child, node, text, e
+.decl unparen(e: node, m: node)
+unparen(e, e) :- node(_, e, k, _, _), k != \"parenthesized_expression\".
+unparen(e, m) :- node(_, e, \"parenthesized_expression\", _, _), child(e, i, 0), unparen(i, m).
+.decl q(a: node, s: symbol)
+q(n, s) :- node(_, n, \"identifier\", _, _), text(n, s).
+";
+    let attr = ".decl attr(a: node, x: symbol, v: node)\nattr(a, x, v) :- field(a, \"attribute\", i), text(i, x), field(a, \"object\", o), unparen(o, v).\n";
+    let qual = "q(a, s) :- attr(a, x, v), q(v, p), s = cat(cat(p, \".\"), x).\n";
+    let ok = |src: String| parse(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    let refused = |src: String| assert!(matches!(parse(&src), Err(Error::UnboundedValueCycle { .. })), "{src}");
+    ok(format!("{decls}{attr}{qual}"));
+    // A recursive relation strictly below: every descendant.
+    ok(format!("{decls}.decl desc(a: node, d: node)\ndesc(a, d) :- child(a, d, _).\ndesc(a, d) :- child(a, c, _), desc(c, d).\nq(a, s) :- desc(a, v), q(v, p), s = cat(p, \"x\").\n"));
+    // unparen alone may stay at the node: a name made there could be made again.
+    refused(format!("{decls}q(a, s) :- unparen(a, v), q(v, p), s = cat(p, \"x\").\n"));
+    // The facts hole: a fact, or an input, is a row no rule bounds.
+    let at = ".decl at(n: node, o: node)\nat(n, o) :- field(n, \"object\", o).\n";
+    let along_at = "q(n, s) :- at(n, o), q(o, p), s = cat(p, \"x\").\n";
+    ok(format!("{decls}{at}{along_at}"));
+    refused(format!("{decls}{at}at(1, 1).\n{along_at}"));
+    refused(format!("{decls}{at}.input at\n{along_at}"));
+    // A recursive relation over a graph guarantees nothing.
+    refused(format!("{decls}.decl reach(a: node, b: node)\nreach(a, b) :- e(a, b).\nreach(a, b) :- e(a, c), reach(c, b).\nq(a, s) :- reach(a, v), q(v, p), s = cat(p, \"x\").\n"));
+    // Parts joined along a node's children, index by index.
+    let parts = ".decl part(p: node, t: symbol)\npart(p, t) :- text(p, t).\n.decl j(c: node, i: number, s: symbol)\nj(c, 0, s) :- child(c, p, 0), part(p, s).\n";
+    ok(format!("{decls}{parts}j(c, i + 1, s2) :- j(c, i, s), child(c, p, i + 1), part(p, t), s2 = cat(s, t).\n"));
+    ok(format!("{decls}{parts}j(c, k, s2) :- j(c, i, s), k = i + 1, child(c, p, k), part(p, t), s2 = cat(s, t).\n"));
+    refused(format!("{decls}{parts}j(c, i + 1, s2) :- j(c, i, s), part(c, t), s2 = cat(s, t).\n"));
+    refused(format!("{decls}{parts}j(c, i + 1, s2) :- j(d, i, s), e(c, d), child(c, p, i + 1), part(p, t), s2 = cat(s, t).\n"));
+    refused(format!("{decls}{parts}j(c, i + 1, s2) :- j(c, i, s), child(c, p, i + 1), part(p, t), s2 = cat(s, t).\nj(c, i - 1, s2) :- j(c, i, s), child(c, p, i - 1), part(p, t), s2 = cat(t, s).\n"));
+}
+
+/// `nearest(n, _, set)` holds where n has an ancestor in the set (it was "nearest: expected a variable, got Wild"):
+/// `inside(n, _, set)`.
+#[test]
+fn positive_nearest_takes_a_wildcard() {
+    let p = parse(".decl k(kind: symbol)\nk(\"module\").\n.decl r(n: node)\nr(n) :- node(_, n, \"identifier\", _, _), nearest(n, _, k).\n").unwrap();
+    assert!(matches!(&p.rules[0].body[1], Literal::Atom(a) if a.rel == format!("{AXIS}k") && a.args[1] == Term::Wild && !a.neg), "{}", p.rules[0]);
+}
+
+/// `.input` of a relation nothing declares is a named error, not the planner's panic (`plan`'s `prog.decls[rel]`).
+#[test]
+fn an_undeclared_input_is_named() {
+    let undeclared = ".decl w(x: symbol)\nw(\"a\").\n.decl v(x: symbol)\nv(x) :- w(x).\n.input undeclared\n";
+    assert_eq!(parse(undeclared).unwrap_err(), Error::UndeclaredInput { relation: "undeclared".into() });
+}
+
 #[test]
 fn comparisons_bind_like_t() {
     let bound = |vs: &[&str]| vs.iter().map(|v| v.to_string()).collect::<BTreeSet<_>>();

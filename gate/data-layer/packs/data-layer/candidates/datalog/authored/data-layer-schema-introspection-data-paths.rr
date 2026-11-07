@@ -1,0 +1,254 @@
+// data-layer-schema-introspection-data-paths: the relational clause schema-introspection, by hand.
+//
+// Its SQL runs over CPython `ast` rows (`pythonAst`); the script it ports is nera-data-layer
+// scripts/lint_schema_introspection_data_paths.py.
+// Options: `entryPoint` from `option_value`. Under `_collect_violations` the gate is every valid module of the
+// scope and the query has no data-path filter; under every other value (the default "all" included) the gate is
+// a valid module whose text matches the trigger regex and the query keeps data paths only. `parameters` is read
+// by no clause.
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl node_text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl end_line(n: node, l: number)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_value(name: symbol, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// The gate: the module's text (W's `regex` on the module: comments and strings included) matches the trigger
+// regex, case-sensitively (its alternatives are literals; those holding a shorter one are left out).
+.decl introspection_trigger(s: symbol)
+introspection_trigger("SqlTableExists"). introspection_trigger("TableExistsIntent").
+introspection_trigger("TableExistsStep"). introspection_trigger("_column_exists_uncached").
+introspection_trigger("_fetch_table_columns"). introspection_trigger("_table_exists_uncached").
+introspection_trigger("column_exists"). introspection_trigger("flush_schema_plan").
+introspection_trigger("get_table_columns"). introspection_trigger("get_table_schema").
+introspection_trigger("information_schema"). introspection_trigger("inspect").
+introspection_trigger("list_collection_names"). introspection_trigger("pragma table_info").
+introspection_trigger("show columns"). introspection_trigger("show tables"). introspection_trigger("sqlite_master").
+introspection_trigger("table_exists").
+.decl introspection_text_doc(d: number)
+introspection_text_doc(d) :- node(d, m, "module", _, _), node_text(m, s), introspection_trigger(x), contains(x, s).
+.decl introspection_gate(d: number, p: symbol)
+introspection_gate(d, p) :- option_value("entryPoint", "_collect_violations"), node(d, _, "module", _, _),
+    in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _).
+introspection_gate(d, p) :- option_value("entryPoint", v), v != "_collect_violations", node(d, _, "module", _, _),
+    in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), introspection_text_doc(d).
+
+// The data paths: under one of the data-path prefixes and with no allowed marker in "/" + path.
+.decl introspection_prefix(s: symbol)
+introspection_prefix("l2050_transaction/"). introspection_prefix("l2055_lazy_result/").
+introspection_prefix("l2060_query_builder/"). introspection_prefix("l2070_batching/").
+introspection_prefix("l4000_permissions/"). introspection_prefix("l7000_versioned_schema/").
+introspection_prefix("l7200_versioned_transactions/"). introspection_prefix("impl/common/l2070_server_plan/").
+introspection_prefix("impl/common/l4100_queue/"). introspection_prefix("impl/common/l5150_fts_polyfill/").
+introspection_prefix("impl/common/l5200_sql_query/"). introspection_prefix("impl/common/l5350_hybrid_search/").
+introspection_prefix("impl/common/l7245_versioned_backends/").
+introspection_prefix("impl/common/l7300_sql_versioned_transactions/").
+introspection_prefix("impl/common/l7350_sparse_versioned_transactions/").
+introspection_prefix("impl/common/l9700_sql_graph_query/").
+// The allowed markers, tested on "/" + path: a marker is anywhere in the path, or, when it starts with "/", the
+// path starts with the rest of it (introspection_rooted: the marker less its "/").
+.decl introspection_allowed(s: symbol)
+introspection_allowed("/schema/"). introspection_allowed("_schema/"). introspection_allowed("/schema_").
+introspection_allowed("/metadata/"). introspection_allowed("_metadata"). introspection_allowed("/migration").
+introspection_allowed("/migrations/"). introspection_allowed("/introspector"). introspection_allowed("_introspector").
+introspection_allowed("/validator"). introspection_allowed("_validator"). introspection_allowed("/capabilit").
+introspection_allowed("/bootstrap"). introspection_allowed("/tests/").
+.decl introspection_rooted(s: symbol)
+introspection_rooted("schema/"). introspection_rooted("schema_"). introspection_rooted("metadata/").
+introspection_rooted("migration"). introspection_rooted("migrations/"). introspection_rooted("introspector").
+introspection_rooted("validator"). introspection_rooted("capabilit"). introspection_rooted("bootstrap").
+introspection_rooted("tests/").
+.decl introspection_marked(d: number)
+introspection_marked(d) :- doc(d, p, _), introspection_allowed(m), contains(m, p).
+introspection_marked(d) :- doc(d, p, _), introspection_rooted(m), prefix(m, p).
+.decl introspection_data_path(d: number)
+introspection_data_path(d) :- doc(d, p, _), introspection_prefix(x), prefix(x, p), !introspection_marked(d).
+
+// introspection_doc(d, p): a file the query reports in.
+.decl introspection_doc(d: number, p: symbol)
+introspection_doc(d, p) :- introspection_gate(d, p), option_value("entryPoint", "_collect_violations").
+introspection_doc(d, p) :- introspection_gate(d, p), option_value("entryPoint", v), v != "_collect_violations",
+    introspection_data_path(d).
+
+// The defs that hold a node as `ast` nests them (a def's decorators are its own): introspection_owner(n, f)
+// for every enclosing def (`n.id BETWEEN owner.id AND owner.last`), introspection_frame(n, f) for the innermost
+// (the row's `fn`; mirrors python/ast.rr def_frame). A class's decorator is the class's, so its innermost def is
+// the one around the class.
+.decl introspection_fdef(kind: symbol)
+introspection_fdef("function_definition").
+.decl introspection_deco(kind: symbol)
+introspection_deco("decorator").
+.decl introspection_frame_mark(kind: symbol)
+introspection_frame_mark("function_definition"). introspection_frame_mark("decorator").
+.decl introspection_owner(n: node, f: node)
+introspection_owner(n, f) :- inside(n, f, introspection_fdef).
+introspection_owner(n, f) :- inside(n, dc, introspection_deco), child(dd, dc, _), field(dd, "definition", f),
+    node(_, f, "function_definition", _, _).
+.decl introspection_frame(n: node, f: node)
+introspection_frame(n, f) :- nearest(n, f, introspection_frame_mark), node(_, f, "function_definition", _, _).
+introspection_frame(n, f) :- nearest(n, dc, introspection_frame_mark), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+introspection_frame(n, f) :- nearest(n, dc, introspection_frame_mark), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", k), node(_, k, "class_definition", _, _),
+    nearest(dc, f, introspection_fdef).
+// introspection_authority(n): some def holding n has a schema-authority word in its lower-cased name.
+.decl introspection_word(s: symbol)
+introspection_word("bootstrap"). introspection_word("create"). introspection_word("drop"). introspection_word("ensure").
+introspection_word("evolve"). introspection_word("migration"). introspection_word("rename").
+introspection_word("reconcile"). introspection_word("schema"). introspection_word("verify").
+.decl introspection_authority(n: node)
+introspection_authority(n) :- introspection_owner(n, f), field(f, "name", nm), text(nm, x), introspection_word(w),
+    icontains(w, x).
+
+// The calls: callee by Name or Attribute (calls.callee), the func's parentheses taken off (mirrors python/ast.rr
+// unparen and call_name, without the subscript step).
+.decl introspection_peel(c: node, e: node)
+introspection_peel(c, g) :- node(d, c, "call", _, _), introspection_doc(d, _), field(c, "function", g).
+introspection_peel(c, i) :- introspection_peel(c, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+.decl introspection_callee(c: node, x: symbol)
+introspection_callee(c, x) :- introspection_peel(c, u), node(_, u, "identifier", _, _), text(u, x).
+introspection_callee(c, x) :- introspection_peel(c, u), node(_, u, "attribute", _, _), field(u, "attribute", a),
+    text(a, x).
+
+.decl introspection_flush(x: symbol)
+introspection_flush("flush_schema_plan"). introspection_flush("flush_schema_plan_async").
+.decl introspection_forbidden(x: symbol)
+introspection_forbidden("SqlTableExists"). introspection_forbidden("TableExistsIntent").
+introspection_forbidden("TableExistsStep"). introspection_forbidden("_column_exists_uncached").
+introspection_forbidden("_fetch_table_columns"). introspection_forbidden("_fetch_table_columns_async").
+introspection_forbidden("_table_exists_uncached"). introspection_forbidden("column_exists").
+introspection_forbidden("column_exists_async"). introspection_forbidden("get_table_columns").
+introspection_forbidden("get_table_schema"). introspection_forbidden("inspect").
+introspection_forbidden("list_collection_names"). introspection_forbidden("table_exists").
+introspection_forbidden("table_exists_async"). introspection_forbidden("table_exists_lazy").
+// The primitive definitions: path, innermost def, callee.
+.decl introspection_primitive(p: symbol, f: symbol, x: symbol)
+introspection_primitive("impl/common/l2070_server_plan/steps/table_exists.py", "compile", "SqlTableExists").
+introspection_primitive("impl/common/l5150_fts_polyfill/manager.py", "execute_async", "table_exists_async").
+introspection_primitive("impl/common/l5150_fts_polyfill/manager.py", "execute_sync", "table_exists").
+.decl introspection_primitive_call(c: node)
+introspection_primitive_call(c) :- introspection_callee(c, x), node(d, c, _, _, _), doc(d, p, _),
+    introspection_frame(c, f), field(f, "name", nm), text(nm, y), introspection_primitive(p, y, x).
+
+// A schema-plan flush in a versioned backend, whatever def holds it.
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
+    introspection_callee(c, x), introspection_flush(x), node(d, c, _, _, _), introspection_doc(d, p),
+    prefix("impl/common/l7245_versioned_backends/", p), line(c, l).
+// An introspection call outside every schema-authority def, other than a primitive definition's.
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
+    introspection_callee(c, x), introspection_forbidden(x), !introspection_authority(c),
+    !introspection_primitive_call(c), node(d, c, _, _, _), introspection_doc(d, p), line(c, l).
+
+// String markers: an ast Constant whose value is a str holding a marker (SQLite's `lower`, ASCII only: the
+// regexes fold ASCII case only), outside every schema-authority def and not the value of an expression statement
+// (a docstring or any lone string statement).
+.decl introspection_sql_marker(m: symbol, re: symbol)
+introspection_sql_marker("information_schema", "(?s:.*)(?i-u:information_schema)(?s:.*)").
+introspection_sql_marker("pragma table_info", "(?s:.*)(?i-u:pragma table_info)(?s:.*)").
+introspection_sql_marker("show columns", "(?s:.*)(?i-u:show columns)(?s:.*)").
+introspection_sql_marker("show tables", "(?s:.*)(?i-u:show tables)(?s:.*)").
+introspection_sql_marker("sqlite_master", "(?s:.*)(?i-u:sqlite_master)(?s:.*)").
+// The literal expressions: a `string` not in an adjacent-string run, or a run (`concatenated_string`), which is
+// one ast node. introspection_f(e): e is or holds an f-string (ast's JoinedStr).
+.decl introspection_in_run(s: node)
+introspection_in_run(s) :- node(_, c, "concatenated_string", _, _), child(c, s, _).
+.decl introspection_lit(e: node)
+introspection_lit(s) :- node(d, s, "string", _, _), introspection_doc(d, _), !introspection_in_run(s).
+introspection_lit(c) :- node(d, c, "concatenated_string", _, _), introspection_doc(d, _).
+.decl introspection_fpart(s: node)
+introspection_fpart(s) :- node(_, s, "string", _, _), strprefix(s, p), contains("f", p).
+.decl introspection_f(e: node)
+introspection_f(s) :- introspection_lit(s), introspection_fpart(s).
+introspection_f(c) :- introspection_lit(c), child(c, s, _), introspection_fpart(s).
+// The string statements: an expression statement whose one expression (parentheses taken off; a trailing comma
+// makes a tuple) is e.
+.decl introspection_stmt_peel(st: node, e: node)
+introspection_stmt_peel(st, e) :- node(_, st, "expression_statement", _, _), child(st, e, 0), !child(st, _, 1),
+    !token(st, _, ",", _, _).
+introspection_stmt_peel(st, i) :- introspection_stmt_peel(st, e), node(_, e, "parenthesized_expression", _, _),
+    child(e, i, 0).
+.decl introspection_stmt_string(n: node)
+introspection_stmt_string(n) :- introspection_stmt_peel(_, n).
+// introspection_const(n, v): a Constant str of a literal with no f-string part and its value, W's `value`
+// (escapes decoded, parts joined), at the literal's line.
+.decl introspection_const(n: node, v: symbol)
+introspection_const(e, v) :- introspection_lit(e), !introspection_f(e), value_type_of(e, "str"), value(e, v),
+    !introspection_stmt_string(e).
+
+// A literal holding an f-string is a JoinedStr, and a format spec (`{x:…}`) a JoinedStr of its own; their
+// Constants are their literal runs (JoinedStr.values; never a statement's own value, the JoinedStr is):
+// fstring_piece's literal rows, decoded and merged across the parts of a run, a debug field's `x = ` and the
+// spec's literal text in them. Each is at CPython 3.12's lineno for it: the line where the run's source starts.
+.decl introspection_fhost(e: node)
+introspection_fhost(e) :- introspection_lit(e), introspection_f(e).
+introspection_fhost(s) :- node(d, s, "format_specifier", _, _), introspection_doc(d, _).
+// The host's parts (a run's strings, else the string) and replacement fields in order (a part's
+// interpolations, a spec's format_expressions): (host, field, start, end).
+.decl introspection_part(e: node, s: node)
+introspection_part(s, s) :- introspection_fhost(s), node(_, s, "string", _, _).
+introspection_part(e, s) :- introspection_fhost(e), node(_, e, "concatenated_string", _, _), child(e, s, _),
+    node(_, s, "string", _, _).
+.decl introspection_field(e: node, f: node, b: number, fe: number)
+introspection_field(e, f, b, fe) :- introspection_part(e, s), child(s, f, _), node(_, f, "interpolation", b, fe).
+introspection_field(e, f, b, fe) :- introspection_fhost(e), node(_, e, "format_specifier", _, _), child(e, f, _),
+    node(_, f, "format_expression", b, fe).
+// The source items a run is read from, at (host, first byte, line), as CPython positions a run (checked on
+// 3.12): an f part's string_content (a `\<newline>` continuation in it included), a plain part (its quote; an
+// empty one too), a debug field's text (from after its `{`), and a spec's slices after its `:` and after each
+// field (the line of the field's `}`), each holding a byte.
+.decl introspection_item(e: node, o: number, l: number)
+introspection_item(e, o, l) :- introspection_part(e, s), introspection_fpart(s), child(s, c, _),
+    node(_, c, "string_content", o, _), line(c, l).
+introspection_item(e, o, l) :- introspection_part(e, s), !introspection_fpart(s), node(_, s, _, o, _), line(s, l).
+introspection_item(e, o, l) :- introspection_field(e, f, b, _), token(f, _, "=", _, _), o = b + 1, line(f, l).
+.decl introspection_slice(e: node, a: number, l: number)
+introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", s, _), a = s + 1, line(e, l).
+introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", _, _),
+    introspection_field(e, f, _, a), end_line(f, l).
+introspection_item(e, a, l) :- introspection_slice(e, a, l), node(_, e, _, _, k), a < k, !introspection_field(e, _, a, _).
+// Each item's run, keyed by the start of the first field ending after it, else the host's end; a run's line is
+// its first item's.
+.decl introspection_after(e: node, o: number, b: number)
+introspection_after(e, o, b) :- introspection_item(e, o, _), introspection_field(e, _, b, fe), fe > o.
+.decl introspection_not_next(e: node, o: number, b: number)
+introspection_not_next(e, o, b) :- introspection_after(e, o, b), introspection_after(e, o, b2), b2 < b.
+.decl introspection_run(e: node, k: number, l: number)
+introspection_run(e, k, l) :- introspection_item(e, o, l), introspection_after(e, o, k), !introspection_not_next(e, o, k).
+introspection_run(e, k, l) :- introspection_item(e, o, l), !introspection_after(e, o, _), node(_, e, _, _, k).
+.decl introspection_run_line(e: node, k: number, l: number)
+introspection_run_line(e, k, l) :- introspection_run(e, k, _), l = min l2 : { introspection_run(e, k, l2) }.
+// fstring_piece has one interpolation per field, in order, and a literal per run that decodes to something: the
+// j-th field's run is the literal right before the j-th interpolation, the last run a literal ending the tree.
+.decl introspection_ford(e: node, b: number, j: number)
+introspection_ford(e, b, j) :- introspection_field(e, _, b, _), j = count : { introspection_field(e, _, b2, _), b2 < b }.
+.decl introspection_pord(e: node, i: number, j: number)
+introspection_pord(e, i, j) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _),
+    j = count : { fstring_piece(e, i2, "interpolation", _), i2 < i }.
+.decl introspection_later(e: node, i: number)
+introspection_later(e, i) :- introspection_fhost(e), fstring_piece(e, i, _, _), fstring_piece(e, i2, _, _), i2 > i.
+.decl introspection_fconst(e: node, v: symbol, l: number)
+introspection_fconst(e, v, l) :- introspection_ford(e, b, j), introspection_pord(e, i, j),
+    fstring_piece(e, h, "literal", v), i = h + 1, introspection_run_line(e, b, l).
+introspection_fconst(e, v, l) :- introspection_fhost(e), node(_, e, _, _, k), fstring_piece(e, h, "literal", v),
+    !introspection_later(e, h), introspection_run_line(e, k, l).
+// Residual, blocked on CPython's own string parts (str_part, not bound): a literal W's parse cannot decode, or
+// over MAX_STRING_BYTES, has no fstring_piece rows and is not read, where CPython still has its Constants.
+
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
+    introspection_const(n, v), introspection_sql_marker(_, re), match(re, v), !introspection_authority(n),
+    node(d, n, _, _, _), introspection_doc(d, p), line(n, l).
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
+    introspection_fconst(n, v, l), introspection_sql_marker(_, re), match(re, v), !introspection_authority(n),
+    node(d, n, _, _, _), introspection_doc(d, p).

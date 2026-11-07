@@ -1,25 +1,33 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl fstring_defs(kind: symbol)
+fstring_defs("function_definition").
 .decl child(p: node, c: node, i: number)
-.decl strprefix(n: node, s: symbol)
-.input doc, node, child, strprefix
-.decl k0(kind: symbol)
-k0("function_definition").
-.decl k1(kind: symbol)
-k1("module").
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl fstring_f(n: node)
+.decl fstring_hit(n: node)
+.decl fstring_part(n: node)
+.decl fstring_render(n: node)
 .decl in_scope(d: number)
-.decl m3(n: node)
-.decl m6(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl strprefix(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, strprefix, line, syntax_error, text
+.output violation
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
-m3(n) :- child(v2, n, _), node(_, v2, "concatenated_string", _, _).
-m6(n) :- node(_, n, "string", _, _), strprefix(n, v1), contains("f", v1), !m3(n).
-m6(n) :- node(_, n, "concatenated_string", _, _), child(n, v4, _), node(_, v4, "string", _, _), strprefix(v4, v5), contains("f", v5).
-m6(n) :- node(_, n, "format_specifier", _, _).
-.output violation
+fstring_f(n) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p).
+fstring_part(n) :- child(c, n, _), node(_, c, "concatenated_string", _, _).
+fstring_hit(n) :- fstring_f(n), !fstring_part(n).
+fstring_hit(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), fstring_f(s).
+fstring_hit(n) :- node(_, n, "format_specifier", _, _).
+fstring_render(n) :- fstring_hit(n), inside(n, f, fstring_defs), field(f, "name", m), text(m, s), s = "render".
+fstring_render(n) :- fstring_hit(n), inside(n, f, fstring_defs), field(f, "name", m), text(m, s), prefix("render_", s).
+violation("data-layer-render-fstrings", "fstring", "render_fstring", p, l) :- fstring_render(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).

@@ -1,6 +1,6 @@
 //! Tape-scoped kind positions: one container segment per kind code (decision 0045 §5,
 //! `content_store::postings::segment_positions`), in preorder.
-use crate::code_rule_dsl::space::NodeSet;
+use crate::code_rule_dsl::space::Builder as SetBuilder;
 
 pub(super) struct Builder {
     positions: Vec<Vec<u32>>,
@@ -19,8 +19,11 @@ impl Builder {
 
     /// Kind `code`'s positions as a segment; the positions are released.
     pub fn segment(&mut self, code: usize) -> Vec<u8> {
-        let mut set = NodeSet::default();
-        set.insert_file(0, std::mem::take(&mut self.positions[code]));
-        set.segment(0)
+        let mut set = SetBuilder::default();
+        let mut positions = std::mem::take(&mut self.positions[code]);
+        positions.sort_unstable();
+        positions.dedup();
+        positions.into_iter().for_each(|p| set.node(p));
+        set.finish().encode()
     }
 }

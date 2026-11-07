@@ -464,11 +464,14 @@ fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
     match l {
         Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
         Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some(),
-        Literal::Agg { var, over, atom, .. } => {
+        Literal::Agg { var, op, over, atom } => {
             let mut need = atom.vars();
             need.remove(var);
             if let Some(o) = over {
                 need.remove(o);
+            }
+            if let AggOp::Join { by, .. } = op {
+                by.iter().for_each(|k| _ = need.remove(k));
             }
             need.is_subset(bound)
         }
@@ -1282,15 +1285,34 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "node" => &[&["n"], &["kind", "n"]],
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
-        "text" | "name" | "str" | "strprefix" | "value" => &[&["n"], &["s", "n"]],
-        "intval" | "op" | "op_at" | "tape" | "line" => &[&["n"]],
+        "text" | "name" | "str" | "strprefix" | "node_text" | "comment" => &[&["n"], &["s", "n"]],
+        "value" | "static_value" => &[&["n"], &["v", "n"]],
+        "value_type_of" => &[&["n"], &["t", "n"]],
+        "value_type" => &[&["v"], &["t", "v"]],
+        "fstring_piece" => &[&["n"], &["v", "n"]],
+        "fstring_template" => &[&["n"], &["v", "n"]],
+        "cpython_syntax_error" => &[&["d"]],
+        "string_annotation" => &[&["s"]],
+        "parsed" => &[&["s"], &["root"]],
+        "literal_json" => &[&["n"], &["v", "n"]],
+        "intval" | "op" | "tape" | "line" | "end_line" | "col" | "reference_open" => &[&["n"]],
+        "reference_edge" => &[&["src"], &["dst"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
-        "doc" | "pkg" | "syntax_error" => &[&["d"]],
+        "doc" | "pkg" | "syntax_error" | "source" | "line_count" => &[&["d"]],
+        "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
+        "rr_docof" => &[&["n"], &["d"]],
+        "op_at" | "prev_token" => &[&["n"], &["s", "n"]],
+        "token" => &[&["p", "i"], &["start"]],
+        "visit_index" => &[&["n"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
         rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
         // A text test's symbols (decision 0037, `logic::strings::as_relations`).
         rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
+        // A `match_all` regex's matches, by span and by match (`facts::vtab::syntax::Extra`).
+        rel if rel.starts_with(super::strings::MATCHES) => &[&["sp"], &["m"]],
+        // A `match_group` regex's groups, by span, by match and by group span.
+        rel if rel.starts_with(super::strings::GROUPS) => &[&["sp"], &["m"], &["gsp"]],
         _ => &[],
     };
     lists.iter().map(|l| l.iter().map(|c| (*c).to_owned()).collect()).collect()
@@ -1407,6 +1429,14 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                     branches: vec![(eq(x.clone(), string("")), y.clone())],
                     fallback: Box::new(bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone())),
                 },
+                // core.rr's functors whose meaning is W's (`register_functors`), ahead of `strings::functions`' below.
+                ("replace_all", [s, re, by]) => symbol_of(atoms, call("rr_replace_all", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
+                // A JSON string literal as W's signed-list stages write one (`json_group_array`'s elements): SQLite's
+                // `json_quote` of the text.
+                ("json_str", [x]) => symbol_of(atoms, call("json_quote", vec![bin(Op::Concatenate, text_of(atoms, x), string(""))])),
+                ("nfkc", [x]) => symbol_of(atoms, call("rr_nfkc", vec![text_of(atoms, x)])),
+                ("ed25519_ok", [k, m, sig]) => call("rr_ed25519_ok", vec![text_of(atoms, k), text_of(atoms, m), text_of(atoms, sig)]),
+                ("rx_replace", [s, re, by]) => symbol_of(atoms, call("rr_rx_replace", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
                 ("flat_bin", [o, x, y]) => {
                     let big = integer(1i64 << 40);
                     let [plus, minus, times] = match atoms {
@@ -1538,11 +1568,11 @@ impl Model {
             alias += 1;
             format!("t{alias}")
         };
-        let neg_conds = |a: &Atom, al: &str, env: &HashMap<String, Expr>, skip: Option<&str>| -> Result<Vec<Expr>> {
+        let neg_conds = |a: &Atom, al: &str, env: &HashMap<String, Expr>, skip: &[&str]| -> Result<Vec<Expr>> {
             a.args
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if Some(v.as_str()) == skip))
+                .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if skip.contains(&v.as_str())))
                 .map(|(c, t)| Ok(eq(col(al, &sql_col(&a.rel, c)), sql_term(t, env, atoms)?)))
                 .collect()
         };
@@ -1602,7 +1632,7 @@ impl Model {
                 }
                 Literal::Atom(l) => {
                     let al = a_name();
-                    let conds = neg_conds(l, &al, &env, None)?;
+                    let conds = neg_conds(l, &al, &env, &[])?;
                     let query = subquery(integer(1), self.relation(prog, &l.rel, false), al, conds);
                     wh.push(Expr::Exists { negated: true, query: Box::new(query) });
                 }
@@ -1675,27 +1705,37 @@ impl Model {
                 }
                 Literal::Agg { var, op, over, atom } => {
                     let al = a_name();
-                    let conds = neg_conds(atom, &al, &env, over.as_deref())?;
-                    let column = |c: usize| col(&al, &sql_col(&atom.rel, c));
-                    let at = |o: &str| atom.args.iter().position(|t| matches!(t, Term::Var(v) if v == o)).expect("the aggregated column");
+                    // The aggregate's own variables are read from its rows, not tested: the aggregated one, and
+                    // join's order where the rule has not bound it.
+                    let mut own: Vec<&str> = over.as_deref().into_iter().collect();
+                    if let AggOp::Join { by, .. } = op {
+                        own.extend(by.iter().map(String::as_str).filter(|k| !env.contains_key(*k)));
+                    }
+                    let conds = neg_conds(atom, &al, &env, &own)?;
+                    // A variable's column in the aggregate's rows, as text where it is a symbol (`sym_text` of its
+                    // atom), so that join orders and writes symbols by their text.
+                    let column = |v: &str, text: bool| {
+                        let c = atom.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("the aggregated column");
+                        let e = col(&al, &sql_col(&atom.rel, c));
+                        if text && prog.decls.get(&atom.rel).is_some_and(|d| d[c].1 == "sym") { text_of(atoms, &e) } else { e }
+                    };
                     let what = match (op, over) {
                         (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
-                        (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(at(o))]),
-                        // Soufflé's sum of nothing is 0; SQL's is NULL.
-                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(at(o))]), integer(0)]),
-                        // Symbols by their text (code point order is UTF-8's byte order, SQLite's BINARY), numbers by
-                        // value; ties by the value joined. "" of nothing, interned like any computed text.
+                        (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o, false)]),
+                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(o, false)]), integer(0)]),
                         (AggOp::Join { by, sep }, Some(o)) => {
-                            let sym = |c: usize| prog.decls.get(&atom.rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
-                            let value = |c: usize| if sym(c) { text_of(atoms, &column(c)) } else { column(c) };
-                            let x = at(o);
-                            let order = by.iter().chain([&x]).map(|&c| value(c)).collect();
-                            let joined = Expr::Ordered { name: "group_concat", arguments: vec![value(x), string(sep)], order };
-                            symbol_of(atoms, call("coalesce", vec![joined, string("")]))
+                            let args = [string(sep), column(o, true)].into_iter().chain(by.iter().map(|k| column(k, true))).collect();
+                            symbol_of(atoms, call("rr_join", args))
                         }
                     };
-                    let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);
-                    env.insert(var.clone(), Expr::Scalar(Box::new(query)));
+                    let query = Expr::Scalar(Box::new(subquery(what, self.relation(prog, &atom.rel, false), al, conds)));
+                    // A result already bound (`def(d, x, s, …), s = max t : { … }`) is compared with it, not rebound.
+                    match env.get(var) {
+                        Some(bound) => wh.push(eq(bound.clone(), query)),
+                        None => {
+                            env.insert(var.clone(), query);
+                        }
+                    }
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) && self.inputs.native.contains("nearest") => {
                     // The climb is a native function over the tape: no CTE, and its result is just a column expression.
@@ -3160,10 +3200,100 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     Ok(views)
 }
 
+/// core.rr's functors whose meaning is W's, which `strings::functions` does not give: `@replace_all(s, re, by)`, each
+/// match of `re` in `s` replaced by `by`, `$1`
+/// and `${name}` its groups, as W's `replace` transform does (`matcher::transform::replace`); `@rx_replace(s, re, by)`
+/// the same as W's SQL `rx_replace` does it (`waves::relational::functions`: the `regex` crate's `replace_all`, `$1`,
+/// `$name`, `${name}` and `$$` as it reads them); `@ed25519_ok(key, message, sig)`, 1 where `crypto::ed25519_ok`
+/// holds, else 0; `@nfkc(s)`, `s` under Unicode NFKC, as CPython normalizes an identifier (PEP 3131: the parser's
+/// `unicodedata.normalize("NFKC", …)` of each non-ASCII one; `identifier::nfkc`). NULL gives NULL (`rr_ed25519_ok`:
+/// 0). `rr_join(sep, x, k, …)` is `join`'s aggregate: the distinct
+/// `(k, …, x)` rows' `x` ordered by `k, …` then `x` (numbers by value, then text by code point, as `sorted()` orders a
+/// list of one type), joined by `sep`; `""` over no rows.
+fn register_functors(db: &Connection) -> rusqlite::Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    fn compiled(f: &str, re: &str) -> rusqlite::Result<regex::Regex> {
+        static REGEXES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<regex::Regex>>>> = std::sync::LazyLock::new(Default::default);
+        let regex = REGEXES.lock().expect("the regex cache").entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok()).clone();
+        regex.ok_or_else(|| rusqlite::Error::UserFunctionError(format!("@{f}: bad regex {re:?}").into()))
+    }
+    let texts = |ctx: &rusqlite::functions::Context<'_>| -> rusqlite::Result<Option<[String; 3]>> {
+        Ok(match (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?, ctx.get::<Option<String>>(2)?) {
+            (Some(a), Some(b), Some(c)) => Some([a, b, c]),
+            _ => None,
+        })
+    };
+    db.create_scalar_function(c"rr_replace_all", 3, flags, move |ctx| {
+        let Some([s, re, by]) = texts(ctx)? else { return Ok(None) };
+        Ok(Some(crate::code_rule_dsl::matcher::transform::replace(&s, &compiled("replace_all", &re)?, &by)))
+    })?;
+    db.create_scalar_function(c"rr_rx_replace", 3, flags, move |ctx| {
+        let Some([s, re, by]) = texts(ctx)? else { return Ok(None) };
+        Ok(Some(compiled("rx_replace", &re)?.replace_all(&s, by.as_str()).into_owned()))
+    })?;
+    db.create_scalar_function(c"rr_ed25519_ok", 3, flags, move |ctx| {
+        Ok(texts(ctx)?.is_some_and(|[key, message, sig]| super::crypto::ed25519_ok(&key, &message, &sig)))
+    })?;
+    db.create_scalar_function(c"rr_nfkc", 1, flags, |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::code_rule_dsl::identifier::nfkc(&s).into_owned())))?;
+    db.create_aggregate_function(c"rr_join", -1, flags, OrderedJoin)
+}
+
+/// `rr_join`'s rows: each one's order key (its `k, …`, then `x`) and `x`'s text.
+struct OrderedJoin;
+impl rusqlite::functions::Aggregate<(String, Vec<(Vec<rusqlite::types::Value>, String)>), String> for OrderedJoin {
+    fn init(&self, ctx: &mut rusqlite::functions::Context<'_>) -> rusqlite::Result<(String, Vec<(Vec<rusqlite::types::Value>, String)>)> {
+        Ok((ctx.get::<Option<String>>(0)?.unwrap_or_default(), Vec::new()))
+    }
+    fn step(&self, ctx: &mut rusqlite::functions::Context<'_>, acc: &mut (String, Vec<(Vec<rusqlite::types::Value>, String)>)) -> rusqlite::Result<()> {
+        use rusqlite::types::Value;
+        let x: Value = ctx.get(1)?;
+        let text = match &x {
+            Value::Text(s) => s.clone(),
+            Value::Integer(i) => i.to_string(),
+            Value::Real(r) => r.to_string(),
+            Value::Null => return Ok(()),
+            Value::Blob(_) => return Err(rusqlite::Error::UserFunctionError("join: a blob".into())),
+        };
+        let mut key: Vec<Value> = (2..ctx.len()).map(|i| ctx.get(i)).collect::<rusqlite::Result<_>>()?;
+        key.push(x);
+        acc.1.push((key, text));
+        Ok(())
+    }
+    fn finalize(&self, _: &mut rusqlite::functions::Context<'_>, acc: Option<(String, Vec<(Vec<rusqlite::types::Value>, String)>)>) -> rusqlite::Result<String> {
+        use rusqlite::types::Value;
+        use std::cmp::Ordering;
+        let Some((sep, mut rows)) = acc else { return Ok(String::new()) };
+        // Numbers by value before text by code point (UTF-8 byte order is code point order).
+        fn value(a: &Value, b: &Value) -> Ordering {
+            let number = |v: &Value| match v {
+                Value::Integer(i) => Some(*i as f64),
+                Value::Real(r) => Some(*r),
+                _ => None,
+            };
+            match (a, b) {
+                (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+                (Value::Text(x), Value::Text(y)) => x.cmp(y),
+                _ => match (number(a), number(b)) {
+                    (Some(x), Some(y)) => x.total_cmp(&y),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                },
+            }
+        }
+        let key = |a: &[Value], b: &[Value]| a.iter().zip(b).map(|(x, y)| value(x, y)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal);
+        rows.sort_by(|a, b| key(&a.0, &b.0));
+        rows.dedup_by(|a, b| key(&a.0, &b.0).is_eq());
+        Ok(rows.iter().map(|(_, x)| x.as_str()).collect::<Vec<_>>().join(&sep))
+    }
+}
+
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
     let db = db;
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
+    register_functors(db)?;
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
     // positions table (`rdl_int`) is the same for every run.
     let temp: Vec<(String, String, String)> = db

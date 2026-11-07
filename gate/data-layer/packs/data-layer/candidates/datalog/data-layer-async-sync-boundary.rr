@@ -1,15 +1,9 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, field, text, name, op, line, syntax_error
 .decl k0(kind: symbol)
 k0("function_definition").
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
 .decl m100(n: node)
 .decl m104(n: node)
 .decl m111(n: node)
@@ -87,7 +81,11 @@ k0("function_definition").
 .decl m82(n: node)
 .decl m89(n: node)
 .decl m93(n: node)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl op(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
 .decl t105(s: symbol)
 .decl t106(s: symbol)
 .decl t116(s: symbol)
@@ -208,7 +206,10 @@ k0("function_definition").
 .decl t84(s: symbol)
 .decl t94(s: symbol)
 .decl t95(s: symbol)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, text, name, op, line, syntax_error
+.output violation
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("conform/**/*.py", p).
@@ -716,4 +717,3 @@ t587(s) :- doc(_, _, s), (suffix("impl/sqlite/native_async_wrapper.py", s) ; suf
 t588(s) :- doc(_, s, _), t587(s).
 t588(s) :- doc(_, _, s), t587(s).
 violation("data-layer-async-sync-boundary", "executor-allowed-file-32", "EXECUTOR_ESCAPE", p, l) :- node(_, n, "call", _, _), field(n, "function", v580), name(v580, v581), suffix("run_in_executor", v581), nearest(n, v582, k0), node(_, v582, "function_definition", _, _), op(v582, "async"), !m586(n), doc(d, p, m), suffix("l8000_admin/tools/ipc_tools.py", p), !t588(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation

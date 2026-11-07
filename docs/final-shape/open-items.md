@@ -1327,14 +1327,16 @@ parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Add
   lines, kept as findings-layer settings and not applied yet; `.violation` at a `loc` or `span` whose values are
   nodes or `@place(path, line)`s (file-length, test-budget). A place is the loc value `-2 - (path << 32 | line)`;
   its finding is at that path and line.
-- `sum` (0 of nothing), `join x by k sep "s"` (keys ordered by text for symbols, by value for numbers, ties by the
-  value; `""` of nothing), an aggregate inside a term, and an aggregate over an expression.
+- `sum` (0 of nothing), `join x by k sep "s"` (the distinct rows of its value and keys, the keys variables of its
+  body; ordered by text for symbols, by value for numbers, ties by the value; no `sep` joins as they are; `""` of
+  nothing), an aggregate inside a term, and an aggregate over an expression.
 - Soufflé's `cat` of any arity, `max/2`, `min/2`, `to_number` (Soufflé's `symbol2numeric`; no value where Soufflé
   errors) and `%` (C's remainder; none for `% 0`); `@lower` as Unicode lowercase; `@dot("", b) = b`, in SQL,
   native and the splits of a bound whole. A function with no value gives no row.
 - `has(a, n, set)` tests the set on n, as `core.rr` says (it was tested on a); sets of nodes, or of kinds rules
-  derive, in every axis; `precedes_stop`; `next_sibling`; `!nearest` with the ancestor named, `!within_stop`,
-  `!earlier`, `!split_dot`; `split_dot` at the last dot only.
+  derive, in every axis; `precedes_stop`; `!nearest` with the ancestor named, `!within_stop`, `!split_dot`;
+  `split_dot` at the last dot only. `within`, `next_sibling`, `precedes`, `earlier` and `unset` are core.rr's
+  tree arithmetic (`rr::lower::core`), negated through a relation of their rows.
 - Negated conjunctions and disjunctions: each alternative of `!( … )` is a helper relation over the variables it
   shares with the rule, negated.
 - Recursion that makes values, where the data bounds it (`front/cycles.rs`): parts of values, values made from
@@ -1343,10 +1345,10 @@ parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Add
 
 Still refused by name: `.violation` at a span or loc that can hold a span the engine does not make (regex-capture
 spans: noqa-sec-ratchet, ruff TD00x; tokens; `match_all`), `~` patterns, `must`/`may`, `ordered by`,
-`dfs_first`, `mean`, `to_float` and decimals (the engine has no decimal values), a negated axis with its other
-node unnamed, and value recursion the check cannot bound: `negate`/`number` in `lib/python/pyflakes.rr` (the
-first error of 321 pack files), token-order walks (`slot_walk`, `elem_start`), `hex_place`, `unescape`,
-`norm`/`sci`. `=> edits` are left out (no applier). `hand_written_rules_lowering_report` (with
+`dfs_first`, `mean`, `to_float` and decimals (the engine has no decimal values), `!within_stop`, `!precedes_stop`
+or `!split_dot` with a node unnamed, and value recursion the check cannot bound: `negate`/`number` in
+`lib/python/pyflakes.rr` (the first error of 321 pack files), token-order walks (`slot_walk`, `elem_start`),
+`hex_place`, `unescape`, `norm`/`sci`. `=> edits` are left out (no applier). `hand_written_rules_lowering_report` (with
 `RERAIL_RR_REPORT_EXTRA`): this branch's 118 files, 75 lower (21 before); More-ergonomic-rule-syntax's 949 packs,
 393 (19 before). **Closure:** list step 30.
 
@@ -1364,10 +1366,11 @@ reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/gene
 
 ## O76. Base relations and inputs the engine does not make yet
 
-Hand-written rules read relations the engine does not make yet: `parsed` and `string_annotation` (strings
-parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
-(`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
-since reading it is not written. **Closure:** these relations are built natively and the files are read.
+Hand-written rules read relations the engine did not make: `parsed` and `string_annotation` (strings parsed as
+code) were read as empty, each named in the profile; they are now made natively (`facts::vtab::syntax::annotation`)
+and `NOT_MADE` is empty. Inputs read from a file in the repository (`.input r(IO=json, filename="…")`) are empty
+when the file is absent; when it exists the run stops, since reading it is not written. **Closure:** the files are
+read.
 
 ## O77. Lowering shortcuts in `.rr`
 

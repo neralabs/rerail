@@ -1,0 +1,76 @@
+// data-layer-error-handling, clause log-reraise (EH001). admin-commit is the converter's. The sourceGate option
+// (option_on; default true) picks the module regex: true `logger\.error|logger\.warning|txn\.commit`, false `^`,
+// which every module matches. oracleAnalyzer is read by no clause.
+//
+// The clause: a raise_statement r
+//   - with no direct child of kind identifier/call/attribute/string/integer/none (`has`, stopBy neighbor);
+//   - that `follows` (stopBy `not comment`) an expression_statement e whose direct child is a call to
+//     `logger.error` / `logger.warning` (function field an attribute: object identifier `logger`, attribute
+//     identifier `error|warning`);
+//   - inside some block, and whose nearest except_clause / function_definition / lambda ancestor is an except_clause
+//     (`inside` with that stop rule: the stop node is tested, then the walk ends);
+//   - in a module whose full text matches the gate, on a path starting api|impl|services, the file parsing.
+// `follows` walks r's previous siblings in the tape, anonymous tokens and comments included, testing each and
+// stopping at the first that is not a comment: so r follows e exactly when e is the last of r's parent's children
+// (`token`) before r that is not a comment. In a Python tape a child whose text starts with `#` is a comment (no
+// statement or anonymous token does); a `;` between them is a token that is not, so `logger.error(x); raise` and
+// `logger.error(x);` NEWLINE `raise` are rejected, as W rejects them.
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl log_reraise_value(kind: symbol)
+log_reraise_value("identifier"). log_reraise_value("call"). log_reraise_value("attribute").
+log_reraise_value("string"). log_reraise_value("integer"). log_reraise_value("none").
+.decl log_reraise_block(kind: symbol)
+log_reraise_block("block").
+.decl log_reraise_stop(kind: symbol)
+log_reraise_stop("except_clause"). log_reraise_stop("function_definition"). log_reraise_stop("lambda").
+.decl log_reraise_level(s: symbol)
+log_reraise_level("error"). log_reraise_level("warning").
+
+// e: an expression_statement whose direct child is a call of logger.error / logger.warning.
+.decl log_reraise_log(e: node)
+log_reraise_log(e) :- node(_, e, "expression_statement", _, _), child(e, c, _), node(_, c, "call", _, _),
+    field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "object", o), node(_, o, "identifier", _, _), text(o, "logger"),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), log_reraise_level(s).
+
+// A bare re-raise (no direct child of the listed kinds).
+.decl log_reraise_valued(r: node)
+log_reraise_valued(r) :- node(_, r, "raise_statement", _, _), child(r, c, _), node(_, c, k, _, _), log_reraise_value(k).
+
+// The tokens of a bare raise's parent: r's own position, and each non-comment child's.
+.decl log_reraise_at(r: node, p: node, i: number)
+log_reraise_at(r, p, i) :- node(_, r, "raise_statement", s, e), !log_reraise_valued(r), child(p, r, _), token(p, i, _, s, e).
+.decl log_reraise_code(p: node, j: number)
+log_reraise_code(p, j) :- log_reraise_at(_, p, _), token(p, j, t, _, _), !prefix("#", t).
+// e: the last non-comment child before r, when it is a logging statement.
+.decl log_reraise_follows(r: node, e: node)
+log_reraise_follows(r, e) :- log_reraise_at(r, p, i), j = max k : { log_reraise_code(p, k), k < i },
+    token(p, j, _, s, t), child(p, e, _), node(_, e, _, s, t), log_reraise_log(e).
+
+// The sourceGate: the module's full text, comments and strings included.
+.decl log_reraise_gate(d: number)
+log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("logger.error", s).
+log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("logger.warning", s).
+log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("txn.commit", s).
+log_reraise_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
+
+violation("data-layer-error-handling", "log-reraise", "EH001", p, l) :-
+    log_reraise_follows(r, _), node(d, r, _, _, _), line(r, l),
+    inside(r, _, log_reraise_block),
+    nearest(r, x, log_reraise_stop), node(_, x, "except_clause", _, _),
+    doc(d, p, _), (prefix("api", p) ; prefix("impl", p) ; prefix("services", p)), log_reraise_gate(d),
+    in_scope(d), !out_scope(d), !syntax_error(d).

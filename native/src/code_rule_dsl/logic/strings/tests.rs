@@ -84,6 +84,19 @@ fn tests_on_text_relations_become_relations() {
     assert_eq!(rows, [vec![1, 2], vec![2], vec![3]]);
 }
 
+/// `fstring_template`'s markers are the program's constants, each once; a marker that is not a constant is an error.
+#[test]
+fn fstring_template_markers_are_constants() {
+    let decls = ".decl fstring_template(n: node, marker: symbol, v: symbol)\n.input fstring_template\n.decl a(n: node)\n";
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(&format!(
+        "{decls}a(n) :- fstring_template(n, \"{{...}}\", v), glob(\"*FROM*\", v).\na(n) :- fstring_template(n, \"{{}}\", _), !fstring_template(n, \"{{...}}\", \"x\").\n.output a\n"
+    ))
+    .unwrap();
+    assert_eq!(as_relations(&mut prog).unwrap().markers, ["{...}", "{}"]);
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}.decl m(s: symbol)\n.input m\na(n) :- m(k), fstring_template(n, k, _).\n.output a\n")).unwrap();
+    assert!(as_relations(&mut prog).err().unwrap().contains("constant marker"));
+}
+
 #[test]
 fn regexes_and_their_rewrites_agree() {
     assert!(test("rx", "_branch_cache_x", r"^_\w*cache\w*$"));

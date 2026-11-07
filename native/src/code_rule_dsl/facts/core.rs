@@ -20,13 +20,22 @@ pub(crate) const NONE: u32 = u32::MAX;
 /// Kind codes per dialect (the tape's `KIND_LIMIT`).
 pub(crate) const KIND_STRIDE: u32 = 1024;
 
-/// The atom of kind `code` in the dialect whose tape tag is `tag`.
+/// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's code (`u16::MAX`) reaches past the
+/// stride, so a kind atom's dialect is its document's (`Facts::tag`), never the atom divided by the stride.
 pub(crate) fn kind_atom(tag: u8, code: u16) -> u32 {
     u32::from(tag) * KIND_STRIDE + u32::from(code)
 }
 
+/// The kind code of `atom` in the dialect whose tape tag is `tag` (`kind_atom`'s inverse), if it is one of that
+/// dialect's.
+pub(crate) fn kind_code(tag: u8, atom: u32) -> Option<u16> {
+    atom.checked_sub(u32::from(tag) * KIND_STRIDE).and_then(|code| u16::try_from(code).ok())
+}
+
 /// One file's facts. Columns are indexed by node id.
 pub(crate) struct Facts {
+    /// The tape tag of the file's dialect, which every kind atom is of.
+    pub tag: u8,
     pub source: Arc<String>,
     pub lines: Arc<LineTable>,
     /// node(id, kind, parent, start, end, start_line, end_line) + subtree_end, flags, field.
@@ -63,18 +72,24 @@ pub(crate) enum Built {
 
 /// Parses `file` in its own dialect and reads its facts off the tape.
 pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
+    Ok(build_with_tape(file)?.map_or(Built::Unparsed, |(facts, _)| Built::Facts(facts)))
+}
+
+/// `build`, with the tape the facts were read off (`None`: the parser stopped at a limit).
+pub(crate) fn build_with_tape(file: &FileInput) -> Result<Option<(Facts, TapeDoc)>, String> {
     let language = eval::file_language(file).ok_or_else(|| format!("{} has no grammar", file.language))?;
     let tape = eval::file_tape(language, file).map_err(|e| e.reason.to_string())?;
     let Some((doc, lines)) = tape else {
-        return Ok(Built::Unparsed);
+        return Ok(None);
     };
-    from_tape(&doc, lines).map(Built::Facts)
+    Ok(Some((from_tape(&doc, lines)?, doc)))
 }
 
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
     let tag = tape_tag(doc.file_dialect()).ok_or("the tape's dialect has no tape tag")?;
     let n = doc.transducer_len();
     let mut f = Facts {
+        tag,
         source: Arc::clone(doc.document_source()),
         lines,
         kind: Vec::with_capacity(n),
@@ -112,6 +127,95 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
     let classes = doc.transducer_supertypes().map(|(node, class)| (kind_atom(tag, class), node)).collect();
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(classes);
     Ok(f)
+}
+
+/// The tape tag of a text-only document's facts (`text`): no dialect has it.
+pub(crate) const TEXT: u8 = u8::MAX;
+
+/// The facts of a file read as text only (core.rr's `.scope text`): its source and lines, no tree. Its lines are W's
+/// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
+pub(crate) fn text(source: Arc<String>) -> Facts {
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
+    let mut f = Facts {
+        tag: TEXT,
+        source,
+        lines,
+        kind: Vec::new(),
+        parent: Vec::new(),
+        start: Vec::new(),
+        end: Vec::new(),
+        start_line: Vec::new(),
+        end_line: Vec::new(),
+        subtree_end: Vec::new(),
+        flags: Vec::new(),
+        field: Vec::new(),
+        child_offsets: Vec::new(),
+        children: Vec::new(),
+        kind_keys: Vec::new(),
+        kind_offsets: Vec::new(),
+        kind_nodes: Vec::new(),
+        class_keys: Vec::new(),
+        class_offsets: Vec::new(),
+        class_nodes: Vec::new(),
+        syntax_errors: false,
+    };
+    index(&mut f);
+    (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
+    f
+}
+
+/// The facts of a parsed literal (`literal::SubTree`) as a document of its own, in the dialect whose tape tag is `tag`
+/// (the tree's kinds and fields are that grammar's: an annotation's are Python's): its source is the tree's text
+/// (decoded), its lines Ruff's (`\r\n`, `\r`, `\n`), its ranges in that text. A tree has no abstract classes.
+pub(crate) fn from_subtree(tag: u8, tree: &crate::code_rule_dsl::literal::SubTree) -> Facts {
+    let source = Arc::new(tree.text().to_owned());
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Newlines));
+    let n = tree.len();
+    let mut f = Facts {
+        tag,
+        source,
+        lines,
+        kind: Vec::with_capacity(n),
+        parent: Vec::with_capacity(n),
+        start: Vec::with_capacity(n),
+        end: Vec::with_capacity(n),
+        start_line: Vec::with_capacity(n),
+        end_line: Vec::with_capacity(n),
+        subtree_end: Vec::with_capacity(n),
+        flags: Vec::with_capacity(n),
+        field: Vec::with_capacity(n),
+        child_offsets: Vec::new(),
+        children: Vec::new(),
+        kind_keys: Vec::new(),
+        kind_offsets: Vec::new(),
+        kind_nodes: Vec::new(),
+        class_keys: Vec::new(),
+        class_offsets: Vec::new(),
+        class_nodes: Vec::new(),
+        syntax_errors: false,
+    };
+    for node in tree.preorder() {
+        f.kind.push(kind_atom(tag, node.kind));
+        f.parent.push(node.parent.unwrap_or(NONE));
+        f.start.push(node.start);
+        f.end.push(node.end);
+        f.start_line.push(f.lines.line(node.start as usize) as u32 + 1);
+        f.end_line.push(f.lines.line(node.end as usize) as u32 + 1);
+        f.subtree_end.push(f.kind.len() as u32);
+        f.flags.push(u8::from(node.named) | u8::from(node.extra) << 1 | u8::from(node.error) << 3);
+        f.field.push(node.field);
+        f.syntax_errors |= node.error;
+    }
+    // Preorder: a node's descendants end where its last child's do.
+    for id in (0..n).rev() {
+        let p = f.parent[id];
+        if p != NONE {
+            f.subtree_end[p as usize] = f.subtree_end[p as usize].max(f.subtree_end[id]);
+        }
+    }
+    index(&mut f);
+    (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
+    f
 }
 
 /// The derived columns: the children CSR (preorder lists a parent's children in order) and the

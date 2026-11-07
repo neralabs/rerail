@@ -1,0 +1,329 @@
+// data-layer-serverplan-target-architecture: four clauses by hand (executor-imports, strategy-getattr,
+// strategy-isinstance, required-contracts); the converter gives the other twelve.
+//
+// Options, as the run gives them: `entryPoint` (the three AST clauses run for "all" and "scan_sources", for no other
+// value: `spta_entry_point`), `requiredShape` (required-contracts reports when true; its false case ends in `WHERE 0`:
+// `spta_required_shape`). `oracleAnalyzer` is read by no clause.
+// strategy-getattr reads the second argument's W `value` (a str: `value_type_of(y, "str")`), a string or a
+// concatenated_string. Comments are not in `child`, so `nthChild` `ofRule: {not: comment}` is a position among
+// `child`'s children.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl spta_entry_point(on: number)
+spta_entry_point(1) :- option_value("entryPoint", v), (v = "all" ; v = "scan_sources").
+.decl spta_required_shape(on: number)
+spta_required_shape(1) :- option_on("requiredShape").
+
+.decl spta_doc(d: number, p: symbol)
+spta_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+
+// A named child's position among its parent's named children, from 1.
+.decl spta_before(p: node, c: node, b: node)
+spta_before(p, c, b) :- child(p, c, i), child(p, b, j), j < i.
+.decl spta_second(p: node, c: node)
+spta_second(p, c) :- child(p, c, _), k = count : { spta_before(p, c, _) }, k = 1.
+
+// An identifier that is neither `x.NAME`'s NAME nor a keyword argument's name.
+.decl spta_ref(x: node, s: symbol)
+spta_ref(x, s) :- node(_, x, "identifier", _, _), text(x, s), !spta_attr_name(x), !spta_kw_name(x).
+.decl spta_attr_name(x: node)
+spta_attr_name(x) :- field(a, "attribute", x), node(_, a, "attribute", _, _).
+.decl spta_kw_name(x: node)
+spta_kw_name(x) :- field(k, "name", x), node(_, k, "keyword_argument", _, _).
+
+// ---- executor-imports ----------------------------------------------------------------------------------------------
+// `from ….steps… import XStep` (or Intent, Strategy; `as y` allowed) in l2070_batching/executor.py.
+.decl spta_ei_name_kind(x: node)
+spta_ei_name_kind(x) :- node(_, x, "dotted_name", _, _).
+spta_ei_name_kind(x) :- node(_, x, "aliased_import", _, _).
+.decl spta_ei_imported(s: node)
+spta_ei_imported(s) :- field(s, "module_name", m), child(s, x, _), x != m, spta_ei_name_kind(x), node_text(x, t),
+    match("(?:[A-Za-z_]\\w*)?(?:Step|Intent|Strategy)(?:\\s+as\\s+\\w+)?", t).
+violation("data-layer-serverplan-target-architecture", "executor-imports", "SPTA005", p, l) :-
+    spta_entry_point(1), spta_doc(d, p), p = "l2070_batching/executor.py", node(d, s, "import_from_statement", _, _),
+    field(s, "module_name", m), node_text(m, t), (contains(".steps.", t) ; suffix(".steps", t)), spta_ei_imported(s), line(s, l).
+
+// ---- strategy-getattr / strategy-isinstance --------------------------------------------------------------------------
+// A call of NAME or `x.NAME` in impl/common/l2070_server_plan/strategies/, and its arguments.
+.decl spta_call(d: number, p: symbol, c: node, name: symbol, al: node)
+spta_call(d, p, c, s, al) :- spta_doc(d, p), prefix("impl/common/l2070_server_plan/strategies/", p), node(d, c, "call", _, _),
+    field(c, "function", f), node(_, f, "identifier", _, _), text(f, s), field(c, "arguments", al).
+spta_call(d, p, c, s, al) :- spta_doc(d, p), prefix("impl/common/l2070_server_plan/strategies/", p), node(d, c, "call", _, _),
+    field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _),
+    text(a, s), field(c, "arguments", al).
+
+// getattr(x, "_stmt" | "_grammar" | "grammar").
+violation("data-layer-serverplan-target-architecture", "strategy-getattr", "SPTA008", p, l) :-
+    spta_entry_point(1), spta_call(_, p, c, "getattr", al), spta_second(al, y), node(_, y, k, _, _),
+    (k = "string" ; k = "concatenated_string"), value(y, v), value_type_of(y, "str"),
+    (v = "_stmt" ; v = "_grammar" ; v = "grammar"), line(c, l).
+
+// isinstance(x, T) where T is, or holds, a plain name starting `Sql` or ending `Grammar` or `Stmt`.
+.decl spta_si_name(x: node)
+spta_si_name(x) :- spta_ref(x, s), (prefix("Sql", s) ; suffix("Grammar", s) ; suffix("Stmt", s)).
+.decl spta_si_type(y: node)
+spta_si_type(y) :- spta_call(_, _, _, "isinstance", al), spta_second(al, y), spta_si_name(y).
+spta_si_type(y) :- spta_call(d, _, _, "isinstance", al), spta_second(al, y), node(d, y, _, ys, ye), node(d, x, "identifier", xs, xe),
+    x != y, xs >= ys, xe <= ye, spta_si_name(x).
+violation("data-layer-serverplan-target-architecture", "strategy-isinstance", "SPTA008", p, l) :-
+    spta_entry_point(1), spta_call(_, p, c, "isinstance", al), spta_second(al, y), spta_si_type(y), line(c, l).
+
+// ---- required-contracts (relational) ---------------------------------------------------------------------------------
+// The evidence rows, over the in-scope documents of valid syntax; owners are the class's (or method's) node.
+.decl spta_rc_scope(kind: symbol)
+spta_rc_scope("class_definition"). spta_rc_scope("function_definition").
+.decl spta_rc_fn(kind: symbol)
+spta_rc_fn("function_definition").
+.decl spta_rc_type(kind: symbol)
+spta_rc_type("type").
+.decl spta_rc_kw(kind: symbol)
+spta_rc_kw("keyword_argument").
+.decl spta_rc_args(kind: symbol)
+spta_rc_args("argument_list").
+.decl spta_rc_assign(kind: symbol)
+spta_rc_assign("assignment"). spta_rc_assign("augmented_assignment").
+.decl spta_rc_params(kind: symbol)
+spta_rc_params("typed_parameter"). spta_rc_params("typed_default_parameter").
+
+// raw_classes: classes in no class or def, by name.
+.decl spta_rc_raw_class(p: symbol, c: node, name: symbol, s: number)
+spta_rc_raw_class(p, c, t, s) :- spta_doc(d, p), node(d, c, "class_definition", s, _), !inside(c, _, spta_rc_scope),
+    field(c, "name", nm), text(nm, t).
+// frozen: decorated `@dataclass(…, frozen=True, …, slots=True, …)` (or `@x.dataclass(…)`).
+.decl spta_rc_kw_true(al: node, name: symbol)
+spta_rc_kw_true(al, k) :- child(al, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", n), node(_, n, "identifier", _, _),
+    text(n, k), field(kw, "value", v), node(_, v, "true", _, _).
+.decl spta_rc_frozen(c: node)
+spta_rc_frozen(c) :- node(_, c, "class_definition", _, _), child(dd, c, _), node(_, dd, "decorated_definition", _, _),
+    child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, call, _), node(_, call, "call", _, _),
+    field(call, "function", f), spta_rc_dataclass(f), field(call, "arguments", al),
+    spta_rc_kw_true(al, "frozen"), spta_rc_kw_true(al, "slots").
+.decl spta_rc_dataclass(f: node)
+spta_rc_dataclass(f) :- node(_, f, "identifier", _, _), text(f, "dataclass").
+spta_rc_dataclass(f) :- node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, "dataclass").
+// classes: the last class of each name in a file.
+.decl spta_rc_class_last(p: symbol, name: symbol, s: number)
+spta_rc_class_last(p, t, s) :- spta_rc_raw_class(p, _, t, _), s = max x : { spta_rc_raw_class(p, _, t, x) }.
+.decl spta_rc_class(p: symbol, name: symbol, c: node)
+spta_rc_class(p, t, c) :- spta_rc_class_last(p, t, s), spta_rc_raw_class(p, c, t, s).
+
+// raw_functions: module-level defs (decorated or not); raw_assignments: module-level `NAME = …` / `NAME op= …`.
+.decl spta_rc_module_stmt(n: node)
+spta_rc_module_stmt(n) :- child(m, n, _), node(_, m, "module", _, _).
+.decl spta_rc_symbol(p: symbol, name: symbol)
+spta_rc_symbol(p, t) :- spta_rc_class(p, t, _).
+spta_rc_symbol(p, t) :- spta_doc(d, p), node(d, f, "function_definition", _, _), !inside(f, _, spta_rc_scope), spta_rc_module_stmt(f),
+    field(f, "name", nm), text(nm, t).
+spta_rc_symbol(p, t) :- spta_doc(d, p), node(d, f, "function_definition", _, _), !inside(f, _, spta_rc_scope), child(dd, f, _),
+    node(_, dd, "decorated_definition", _, _), spta_rc_module_stmt(dd), field(f, "name", nm), text(nm, t).
+spta_rc_symbol(p, t) :- spta_rc_module_assign(p, _, t).
+.decl spta_rc_assign_node(a: node)
+spta_rc_assign_node(a) :- node(_, a, "assignment", _, _).
+spta_rc_assign_node(a) :- node(_, a, "augmented_assignment", _, _).
+.decl spta_rc_module_assign(p: symbol, a: node, name: symbol)
+spta_rc_module_assign(p, a, t) :- spta_doc(d, p), node(d, a, _, _, _), spta_rc_assign_node(a),
+    field(a, "left", x), node(_, x, "identifier", _, _), text(x, t), child(es, a, _), node(_, es, "expression_statement", _, _),
+    spta_rc_module_stmt(es).
+
+// raw_members: `FIELD[: TYPE] = …` / `FIELD: TYPE` statements of a module-level class's body; typed or not.
+.decl spta_rc_member(c: node, name: symbol, typed: number)
+spta_rc_member(c, t, 1) :- spta_rc_class_body_assign(c, a, t), field(a, "type", _).
+spta_rc_member(c, t, 0) :- spta_rc_class_body_assign(c, a, t), !spta_rc_typed(a).
+.decl spta_rc_typed(a: node)
+spta_rc_typed(a) :- node(_, a, "assignment", _, _), field(a, "type", _).
+.decl spta_rc_class_body_assign(c: node, a: node, name: symbol)
+spta_rc_class_body_assign(c, a, t) :- spta_rc_raw_class(_, c, _, _), field(c, "body", b), node(_, b, "block", _, _), child(b, es, _),
+    node(_, es, "expression_statement", _, _), child(es, a, _), node(_, a, "assignment", _, _), field(a, "left", x),
+    node(_, x, "identifier", _, _), text(x, t).
+
+// raw_methods: a module-level class's defs (decorated or not); methods: the last of each name.
+.decl spta_rc_raw_method(c: node, f: node, name: symbol, s: number)
+spta_rc_raw_method(c, f, t, s) :- spta_rc_raw_class(_, c, _, _), field(c, "body", b), node(_, b, "block", _, _), child(b, f, _),
+    node(_, f, "function_definition", s, _), field(f, "name", nm), text(nm, t).
+spta_rc_raw_method(c, f, t, s) :- spta_rc_raw_class(_, c, _, _), field(c, "body", b), node(_, b, "block", _, _), child(b, dd, _),
+    node(_, dd, "decorated_definition", _, _), child(dd, f, _), node(_, f, "function_definition", s, _), field(f, "name", nm), text(nm, t).
+.decl spta_rc_method_last(c: node, name: symbol, s: number)
+spta_rc_method_last(c, t, s) :- spta_rc_raw_method(c, _, t, _), s = max x : { spta_rc_raw_method(c, _, t, x) }.
+.decl spta_rc_method(c: node, name: symbol, f: node)
+spta_rc_method(c, t, f) :- spta_rc_method_last(c, t, s), spta_rc_raw_method(c, f, t, s).
+
+// raw_annotations: a name in a class member's annotation (FIELD: … NAME …).
+.decl spta_rc_annotation(c: node, field_name: symbol, name: symbol)
+spta_rc_annotation(c, fld, t) :- spta_rc_class_body_assign(c, a, fld), field(a, "type", ty), node(_, ty, "type", _, _),
+    spta_ref(x, t), inside(x, ty, spta_rc_type).
+spta_rc_annotation(c, fld, t) :- spta_rc_class_body_assign(c, a, fld), field(a, "type", ty), node(_, ty, "type", _, _), spta_ref(ty, t).
+// raw_returns: a name in a method's return annotation; raw_parameters: a name in one of its typed parameters' type,
+// the parameter no *args/**kwargs, the method the name's nearest def.
+.decl spta_rc_return(f: node, name: symbol)
+spta_rc_return(f, t) :- spta_rc_raw_method(_, f, _, _), field(f, "return_type", r), node(d, r, _, rs, re), node(d, x, "identifier", xs, xe),
+    xs >= rs, xe <= re, spta_ref(x, t), inside(x, f, spta_rc_fn).
+.decl spta_rc_param(f: node, name: symbol)
+spta_rc_param(f, t) :- spta_rc_raw_method(_, f, _, _), nearest(x, f, spta_rc_fn), spta_ref(x, t), inside(x, q, spta_rc_params),
+    !spta_rc_splat(q), field(q, "type", ty), node(d, ty, _, ts, te), node(d, x, _, xs, xe), xs >= ts, xe <= te.
+.decl spta_rc_splat(q: node)
+spta_rc_splat(q) :- child(q, z, _), node(_, z, "list_splat_pattern", _, _).
+spta_rc_splat(q) :- child(q, z, _), node(_, z, "dictionary_splat_pattern", _, _).
+// raw_bases: a name in a module-level class's base list, not inside a keyword argument.
+.decl spta_rc_base(c: node, name: symbol)
+spta_rc_base(c, t) :- spta_rc_raw_class(_, c, _, _), child(c, al, _), node(_, al, "argument_list", _, _), inside(x, al, spta_rc_args),
+    spta_ref(x, t), !inside(x, _, spta_rc_kw).
+// raw_union_names: a name on the right of a module-level `ALIAS = …`.
+.decl spta_rc_union(p: symbol, alias: symbol, name: symbol)
+spta_rc_union(p, al, t) :- spta_rc_module_assign(p, a, al), field(a, "right", r), node(d, r, _, rs, re), node(d, x, "identifier", xs, xe),
+    xs >= rs, xe <= re, spta_ref(x, t), spta_rc_nearest_right(x, a).
+// The assignment whose right side holds x nearest it, among those at module level (inside's first match).
+.decl spta_rc_right_of(x: node, a: node, s: number)
+spta_rc_right_of(x, a, s) :- inside(x, a, spta_rc_assign), field(a, "right", r), node(d, r, _, rs, re), node(d, x, _, xs, xe), xs >= rs,
+    xe <= re, spta_rc_module_assign(_, a, _), node(_, a, _, s, _).
+.decl spta_rc_nearest_right(x: node, a: node)
+spta_rc_nearest_right(x, a) :- spta_rc_right_of(x, a, s), s = max y : { spta_rc_right_of(x, _, y) }.
+
+// The requirements (the stages' json_each tables).
+.decl spta_rc_req_symbol(p: symbol, name: symbol)
+spta_rc_req_symbol("l2070_batching/execution_receipt.py", "BackendExecutionReceipt").
+spta_rc_req_symbol("l2070_batching/execution_receipt.py", "PhysicalResultSet").
+spta_rc_req_symbol("l2070_batching/physical_program.py", "ClosedApplicationRegion").
+spta_rc_req_symbol("l2070_batching/physical_program.py", "ExternalIoRegion").
+spta_rc_req_symbol("l2070_batching/physical_program.py", "PhysicalTransportProgram").
+spta_rc_req_symbol("l2070_batching/physical_program.py", "PhysicalTransportRegion").
+spta_rc_req_symbol("l2070_batching/physical_program.py", "PhysicalTransportRequest").
+spta_rc_req_symbol("l2070_batching/physical_program.py", "SqlStatementRegion").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "FailureIsolationKind").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "FailureIsolationRequirement").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "OrderedEffect").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "PythonBoundary").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "PythonBoundaryKind").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "RecursiveQueryRequirement").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "ResultTransportKind").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "ResultTransportRequirement").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "SessionContextRequirement").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "SessionContextScope").
+spta_rc_req_symbol("l2070_batching/planning_contract.py", "StepPlanningContract").
+spta_rc_req_symbol("l2070_batching/runtime_application.py", "ApplyLifecycleEffectApplication").
+spta_rc_req_symbol("l2070_batching/runtime_application.py", "BuildTerminalPayloadApplication").
+spta_rc_req_symbol("l2070_batching/runtime_application.py", "DecodeAffectedCountApplication").
+spta_rc_req_symbol("l2070_batching/runtime_application.py", "DecodeScalarApplication").
+spta_rc_req_symbol("l2070_batching/runtime_application.py", "HydrateManyApplication").
+spta_rc_req_symbol("l2070_batching/runtime_application.py", "HydrateOneApplication").
+spta_rc_req_symbol("l2070_batching/runtime_application.py", "PopulateCacheApplication").
+spta_rc_req_symbol("l2070_batching/runtime_application.py", "RuntimeApplication").
+.decl spta_rc_req_field(p: symbol, cls: symbol, name: symbol)
+spta_rc_req_field("l2070_batching/execution_receipt.py", "BackendExecutionReceipt", "application_results").
+spta_rc_req_field("l2070_batching/execution_receipt.py", "BackendExecutionReceipt", "driver_round_trips").
+spta_rc_req_field("l2070_batching/execution_receipt.py", "BackendExecutionReceipt", "result_set_count").
+spta_rc_req_field("l2070_batching/execution_receipt.py", "BackendExecutionReceipt", "results").
+spta_rc_req_field("l2070_batching/execution_receipt.py", "BackendExecutionReceipt", "sql_group_count").
+spta_rc_req_field("l2070_batching/execution_receipt.py", "BackendExecutionReceipt", "sql_statement_count").
+spta_rc_req_field("l2070_batching/execution_receipt.py", "BackendExecutionReceipt", "transaction_control_count").
+spta_rc_req_field("l2070_batching/physical_program.py", "ClosedApplicationRegion", "applications").
+spta_rc_req_field("l2070_batching/physical_program.py", "ExternalIoRegion", "operation").
+spta_rc_req_field("l2070_batching/physical_program.py", "PhysicalTransportProgram", "requests").
+spta_rc_req_field("l2070_batching/physical_program.py", "PhysicalTransportRequest", "regions").
+spta_rc_req_field("l2070_batching/physical_program.py", "SqlStatementRegion", "result_bindings").
+spta_rc_req_field("l2070_batching/physical_program.py", "SqlStatementRegion", "statements").
+spta_rc_req_field("l2070_batching/planning_contract.py", "FailureIsolationRequirement", "kind").
+spta_rc_req_field("l2070_batching/planning_contract.py", "FailureIsolationRequirement", "rollback_scope_ref").
+spta_rc_req_field("l2070_batching/planning_contract.py", "OrderedEffect", "after_refs").
+spta_rc_req_field("l2070_batching/planning_contract.py", "OrderedEffect", "effect_ref").
+spta_rc_req_field("l2070_batching/planning_contract.py", "PythonBoundary", "kind").
+spta_rc_req_field("l2070_batching/planning_contract.py", "RecursiveQueryRequirement", "required").
+spta_rc_req_field("l2070_batching/planning_contract.py", "ResultTransportRequirement", "cardinality").
+spta_rc_req_field("l2070_batching/planning_contract.py", "ResultTransportRequirement", "kind").
+spta_rc_req_field("l2070_batching/planning_contract.py", "ResultTransportRequirement", "relation").
+spta_rc_req_field("l2070_batching/planning_contract.py", "SessionContextRequirement", "permission_context_ref").
+spta_rc_req_field("l2070_batching/planning_contract.py", "SessionContextRequirement", "scope").
+spta_rc_req_field("l2070_batching/planning_contract.py", "SessionContextRequirement", "validated_session_ref").
+spta_rc_req_field("l2070_batching/planning_contract.py", "StepPlanningContract", "failure_isolation").
+spta_rc_req_field("l2070_batching/planning_contract.py", "StepPlanningContract", "ordered_effects").
+spta_rc_req_field("l2070_batching/planning_contract.py", "StepPlanningContract", "python_boundary").
+spta_rc_req_field("l2070_batching/planning_contract.py", "StepPlanningContract", "recursive_query").
+spta_rc_req_field("l2070_batching/planning_contract.py", "StepPlanningContract", "result_transport").
+spta_rc_req_field("l2070_batching/planning_contract.py", "StepPlanningContract", "session_context").
+.decl spta_rc_req_immutable(p: symbol, cls: symbol)
+spta_rc_req_immutable("l2070_batching/execution_receipt.py", "BackendExecutionReceipt").
+spta_rc_req_immutable("l2070_batching/execution_receipt.py", "PhysicalResultSet").
+spta_rc_req_immutable("l2070_batching/physical_program.py", "ClosedApplicationRegion").
+spta_rc_req_immutable("l2070_batching/physical_program.py", "ExternalIoRegion").
+spta_rc_req_immutable("l2070_batching/physical_program.py", "PhysicalTransportProgram").
+spta_rc_req_immutable("l2070_batching/physical_program.py", "PhysicalTransportRequest").
+spta_rc_req_immutable("l2070_batching/physical_program.py", "SqlStatementRegion").
+spta_rc_req_immutable("l2070_batching/planning_contract.py", "FailureIsolationRequirement").
+spta_rc_req_immutable("l2070_batching/planning_contract.py", "OrderedEffect").
+spta_rc_req_immutable("l2070_batching/planning_contract.py", "PythonBoundary").
+spta_rc_req_immutable("l2070_batching/planning_contract.py", "RecursiveQueryRequirement").
+spta_rc_req_immutable("l2070_batching/planning_contract.py", "ResultTransportRequirement").
+spta_rc_req_immutable("l2070_batching/planning_contract.py", "SessionContextRequirement").
+spta_rc_req_immutable("l2070_batching/planning_contract.py", "StepPlanningContract").
+spta_rc_req_immutable("l2070_batching/runtime_application.py", "ApplyLifecycleEffectApplication").
+spta_rc_req_immutable("l2070_batching/runtime_application.py", "BuildTerminalPayloadApplication").
+spta_rc_req_immutable("l2070_batching/runtime_application.py", "DecodeAffectedCountApplication").
+spta_rc_req_immutable("l2070_batching/runtime_application.py", "DecodeScalarApplication").
+spta_rc_req_immutable("l2070_batching/runtime_application.py", "HydrateManyApplication").
+spta_rc_req_immutable("l2070_batching/runtime_application.py", "HydrateOneApplication").
+spta_rc_req_immutable("l2070_batching/runtime_application.py", "PopulateCacheApplication").
+.decl spta_rc_req_enum(p: symbol, cls: symbol, name: symbol)
+spta_rc_req_enum("l2070_batching/planning_contract.py", "FailureIsolationKind", "SAVEPOINT").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "FailureIsolationKind", "STATEMENT").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "FailureIsolationKind", "TRANSACTION").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "PythonBoundaryKind", "CLOSED_APPLICATION").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "PythonBoundaryKind", "EXTERNAL_IO").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "PythonBoundaryKind", "NONE").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "ResultTransportKind", "AFFECTED_COUNT").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "ResultTransportKind", "GENERATED_IDENTIFIER").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "ResultTransportKind", "LOGICAL_ROW").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "ResultTransportKind", "NONE").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "ResultTransportKind", "RAW_RELATION").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "ResultTransportKind", "TERMINAL_SCALAR").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "SessionContextScope", "NONE").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "SessionContextScope", "STATEMENT").
+spta_rc_req_enum("l2070_batching/planning_contract.py", "SessionContextScope", "TRANSACTION").
+.decl spta_rc_req_union(p: symbol, alias: symbol, name: symbol)
+spta_rc_req_union("l2070_batching/physical_program.py", "PhysicalTransportRegion", "ClosedApplicationRegion").
+spta_rc_req_union("l2070_batching/physical_program.py", "PhysicalTransportRegion", "ExternalIoRegion").
+spta_rc_req_union("l2070_batching/physical_program.py", "PhysicalTransportRegion", "SqlStatementRegion").
+spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "ApplyLifecycleEffectApplication").
+spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "BuildTerminalPayloadApplication").
+spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "DecodeAffectedCountApplication").
+spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "DecodeScalarApplication").
+spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "HydrateManyApplication").
+spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "HydrateOneApplication").
+spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "PopulateCacheApplication").
+
+// The findings: each at its required path's first line (start_byte 0), whether or not the file is there.
+.decl spta_rc_finding(p: symbol, code: symbol)
+spta_rc_finding(p, "SPTA001") :- spta_rc_req_symbol(p, t), !spta_rc_symbol(p, t).
+spta_rc_finding(p, "SPTA013") :- spta_rc_req_field(p, k, t), spta_rc_class(p, k, c), !spta_rc_member(c, t, 1).
+spta_rc_finding(p, "SPTA013") :- spta_rc_req_immutable(p, k), spta_rc_class(p, k, c), !spta_rc_frozen(c).
+spta_rc_finding(p, "SPTA013") :- spta_rc_req_enum(p, k, _), spta_rc_class(p, k, c), !spta_rc_base(c, "StrEnum").
+spta_rc_finding(p, "SPTA013") :- spta_rc_req_enum(p, k, t), spta_rc_class(p, k, c), !spta_rc_member(c, t, 0).
+spta_rc_finding(p, "SPTA013") :- spta_rc_req_union(p, a, t), spta_rc_symbol(p, a), !spta_rc_union(p, a, t).
+spta_rc_finding("l2070_batching/step.py", "SPTA002") :- spta_required_shape(1), !spta_rc_planning_method(1).
+spta_rc_finding("l2070_batching/physical_placement.py", "SPTA003") :- spta_required_shape(1), !spta_rc_application_field(1).
+spta_rc_finding("l2070_batching/physical_executor.py", "SPTA011") :- spta_required_shape(1), !spta_rc_executor_method(1).
+.decl spta_rc_planning_method(ok: number)
+spta_rc_planning_method(1) :- spta_rc_class("l2070_batching/step.py", "ServerPlanStep", c), spta_rc_method(c, "planning_contract", f),
+    spta_rc_return(f, "StepPlanningContract").
+.decl spta_rc_application_field(ok: number)
+spta_rc_application_field(1) :- spta_rc_class("l2070_batching/physical_placement.py", "ApplicationPlacementUnit", c),
+    spta_rc_annotation(c, "application", "RuntimeApplication").
+.decl spta_rc_executor_method(ok: number)
+spta_rc_executor_method(1) :- spta_rc_class("l2070_batching/physical_executor.py", "BackendExecutor", c),
+    spta_rc_method(c, "execute_program", f), spta_rc_return(f, "BackendExecutionReceipt"), spta_rc_param(f, "PhysicalTransportProgram").
+
+violation("data-layer-serverplan-target-architecture", "required-contracts", code, p, 1) :- spta_required_shape(1), spta_rc_finding(p, code).

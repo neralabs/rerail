@@ -1,0 +1,53 @@
+// data-layer-history-serverplan-projection: the clauses `history-runtime` and `sentinel`, whose `value` test the
+// converter cannot say. Policy: candidates/rules/data-layer-history-serverplan-projection.json. No options.
+//
+// Both clauses: a `return` statement, in a non-test file under impl/common/l2070_server_plan/steps/ whose name holds
+// `history`, that directly returns a string, a set/tuple/list literal or a `frozenset(...)` call, and has string
+// descendants whose values are the given words. `has` with no stopBy is a direct child; `stopBy: end` any descendant.
+// W's `value: {regex}` reads string values only: `value` (escapes decoded, adjacent literals joined) of type `str`.
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl inside(n: node, a: node, set: relation)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl history_runtime_ret(k: symbol)
+history_runtime_ret("return_statement").
+
+// The file: impl/ or l7200_versioned_transactions/ (implied by the steps path), not a test, a history step module.
+.decl history_runtime_file(d: number, p: symbol)
+history_runtime_file(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    match("impl/common/l2070_server_plan/steps/(?:.*/)?[^/]*history[^/]*\\.py", p),
+    !match("(?s:.*)(?:(?:^|/)tests/|(?:^|/)test_[^/]*$)(?s:.*)", p).
+
+// The return statement's shape: a direct child string, set, tuple or list, or a call `frozenset(...)` (the function
+// both `frozenset`, an identifier or an attribute ending so, and an identifier: so the identifier `frozenset`).
+.decl history_runtime_shape(n: node)
+history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _), node(_, c, "string", _, _).
+history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _), node(_, c, "set", _, _).
+history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _), node(_, c, "tuple", _, _).
+history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _), node(_, c, "list", _, _).
+history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _), node(_, c, "call", _, _),
+    field(c, "function", f), node(_, f, "identifier", _, _), text(f, "frozenset").
+
+// A string below the return statement with the given value.
+.decl history_runtime_word(n: node, v: symbol)
+history_runtime_word(n, v) :- node(_, s, "string", _, _), value(s, v), value_type_of(s, "str"),
+    inside(s, n, history_runtime_ret).
+
+violation("data-layer-history-serverplan-projection", "history-runtime", "HSP-002", p, l) :-
+    history_runtime_shape(n), history_runtime_word(n, "history"), history_runtime_word(n, "runtime"),
+    node(d, n, _, _, _), history_runtime_file(d, p), line(n, l).
+
+violation("data-layer-history-serverplan-projection", "sentinel", "HSP-003", p, l) :-
+    history_runtime_shape(n), history_runtime_word(n, "__history_runtime__"),
+    node(d, n, _, _, _), history_runtime_file(d, p), line(n, l).

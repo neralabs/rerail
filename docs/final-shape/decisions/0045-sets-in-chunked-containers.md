@@ -47,7 +47,9 @@ Three things make this a good fit here:
 
 ### 1. One set type, three containers
 
-- **Directory:** sorted `(document, chunk) → (kind, offset)`, one entry per non-empty chunk.
+- **Directory:** sorted `chunk → (kind, offset)`, one entry per non-empty chunk. A chunk is 2^16
+  nodes of the space, across files, as in Roaring (it was one file's 2^16 slice; see "Chunks of
+  the space"). Files are ranges of the space: per-file questions take the space.
 - **Containers** (chunk = 2^16 ids, values are the low 16 bits):
   - **array:** sorted `u16`, while the count is at most 4,096 (it is then no bigger than a
     bitmap);
@@ -95,8 +97,10 @@ Only chunks present in the inputs are visited: an intersection walks the shorter
   blobs per document, and read through the vtab as rows when SQL needs rows.
 - **Binary relations grouped by their first column** become posting lists of containers. This is
   what the kind postings are, with containers instead of delta-varint lists.
-- **Containers are per document**, so 0044's per-document derivations replace a document's
-  chunks and nothing else.
+- **Stored containers are per document**: a document's segment holds its own 2^16 slices, so
+  0044's per-document derivations replace a document's segment and nothing else. In memory a
+  set's chunks are the space's; a segment is moved to the document's base when read (arrays and
+  runs by adding it, bitmaps by a shift) and cut out of the space's chunks when written.
 
 ## Evidence: the census (step 1)
 
@@ -228,15 +232,121 @@ What it shows:
   chunks instead of 8,129. That halves the bitmap cases (433 → 232 µs) and makes sparse ones 2.5
   times faster. The result must be the same set: the profile checks both chunkings agree.
 
-Possible next levers, measured but not taken:
+Possible next levers:
 
-1. **Chunk the space, not the file (2^16 nodes across files).** This removes most of the
-   per-chunk cost. It changes §1's key and the store's per-file segments, which are then cut from
-   space chunks. It needs its own decision.
+1. **Chunk the space, not the file** (taken: "Chunks of the space", below).
 2. **Pick containers for speed where an operation is hot.** As bitmaps, "inside a function"
    intersects twice as fast but is three times larger.
 3. **Count lazily.** Today every result counts its members to choose its container. A pass with
    no count could run at dense's instruction rate.
+
+## Evidence: chunks of the space
+
+A chunk is now 2^16 nodes of the space, across files: 282 chunks over the repository instead of
+8,129. Sets are built in node order by `space::Builder`. A chunk's single nodes gather as an
+array (up to 1,024 of them), and anything else in a 1,024-word bitmap of the chunk. The chunk is
+sealed in the form that suits it when the next chunk starts. Per-file questions use the space:
+- `within_files` takes the first test's files, keeps those where every other test has a node,
+  and intersects with those files' ranges as runs;
+- `file_nodes` reads the chunks over the file's range;
+- a stored segment is cut from them.
+A bitmap less runs now uses the same toggle-and-prefix-xor mask as a bitmap within runs.
+
+Same repository, results checked against dense and against an ordered-set model (files not
+aligned to words or chunks). Thread CPU per operation; load 34-57:
+
+| Operation | Dense ms | Per-file chunks ms | Space chunks ms |
+|---|---|---|---|
+| call ∩ inside function | 0.10 | 1.24 | 0.63 |
+| call − inside function | 0.15 | 2.25 | 0.89 |
+| identifier ∩ inside class | 0.12 | 0.75 | 0.45 |
+| identifier − inside class | 0.15 | 1.16 | 0.41 |
+| raise ∩ inside except | 0.11 | 0.13 | 0.04 |
+| decorator ∩ call | 0.14 | 0.24 | 0.04 |
+| call ∪ await | 0.12 | 0.42 | 0.26 |
+| inside function ∪ inside class | 0.11 | 0.63 | 0.52 |
+| call within files of raise | 0.21 | 0.51 | 0.97, then 0.22 (below) |
+| identifier within files of await | 0.27 | 0.39 | 0.65, then 0.14 (below) |
+| clone call | 0.08 | 0.07 | 0.05 |
+
+The per-file column is from the step 2 run (load 78), with that step's code. `set_profile`, with
+the runs/bitmap work of the previous section on both sides:
+
+| | Per-file chunks µs | Space chunks µs | Instructions, space |
+|---|---|---|---|
+| call ∩ inside function (runs) | 837 | 607 | 7.9 M |
+| the same, the inside-set as bitmaps | 433 | 208 | 2.0 M |
+| raise ∩ inside except (sparse) | 81 | 39 | 0.4 M |
+| await ∩ call (sparse ∩ dense-ish) | 76 | 20 | 0.3 M |
+
+Other measures:
+- **Memory:** 117 sets, 48.3 MB → 40.1 MB; the largest wave 0.7 → 0.6 MB. Fewer directory
+  entries, and a chunk's bitmap is shared by its files.
+- **Reading kind postings into sets** (`posting_forms`, every kind over the repository):
+  135 ms, against 66 ms when segments were copied as they are. Delta-varint read through the
+  same builder: 188 ms. The cost is the shift into the space's chunks, and sealing.
+- **Push path, 219-file subtree** (`data_layer_bench`, load 66-71): 1,806 operations, evaluation
+  23.4 ms (17.8 ms per file, load 44), peak set bytes 5.0 MB (5.1), `sets.read` 150 ms.
+- Replay unchanged: 3988 273 266 0; converted 3988 175 169 0.
+
+What it shows:
+- **Intersections, differences and unions gain 1.2 to 6 times**, because the per-chunk cost is
+  paid 282 times, not 8,129. Sparse operations now beat dense by 2.6 to 3.8 times.
+- **Large sets are still 2 to 6 times slower than dense.** They are compute-bound, as the
+  previous section shows. What is left is the runs mask (about 15 instructions per word) and the
+  count.
+- **`within` was slower at first: 0.97 ms against 0.51 ms per file.** A profile of `call within
+  files of raise` (648 µs, 12.4 M instructions; dense 121 µs, 1.7 M; the benchmark's clone of
+  `call` included on both sides) showed three costs:
+  - 41%: building the kept files' ranges through `Builder`. Its seal scanned all 1,024 words of
+    each chunk to count members and find runs that were already known.
+  - 32%: intersecting with those ranges by the toggle-and-prefix-xor mask, about 15
+    instructions on each of `call`'s 287 K words, though a kept range is whole files (32 words
+    or more).
+  - 12%: finding the test's files. That was a `Vec` per chunk and one range query per file of the
+    space, even for a sparse test.
+
+  Now:
+  - the ranges are written directly as runs containers;
+  - a bitmap within runs averaging 8 words or more copies the inner words and masks only the
+    edges, then counts in one vectorized pass;
+  - a sparse chunk's files are found by walking its members with a cursor over the files.
+
+  `call within files of raise`: 199 µs and 3.7 M instructions (dense 128 µs). In
+  `set_operations` at load 18:
+  - call within files of raise: 0.22 ms (dense 0.14, per-file chunks 0.51 at load 78);
+  - identifier within files of await: 0.14 ms (dense 0.17, per-file 0.39).
+
+  What is left is mostly the benchmark's clone, the copy and the count, and turning sparse
+  results into arrays.
+- **Reading postings was twice as slow: 135 ms against 66 ms.** A profile of reading every
+  kind's set (`posting_forms`, `RERAIL_POSTING_SPIN`) found:
+  - ~45%: decoding bytes element by element (`chunks_exact` over `u8`, a new `Vec<u64>` per
+    bitmap);
+  - ~15%: `words_at`, word by word;
+  - ~13%: `node()` per array member;
+  - ~8%: sealing.
+
+  Now:
+  - containers are read with one copy into reused buffers;
+  - an array is offset and appended a chunk at a time;
+  - a bitmap is shifted into its chunk in one loop;
+  - a sealed chunk's array is extracted in one tight loop.
+
+  The bench now also times a floor: each segment's containers parsed and copied as they are,
+  which is what per-file chunks did. At load 37, twice:
+
+  | Read | ms |
+  |---|---|
+  | delta-varint | 196-199 |
+  | segments into the space's chunks | 107-113 |
+  | segments copied as they are (the floor) | 46-48 |
+
+  Moving segments into the space's chunks costs about 60 ms over the whole repository, all
+  393,756 (document, kind) postings. That is the price of the layout, paid once when a batch
+  reads its leaves. Of what is left, about half the samples are the first touch of each
+  segment: 40 MB in 393 K separate buffers, more than the 16 MB L2. The floor pays that too.
+  The rest is the shift and offset, and choosing each chunk's form.
 
 ## Steps
 

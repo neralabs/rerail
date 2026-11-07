@@ -1,0 +1,150 @@
+// data-layer-swallowed-exceptions: the four clauses by hand (the converter's gaps: `nthChild` over non-comment
+// siblings, and `layout` gaps to captures).
+//
+// - Comments are not nodes of `node`/`child` (the runner's rows are named non-comment nodes), so W's `nthChild`
+//   `ofRule: {not: comment}` is a position among `child`'s children, and "no second such child" is "one child".
+// - `has` with `stopBy: {any: [class, def, lambda, except_clause]}` from an except clause's block: descendants not
+//   inside a nested stop node. The except clause is itself a stop kind, so that is "the nearest stop ancestor is
+//   the clause" (`nearest`), within its block.
+// - suppress-critical's `layout`: `after` to $WITH (breaks min 0) is "the with statement starts at or after the
+//   import's end"; `before` to $IMPORT is "the later import starts at or after $IMPORT's end". So the import that
+//   counts is the last `from contextlib import …` ending before the with statement, and it must import `suppress`.
+// - `violation.each: SUPPRESS` gives one finding per suppress call at the with statement's line: one key.
+// Options: `sourceGate` (default true) gates on the module's text matching `except|suppress` (`^` when false). An
+// except clause's text holds `except`, and each suppress clause needs a `suppress` name in the with statement, so
+// the gate holds whenever the rest does, under either value: left out. `oracleAnalyzer` is read by no clause.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl swe_doc(d: number, p: symbol)
+swe_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+
+// ---- protocol: KeyError, StopAsyncIteration, StopIteration, queue.Empty, parenthesised or a one-element tuple ------
+.decl swe_second(p: node)
+swe_second(p) :- child(p, _, i), child(p, _, j), i < j.
+.decl swe_attr(n: node, object: symbol, attribute: symbol)
+swe_attr(n, o, a) :- node(_, n, "attribute", _, _), field(n, "object", x), node(_, x, "identifier", _, _), text(x, o),
+    field(n, "attribute", y), node(_, y, "identifier", _, _), text(y, a).
+.decl swe_protocol(n: node)
+swe_protocol(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "KeyError" ; s = "StopAsyncIteration" ; s = "StopIteration").
+swe_protocol(n) :- swe_attr(n, "queue", "Empty").
+swe_protocol(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), swe_protocol(c).
+swe_protocol(n) :- node(_, n, "tuple", _, _), child(n, c, _), swe_protocol(c), !swe_second(n).
+
+// ---- except clauses ------------------------------------------------------------------------------------------------
+.decl swe_stop(kind: symbol)
+swe_stop("class_definition"). swe_stop("function_definition"). swe_stop("lambda"). swe_stop("except_clause").
+.decl swe_stop_target(kind: symbol)
+swe_stop_target("class_definition"). swe_stop_target("function_definition"). swe_stop_target("lambda").
+swe_stop_target("except_clause"). swe_stop_target("as_pattern_target").
+.decl swe_scope(kind: symbol)
+swe_scope("class_definition"). swe_scope("function_definition"). swe_scope("lambda").
+.decl swe_except(kind: symbol)
+swe_except("except_clause").
+.decl swe_block(kind: symbol)
+swe_block("block").
+
+// An except clause that does not catch a protocol exception.
+.decl swe_clause(d: number, p: symbol, e: node)
+swe_clause(d, p, e) :- swe_doc(d, p), node(d, e, "except_clause", _, _), !swe_catches_protocol(e).
+.decl swe_catches_protocol(e: node)
+swe_catches_protocol(e) :- node(_, e, "except_clause", _, _), field(e, "value", v), swe_protocol(v).
+swe_catches_protocol(e) :- node(_, e, "except_clause", _, _), field(e, "value", v), node(_, v, "as_pattern", _, _),
+    child(v, c, _), swe_protocol(c).
+// Inside a class, def or lambda that is itself inside an except clause.
+.decl swe_deep(e: node)
+swe_deep(e) :- node(_, e, "except_clause", _, _), inside(e, x, swe_scope), inside(x, _, swe_except).
+// x lies in the clause's block, not inside a nested class, def, lambda or except clause.
+.decl swe_in_block(e: node, x: node)
+swe_in_block(e, x) :- nearest(x, e, swe_stop), node(_, e, "except_clause", _, _), child(e, b, _), node(_, b, "block", _, _),
+    inside(x, b, swe_block).
+.decl swe_reraises(e: node)
+swe_reraises(e) :- node(_, x, "raise_statement", _, _), swe_in_block(e, x), !swe_deep(e).
+
+// $ERROR: the clause's alias (`except E as e`), by name.
+.decl swe_alias(e: node, s: symbol)
+swe_alias(e, s) :- node(_, e, "except_clause", _, _), field(e, "alias", a), node(_, a, "identifier", _, _), text(a, s).
+swe_alias(e, s) :- node(_, e, "except_clause", _, _), field(e, "value", v), node(_, v, "as_pattern", _, _),
+    field(v, "alias", t), child(t, a, _), node(_, a, "identifier", _, _), text(a, s).
+// An identifier that is not `x.NAME`'s NAME nor a keyword argument's name.
+.decl swe_ref(x: node, s: symbol)
+swe_ref(x, s) :- node(_, x, "identifier", _, _), text(x, s), !swe_attr_name(x), !swe_kw_name(x).
+.decl swe_attr_name(x: node)
+swe_attr_name(x) :- field(a, "attribute", x), node(_, a, "attribute", _, _).
+.decl swe_kw_name(x: node)
+swe_kw_name(x) :- field(k, "name", x), node(_, k, "keyword_argument", _, _).
+// The alias used: in the block (not past a nested stop node), or in the clause's value itself or below it, not past
+// a stop node or an as_pattern_target.
+.decl swe_uses(e: node)
+swe_uses(e) :- swe_alias(e, s), swe_ref(x, s), swe_in_block(e, x).
+swe_uses(e) :- swe_alias(e, s), field(e, "value", v), swe_ref(v, s).
+swe_uses(e) :- swe_alias(e, s), field(e, "value", v), node(_, v, _, vs, ve), swe_ref(x, s), nearest(x, e, swe_stop_target),
+    node(_, x, _, xs, xe), xs >= vs, xe <= ve.
+.decl swe_handled(e: node)
+swe_handled(e) :- swe_uses(e), !swe_deep(e).
+
+// except-warning: the error is named and used, never re-raised.
+violation("data-layer-swallowed-exceptions", "except-warning", "WARNING", p, l) :-
+    swe_clause(_, p, e), !swe_reraises(e), !swe_deep(e), swe_uses(e), line(e, l).
+// except-critical: neither re-raised nor used.
+violation("data-layer-swallowed-exceptions", "except-critical", "CRITICAL", p, l) :-
+    swe_clause(_, p, e), !swe_reraises(e), !swe_handled(e), line(e, l).
+
+// ---- with suppress(…) ------------------------------------------------------------------------------------------------
+// The calls a with statement's items open: `with CALL:` or `with CALL as x:`.
+.decl swe_with_call(w: node, c: node)
+swe_with_call(w, c) :- node(_, w, "with_statement", _, _), child(w, wc, _), node(_, wc, "with_clause", _, _),
+    child(wc, it, _), node(_, it, "with_item", _, _), field(it, "value", c), node(_, c, "call", _, _).
+swe_with_call(w, c) :- node(_, w, "with_statement", _, _), child(w, wc, _), node(_, wc, "with_clause", _, _),
+    child(wc, it, _), node(_, it, "with_item", _, _), field(it, "value", v), node(_, v, "as_pattern", _, _),
+    child(v, c, _), node(_, c, "call", _, _).
+// One argument and it is a protocol exception (suppress-legacy) or KeyError (suppress-critical).
+.decl swe_one_protocol(c: node)
+swe_one_protocol(c) :- field(c, "arguments", al), child(al, a, _), swe_protocol(a), !swe_second(al).
+.decl swe_one_keyerror(c: node)
+swe_one_keyerror(c) :- field(c, "arguments", al), child(al, a, _), node(_, a, "identifier", _, _), text(a, "KeyError"), !swe_second(al).
+.decl swe_suppress_name(c: node)
+swe_suppress_name(c) :- field(c, "function", f), node(_, f, "identifier", _, _), text(f, "suppress").
+.decl swe_contextlib_suppress(c: node)
+swe_contextlib_suppress(c) :- field(c, "function", f), swe_attr(f, "contextlib", "suppress").
+
+// suppress-legacy: a sync with statement on suppress(…) or contextlib.suppress(…), other than of one protocol error.
+.decl swe_async_with(w: node)
+swe_async_with(w) :- node(_, w, "with_statement", _, _), node_text(w, s), match("(?s)async\\b.*", s).
+violation("data-layer-swallowed-exceptions", "suppress-legacy", "CRITICAL", p, l) :-
+    swe_doc(d, p), node(d, w, "with_statement", _, _), !swe_async_with(w), swe_with_call(w, c),
+    (swe_suppress_name(c) ; swe_contextlib_suppress(c)), !swe_one_protocol(c), line(w, l).
+
+// suppress-critical: contextlib.suppress(…), or suppress(…) where the last `from contextlib import …` before the
+// with statement imports suppress; other than suppress(KeyError).
+.decl swe_ctx_import(d: number, i: node, s: number, e: number)
+swe_ctx_import(d, i, s, e) :- node(d, i, "import_from_statement", s, e), field(i, "module_name", m), node(_, m, "dotted_name", _, _),
+    node_text(m, "contextlib").
+.decl swe_imports_suppress(i: node)
+swe_imports_suppress(i) :- swe_ctx_import(_, i, _, _), child(i, x, _), node(_, x, "dotted_name", _, _), node_text(x, "suppress").
+swe_imports_suppress(i) :- swe_ctx_import(_, i, _, _), child(i, x, _), node(_, x, "aliased_import", _, _), field(x, "name", y),
+    node(_, y, "dotted_name", _, _), node_text(y, "suppress").
+// i ends before w starts, and no other contextlib import lies between them.
+.decl swe_before(w: node, i: node)
+swe_before(w, i) :- node(d, w, "with_statement", ws, _), swe_ctx_import(d, i, _, ie), ws >= ie.
+.decl swe_shadowed(w: node, i: node)
+swe_shadowed(w, i) :- swe_before(w, i), swe_ctx_import(d, i, _, ie), swe_ctx_import(d, j, js, je), js >= ie, node(d, w, _, ws, _), ws >= je, j != i.
+.decl swe_imported_suppress(w: node)
+swe_imported_suppress(w) :- swe_before(w, i), swe_imports_suppress(i), !swe_shadowed(w, i).
+violation("data-layer-swallowed-exceptions", "suppress-critical", "CRITICAL", p, l) :-
+    swe_doc(d, p), node(d, w, "with_statement", _, _), swe_with_call(w, c), swe_contextlib_suppress(c),
+    !swe_one_keyerror(c), line(w, l).
+violation("data-layer-swallowed-exceptions", "suppress-critical", "CRITICAL", p, l) :-
+    swe_doc(d, p), node(d, w, "with_statement", _, _), swe_with_call(w, c), swe_suppress_name(c), swe_imported_suppress(w),
+    !swe_one_keyerror(c), line(w, l).

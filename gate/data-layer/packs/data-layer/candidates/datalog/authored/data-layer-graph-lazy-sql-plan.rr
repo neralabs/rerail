@@ -1,0 +1,330 @@
+// data-layer-graph-lazy-sql-plan: the nine graph-plan-contracts-N clauses (relational, SQL stages over CPython's
+// `ast`), by hand over tree-sitter's tree. Source: gate/data-layer/packs/data-layer/rules/data-layer-graph-lazy-sql-plan.json.
+// Options at their defaults (entryPoint "all", parameters "{}"; neither is read by these clauses).
+//
+// Each clause is one UNION ALL of contract checks over one file of the scope; the code is the row's `issue`
+// column (GLSP-0NN), the line its `line`. Gate: python, syntax valid (`!syntax_error(d)`, W's own verdict: the
+// tape's ERROR/MISSING nodes), and CPython's parse for the pythonAst stage (`!cpython_syntax_error(d, _, _)`);
+// partitionBy file.
+// The stage relations, as CPython's `ast` columns read them (metadata.structure_index):
+//   - fn / cls: the nearest enclosing FunctionDef/AsyncFunctionDef / ClassDef, each independently (lambdas are
+//     not functions). "fn IS NULL AND cls IS NULL" is a node with no def or class above it: graph_plan_contracts_nested.
+//   - id (preorder): among statements, the source order; so "earliest id" is the least start byte and "latest id"
+//     the greatest (decorators hold no statements, so a def's preorder sits where its `def` does).
+//   - line: ast's lineno: a def's or class's is its `def`/`class` line (after decorators), as tree-sitter's
+//     function_definition/class_definition start; an Assign's is its first target's; a Module's is 1.
+//   - graph_classes: per class name, the first top-level ClassDef. graph_method_candidates: defs with no function
+//     above whose nearest class is top-level; graph_methods: per (owner NAME, method name) the last one, over all
+//     top-level classes of that name.
+//   - single_decorators: each decorator's expression, or a Call decorator's func, by its Name id / Attribute attr.
+//   - top_definitions: top-level ClassDef/FunctionDef/AsyncFunctionDef by name, Assign by each direct Name target
+//     (`a = b = v` gives a and b), TypeAlias by its Name; top_symbols: per name, the last of them.
+//   - mention: a Name (by id) or Attribute (by attr) in the method's ast subtree: its decorators, parameters
+//     (annotations, defaults), return annotation and body.
+// Set semantics: rows of one clause with one (path, line, code) are one finding here (W keeps each identity).
+
+#include "python/ast.rr"
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- shared stage relations ----------------------------------------------------------------------------------
+.decl graph_plan_contracts_defs(kind: symbol)
+graph_plan_contracts_defs("function_definition"). graph_plan_contracts_defs("class_definition").
+.decl graph_plan_contracts_fdef(kind: symbol)
+graph_plan_contracts_fdef("function_definition").
+.decl graph_plan_contracts_cdef(kind: symbol)
+graph_plan_contracts_cdef("class_definition").
+.decl graph_plan_contracts_deco(kind: symbol)
+graph_plan_contracts_deco("decorator").
+
+// The file: in scope, parsed, its path.
+.decl graph_plan_contracts_file(d: number, p: symbol)
+graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d),
+    !cpython_syntax_error(d, _, _), !out_scope(d), doc(d, p, _).
+// The stages' rows are CPython's `ast` of the file (pythonAst), so a file ast.parse rejects has none, its module
+// row included, and no check fires there: `!cpython_syntax_error(d, _, _)`, beside W's own gate (`!syntax_error(d)`).
+
+// A node with a def or class above it (fn or cls not NULL).
+.decl graph_plan_contracts_nested(n: node)
+graph_plan_contracts_nested(n) :- inside(n, _, graph_plan_contracts_defs).
+.decl graph_plan_contracts_in_fn(n: node)
+graph_plan_contracts_in_fn(n) :- inside(n, _, graph_plan_contracts_fdef).
+
+// Top-level classes, by name, at their start; graph_classes: the first of each name.
+.decl graph_plan_contracts_tclass(d: number, x: symbol, c: node, s: number)
+graph_plan_contracts_tclass(d, x, c, s) :- node(d, c, "class_definition", s, _), !graph_plan_contracts_nested(c),
+    field(c, "name", nm), text(nm, x).
+.decl graph_plan_contracts_class(d: number, x: symbol, c: node)
+graph_plan_contracts_class(d, x, c) :- graph_plan_contracts_tclass(d, x, c, s),
+    s = min t : { graph_plan_contracts_tclass(d, x, _, t) }.
+.decl graph_plan_contracts_has_class(d: number, x: symbol)
+graph_plan_contracts_has_class(d, x) :- graph_plan_contracts_tclass(d, x, _, _).
+
+// graph_method_candidates by (owner name, name), at their start; graph_methods: the last of each.
+.decl graph_plan_contracts_cand(d: number, o: symbol, x: symbol, f: node, s: number)
+graph_plan_contracts_cand(d, o, x, f, s) :- node(d, f, "function_definition", s, _), !graph_plan_contracts_in_fn(f),
+    nearest(f, c, graph_plan_contracts_cdef), graph_plan_contracts_tclass(d, o, c, _), field(f, "name", nm), text(nm, x).
+.decl graph_plan_contracts_method(d: number, o: symbol, x: symbol, f: node)
+graph_plan_contracts_method(d, o, x, f) :- graph_plan_contracts_cand(d, o, x, f, s),
+    s = max t : { graph_plan_contracts_cand(d, o, x, _, t) }.
+.decl graph_plan_contracts_has_method(d: number, o: symbol, x: symbol)
+graph_plan_contracts_has_method(d, o, x) :- graph_plan_contracts_cand(d, o, x, _, _).
+
+// A decorator's expression without parentheses (CPython has no node for them). mirrors python/ast.rr unparen
+.decl graph_plan_contracts_unparen(e: node, m: node)
+graph_plan_contracts_unparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expression".
+graph_plan_contracts_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), graph_plan_contracts_unparen(i, m).
+// The Name id / Attribute attr of an expression (other kinds have no ast_name of these kinds).
+.decl graph_plan_contracts_ref(e: node, x: symbol)
+graph_plan_contracts_ref(e, x) :- node(_, e, "identifier", _, _), text(e, x).
+graph_plan_contracts_ref(e, x) :- node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x).
+// single_decorators, kind IN ('Name','Attribute'): def f's decorators by name.
+// mirrors python/names.rr decorator (by the expression's or its call's Name id / Attribute attr)
+.decl graph_plan_contracts_decorator(f: node, x: symbol)
+graph_plan_contracts_decorator(f, x) :- field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _),
+    child(dc, e0, 0), graph_plan_contracts_unparen(e0, e), !node(_, e, "call", _, _), graph_plan_contracts_ref(e, x).
+graph_plan_contracts_decorator(f, x) :- field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _),
+    child(dc, e0, 0), graph_plan_contracts_unparen(e0, e), node(_, e, "call", _, _), field(e, "function", g0),
+    graph_plan_contracts_unparen(g0, g), graph_plan_contracts_ref(g, x).
+
+// Identifiers that are not an ast Name: def/class/keyword/default-parameter names (field "name"), parameters,
+// import names, global/nonlocal names, `except E as x`.
+.decl graph_plan_contracts_params(kind: symbol)
+graph_plan_contracts_params("parameters"). graph_plan_contracts_params("lambda_parameters").
+.decl graph_plan_contracts_imports(kind: symbol)
+graph_plan_contracts_imports("import_statement"). graph_plan_contracts_imports("import_from_statement").
+graph_plan_contracts_imports("future_import_statement").
+// mirrors python/ast.rr not_name (ast_name's exclusions)
+.decl graph_plan_contracts_not_name(n: node)
+graph_plan_contracts_not_name(n) :- field(_, "name", n).
+graph_plan_contracts_not_name(n) :- child(ps, n, _), node(_, ps, k, _, _), graph_plan_contracts_params(k).
+graph_plan_contracts_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, n, 0).
+graph_plan_contracts_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, s, 0), child(s, n, 0),
+    (node(_, s, "list_splat_pattern", _, _) ; node(_, s, "dictionary_splat_pattern", _, _)).
+graph_plan_contracts_not_name(n) :- child(ps, s, _), node(_, ps, k, _, _), graph_plan_contracts_params(k), child(s, n, 0),
+    (node(_, s, "list_splat_pattern", _, _) ; node(_, s, "dictionary_splat_pattern", _, _)).
+graph_plan_contracts_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, graph_plan_contracts_imports).
+graph_plan_contracts_not_name(n) :- (node(_, g, "global_statement", _, _) ; node(_, g, "nonlocal_statement", _, _)), child(g, n, _).
+graph_plan_contracts_not_name(n) :- node(_, x, "except_clause", _, _), child(x, ap, _), node(_, ap, "as_pattern", _, _),
+    field(ap, "alias", t), child(t, n, _).
+// Match patterns: a capture (`case x`, a lone name), `case … as x`, `*rest`/`**rest` and a keyword pattern's
+// keyword are strings in CPython (MatchAs/MatchStar/MatchMapping.rest, MatchClass.kwd_attrs); a value pattern's
+// dotted name (`case A.B`) and a class pattern's class are Names/Attributes.
+graph_plan_contracts_not_name(n) :- node(_, cp, "case_pattern", _, _), child(cp, dn, 0), node(_, dn, "dotted_name", _, _),
+    child(dn, n, 0), !child(dn, _, 1).
+graph_plan_contracts_not_name(n) :- node(_, cp, "case_pattern", _, _), child(cp, ap, 0), node(_, ap, "as_pattern", _, _),
+    child(ap, n, 1), node(_, n, "identifier", _, _).
+graph_plan_contracts_not_name(n) :- node(_, s, "splat_pattern", _, _), child(s, n, 0).
+graph_plan_contracts_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, n, 0).
+graph_plan_contracts_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, dn, 1), node(_, dn, "dotted_name", _, _),
+    child(dn, n, 0), !child(dn, _, 1).
+// PEP 695 type parameters' names are strings (TypeVar/TypeVarTuple/ParamSpec.name): python/ast.rr type_param.
+graph_plan_contracts_not_name(n) :- type_param(_, _, n, _, _, _, _).
+
+// The names the mention checks look for.
+.decl graph_plan_contracts_wanted(x: symbol)
+graph_plan_contracts_wanted("_legacy_delegate_stub"). graph_plan_contracts_wanted("_txn_legacy_delegate_body").
+graph_plan_contracts_wanted("_versioned_legacy_delegate_body"). graph_plan_contracts_wanted("SqlColumnTypeHints").
+graph_plan_contracts_wanted("_binding_node_sys_id_alias"). graph_plan_contracts_wanted("_binding_edge_alias").
+graph_plan_contracts_wanted("uuid_columns"). graph_plan_contracts_wanted("text_columns").
+graph_plan_contracts_wanted("integer_columns").
+// A Name or Attribute of name x: an identifier read as a Name, or an attribute's attr.
+.decl graph_plan_contracts_named(d: number, i: node, x: symbol)
+graph_plan_contracts_named(d, i, x) :- node(d, i, "identifier", _, _), text(i, x), graph_plan_contracts_wanted(x),
+    !graph_plan_contracts_not_name(i).
+graph_plan_contracts_named(d, i, x) :- node(d, i, "identifier", _, _), text(i, x), graph_plan_contracts_wanted(x),
+    field(a, "attribute", i), node(_, a, "attribute", _, _).
+// mention: x in def f's ast subtree (its function_definition, or one of its decorators).
+.decl graph_plan_contracts_mention(f: node, x: symbol)
+graph_plan_contracts_mention(f, x) :- graph_plan_contracts_named(_, i, x), inside(i, f, graph_plan_contracts_fdef).
+graph_plan_contracts_mention(f, x) :- graph_plan_contracts_named(_, i, x), inside(i, dc, graph_plan_contracts_deco),
+    child(dd, dc, _), field(dd, "definition", f).
+
+// top_definitions: (doc, name, start, symbol kind, line).
+.decl graph_plan_contracts_topdef(d: number, x: symbol, s: number, k: symbol, l: number)
+graph_plan_contracts_topdef(d, x, s, "class", l) :- graph_plan_contracts_tclass(d, x, c, s), line(c, l).
+graph_plan_contracts_topdef(d, x, s, "function", l) :- node(d, f, "function_definition", s, _), !graph_plan_contracts_nested(f),
+    field(f, "name", nm), text(nm, x), line(f, l).
+// An Assign: an assignment without an annotation that is not another's right side; its targets, the left of each
+// assignment down its chain of right sides.
+// mirrors python/ast.rr assign_chain / assign_target (Assign only: no annotation)
+.decl graph_plan_contracts_chain(a: node, b: node)
+graph_plan_contracts_chain(a, a) :- node(_, a, "assignment", _, _), !field(a, "type", _), !graph_plan_contracts_inner(a).
+graph_plan_contracts_chain(a, c) :- graph_plan_contracts_chain(a, b), field(b, "right", c), node(_, c, "assignment", _, _).
+.decl graph_plan_contracts_inner(a: node)
+graph_plan_contracts_inner(a) :- node(_, b, "assignment", _, _), field(b, "right", a).
+// assign_target(a, t): Name t is a direct target of Assign a; `(t) = v` (a tuple_pattern of one, no comma) is a
+// Name target too.
+.decl graph_plan_contracts_target(a: node, t: node)
+graph_plan_contracts_target(a, t) :- graph_plan_contracts_chain(a, b), field(b, "left", l), graph_plan_contracts_bare(l, t).
+.decl graph_plan_contracts_bare(l: node, t: node)
+graph_plan_contracts_bare(l, l) :- node(_, l, "identifier", _, _).
+graph_plan_contracts_bare(l, t) :- node(_, l, "tuple_pattern", _, _), child(l, c, 0), !child(l, _, 1),
+    !token(l, _, ",", _, _), graph_plan_contracts_bare(c, t).
+graph_plan_contracts_topdef(d, x, s, "assign", l) :- node(d, a, "assignment", s, _), !graph_plan_contracts_nested(a),
+    graph_plan_contracts_target(a, t), text(t, x), line(a, l).
+// TypeAlias: `type X = …` or `type X[T] = …`.
+.decl graph_plan_contracts_alias_name(o: node, i: node)
+graph_plan_contracts_alias_name(o, i) :- node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "type", _, _),
+    child(t, i, 0), node(_, i, "identifier", _, _).
+graph_plan_contracts_alias_name(o, i) :- node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "type", _, _),
+    child(t, g, 0), node(_, g, "generic_type", _, _), child(g, i, 0), node(_, i, "identifier", _, _).
+graph_plan_contracts_alias_name(o, i) :- node(_, o, "type_alias_statement", _, _), field(o, "left", g), node(_, g, "generic_type", _, _),
+    child(g, i, 0), node(_, i, "identifier", _, _).
+graph_plan_contracts_topdef(d, x, s, "typealias", l) :- node(d, o, "type_alias_statement", s, _), !graph_plan_contracts_nested(o),
+    graph_plan_contracts_alias_name(o, i), text(i, x), line(o, l).
+// top_symbols: per name, the last definition.
+.decl graph_plan_contracts_symbol(d: number, x: symbol, k: symbol, l: number)
+graph_plan_contracts_symbol(d, x, k, l) :- graph_plan_contracts_topdef(d, x, s, k, l),
+    s = max t : { graph_plan_contracts_topdef(d, x, t, _, _) }.
+.decl graph_plan_contracts_defkind(k: symbol)
+graph_plan_contracts_defkind("class"). graph_plan_contracts_defkind("function").
+.decl graph_plan_contracts_has_def(d: number, x: symbol)
+graph_plan_contracts_has_def(d, x) :- graph_plan_contracts_symbol(d, x, k, _), graph_plan_contracts_defkind(k).
+
+// ---- the checks, as tables -------------------------------------------------------------------------------------
+// Module checks: class x of path p is required (code at line 1).
+.decl graph_plan_contracts_req_class(clause: symbol, p: symbol, x: symbol, code: symbol)
+graph_plan_contracts_req_class("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "GLSP-002").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "GraphLazyStepRegistrar", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQuery", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphTraversal", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-4", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "GLSP-006").
+graph_plan_contracts_hit(c, code, p, 1) :- graph_plan_contracts_req_class(c, p, x, code),
+    graph_plan_contracts_file(d, p), !graph_plan_contracts_has_class(d, x).
+
+// Module checks: top-level symbol x (its last definition a class or function) is required.
+.decl graph_plan_contracts_req_symbol(clause: symbol, p: symbol, x: symbol, code: symbol)
+graph_plan_contracts_req_symbol("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphAggregateStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphCountStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphExistsStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphNodesStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphOneStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphPathsStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "_build_graph_execution_ctx", "GLSP-012").
+graph_plan_contracts_hit(c, code, p, 1) :- graph_plan_contracts_req_symbol(c, p, x, code),
+    graph_plan_contracts_file(d, p), !graph_plan_contracts_has_def(d, x).
+
+// Banned top-level symbols (top_symbols): k "def" = only where the last definition is a class or function, "any"
+// = any kind; need: a graph class the file must have for the check to apply ("" for none).
+.decl graph_plan_contracts_banned(clause: symbol, p: symbol, x: symbol, k: symbol, need: symbol, code: symbol)
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_MappedLazyContext", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_PlanBackedGraphQuery", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_PlanBackedGraphTraversal", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_TxnBoundGraphQueryBuilder", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_add_plan_intent", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_get_or_create_plan_flush_context", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_lazy_result_for_plan_ref", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_make_graph_query_builder", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_map_lazy", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "GraphQueryTerminalIntent", "any", "", "GLSP-010").
+graph_plan_contracts_banned("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "GraphQueryTerminalStep", "any", "", "GLSP-010").
+graph_plan_contracts_banned("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphQueryTerminalMode", "any", "", "GLSP-010").
+graph_plan_contracts_banned("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "_clone_graph_pattern", "any", "", "GLSP-010").
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_banned(c, p, x, "def", need, code),
+    graph_plan_contracts_file(d, p), graph_plan_contracts_symbol(d, x, k, l), graph_plan_contracts_defkind(k),
+    graph_plan_contracts_has_class(d, need).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_banned(c, p, x, "any", "", code),
+    graph_plan_contracts_file(d, p), graph_plan_contracts_symbol(d, x, _, l).
+
+// Method checks on graph class o of path p: method x is required (at the class's line).
+.decl graph_plan_contracts_req_method(clause: symbol, p: symbol, o: symbol, x: symbol, code: symbol)
+graph_plan_contracts_req_method("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "graph_lazy", "GLSP-003").
+graph_plan_contracts_req_method("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_one_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "count_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "exists_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_bindings_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_aggregate_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-4", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_paths_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-4", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph", "GLSP-007").
+graph_plan_contracts_req_method("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_async", "GLSP-007").
+graph_plan_contracts_req_method("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "GLSP-013").
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_method(c, p, o, x, code),
+    graph_plan_contracts_file(d, p), graph_plan_contracts_class(d, o, k), !graph_plan_contracts_has_method(d, o, x), line(k, l).
+
+// Method x of o must carry decorator y (at the method's line).
+.decl graph_plan_contracts_req_deco(clause: symbol, p: symbol, o: symbol, x: symbol, y: symbol, code: symbol)
+graph_plan_contracts_req_deco("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "graph_lazy", "pure_lazy", "GLSP-004").
+graph_plan_contracts_req_deco("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_one_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "count_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "exists_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_bindings_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_aggregate_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-4", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_paths_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-4", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph", "legacy_sync", "GLSP-010").
+graph_plan_contracts_req_deco("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_async", "legacy_async", "GLSP-010").
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_deco(c, p, o, x, y, code),
+    graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), !graph_plan_contracts_decorator(f, y), line(f, l).
+
+// Method x of o must mention name y (a Name id or Attribute attr in its subtree); "legacy": any of the three
+// legacy delegate names.
+.decl graph_plan_contracts_req_mention(clause: symbol, p: symbol, o: symbol, x: symbol, y: symbol, code: symbol)
+graph_plan_contracts_req_mention("graph-plan-contracts-4", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph", "legacy", "GLSP-011").
+graph_plan_contracts_req_mention("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_async", "legacy", "GLSP-011").
+graph_plan_contracts_req_mention("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "SqlColumnTypeHints", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "_binding_node_sys_id_alias", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "_binding_edge_alias", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "uuid_columns", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "text_columns", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "integer_columns", "GLSP-014").
+.decl graph_plan_contracts_alias(y: symbol, x: symbol)
+graph_plan_contracts_alias("legacy", "_legacy_delegate_stub"). graph_plan_contracts_alias("legacy", "_txn_legacy_delegate_body").
+graph_plan_contracts_alias("legacy", "_versioned_legacy_delegate_body").
+graph_plan_contracts_alias(y, y) :- graph_plan_contracts_req_mention(_, _, _, _, y, _), y != "legacy".
+.decl graph_plan_contracts_mentions(f: node, y: symbol)
+graph_plan_contracts_mentions(f, y) :- graph_plan_contracts_alias(y, x), graph_plan_contracts_mention(f, x).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_mention(c, p, o, x, y, code),
+    graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), !graph_plan_contracts_mentions(f, y), line(f, l).
+
+// Removed methods: method x of o must be absent (at the method's line).
+.decl graph_plan_contracts_removed(clause: symbol, p: symbol, o: symbol, x: symbol, code: symbol)
+graph_plan_contracts_removed("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "graph_query_builder_lazy", "GLSP-003").
+graph_plan_contracts_removed("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "graph_traverse_lazy", "GLSP-003").
+graph_plan_contracts_removed("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_query_builder", "GLSP-007").
+graph_plan_contracts_removed("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_query_builder_async", "GLSP-007").
+graph_plan_contracts_removed("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_traverse", "GLSP-007").
+graph_plan_contracts_removed("graph-plan-contracts-6", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_traverse_async", "GLSP-007").
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_removed(c, p, o, x, code),
+    graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), line(f, l).
+
+// graph-plan-contracts-1, GLSP-007: GraphLazyStepRegistrar must declare `__pure_lazy_surface__`: an Assign (not
+// AnnAssign) with no function above, whose nearest class is a top-level GraphLazyStepRegistrar (any of that name),
+// with a direct Name target `__pure_lazy_surface__`. At the first such class's line, or 1 where there is none.
+.decl graph_plan_contracts_surface(d: number)
+graph_plan_contracts_surface(d) :- graph_plan_contracts_target(a, t), text(t, "__pure_lazy_surface__"), node(d, a, _, _, _),
+    !graph_plan_contracts_in_fn(a), nearest(a, c, graph_plan_contracts_cdef), graph_plan_contracts_tclass(d, "GraphLazyStepRegistrar", c, _).
+graph_plan_contracts_hit("graph-plan-contracts-1", "GLSP-007", p, 1) :-
+    graph_plan_contracts_file(d, p), p = "l7200_versioned_transactions/graph_lazy_sql.py",
+    !graph_plan_contracts_has_class(d, "GraphLazyStepRegistrar").
+graph_plan_contracts_hit("graph-plan-contracts-1", "GLSP-007", p, l) :-
+    graph_plan_contracts_file(d, p), p = "l7200_versioned_transactions/graph_lazy_sql.py",
+    graph_plan_contracts_class(d, "GraphLazyStepRegistrar", k), !graph_plan_contracts_surface(d), line(k, l).
+
+// ---- the clauses: each one's rows ------------------------------------------------------------------------------
+.decl graph_plan_contracts_hit(clause: symbol, code: symbol, p: symbol, l: number)
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-0", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-0", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-1", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-1", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-2", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-2", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-3", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-3", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-4", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-4", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-5", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-5", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-6", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-6", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-7", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-7", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-8", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-8", code, p, l).

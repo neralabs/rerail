@@ -1,12 +1,92 @@
+.decl bootstrap_cache_scope(kind: symbol)
+bootstrap_cache_scope("function_definition"). bootstrap_cache_scope("decorator").
+.decl bootstrap_cache_allowed(c: node)
+.decl bootstrap_cache_ast(n: node, e: node)
+.decl bootstrap_cache_call(c: node, kind: symbol, callee: symbol)
+.decl bootstrap_cache_decorator(f: node, e: node)
+.decl bootstrap_cache_doc(d: number, p: symbol)
+.decl bootstrap_cache_fixture(e: node)
+.decl bootstrap_cache_fn(n: node, f: node)
+.decl bootstrap_cache_head(n: node, h: node)
+.decl bootstrap_cache_helper(s: symbol)
+.decl bootstrap_cache_in_test(c: node)
+.decl bootstrap_cache_last(n: node, s: symbol)
+.decl bootstrap_cache_need(n: node)
+.decl bootstrap_cache_qualified(n: node)
+.decl bootstrap_cache_slot(n: node)
+.decl bootstrap_cache_test(f: node)
+.decl bootstrap_cache_up(n: node)
+.decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl reported_parser_error_entry(d: number)
+.decl src_line(d: number, l: number, sp: node)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, child, text, line, src_line, syntax_error, cpython_syntax_error, node_text
+.output violation
+bootstrap_cache_helper("bootstrap_test_logged_tables_for_tests").
+bootstrap_cache_helper("bootstrap_test_logged_tables_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_queues_for_tests").
+bootstrap_cache_helper("bootstrap_test_queues_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_schema_for_tests").
+bootstrap_cache_helper("bootstrap_test_schema_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_table_triggers_for_tests").
+bootstrap_cache_helper("bootstrap_test_table_triggers_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_tables_for_tests").
+bootstrap_cache_helper("bootstrap_test_tables_for_tests_async").
+bootstrap_cache_helper("bootstrap_test_versioning_domain_for_tests").
+bootstrap_cache_helper("bootstrap_test_versioning_domain_for_tests_async").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
 in_scope(d) :- doc(d, p, _), glob("conform/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
-.output violation
+bootstrap_cache_slot(f) :- node(_, c, "call", _, _), field(c, "function", f).
+bootstrap_cache_slot(o) :- bootstrap_cache_need(a), node(_, a, "attribute", _, _), field(a, "object", o).
+bootstrap_cache_slot(e) :- bootstrap_cache_decorator(_, e).
+bootstrap_cache_slot(x) :- bootstrap_cache_slot(p), node(_, p, "parenthesized_expression", _, _), child(p, x, _), !node(_, x, "comment", _, _).
+bootstrap_cache_ast(n, n) :- bootstrap_cache_slot(n), !node(_, n, "parenthesized_expression", _, _).
+bootstrap_cache_ast(n, e) :- bootstrap_cache_slot(n), node(_, n, "parenthesized_expression", _, _), child(n, x, _), !node(_, x, "comment", _, _), bootstrap_cache_ast(x, e).
+bootstrap_cache_call(c, "Name", s) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_cache_ast(f0, f), node(_, f, "identifier", _, _), text(f, s).
+bootstrap_cache_call(c, "Attribute", s) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_cache_ast(f0, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s).
+bootstrap_cache_up(c) :- bootstrap_cache_call(c, _, _).
+bootstrap_cache_up(w) :- bootstrap_cache_up(n), nearest(n, d, bootstrap_cache_scope), node(_, d, "decorator", _, _), child(w, d, _), field(w, "definition", k), !node(_, k, "function_definition", _, _).
+bootstrap_cache_fn(n, f) :- bootstrap_cache_up(n), nearest(n, f, bootstrap_cache_scope), node(_, f, "function_definition", _, _).
+bootstrap_cache_fn(n, g) :- bootstrap_cache_up(n), nearest(n, d, bootstrap_cache_scope), node(_, d, "decorator", _, _), child(w, d, _), field(w, "definition", g), node(_, g, "function_definition", _, _).
+bootstrap_cache_fn(n, f) :- bootstrap_cache_up(n), nearest(n, d, bootstrap_cache_scope), node(_, d, "decorator", _, _), child(w, d, _), field(w, "definition", k), !node(_, k, "function_definition", _, _), bootstrap_cache_fn(w, f).
+bootstrap_cache_decorator(f, e) :- node(_, f, "function_definition", _, _), field(w, "definition", f), node(_, w, "decorated_definition", _, _), child(w, d, _), node(_, d, "decorator", _, _), child(d, e, _), !node(_, e, "comment", _, _).
+bootstrap_cache_need(e) :- bootstrap_cache_decorator(_, e0), bootstrap_cache_ast(e0, e).
+bootstrap_cache_need(f) :- bootstrap_cache_need(c), node(_, c, "call", _, _), field(c, "function", f0), bootstrap_cache_ast(f0, f).
+bootstrap_cache_need(o) :- bootstrap_cache_need(a), node(_, a, "attribute", _, _), field(a, "object", o0), bootstrap_cache_ast(o0, o).
+bootstrap_cache_qualified(n) :- bootstrap_cache_need(n), node(_, n, "identifier", _, _).
+bootstrap_cache_qualified(a) :- bootstrap_cache_need(a), node(_, a, "attribute", _, _), field(a, "object", o0), bootstrap_cache_ast(o0, o), bootstrap_cache_qualified(o).
+bootstrap_cache_qualified(c) :- bootstrap_cache_need(c), node(_, c, "call", _, _), field(c, "function", f0), bootstrap_cache_ast(f0, f), bootstrap_cache_qualified(f).
+bootstrap_cache_head(n, n) :- bootstrap_cache_need(n), !node(_, n, "call", _, _).
+bootstrap_cache_head(c, h) :- bootstrap_cache_need(c), node(_, c, "call", _, _), field(c, "function", f0), bootstrap_cache_ast(f0, f), bootstrap_cache_head(f, h).
+bootstrap_cache_last(n, s) :- bootstrap_cache_head(n, h), node(_, h, "identifier", _, _), text(h, s).
+bootstrap_cache_last(n, s) :- bootstrap_cache_head(n, h), node(_, h, "attribute", _, _), field(h, "attribute", t), text(t, s).
+bootstrap_cache_fixture(e) :- bootstrap_cache_head(e, h), node(_, h, "identifier", _, _), text(h, "fixture").
+bootstrap_cache_fixture(e) :- bootstrap_cache_head(e, h), node(_, h, "attribute", _, _), field(h, "attribute", t), text(t, "fixture"), field(h, "object", o0), bootstrap_cache_ast(o0, o), bootstrap_cache_qualified(o), bootstrap_cache_last(o, s), suffix("pytest", s).
+bootstrap_cache_test(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s), prefix("test_", s).
+bootstrap_cache_test(f) :- bootstrap_cache_decorator(f, e0), bootstrap_cache_ast(e0, e), bootstrap_cache_fixture(e).
+bootstrap_cache_allowed(c) :- bootstrap_cache_call(c, _, _), node(d, c, _, _, _), line(c, l), src_line(d, l, sp), text(sp, s), contains("bootstrap-cache-health: allow", s).
+bootstrap_cache_allowed(c) :- bootstrap_cache_call(c, _, _), node(d, c, _, _, _), line(c, l), k = @sub(l, 1), src_line(d, k, sp), text(sp, s), contains("bootstrap-cache-health: allow", s).
+bootstrap_cache_in_test(c) :- bootstrap_cache_fn(c, f), bootstrap_cache_test(f).
+bootstrap_cache_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _).
+violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH001", p, l) :- bootstrap_cache_call(c, _, s), bootstrap_cache_helper(s), bootstrap_cache_in_test(c), !bootstrap_cache_allowed(c), node(d, c, _, _, _), bootstrap_cache_doc(d, p), line(c, l).
+violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH002", p, l) :- bootstrap_cache_call(c, _, s), bootstrap_cache_helper(s), field(c, "arguments", al), child(al, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", x), text(x, "manifest_key"), !bootstrap_cache_allowed(c), node(d, c, _, _, _), bootstrap_cache_doc(d, p), line(c, l).
+violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH003", p, l) :- bootstrap_cache_call(c, "Name", s), (s = "create_table" ; s = "create_tables"), bootstrap_cache_in_test(c), !bootstrap_cache_allowed(c), node(d, c, _, _, _), bootstrap_cache_doc(d, p), line(c, l).
+reported_parser_error_entry(d) :- option_value("entryPoint", v), v != "all", node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables)(?s:.*)", s).
+violation("data-layer-bootstrap-cache-health", "reported-parser-error", "BCH000", p, 1) :- reported_parser_error_entry(d), doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), cpython_syntax_error(d, _, _).

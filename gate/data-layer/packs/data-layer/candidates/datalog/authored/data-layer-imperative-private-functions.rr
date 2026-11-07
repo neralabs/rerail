@@ -1,0 +1,280 @@
+// data-layer-imperative-private-functions, all three clauses; `caller` reads W's reference graph through
+// `reference_edge(src, dst, via)`. Policy: candidates/rules-ast/data-layer-imperative-private-functions.json.
+// Options (oracleAnalyzer, sourceGate) are read by no clause.
+//
+// The symbol (each clause's first `all`): a function_definition in no function. At module level it counts unless
+// its name has more than one binding in its scope (`binds bindings max 1`) and a later top-level def has its name
+// (`later-module-symbol`: a function_definition in no function or class, starting at or after this one's end). A
+// later such def is itself a second binding in the module scope, so this is: no later top-level def of the name.
+// In a class (its nearest, SYMBOL_CLASS its name) it counts if its name and the class's name each have one binding
+// in their scopes, or no later def in no function, whose nearest class has the class's name, has its name
+// (`later-method-symbol`).
+// Bindings (Ruff's scope.get_all, deletions included) are counted per scope (module, class, def, lambda,
+// comprehension) and name: def and class names (in the scope holding the definition), assignment, augmented and
+// annotated targets (identifiers through tuple/list patterns and splats), for/comprehension targets, with-as and
+// except-as names, walrus targets (in the nearest scope that is no comprehension, as PEP 572 binds them), import
+// names, global/nonlocal names, del targets, `type X = …` aliases' names, and match-statement captures (W's
+// `case_pattern` walk, `scope::python`: a lone name, an `as` name, a splat's name, a class pattern's arguments and
+// keyword values, a mapping's values and `**rest`; `_` binds nothing).
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl inside(n: node, a: node, set: relation)
+.decl nearest(n: node, a: node, set: relation)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl direct_execution_fdef(kind: symbol)
+direct_execution_fdef("function_definition").
+.decl direct_execution_cdef(kind: symbol)
+direct_execution_cdef("class_definition").
+.decl direct_execution_block(kind: symbol)
+direct_execution_block("block").
+.decl direct_execution_scope(kind: symbol)
+direct_execution_scope("module"). direct_execution_scope("function_definition"). direct_execution_scope("class_definition").
+direct_execution_scope("lambda"). direct_execution_scope("list_comprehension"). direct_execution_scope("set_comprehension").
+direct_execution_scope("dictionary_comprehension"). direct_execution_scope("generator_expression").
+
+// ---- bindings: direct_execution_bind(s, x, site) ----
+.decl direct_execution_bind(s: node, x: symbol, site: node)
+// def and class names bind in the scope holding the definition.
+direct_execution_bind(s, x, n) :- node(_, f, "function_definition", _, _), field(f, "name", n), text(n, x), nearest(f, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, f, "class_definition", _, _), field(f, "name", n), text(n, x), nearest(f, s, direct_execution_scope).
+// Target roots, and the identifiers they bind through patterns.
+.decl direct_execution_target(t: node)
+direct_execution_target(t) :- node(_, a, "assignment", _, _), field(a, "left", t).
+direct_execution_target(t) :- node(_, a, "augmented_assignment", _, _), field(a, "left", t).
+direct_execution_target(t) :- node(_, a, "for_statement", _, _), field(a, "left", t).
+direct_execution_target(t) :- node(_, a, "for_in_clause", _, _), field(a, "left", t).
+direct_execution_walrus(t) :- node(_, a, "named_expression", _, _), field(a, "name", t).
+direct_execution_target(t) :- node(_, a, "as_pattern", _, _), field(a, "alias", t).
+direct_execution_target(t) :- node(_, a, "except_clause", _, _), field(a, "alias", t).
+direct_execution_target(t) :- node(_, a, "delete_statement", _, _), child(a, t, _).
+direct_execution_target(c) :- direct_execution_target(t), direct_execution_pattern(t), child(t, c, _).
+.decl direct_execution_pattern(t: node)
+direct_execution_pattern(t) :- node(_, t, "pattern_list", _, _).
+direct_execution_pattern(t) :- node(_, t, "tuple_pattern", _, _).
+direct_execution_pattern(t) :- node(_, t, "list_pattern", _, _).
+direct_execution_pattern(t) :- node(_, t, "list_splat_pattern", _, _).
+direct_execution_pattern(t) :- node(_, t, "tuple", _, _).
+direct_execution_pattern(t) :- node(_, t, "list", _, _).
+direct_execution_pattern(t) :- node(_, t, "expression_list", _, _).
+direct_execution_pattern(t) :- node(_, t, "parenthesized_expression", _, _).
+direct_execution_pattern(t) :- node(_, t, "as_pattern_target", _, _).
+direct_execution_pattern(t) :- node(_, t, "list_splat", _, _).
+direct_execution_bind(s, x, t) :- direct_execution_target(t), !direct_execution_walrus(t), node(_, t, "identifier", _, _), text(t, x),
+    nearest(t, s, direct_execution_scope).
+// A walrus target binds in the nearest scope that is no comprehension.
+.decl direct_execution_walrus(t: node)
+direct_execution_bind(s, x, t) :- direct_execution_walrus(t), node(_, t, "identifier", _, _), text(t, x),
+    nearest(t, s, direct_execution_wscope).
+.decl direct_execution_wscope(kind: symbol)
+direct_execution_wscope("module"). direct_execution_wscope("function_definition"). direct_execution_wscope("class_definition").
+direct_execution_wscope("lambda").
+// Imports: `import a.b` binds a, `import a.b as c` c, `from m import y [as z]` y [z].
+direct_execution_bind(s, x, n) :- node(_, i, "import_statement", _, _), field(i, "name", dn), node(_, dn, "dotted_name", _, _),
+    child(dn, n, 0), text(n, x), nearest(i, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, i, "import_statement", _, _), field(i, "name", al), node(_, al, "aliased_import", _, _),
+    field(al, "alias", n), text(n, x), nearest(i, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, i, "import_from_statement", _, _), field(i, "name", dn), node(_, dn, "dotted_name", _, _),
+    child(dn, n, 0), text(n, x), nearest(i, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, i, "import_from_statement", _, _), field(i, "name", al), node(_, al, "aliased_import", _, _),
+    field(al, "alias", n), text(n, x), nearest(i, s, direct_execution_scope).
+// global / nonlocal x: a binding of x in the declaring scope.
+direct_execution_bind(s, x, n) :- node(_, g, "global_statement", _, _), child(g, n, _), text(n, x), nearest(g, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, g, "nonlocal_statement", _, _), child(g, n, _), text(n, x), nearest(g, s, direct_execution_scope).
+// `type X = …` and `type X[T] = …`: X binds where the statement is.
+direct_execution_bind(s, x, n) :- node(_, t, "type_alias_statement", _, _), field(t, "left", l), direct_execution_alias_inner(l, n),
+    node(_, n, "identifier", _, _), text(n, x), nearest(t, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, t, "type_alias_statement", _, _), field(t, "left", l), direct_execution_alias_inner(l, i),
+    node(_, i, "generic_type", _, _), child(i, n, 0), node(_, n, "identifier", _, _), text(n, x), nearest(t, s, direct_execution_scope).
+.decl direct_execution_alias_inner(l: node, i: node)
+direct_execution_alias_inner(l, i) :- node(_, l, "type", _, _), child(l, i, 0).
+direct_execution_alias_inner(l, l) :- node(_, a, "type_alias_statement", _, _), field(a, "left", l), !node(_, l, "type", _, _).
+// Match captures: direct_execution_case(n), a node W's case-pattern walk visits, from a case clause's patterns;
+// direct_execution_capture(i), a name it captures.
+.decl direct_execution_case(n: node)
+.decl direct_execution_capture(i: node)
+.decl direct_execution_case_group(kind: symbol)
+direct_execution_case_group("case_pattern"). direct_execution_case_group("union_pattern"). direct_execution_case_group("list_pattern").
+direct_execution_case_group("tuple_pattern").
+direct_execution_case(c) :- node(_, cc, "case_clause", _, _), child(cc, c, _), node(_, c, k, _, _), direct_execution_case_group(k).
+// A group or an `as` pattern: each identifier child captured, every other child walked.
+direct_execution_capture(c) :- direct_execution_case(n), direct_execution_case_or_as(n), child(n, c, _), node(_, c, "identifier", _, _).
+direct_execution_case(c) :- direct_execution_case(n), direct_execution_case_or_as(n), child(n, c, _), !node(_, c, "identifier", _, _).
+.decl direct_execution_case_or_as(n: node)
+direct_execution_case_or_as(n) :- direct_execution_case(n), node(_, n, k, _, _), direct_execution_case_group(k).
+direct_execution_case_or_as(n) :- direct_execution_case(n), node(_, n, "as_pattern", _, _).
+// A dotted name of one part is a capture (more parts: a value pattern).
+direct_execution_capture(i) :- direct_execution_case(n), node(_, n, "dotted_name", _, _), child(n, i, 0), !child(n, _, 1).
+direct_execution_capture(n) :- direct_execution_case(n), node(_, n, "identifier", _, _).
+direct_execution_capture(i) :- direct_execution_case(n), node(_, n, "splat_pattern", _, _), child(n, i, _), node(_, i, "identifier", _, _).
+// A class pattern: the class is read; its arguments are walked.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "class_pattern", _, _), child(n, c, i), i > 0.
+// A keyword pattern: its first identifier names an attribute; the rest is walked.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "keyword_pattern", _, _), child(n, c, i), i > 0.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "keyword_pattern", _, _), child(n, c, 0), !node(_, c, "identifier", _, _).
+// A mapping pattern: its keys are read, everything else walked.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "dict_pattern", _, _), child(n, c, _), !field(n, "key", c).
+direct_execution_bind(s, x, i) :- direct_execution_capture(i), text(i, x), x != "_", nearest(i, s, direct_execution_scope).
+// A name with more than one binding in a scope.
+.decl direct_execution_multi(s: node, x: symbol)
+direct_execution_multi(s, x) :- direct_execution_bind(s, x, _), k = count : { direct_execution_bind(s, x, _) }, k > 1.
+
+// ---- the symbol ----
+// direct_execution_top(f, x): a def in no function, and its name.
+.decl direct_execution_top(f: node, x: symbol)
+direct_execution_top(f, x) :- node(_, f, "function_definition", _, _), !inside(f, _, direct_execution_fdef), field(f, "name", n), text(n, x).
+// direct_execution_owner(f, c, cx): a method's nearest class and its name.
+.decl direct_execution_owner(f: node, c: node, cx: symbol)
+direct_execution_owner(f, c, cx) :- direct_execution_top(f, _), nearest(f, c, direct_execution_cdef), field(c, "name", n), text(n, cx).
+// A later top-level def of the same name (later-module-symbol).
+.decl direct_execution_later_module(f: node)
+direct_execution_later_module(f) :- direct_execution_top(f, x), node(d, f, _, _, fe), direct_execution_top(g, x), !inside(g, _, direct_execution_cdef),
+    node(d, g, _, gs, _), gs >= fe.
+// A later method of the same name in a class of the same name (later-method-symbol).
+.decl direct_execution_later_method(f: node)
+direct_execution_later_method(f) :- direct_execution_owner(f, _, cx), direct_execution_top(f, x), node(d, f, _, _, fe),
+    direct_execution_owner(g, _, cx), direct_execution_top(g, x), node(d, g, _, gs, _), gs >= fe.
+.decl direct_execution_symbol(f: node)
+direct_execution_symbol(f) :- direct_execution_top(f, _), !inside(f, _, direct_execution_cdef), !direct_execution_later_module(f).
+direct_execution_symbol(f) :- direct_execution_owner(f, c, cx), direct_execution_top(f, x), !direct_execution_multi(c, x),
+    nearest(c, s, direct_execution_scope), !direct_execution_multi(s, cx).
+direct_execution_symbol(f) :- direct_execution_owner(f, _, _), !direct_execution_later_method(f).
+
+// ---- direct execution: the body holds a call of an execution method ----
+.decl direct_execution_exec(x: symbol)
+direct_execution_exec("_fetchall"). direct_execution_exec("_fetchone"). direct_execution_exec("execute"). direct_execution_exec("execute_async").
+direct_execution_exec("execute_fire_and_forget"). direct_execution_exec("execute_grammar"). direct_execution_exec("execute_grammar_fetchall").
+direct_execution_exec("execute_grammar_fetchone"). direct_execution_exec("execute_raw"). direct_execution_exec("fetchall").
+direct_execution_exec("fetchall_raw"). direct_execution_exec("fetchone"). direct_execution_exec("fetchone_raw").
+direct_execution_exec("grammar_effect_lazy"). direct_execution_exec("grammar_fetchall"). direct_execution_exec("grammar_fetchall_async").
+direct_execution_exec("grammar_fetchone"). direct_execution_exec("grammar_fetchone_async"). direct_execution_exec("grammar_row_lazy").
+direct_execution_exec("grammar_rows_lazy"). direct_execution_exec("raw_execute").
+// The callee's name: an identifier, or an attribute's attr.
+.decl direct_execution_callee(c: node, x: symbol)
+direct_execution_callee(c, x) :- node(_, c, "call", _, _), field(c, "function", fn), node(_, fn, "identifier", _, _), text(fn, x).
+direct_execution_callee(c, x) :- node(_, c, "call", _, _), field(c, "function", fn), node(_, fn, "attribute", _, _), field(fn, "attribute", a), text(a, x).
+.decl direct_execution_exec_call(c: node)
+direct_execution_exec_call(c) :- direct_execution_callee(c, x), direct_execution_exec(x).
+direct_execution_exec_call(c) :- direct_execution_callee(c, x), prefix("execute_grammar", x).
+direct_execution_exec_call(c) :- direct_execution_callee(c, x), prefix("grammar_fetch", x).
+.decl direct_execution_direct(f: node)
+direct_execution_direct(f) :- direct_execution_top(f, _), field(f, "body", b), direct_execution_exec_call(c), inside(c, b, direct_execution_block).
+.decl direct_execution_imperative(f: node)
+direct_execution_imperative(f) :- direct_execution_symbol(f), direct_execution_direct(f).
+
+violation("data-layer-imperative-private-functions", "direct-execution", "direct_execution", p, l) :-
+    direct_execution_imperative(f), node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+
+// ---- eager signature ----
+// Private: not a dunder, and the name or the nearest class's name starts with `_`.
+.decl eager_signature_private(f: node)
+eager_signature_private(f) :- direct_execution_top(f, x), !match("__.*__", x), prefix("_", x).
+eager_signature_private(f) :- direct_execution_top(f, x), !match("__.*__", x), direct_execution_owner(f, _, cx), prefix("_", cx).
+// The decorators of f (it is the definition of a decorated_definition): each decorator's expression.
+.decl eager_signature_decorator(f: node, e: node)
+eager_signature_decorator(f, e) :- child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e, _).
+// A decorator expression's name, for `x`, `a.x`, `x(...)` and `a.x(...)`.
+.decl eager_signature_decorator_name(f: node, x: symbol)
+eager_signature_decorator_name(f, x) :- eager_signature_decorator(f, e), node(_, e, "identifier", _, _), text(e, x).
+eager_signature_decorator_name(f, x) :- eager_signature_decorator(f, e), node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x).
+eager_signature_decorator_name(f, x) :- eager_signature_decorator(f, e), direct_execution_callee(e, x).
+// The setter/deleter form: `@a.setter`, `@a.setter(...)`: an attribute (called or not) with that attr.
+.decl eager_signature_accessor(f: node)
+eager_signature_accessor(f) :- eager_signature_decorator(f, e), node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x), (x = "setter" ; x = "deleter").
+eager_signature_accessor(f) :- eager_signature_decorator(f, e), node(_, e, "call", _, _), field(e, "function", fn), node(_, fn, "attribute", _, _),
+    field(fn, "attribute", a), text(a, x), (x = "setter" ; x = "deleter").
+// The parameters the signature tests read: typed (with or without a default), no splat, not before `/`, and not an
+// annotated self/cls of a def in a class. `eager_signature_param(f, p)`: direct children of the parameters (`has`
+// stopBy neighbor); `eager_signature_param_any(f, p)`: any descendant (stopBy end).
+.decl eager_signature_typed(p: node)
+eager_signature_typed(p) :- node(_, p, "typed_parameter", _, _).
+eager_signature_typed(p) :- node(_, p, "typed_default_parameter", _, _).
+.decl eager_signature_param_ok(p: node)
+eager_signature_param_ok(p) :- eager_signature_typed(p), !eager_signature_splat(p), !eager_signature_positional(p), !eager_signature_self(p).
+.decl eager_signature_splat(p: node)
+eager_signature_splat(p) :- eager_signature_typed(p), child(p, s, _), node(_, s, "list_splat_pattern", _, _).
+eager_signature_splat(p) :- eager_signature_typed(p), child(p, s, _), node(_, s, "dictionary_splat_pattern", _, _).
+.decl eager_signature_positional(p: node)
+eager_signature_positional(p) :- eager_signature_typed(p), child(ps, p, i), child(ps, s, j), node(_, s, "positional_separator", _, _), j > i.
+.decl eager_signature_self(p: node)
+eager_signature_self(p) :- node(_, p, "typed_parameter", _, _), inside(p, _, direct_execution_cdef), child(p, n, _), node(_, n, "identifier", _, _),
+    text(n, x), (x = "self" ; x = "cls").
+eager_signature_self(p) :- node(_, p, "typed_default_parameter", _, _), inside(p, _, direct_execution_cdef), field(p, "name", n),
+    node(_, n, "identifier", _, _), text(n, x), (x = "self" ; x = "cls").
+.decl eager_signature_param(f: node, p: node)
+eager_signature_param(f, p) :- direct_execution_top(f, _), field(f, "parameters", ps), child(ps, p, _), eager_signature_param_ok(p).
+.decl eager_signature_param_any(f: node, p: node)
+eager_signature_param_any(f, p) :- direct_execution_top(f, _), field(f, "parameters", ps), eager_signature_param_ok(p), inside(p, ps, eager_signature_params).
+.decl eager_signature_params(kind: symbol)
+eager_signature_params("parameters").
+// Lazy: the name ends `_lazy`, a decorator's name ends `lazy`, or the return type or a parameter's type reads
+// Lazy… or ServerPlan (a search in their text).
+.decl eager_signature_lazy(f: node)
+eager_signature_lazy(f) :- direct_execution_top(f, x), suffix("_lazy", x).
+eager_signature_lazy(f) :- eager_signature_decorator_name(f, x), suffix("lazy", x).
+eager_signature_lazy(f) :- direct_execution_top(f, _), field(f, "return_type", t), node_text(t, s), (contains("Lazy", s) ; contains("ServerPlan", s)).
+eager_signature_lazy(f) :- eager_signature_param(f, p), field(p, "type", t), node_text(t, s), (contains("Lazy", s) ; contains("ServerPlan", s)).
+// Exempt: abstractmethod, property, legacy_* decorators; setters and deleters.
+.decl eager_signature_exempt(f: node)
+eager_signature_exempt(f) :- eager_signature_decorator_name(f, x),
+    (suffix("abstractmethod", x) ; suffix("property", x) ; suffix("legacy_sync", x) ; suffix("legacy_module_sync", x) ;
+     suffix("direct_legacy_module_sync", x) ; suffix("legacy_async", x) ; suffix("legacy_module_async", x) ; suffix("direct_legacy_module_async", x)).
+eager_signature_exempt(f) :- eager_signature_accessor(f).
+// Data-layer context: the name, the nearest class's name or the path; or a data-layer type in the signature.
+.decl eager_signature_context(f: node)
+eager_signature_context(f) :- direct_execution_top(f, x),
+    match("(?i).*(?:branch|commit|connection|delete|execute|fetch|graph|insert|lazy|merge|plan|query|read|revision|select|server|transaction|update|versioned|write).*", x).
+eager_signature_context(f) :- direct_execution_owner(f, _, cx),
+    match("(?i).*(?:branch|commit|connection|delete|execute|fetch|graph|insert|lazy|merge|plan|query|read|revision|select|server|transaction|update|versioned|write).*", cx).
+eager_signature_context(f) :- direct_execution_top(f, _), node(d, f, _, _, _), doc(d, p, _),
+    match(".*(?:/connection|/graph_query|/query|/server_plan|/transaction|/versioned).*", p).
+eager_signature_context(f) :- direct_execution_top(f, _), field(f, "return_type", t), eager_signature_type_name(t).
+eager_signature_context(f) :- eager_signature_param_any(f, p), field(p, "type", t), eager_signature_type_name(t).
+// A type holding (strictly below it) an identifier that names a data-layer type, whatever its case.
+.decl eager_signature_type_name(t: node)
+eager_signature_type_name(t) :- node(_, t, "type", _, _), node(_, i, "identifier", _, _), inside(i, t, eager_signature_types), text(i, x),
+    match("(?i)(?:databaseconnection|syncdatabaseconnection|lazyresult|lazyseq|readtransaction|serverplan|syncversioneddatabaseconnection|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction)", x).
+.decl eager_signature_types(kind: symbol)
+eager_signature_types("type").
+.decl eager_signature_eager(f: node)
+eager_signature_eager(f) :- eager_signature_private(f), !eager_signature_lazy(f), !eager_signature_exempt(f), eager_signature_context(f).
+
+violation("data-layer-imperative-private-functions", "eager-signature", "eager_signature", p, l) :-
+    direct_execution_symbol(f), !direct_execution_direct(f), eager_signature_eager(f),
+    node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+
+// ---- caller ----
+// `calls: {graph: references, at: definition, through: any, siblingLinks, constructorFields}` over the inner rule
+// "an imperative symbol" (the symbol, and a direct execution in its body or an eager signature): the definition
+// reaches a seed through the reference graph, every definition after it (the callee on) a function, not a class
+// (`through: any` allows async ones). The caller itself is a symbol that is neither imperative form.
+// reference_edge(src, dst, via): definition src (function_definition or class_definition) references definition
+// dst, by the link kind `via`; the graph is W's `references` graph as this policy configures it:
+//   siblingLinks: a def decorated `(?:legacy_sync|legacy_module_sync|direct_legacy_module_sync)$` links to its name
+//     + "_lazy"; one decorated `(?:legacy_async|legacy_module_async|direct_legacy_module_async)$` to its name with
+//     `(?:_async)?$` replaced by "_lazy";
+//   constructorFields: fieldToParameter, a self field's name with `^_+` removed names the constructor parameter
+//     whose declared type types the field.
+// Every edge counts (EngRefs builds the graph with this policy's config; via names the link kind). An open
+// definition (`reference_open`) makes W's term Unknown only where no seed is reached: no finding either way.
+.decl reference_edge(src: node, dst: node, via: symbol)
+.decl caller_seed(f: node)
+caller_seed(f) :- direct_execution_imperative(f).
+caller_seed(f) :- direct_execution_symbol(f), eager_signature_eager(f).
+// A function from which a seed is reachable, the seed included, through functions only.
+.decl caller_reaches(g: node)
+caller_reaches(g) :- caller_seed(g), node(_, g, "function_definition", _, _).
+caller_reaches(g) :- node(_, g, "function_definition", _, _), reference_edge(g, h, _), caller_reaches(h).
+violation("data-layer-imperative-private-functions", "caller", "calls_imperative", p, l) :-
+    direct_execution_symbol(f), !direct_execution_direct(f), !eager_signature_eager(f),
+    reference_edge(f, g, _), caller_reaches(g),
+    node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).

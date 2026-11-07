@@ -45,20 +45,60 @@ pub(super) fn glob_literal(s: &str) -> String {
     out
 }
 
+/// A regex test's `.rr` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
+/// `rx` of `^(?:X)$` and prints back as written; another `rx` is the search `(?s:.*)(?:P)(?s:.*)`, its flag on the
+/// dots only (a leading `(?s)` would give P's own `.` newlines), `irx` that under `(?i:…)`.
+pub(super) fn search(op: &str, p: &str) -> String {
+    match (op, whole(p)) {
+        ("rx", Some(x)) => x.to_owned(),
+        ("rx", None) => format!("(?s:.*)(?:{p})(?s:.*)"),
+        _ => format!("(?i:(?s:.*)(?:{p})(?s:.*))"),
+    }
+}
+
+/// `X` where `p` is `^(?:X)$`, the group closing at the end.
+fn whole(p: &str) -> Option<&str> {
+    let inner = p.strip_prefix("^(?:")?.strip_suffix(")$")?;
+    // The group `(?:` opens must close only at the last `)`: inside, every `(` closes again.
+    let (mut depth, mut chars, mut class) = (0usize, inner.chars(), false);
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '[' if !class => class = true,
+            ']' if class => class = false,
+            '(' if !class => depth += 1,
+            ')' if !class => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    (depth == 0 && !class).then_some(inner)
+}
+
 /// The text test `op(s, pattern)`, holding or (`neg`) failing.
 fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> {
     let s = term(s)?;
     let bang = if neg { "!" } else { "" };
     let one = |p: &Term| -> Result<String, Error> {
         let Term::Str(p) = p else {
-            let p = term(p)?;
-            return Ok(if op == "equals" { format!("{s} {} {p}", if neg { "!=" } else { "=" }) } else { format!("{bang}{op}({p}, {s})") });
+            // A pattern computed in the rule. `rx` has no `.rr` name: of an anchored pattern (`match(x, s)`,
+            // `lower::anchored`) it is `match` of the pattern; another search is `match` of it between any text.
+            let between = |p: &Term, open: &str| -> Result<String, Error> { Ok(format!("cat({}, cat({}, {}))", quote(open), term(p)?, quote(")(?s:.*)"))) };
+            return Ok(match op {
+                "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, term(p)?),
+                "rx" => match super::lower::unanchored(p) {
+                    Some(inner) => format!("{bang}match({}, {s})", term(inner)?),
+                    None => format!("{bang}match({}, {s})", between(p, "(?s:.*)(?:")?),
+                },
+                "irx" => format!("{bang}match({}, {s})", between(p, "(?s:.*)(?i:")?),
+                _ => format!("{bang}{op}({}, {s})", term(p)?),
+            });
         };
         Ok(match op {
             "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
             "iequals" => format!("{bang}iglob({}, {s})", quote(&glob_literal(p))),
-            "rx" => format!("{bang}match({}, {s})", quote(&format!("(?s).*(?:{p}).*"))),
-            "irx" => format!("{bang}match({}, {s})", quote(&format!("(?is).*(?:{p}).*"))),
+            "rx" | "irx" => format!("{bang}match({}, {s})", quote(&search(op, p))),
             _ => format!("{bang}{op}({}, {s})", quote(p)),
         })
     };
@@ -70,48 +110,44 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
     }
 }
 
-fn atom(a: &Atom, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
+/// An atom. `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are the built-ins where the program
+/// declares no relation of that name (a `.rr` program cannot): they print as themselves, where a relation of a
+/// reserved name gets a trailing `_` (`translate::relation`).
+fn atom(a: &Atom, prog: &Program) -> Result<String, Error> {
     let bang = if a.neg { "!" } else { "" };
     if let Some((set, has)) = axis(&a.rel)
-        && kindsets.contains(&set.to_owned())
+        && prog.kindsets.contains_key(set)
         && let [n, x] = a.args.as_slice()
     {
         return Ok(if has { format!("{bang}has({}, {}, {set})", term(x)?, term(n)?) } else { format!("{bang}inside({}, {}, {set})", term(n)?, term(x)?) });
     }
-    Ok(format!("{bang}{}({})", relation(&a.rel), terms(&a.args)?))
+    let builtin = BUILTINS.contains(&a.rel.as_str()) && !prog.decls.contains_key(&a.rel);
+    let name = if builtin { a.rel.clone() } else { relation(&a.rel) };
+    Ok(format!("{bang}{name}({})", terms(&a.args)?))
 }
 
-fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
+/// The built-in constraints that read like relations (`atom`).
+const BUILTINS: [&str; 2] = ["match_all", "match_group"];
+
+fn literal(l: &Literal, prog: &Program) -> Result<String, Error> {
     Ok(match l {
-        Literal::Atom(a) => atom(a, kindsets)?,
+        Literal::Atom(a) => atom(a, prog)?,
         Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(b @ (0 | 1)) } if is_test(f) && args.len() == 2 => test(f, &args[0], &args[1], *b == 0)?,
         Literal::Cmp { l, op, r } => format!("{} {op} {}", term(l)?, term(r)?),
         Literal::Agg { var: v, op, over, atom: a } => {
-            let over = var(over.as_deref().unwrap_or("_"));
+            let over = || var(over.as_deref().unwrap_or("_"));
             let op = match op {
                 AggOp::Count => "count".to_owned(),
-                AggOp::Min => format!("min {over}"),
-                AggOp::Max => format!("max {over}"),
-                AggOp::Sum => format!("sum {over}"),
-                // The keys are the atom's columns: named where the atom has `_` (`rr_by0`, a name lowering never
-                // makes), so the printed body binds them.
+                AggOp::Min => format!("min {}", over()),
+                AggOp::Max => format!("max {}", over()),
+                AggOp::Sum => format!("sum {}", over()),
                 AggOp::Join { by, sep } => {
-                    let mut a = a.clone();
-                    let keys = by
-                        .iter()
-                        .map(|&c| match &a.args[c] {
-                            Term::Wild => {
-                                let k = format!("rr_by{c}");
-                                a.args[c] = Term::Var(k.clone());
-                                Ok(var(&k))
-                            }
-                            t => term(t),
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    return Ok(format!("{} = join {over} by ({}) sep {} : {{ {} }}", var(v), keys.join(", "), quote(sep), atom(&a, kindsets)?));
+                    let by: Vec<String> = by.iter().map(|k| var(k)).collect();
+                    let by = if by.is_empty() { String::new() } else { format!(" by ({})", by.join(", ")) };
+                    format!("join {}{by} sep {}", over(), quote(sep))
                 }
             };
-            format!("{} = {op} : {{ {} }}", var(v), atom(a, kindsets)?)
+            format!("{} = {op} : {{ {} }}", var(v), atom(a, prog)?)
         }
         Literal::Nearest { n, a, kindset } => format!("nearest({}, {}, {kindset})", var(n), var(a)),
         Literal::Ast { document, node, matcher, captures } => {
@@ -127,7 +163,6 @@ fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
 /// The program's `.rr` text.
 pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
     let mut out = String::new();
-    let kindsets: BTreeSet<&String> = prog.kindsets.keys().collect();
     for p in &prog.policies {
         writeln!(out, ".policy {p}").expect("a string");
     }
@@ -192,8 +227,8 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
         }
     }
     for rule in &prog.rules {
-        let body = rule.body.iter().map(|l| literal(l, &kindsets)).collect::<Result<Vec<_>, _>>()?;
-        let head = atom(&rule.head, &kindsets)?;
+        let body = rule.body.iter().map(|l| literal(l, prog)).collect::<Result<Vec<_>, _>>()?;
+        let head = atom(&rule.head, prog)?;
         if body.is_empty() {
             writeln!(out, "{head}.").expect("a string");
         } else {

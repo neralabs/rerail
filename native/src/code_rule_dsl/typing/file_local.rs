@@ -221,12 +221,20 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    // A base relation's location columns: node columns, and the document column of `node`, `doc`, `pkg` and
-    // `syntax_error`.
+    // A base relation's location columns: node columns, and the document column of `node`, `doc`, `pkg`,
+    // `syntax_error`, `cpython_syntax_error`, the source text's (`source`, `src_line`, `src_line_lf`, `tape_line`,
+    // `line_count`), the path's (`path_part`, `file_name`) and `docof`'s. The reference graph's (`reference_edge`,
+    // `reference_open`) have none: an edge's ends are in any files, and the graph is made of every file's.
     let base_locations = |rel: &str| -> Vec<usize> {
+        if matches!(rel, "reference_edge" | "reference_open") {
+            return Vec::new();
+        }
         let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
-        if matches!(rel, "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error") {
+        if matches!(rel, "node" | "doc" | "pkg" | "syntax_error" | "cpython_syntax_error" | "source" | "src_line" | "src_line_lf" | "tape_line" | "line_count" | "path_part" | "file_name") {
             columns.push(0);
+        }
+        if rel == "rr_docof" {
+            columns.push(1);
         }
         columns
     };
@@ -403,6 +411,8 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     l.lattice.retain(|rel, _| is_local(rel));
     l.gates.retain(|(rel, _)| is_local(rel));
     l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
+    // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
+    l.inputs.retain(|i| !matches!(i.as_str(), "reference_edge" | "reference_open"));
     let mut c = prog.clone();
     c.rules.retain(|r| in_cross(&r.head.rel));
     c.lattice.retain(|rel, _| !is_local(rel));

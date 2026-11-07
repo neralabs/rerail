@@ -1,0 +1,293 @@
+// data-layer-plan-composition-architecture, authored clause `plan-composition` (relational over a `pythonAst`
+// stage, partitionBy file, requireNonemptyInput gate: documents without syntax errors). A finding is (issue, path,
+// line): the code is the row's `issue` (SPC-001 … SPC-005), the line its node's `line`.
+// The `pythonAst` rows (CPython `ast`, W's python_ast worker: `ast_name` the first str of a node's name/id/arg/attr,
+// `ast_annotation` `ast.unparse` of a node at field annotation/returns) are read over tree-sitter, as python/ast.rr
+// does (not included: only a few of its views are needed, written here per check). An identifier (a Name's id, an
+// attr, a def's or class's name, an import's dotted name parts, a keyword's name) is `@nfkc` of its text, as
+// CPython's parser normalizes it (PEP 3131). Gaps are named at their checks.
+// Clause `composition-runtime-observations` reads option `parameters` (JSON text) through option_json; see its
+// section at the end.
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+.decl fstring_template(n: node, marker: symbol, v: symbol)
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl option_value(name: symbol, v: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, str, value, value_type_of, fstring_piece, fstring_template, op, line, syntax_error
+.output violation
+
+.decl plan_doc(d: number)
+plan_doc(d) :- in_scope(d), !out_scope(d), !syntax_error(d).
+
+// ---- SPC-001: an Import / ImportFrom whose `imported` names a runtime module ----
+// ImportFrom: its module, relative dots dropped (none for `from . import x`). Import: its alias names joined by `,`
+// in order; a word is in the join when it is in one name, a suffix is the last name's. A dotted name is its
+// identifiers joined by `.` (`a . b` is `a.b`, as in `ast`).
+.decl plan_word_runtime(s: symbol)
+plan_word_runtime(s) :-
+    plan_imported(_, s), (contains("cache", s) ; contains("connection", s) ; contains("executor", s) ;
+    contains("plan_flush", s) ; contains("runtime_services", s) ; contains("transaction", s)).
+.decl plan_import_dotted(y: node)
+plan_import_dotted(y) :-
+    plan_doc(d), node(d, n, "import_from_statement", _, _), field(n, "module_name", y), node(_, y, "dotted_name", _, _).
+plan_import_dotted(y) :-
+    plan_doc(d), node(d, n, "import_from_statement", _, _), field(n, "module_name", r), node(_, r, "relative_import", _, _),
+    child(r, y, _), node(_, y, "dotted_name", _, _).
+plan_import_dotted(y) :-
+    plan_doc(d), node(d, n, "import_statement", _, _), child(n, y, _), node(_, y, "dotted_name", _, _).
+plan_import_dotted(y) :-
+    plan_doc(d), node(d, n, "import_statement", _, _), child(n, x, _), node(_, x, "aliased_import", _, _),
+    field(x, "name", y).
+.decl plan_dotted(y: node, s: symbol)
+plan_dotted(y, s) :-
+    plan_import_dotted(y), s = join x by i sep "." : { child(y, c, i), node(_, c, "identifier", _, _), text(c, t), x = @nfkc(t) }.
+.decl plan_imported(n: node, s: symbol)
+plan_imported(n, m) :-
+    plan_doc(d), node(d, n, "import_from_statement", _, _), field(n, "module_name", y), plan_dotted(y, m).
+plan_imported(n, m) :-
+    plan_doc(d), node(d, n, "import_from_statement", _, _), field(n, "module_name", r), node(_, r, "relative_import", _, _),
+    child(r, y, _), plan_dotted(y, m).
+// An Import's alias names, by position.
+.decl plan_import_name(n: node, i: number, s: symbol)
+plan_import_name(n, i, s) :-
+    plan_doc(d), node(d, n, "import_statement", _, _), child(n, x, i), node(_, x, "dotted_name", _, _), plan_dotted(x, s).
+plan_import_name(n, i, s) :-
+    plan_doc(d), node(d, n, "import_statement", _, _), child(n, x, i), node(_, x, "aliased_import", _, _),
+    field(x, "name", y), plan_dotted(y, s).
+.decl plan_import_later(n: node, i: number)
+plan_import_later(n, i) :- plan_import_name(n, i, _), plan_import_name(n, j, _), j > i.
+.decl plan_runtime_import(n: node)
+plan_runtime_import(n) :- plan_imported(n, s), plan_word_runtime(s).
+plan_runtime_import(n) :-
+    node(_, n, "import_from_statement", _, _), plan_imported(n, s), (suffix(".lazy_result", s) ; suffix(".lazy_seq", s)).
+plan_runtime_import(n) :-
+    plan_import_name(n, i, s), !plan_import_later(n, i), (suffix(".lazy_result", s) ; suffix(".lazy_seq", s)).
+
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-001", p, l) :-
+    plan_runtime_import(n), node(d, n, _, _, _), doc(d, p, _), line(n, l).
+
+// ---- SPC-002: an AnnAssign whose annotation's ast.unparse text holds a runtime type's word ----
+// ast.unparse writes the annotation's tokens apart (spaces, punctuation or quotes between any two that are words), so
+// a word (ASCII letters, a capital first) is in the text when it is in one token's: an identifier (a Name, an attr, a
+// keyword's or lambda parameter's name), a string Constant as `repr` writes it, or an f-string. `repr` keeps letters
+// and escapes only with a backslash followed by lowercase letters, digits or `U`, so the word is in it when it is in
+// the decoded value. A string Constant is a maximal string or concatenated_string: its decoded value (`value`), or,
+// with an f-string among its parts, its literal text with each interpolation a marker (`fstring_template`, a debug
+// field's `x=` included; the interpolations' own tokens are the nodes inside them); a format spec's literal text is
+// its format_specifier's literal pieces. GAP (bytes have no decoded value): a bytes literal is read as written, so one
+// whose escapes or line continuations spell part of a word differs.
+.decl plan_ann(a: node, t: node)
+plan_ann(a, t) :- plan_doc(d), node(d, a, "assignment", _, _), field(a, "type", t).
+.decl plan_ann_word(s: symbol)
+plan_ann_word(s) :-
+    plan_ann_token(_, s), (contains("Connection", s) ; contains("Cursor", s) ; contains("Executor", s) ;
+    contains("LazyResult", s) ; contains("PlanFlushContext", s) ; contains("Transaction", s)).
+.decl plan_within(x: node, t: node)
+plan_within(x, t) :- plan_ann(_, t), node(d, t, _, ts, te), node(d, x, _, xs, xe), xs >= ts, xe <= te.
+.decl plan_concat_part(x: node)
+plan_concat_part(x) :- node(_, c, "concatenated_string", _, _), child(c, x, _).
+.decl plan_ann_string(a: node, x: node)
+plan_ann_string(a, x) :-
+    plan_ann(a, t), plan_within(x, t), node(_, x, k, _, _), (k = "string" ; k = "concatenated_string"),
+    !plan_concat_part(x).
+.decl plan_ann_token(a: node, s: symbol)
+plan_ann_token(a, s) :- plan_ann(a, t), plan_within(x, t), node(_, x, "identifier", _, _), text(x, u), s = @nfkc(u).
+plan_ann_token(a, s) :- plan_ann_string(a, x), fstring_template(x, "{}", s).
+plan_ann_token(a, s) :- plan_ann_string(a, x), !fstring_template(x, "{}", _), value_type_of(x, "str"), value(x, s).
+plan_ann_token(a, s) :- plan_ann_string(a, x), node(_, x, "string", _, _), value_type_of(x, "bytes"), str(x, s).
+plan_ann_token(a, s) :-
+    plan_ann_string(a, x), node(_, x, "concatenated_string", _, _), value_type_of(x, "bytes"),
+    s = join v by i : { child(x, c, i), str(c, v) }.
+plan_ann_token(a, s) :-
+    plan_ann(a, t), plan_within(x, t), node(_, x, "format_specifier", _, _), fstring_piece(x, _, "literal", s).
+
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-002", p, l) :-
+    plan_ann(a, _), plan_ann_token(a, s), plan_ann_word(s), node(d, a, _, _, _), doc(d, p, _), line(a, l).
+
+// ---- composition_methods: a FunctionDef (not async) in the body of a top-level class SemanticPlanBuilder ----
+.decl plan_toplevel_class(c: node)
+plan_toplevel_class(c) :-
+    plan_doc(d), node(d, c, "class_definition", _, _), field(c, "name", y), text(y, t), @nfkc(t) = "SemanticPlanBuilder",
+    child(m, c, _), node(_, m, "module", _, _).
+plan_toplevel_class(c) :-
+    plan_doc(d), node(d, c, "class_definition", _, _), field(c, "name", y), text(y, t), @nfkc(t) = "SemanticPlanBuilder",
+    child(dd, c, _), node(_, dd, "decorated_definition", _, _), child(m, dd, _), node(_, m, "module", _, _).
+// plan_method(d, f, class, name, start, end): start is the decorators' when decorated (CPython's subtree holds them).
+.decl plan_method(d: number, f: node, c: node, x: symbol, s: number, e: number)
+plan_method(d, f, c, x, s, e) :-
+    plan_toplevel_class(c), field(c, "body", b), child(b, f, _), node(d, f, "function_definition", s, e),
+    !op(f, "async"), field(f, "name", y), text(y, t), x = @nfkc(t).
+plan_method(d, f, c, x, s, e) :-
+    plan_toplevel_class(c), field(c, "body", b), child(b, dd, _), node(_, dd, "decorated_definition", s, _),
+    child(dd, f, _), node(d, f, "function_definition", _, e), !op(f, "async"), field(f, "name", y), text(y, t),
+    x = @nfkc(t).
+
+// ---- SPC-004: a public method returning dict/list/set or a subscript of one ----
+// `ast_name` of an Attribute is its attr. Parentheses are no node in `ast`: plan_unparen(e, m) strips them.
+.decl plan_paren_root(e: node)
+plan_paren_root(v) :- plan_returns(_, v).
+plan_paren_root(r) :- plan_ret(_, v), node(_, v, "subscript", _, _), field(v, "value", r).
+plan_paren_root(fn) :- plan_call(_, c, _), field(c, "function", fn).
+.decl plan_paren_in(e: node, m: node)
+plan_paren_in(e, e) :- plan_paren_root(e).
+plan_paren_in(e, c) :- plan_paren_in(e, m), node(_, m, "parenthesized_expression", _, _), child(m, c, _).
+.decl plan_unparen(e: node, m: node)
+plan_unparen(e, m) :- plan_paren_in(e, m), !node(_, m, "parenthesized_expression", _, _).
+.decl plan_mutable(x: symbol)
+plan_mutable("dict"). plan_mutable("list"). plan_mutable("set").
+// A Name or Attribute named so, among the return annotations and their subscripts' values.
+.decl plan_name_cand(v: node)
+plan_name_cand(v) :- plan_ret(_, v).
+plan_name_cand(r2) :- plan_ret(_, v), node(_, v, "subscript", _, _), field(v, "value", r), plan_unparen(r, r2).
+.decl plan_mutable_name(v: node)
+plan_mutable_name(v) :- plan_name_cand(v), node(_, v, "identifier", _, _), text(v, t), x = @nfkc(t), plan_mutable(x).
+plan_mutable_name(v) :-
+    plan_name_cand(v), node(_, v, "attribute", _, _), field(v, "attribute", y), text(y, t), x = @nfkc(t), plan_mutable(x).
+.decl plan_mutable_ann(v: node)
+plan_mutable_ann(v) :- plan_ret(_, v), plan_mutable_name(v).
+plan_mutable_ann(v) :-
+    plan_ret(_, v), node(_, v, "subscript", _, _), field(v, "value", r), plan_unparen(r, r2), plan_mutable_name(r2).
+// tree-sitter reads `list[int]` in a return annotation as a generic_type.
+plan_mutable_ann(v) :-
+    plan_ret(_, v), node(_, v, "generic_type", _, _), child(v, r, 0), node(_, r, "identifier", _, _), text(r, t),
+    x = @nfkc(t), plan_mutable(x).
+.decl plan_returns(f: node, v: node)
+plan_returns(f, v) :- plan_method(_, f, _, _, _, _), field(f, "return_type", t), node(_, t, "type", _, _), child(t, v, 0).
+plan_returns(f, v) :- plan_method(_, f, _, _, _, _), field(f, "return_type", v), !node(_, v, "type", _, _).
+.decl plan_ret(f: node, v: node)
+plan_ret(f, m) :- plan_returns(f, v), plan_unparen(v, m).
+
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-004", p, l) :-
+    plan_method(d, f, _, x, _, _), !prefix("_", x), plan_ret(f, v), plan_mutable_ann(v), doc(d, p, _), line(f, l).
+
+// ---- SPC-003: a call in a composition method whose callee is an attribute named as a runtime terminal ----
+.decl plan_terminal(x: symbol)
+plan_terminal("commit"). plan_terminal("execute"). plan_terminal("execute_async"). plan_terminal("execute_sync").
+plan_terminal("resolve"). plan_terminal("resolve_async"). plan_terminal("rollback").
+.decl plan_call(d: number, c: node, f: node)
+plan_call(d, c, f) :- plan_method(d, f, _, _, s, e), node(d, c, "call", cs, ce), cs >= s, ce <= e.
+
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-003", p, l) :-
+    plan_call(d, c, _), field(c, "function", fn), plan_unparen(fn, a), node(_, a, "attribute", _, _),
+    field(a, "attribute", y), text(y, t), x = @nfkc(t), plan_terminal(x), doc(d, p, _), line(c, l).
+
+// ---- SPC-005: the first add_fragment of a class without both RefRemap and rewrite_exact_plan_refs_payload ----
+.decl plan_later_fragment(f: node)
+plan_later_fragment(f) :-
+    plan_method(_, f, c, "add_fragment", s, _), plan_method(_, g, c, "add_fragment", t, _), g != f, t < s.
+// A Name is an identifier in expression position. Not one: an attribute's attr and a dotted name's later parts, a
+// keyword argument's name, a def's or class's name, a parameter's name, a type parameter's name, in an import, the
+// names of `global`/`nonlocal`, `except E as x`'s x, and a match pattern's captures (`case x`, `C(k=x)`'s k and x,
+// `*x`, `**x`, `p as x`): CPython keeps each as a str. A dotted name in a pattern with two parts or more is a value
+// (`case a.b`: Name a, attr b), and a class pattern's class a Name.
+.decl plan_not_name(n: node)
+plan_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
+plan_not_name(n) :-
+    node(_, dn, "dotted_name", _, _), child(dn, m, j), node(_, m, "identifier", _, _), child(dn, n, i), j < i.
+plan_not_name(n) :- node(_, k, "keyword_argument", _, _), field(k, "name", n).
+plan_not_name(n) :- node(_, f, "function_definition", _, _), field(f, "name", n).
+plan_not_name(n) :- node(_, c, "class_definition", _, _), field(c, "name", n).
+.decl plan_param(p: node)
+plan_param(p) :- node(_, ps, k, _, _), (k = "parameters" ; k = "lambda_parameters"), child(ps, p, _).
+plan_param(q) :-
+    plan_param(p), node(_, p, "typed_parameter", _, _), child(p, q, _),
+    (node(_, q, "list_splat_pattern", _, _) ; node(_, q, "dictionary_splat_pattern", _, _)).
+plan_not_name(n) :- plan_param(n), node(_, n, "identifier", _, _).
+plan_not_name(n) :- plan_param(p), child(p, n, _), node(_, n, "identifier", _, _), !field(p, "value", n).
+.decl plan_tparam_list(l: node)
+plan_tparam_list(l) :-
+    node(_, o, k, _, _), (k = "function_definition" ; k = "class_definition"), field(o, "type_parameters", l).
+plan_tparam_list(l) :-
+    node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "generic_type", _, _), child(t, l, _),
+    node(_, l, "type_parameter", _, _).
+plan_tparam_list(l) :-
+    node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "type", _, _), child(t, g, _),
+    node(_, g, "generic_type", _, _), child(g, l, _), node(_, l, "type_parameter", _, _).
+.decl plan_tparam(p: node)
+plan_tparam(p) :- plan_tparam_list(l), child(l, p, _), node(_, p, "type", _, _).
+plan_tparam(p) :- plan_tparam_list(l), child(l, e, _), node(_, e, "type_default", _, _), field(e, "name", p).
+plan_not_name(n) :- plan_tparam(p), child(p, n, _), node(_, n, "identifier", _, _).
+plan_not_name(n) :-
+    plan_tparam(p), child(p, c, _), node(_, c, "constrained_type", _, _), child(c, t, 0), child(t, n, _),
+    node(_, n, "identifier", _, _).
+plan_not_name(n) :- plan_tparam(p), child(p, s, _), node(_, s, "splat_type", _, _), child(s, n, _), node(_, n, "identifier", _, _).
+plan_not_name(n) :- node(d, i, "import_statement", is, ie), node(d, n, "identifier", s, _), s >= is, s < ie.
+plan_not_name(n) :- node(d, i, "import_from_statement", is, ie), node(d, n, "identifier", s, _), s >= is, s < ie.
+plan_not_name(n) :- node(_, g, k, _, _), (k = "global_statement" ; k = "nonlocal_statement"), child(g, n, _).
+plan_not_name(n) :- node(_, x, "except_clause", _, _), field(x, "alias", n), node(_, n, "identifier", _, _).
+.decl plan_dotted_parts(dn: node)
+plan_dotted_parts(dn) :-
+    node(_, dn, "dotted_name", _, _), child(dn, a, i), node(_, a, "identifier", _, _), child(dn, b, j),
+    node(_, b, "identifier", _, _), i < j.
+plan_not_name(n) :-
+    node(_, dn, "dotted_name", _, _), child(cp, dn, _), (node(_, cp, "case_pattern", _, _) ; node(_, cp, "keyword_pattern", _, _)),
+    !plan_dotted_parts(dn), child(dn, n, _), node(_, n, "identifier", _, _).
+plan_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, n, _), node(_, n, "identifier", _, _).
+plan_not_name(n) :- node(_, s, "splat_pattern", _, _), child(s, n, _), node(_, n, "identifier", _, _).
+plan_not_name(n) :-
+    node(_, ap, "as_pattern", _, _), child(cp, ap, _), node(_, cp, "case_pattern", _, _), child(ap, n, _),
+    node(_, n, "identifier", _, _).
+.decl plan_fragment_has(f: node, x: symbol)
+plan_fragment_has(f, x) :-
+    plan_method(d, f, _, "add_fragment", s, e), node(d, n, "identifier", ns, ne), ns >= s, ne <= e, text(n, t),
+    x = @nfkc(t), (x = "RefRemap" ; x = "rewrite_exact_plan_refs_payload"), !plan_not_name(n).
+
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :-
+    plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "RefRemap"),
+    doc(d, p, _), line(f, l).
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :-
+    plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "rewrite_exact_plan_refs_payload"),
+    doc(d, p, _), line(f, l).
+
+// ---- composition-runtime-observations ----
+// Relational, not per file, its findings at the declared location `l2070_batching/semantic_plan.py` (byte 0, line 1,
+// no document needed). Stage `supplied` is the `parameters` option as JSON; `observations` keeps it when
+// `fingerprints` is an array of exactly two strings and `firstRefs` and `secondRefs` are arrays of strings, and
+// otherwise fails (`json_extract('[]','$[composition observations required]')` is a SQL error: no findings, as
+// here). The stage and the query read `$option: entryPoint`, with cases `all` (the default) and
+// `run_behavior_probes`, the same SQL; their default, for any other entry point, is a fixed passing observation and a
+// query `… WHERE 0`: no findings, as here. Findings: SPC-012 when the two fingerprints differ, SPC-005 when a value
+// of firstRefs is one of secondRefs.
+// GAP (blocked: a JSON type for each option leaf and a row for an empty array or object; option_json gives neither,
+// and `option_value`'s raw JSON text cannot be typed by a regex, its nesting not being regular): a number, boolean or
+// null element passes as a string here where W's `type!='text'` fails the stage; an element that is an empty array
+// or object is unseen (a third such fingerprint passes; one of two leaves one, which fails, as in W); an absent
+// firstRefs/secondRefs passes as an empty array. A scalar or object in their place is seen (a leaf at the key
+// itself, or under a non-index key) and fails.
+.decl observations_entry(e: symbol)
+observations_entry("all"). observations_entry("run_behavior_probes").
+.decl observations_on(e: symbol)
+observations_on(e) :- option_value("entryPoint", e), observations_entry(e).
+.decl observations_list(key: symbol)
+observations_list("fingerprints"). observations_list("firstRefs"). observations_list("secondRefs").
+// A leaf under a list key that is not a direct string element.
+.decl observations_bad(key: symbol)
+observations_bad(k) :- observations_list(k), ptr = cat("/", k), option_json("parameters", ptr, _).
+observations_bad(k) :-
+    observations_list(k), pre = cat(cat("/", k), "/"), option_json("parameters", ptr, _), prefix(pre, ptr),
+    re = cat(pre, "[0-9]+"), !match(re, ptr).
+observations_bad("fingerprints") :-
+    option_json("parameters", ptr, _), prefix("/fingerprints/", ptr), ptr != "/fingerprints/0", ptr != "/fingerprints/1".
+.decl observations_valid(a: symbol, b: symbol)
+observations_valid(a, b) :-
+    observations_on(_), option_json("parameters", "/fingerprints/0", a), option_json("parameters", "/fingerprints/1", b),
+    !observations_bad("fingerprints"), !observations_bad("firstRefs"), !observations_bad("secondRefs").
+
+violation("data-layer-plan-composition-architecture", "composition-runtime-observations", "SPC-012", "l2070_batching/semantic_plan.py", 1) :-
+    observations_valid(a, b), a != b.
+violation("data-layer-plan-composition-architecture", "composition-runtime-observations", "SPC-005", "l2070_batching/semantic_plan.py", 1) :-
+    observations_valid(_, _), option_json("parameters", p, v), prefix("/firstRefs/", p),
+    option_json("parameters", q, v), prefix("/secondRefs/", q).

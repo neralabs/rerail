@@ -321,10 +321,10 @@ fn operations(docs: &[DocSets], spans: &[std::ops::Range<usize>]) {
                         if let Some(scope) = name.strip_prefix("inside:") {
                             let runs = &d.inside[scope];
                             runs.iter().for_each(|&(a, b)| dense.fill(space.base(f) + a..space.base(f) + b));
-                            chunked.insert_runs(f, runs.iter().map(|&(a, b)| a..b));
+                            chunked.insert_runs(&space, f, runs.iter().map(|&(a, b)| a..b));
                         } else if let Some(ps) = d.kinds.get(*name) {
                             ps.iter().for_each(|&p| dense.insert(space.base(f) + p));
-                            chunked.insert_file(f, ps.iter().copied());
+                            chunked.insert_file(&space, f, ps.iter().copied());
                         }
                     }
                     (dense, chunked)
@@ -408,12 +408,12 @@ fn population(docs: &[DocSets], waves: &[std::ops::Range<usize>]) {
         let mut chunked = 0;
         for k in &kinds {
             let mut set = NodeSet::empty(&space);
-            docs.iter().enumerate().filter_map(|(f, d)| d.kinds.get(k).map(|ps| (f, ps))).for_each(|(f, ps)| set.insert_file(f, ps.iter().copied()));
+            docs.iter().enumerate().filter_map(|(f, d)| d.kinds.get(k).map(|ps| (f, ps))).for_each(|(f, ps)| set.insert_file(&space, f, ps.iter().copied()));
             chunked += set.bytes();
         }
         for k in &scopes {
             let mut set = NodeSet::empty(&space);
-            docs.iter().enumerate().for_each(|(f, d)| set.insert_runs(f, d.inside[k].iter().map(|&(a, b)| a..b)));
+            docs.iter().enumerate().for_each(|(f, d)| set.insert_runs(&space, f, d.inside[k].iter().map(|&(a, b)| a..b)));
             chunked += set.bytes();
         }
         (sets * space.words() * 8, chunked)
@@ -433,7 +433,7 @@ fn population(docs: &[DocSets], waves: &[std::ops::Range<usize>]) {
 #[test]
 #[ignore = "a measurement over a repository on disk (RERAIL_SET_CENSUS_ROOT)"]
 fn posting_forms() {
-    use crate::code_rule_dsl::space::{NodeSet, NodeSpace};
+    use crate::code_rule_dsl::space::NodeSpace;
     let root = PathBuf::from(std::env::var("RERAIL_SET_CENSUS_ROOT").expect("RERAIL_SET_CENSUS_ROOT"));
     let mut files = Vec::new();
     python_files(&root, &mut files);
@@ -456,9 +456,9 @@ fn posting_forms() {
         kinds.sort();
         for (k, ps) in kinds {
             varint.push((f, k.clone(), crate::content_store::prefilter::pack(ps)));
-            let mut one = NodeSet::empty(&space);
-            one.insert_file(f, ps.iter().copied());
-            segments.push((f, k.clone(), one.segment(f)));
+            let mut one = crate::code_rule_dsl::space::Builder::default();
+            ps.iter().for_each(|&p| one.node(p));
+            segments.push((f, k.clone(), one.finish().encode()));
         }
     }
     let (vb, sb): (usize, usize) = (varint.iter().map(|p| p.2.len()).sum(), segments.iter().map(|p| p.2.len()).sum());
@@ -471,7 +471,7 @@ fn posting_forms() {
     let rounds = 3;
     let read_varint = || {
         by_kind.values().map(|ids| {
-            let mut set = NodeSet::empty(&space);
+            let mut set = crate::code_rule_dsl::space::Builder::default();
             for &i in ids {
                 let (f, _, bytes) = &varint[i];
                 let (mut at, mut pre, mut positions) = (0, 0u32, Vec::new());
@@ -487,29 +487,60 @@ fn posting_forms() {
                     pre += delta;
                     positions.push(pre);
                 }
-                set.insert_file(*f, positions);
+                positions.into_iter().for_each(|p| set.node(space.base(*f) + p));
             }
-            set.len()
+            set.finish().len()
         }).sum::<usize>()
     };
     let read_segments = || {
         by_kind.values().map(|ids| {
-            let mut set = NodeSet::empty(&space);
+            let mut set = crate::code_rule_dsl::space::Builder::default();
             for &i in ids {
                 let (f, _, bytes) = &segments[i];
-                set.push_segment(*f, bytes, u32::MAX).unwrap();
+                set.segment(space.base(*f), bytes, space.count(*f)).unwrap();
             }
-            set.len()
+            set.finish().len()
         }).sum::<usize>()
     };
     assert_eq!(read_varint(), read_segments());
+    // `RERAIL_POSTING_SPIN=<seconds>`: only read the segments, for a profiler.
+    if let Some(seconds) = std::env::var("RERAIL_POSTING_SPIN").ok().and_then(|s| s.parse::<f64>().ok()) {
+        println!("spinning on segments for {seconds} s, pid {}", std::process::id());
+        let start = std::time::Instant::now();
+        while start.elapsed().as_secs_f64() < seconds {
+            std::hint::black_box(read_segments());
+        }
+        return;
+    }
     let t = thread_cpu();
     (0..rounds).for_each(|_| { std::hint::black_box(read_varint()); });
     let tv = (thread_cpu() - t) / f64::from(rounds) * 1e3;
     let t = thread_cpu();
     (0..rounds).for_each(|_| { std::hint::black_box(read_segments()); });
     let ts = (thread_cpu() - t) / f64::from(rounds) * 1e3;
-    println!("  reading every kind's set: delta-varint {tv:.1} ms, segments {ts:.1} ms (thread CPU, mean of {rounds})");
+    // The floor: each segment's containers parsed and copied into one set's buffers as they are
+    // (what per-file chunks did), with no move into the space's chunks.
+    let read_copy = || {
+        by_kind.values().map(|ids| {
+            let (mut directory, mut values, mut words) = (Vec::new(), Vec::<u8>::new(), Vec::<u8>::new());
+            for &i in ids {
+                let mut bytes: &[u8] = &segments[i].2;
+                while bytes.len() >= 7 {
+                    let len = u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]) as usize;
+                    let size = [2, 8, 4][usize::from(bytes[2])] * len;
+                    directory.push((segments[i].0, u16::from_le_bytes([bytes[0], bytes[1]]), bytes[2], len));
+                    let into = if bytes[2] == 1 { &mut words } else { &mut values };
+                    into.extend_from_slice(&bytes[7..7 + size]);
+                    bytes = &bytes[7 + size..];
+                }
+            }
+            directory.len() + values.len() + words.len()
+        }).sum::<usize>()
+    };
+    let t = thread_cpu();
+    (0..rounds).for_each(|_| { std::hint::black_box(read_copy()); });
+    let tc = (thread_cpu() - t) / f64::from(rounds) * 1e3;
+    println!("  reading every kind's set: delta-varint {tv:.1} ms, segments {ts:.1} ms, copying the containers only {tc:.1} ms (thread CPU, mean of {rounds})");
 }
 
 /// The process's retired instructions and cycles (macOS `proc_pid_rusage`); 0s elsewhere.
@@ -558,10 +589,10 @@ fn set_profile() {
             if let Some(scope) = name.strip_prefix("inside:") {
                 let runs = &d.inside[scope];
                 runs.iter().for_each(|&(a, b)| dense.fill(space.base(f) + a..space.base(f) + b));
-                chunked.insert_runs(f, runs.iter().map(|&(a, b)| a..b));
+                chunked.insert_runs(&space, f, runs.iter().map(|&(a, b)| a..b));
             } else if let Some(ps) = d.kinds.get(name) {
                 ps.iter().for_each(|&p| dense.insert(space.base(f) + p));
-                chunked.insert_file(f, ps.iter().copied());
+                chunked.insert_file(&space, f, ps.iter().copied());
             }
         }
         (dense, chunked)
@@ -572,6 +603,7 @@ fn set_profile() {
         ("identifier ∩ inside class (runs)", "identifier", "inside:class_definition", false),
         ("raise ∩ inside except (sparse)", "raise_statement", "inside:except_clause", false),
         ("await ∩ call (sparse ∩ dense-ish)", "await", "call", false),
+        ("call within files of raise", "call", "raise_statement", false),
     ]
     .iter()
     .map(|&(label, a, b, bitmaps)| {
@@ -582,19 +614,7 @@ fn set_profile() {
         (label.to_owned(), a, b)
     })
     .collect();
-    // The same members chunked Roaring's way: 2^16 nodes of the whole space per chunk, so a
-    // chunk spans many files (about 32 here), against one chunk per file.
-    let wide_space = {
-        let (full, rest) = (space.len() / 65536, space.len() % 65536);
-        NodeSpace::new(std::iter::repeat_n(65536, full as usize).chain((rest > 0).then_some(rest)).collect())
-    };
-    let wide: Vec<(NodeSet, NodeSet)> = cases
-        .iter()
-        .map(|(label, (da, _), (db, _))| {
-            let (a, b) = (NodeSet::from_words(&wide_space, da.words()), NodeSet::from_words(&wide_space, db.words()));
-            (a, if label.contains("(bitmaps)") { b.as_bitmaps() } else { b })
-        })
-        .collect();
+
     println!("space: {} files, {} nodes; dense set {} B", docs.len(), space.len(), space.words() * 8);
 
     if let Ok(spin) = std::env::var("RERAIL_SET_SPIN") {
@@ -607,10 +627,20 @@ fn set_profile() {
         while start.elapsed().as_secs_f64() < seconds {
             if side == "dense" {
                 let mut x = da.clone();
-                x.intersect_with(db);
+                if label.contains("within") {
+                    x.within_files(&space, &[db]);
+                } else {
+                    x.intersect_with(db);
+                }
                 std::hint::black_box(x);
             } else {
-                std::hint::black_box(ca.intersection(cb));
+                if label.contains("within") {
+                    let mut x = ca.clone();
+                    x.within_files(&space, &[cb]);
+                    std::hint::black_box(x);
+                } else {
+                    std::hint::black_box(ca.intersection(cb));
+                }
             }
             n += 1;
         }
@@ -620,19 +650,27 @@ fn set_profile() {
 
     const COPIES: usize = 64;
     println!("\ncase\tform\tregime\tµs/op\tinstr/op (M)\tcycles/op (M)\tIPC\tbytes in+out (MB)\tGB/s\tinstr/byte");
-    for ((label, (da, ca), (db, cb)), (wa, wb)) in cases.iter().zip(&wide) {
+    for (label, (da, ca), (db, cb)) in &cases {
         let dense_bytes = 3 * space.words() * 8;
-        let chunk_bytes = ca.bytes() + cb.bytes() + ca.intersection(cb).bytes();
-        let wide_bytes = wa.bytes() + wb.bytes() + wa.intersection(wb).bytes();
-        assert_eq!(wa.intersection(wb).len(), ca.intersection(cb).len(), "{label}: the two chunkings agree");
-        for (side, set) in [("a", ca), ("b", cb), ("a∩b", &ca.intersection(cb)), ("64K a", wa), ("64K b", wb)] {
+        let within = label.contains("within");
+        let result = if within {
+            let mut x = ca.clone();
+            x.within_files(&space, &[cb]);
+            let mut d = da.clone();
+            d.within_files(&space, &[db]);
+            assert_eq!(NodeSet::from_words(&space, d.words()), x, "{label}");
+            x
+        } else {
+            ca.intersection(cb)
+        };
+        let chunk_bytes = ca.bytes() + cb.bytes() + result.bytes();
+        for (side, set) in [("a", ca), ("b", cb), ("a∩b", &ca.intersection(cb))] {
             let [arrays, bitmaps, runs] = set.census();
             println!("# {label} {side}: arrays {arrays:?} bitmaps {bitmaps:?} runs {runs:?} (chunks, elements)");
         }
         // Each form, hot then cold. Dense copies its first operand (that copy is its result's
         // buffer); containers write a new set without copying it.
-        for form in ["dense", "containers", "containers 64K"] {
-            let (ca, cb) = if form == "containers 64K" { (wa, wb) } else { (ca, cb) };
+        for form in ["dense", "containers"] {
             for cold in [false, true] {
                 let copies = if cold { COPIES } else { 1 };
                 let rounds = if cold { COPIES * 2 } else { 200 };
@@ -650,20 +688,26 @@ fn set_profile() {
                     let k = r % copies;
                     if form == "dense" {
                         let mut x = dense_a[k].clone();
-                        x.intersect_with(&dense_b[k]);
+                        if within {
+                            x.within_files(&space, &[&dense_b[k]]);
+                        } else {
+                            x.intersect_with(&dense_b[k]);
+                        }
                         std::hint::black_box(x);
                     } else {
-                        std::hint::black_box(chunk_a[k].intersection(&chunk_b[k]));
+                        if within {
+                            let mut x = chunk_a[k].clone();
+                            x.within_files(&space, &[&chunk_b[k]]);
+                            std::hint::black_box(x);
+                        } else {
+                            std::hint::black_box(chunk_a[k].intersection(&chunk_b[k]));
+                        }
                     }
                 }
                 let (spent, (i1, c1)) = (thread_cpu() - t, counters());
                 let per = |x: f64| x / rounds as f64;
                 let (us, instr, cycles) = (per(spent) * 1e6, per((i1 - i0) as f64), per((c1 - c0) as f64));
-                let bytes = match form {
-                    "dense" => dense_bytes,
-                    "containers" => chunk_bytes,
-                    _ => wide_bytes,
-                } as f64;
+                let bytes = if form == "dense" { dense_bytes } else { chunk_bytes } as f64;
                 println!(
                     "{label}\t{form}\t{}\t{us:.0}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.1}\t{:.2}",
                     if cold { "cold" } else { "hot" },

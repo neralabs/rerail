@@ -1,0 +1,480 @@
+// data-layer-async-patterns: every clause, by hand. The converter cannot say 15 of them (semantic layout, semantic
+// value, the parameterised utilities query-name/session-name of `oracle-facade`); the rest it converts for one
+// value of the option only, and are written here so every configuration runs.
+// The option oracleAnalyzer (`option_on`) picks the clauses: false (the default, the production plugin) runs the
+// -impl/-api/-conform clauses, true (the raw analyzer) the -analyzer ones. Options other than oracleAnalyzer: none.
+//
+// Shared readings of the policy's matchers:
+// - The reported node is the call `<object>.<method>(…)` ($CALL), whose `function` is an attribute with an
+//   identifier `attribute` and an `object` ($RECEIVER); its line is the call's first line (anchor witness.span).
+// - `inside` an async function_definition with stopBy function_definition|lambda: the call's nearest enclosing
+//   function_definition or lambda is a function_definition with `async` (W's regex `^async\b` on its text).
+// - `not inside` a class_definition with stopBy class_definition: the nearest enclosing class_definition is not one
+//   whose name contains Transaction|Connection|Query|Handle|Version, or whose superclasses list holds `ABC` or `x.ABC`.
+// - `layout.context {before: b, after: b, regex: r}`: r matches the source lines from the call's first line - b to
+//   its first line + b (W: the lines of the whole file, comments and strings included). Every r here is a literal
+//   with no line break, so "some line of the window contains r" is the same test. Lines are `tape_line`'s (\r\n, \r,
+//   \n), as W's `layout` and `line(n)` count them.
+// - `syntax: valid`: the document has no syntax error; `file.path` `^impl/` etc.: a path prefix.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: loc, s: symbol)
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl tape_line(d: number, l: number, sp: span)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl nearest(n: node, a: node, set: relation)
+.decl option_on(name: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// ---- shared -----------------------------------------------------------------------------------------------------
+
+.decl async_patterns_fnk(kind: symbol)
+async_patterns_fnk("function_definition").
+async_patterns_fnk("lambda").
+.decl async_patterns_classk(kind: symbol)
+async_patterns_classk("class_definition").
+
+// The method names of each family (the clause's `^(?:…)$` over the attribute identifier).
+.decl async_patterns_method(family: symbol, m: symbol)
+async_patterns_method("to-thread", "to_thread").
+async_patterns_method("executor", "run_in_executor").
+async_patterns_method("internal-io", "_execute_sql").
+async_patterns_method("internal-io", "_fetchone").
+async_patterns_method("internal-io", "_fetchall").
+async_patterns_method("internal-io", "raw_execute").
+async_patterns_method("internal-io", "_execute_template_with_params").
+async_patterns_method("internal-io", "nonportably_execute_sql").
+async_patterns_method("transaction-receiver", "insert").
+async_patterns_method("transaction-receiver", "insert_many").
+async_patterns_method("transaction-receiver", "update").
+async_patterns_method("transaction-receiver", "update_many").
+async_patterns_method("transaction-receiver", "delete_by_id").
+async_patterns_method("transaction-receiver", "delete_many").
+async_patterns_method("transaction-receiver", "delete_returning").
+async_patterns_method("transaction-receiver", "delete_many_returning").
+async_patterns_method("transaction-receiver", "delete_by_key_many").
+async_patterns_method("transaction-receiver", "upsert").
+async_patterns_method("transaction-receiver", "upsert_many").
+async_patterns_method("transaction-receiver", "commit").
+async_patterns_method("transaction-receiver", "rollback").
+async_patterns_method("transaction-receiver", "select_one").
+async_patterns_method("transaction-receiver", "execute").
+async_patterns_method("transaction-receiver", "execute_one").
+async_patterns_method("transaction-receiver", "count").
+async_patterns_method("transaction-receiver", "exists").
+async_patterns_method("transaction-receiver", "first").
+async_patterns_method("transaction-receiver", "execute_raw").
+async_patterns_method("transaction-receiver", "fetchone_raw").
+async_patterns_method("transaction-receiver", "fetchall_raw").
+async_patterns_method("transaction-receiver", "search").
+async_patterns_method("transaction-receiver", "commit_branch").
+async_patterns_method("transaction-receiver", "get_history").
+async_patterns_method("transaction-receiver", "get_branch_tip").
+async_patterns_method("transaction-receiver", "select_at_revision").
+async_patterns_method("session-receiver", "read").
+async_patterns_method("session-receiver", "write").
+
+// A checked document: in scope, parsed without error.
+.decl async_patterns_doc(d: number, p: symbol)
+async_patterns_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+// The production plugin's documents (oracleAnalyzer false).
+.decl async_patterns_plugin(d: number, p: symbol)
+async_patterns_plugin(d, p) :- async_patterns_doc(d, p), !option_on("oracleAnalyzer").
+
+// async_patterns_call(family, d, c, o): c is `o.<method>(…)` with a method of the family, in a checked document.
+.decl async_patterns_call(family: symbol, d: number, c: node, o: node)
+async_patterns_call(fam, d, c, o) :- async_patterns_method(fam, m), text(a, m), node(_, a, "identifier", _, _),
+    field(f, "attribute", a), node(_, f, "attribute", _, _), field(c, "function", f), node(d, c, "call", _, _),
+    field(f, "object", o), async_patterns_doc(d, _).
+
+// The call's nearest enclosing function_definition or lambda is an async function_definition.
+.decl async_patterns_in_async(c: node)
+async_patterns_in_async(c) :- async_patterns_call(fam, _, c, _), fam != "to-thread", fam != "executor",
+    nearest(c, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async").
+
+// The call's nearest enclosing class_definition is a transaction-like class or an ABC.
+.decl async_patterns_marked_class(k: node)
+async_patterns_marked_class(k) :- node(_, k, "class_definition", _, _), field(k, "name", nm), text(nm, s),
+    (contains("Transaction", s) ; contains("Connection", s) ; contains("Query", s) ; contains("Handle", s) ;
+     contains("Version", s)).
+async_patterns_marked_class(k) :- node(_, k, "class_definition", _, _), field(k, "superclasses", sc), child(sc, b, _),
+    node(_, b, "identifier", _, _), text(b, "ABC").
+async_patterns_marked_class(k) :- node(_, k, "class_definition", _, _), field(k, "superclasses", sc), child(sc, b, _),
+    node(_, b, "attribute", _, _), field(b, "attribute", a), node(_, a, "identifier", _, _), text(a, "ABC").
+.decl async_patterns_in_marked_class(c: node)
+async_patterns_in_marked_class(c) :- async_patterns_call(_, _, c, _), nearest(c, k, async_patterns_classk),
+    async_patterns_marked_class(k).
+
+// The context windows: async_patterns_window(w, k) for every offset k in -w..w.
+.decl async_patterns_window(w: number, k: number)
+async_patterns_window(5, -5). async_patterns_window(5, -4). async_patterns_window(5, -3). async_patterns_window(5, -2).
+async_patterns_window(5, -1). async_patterns_window(5, 0). async_patterns_window(5, 1). async_patterns_window(5, 2).
+async_patterns_window(5, 3). async_patterns_window(5, 4). async_patterns_window(5, 5).
+async_patterns_window(15, -15). async_patterns_window(15, -14). async_patterns_window(15, -13). async_patterns_window(15, -12).
+async_patterns_window(15, -11). async_patterns_window(15, -10). async_patterns_window(15, -9). async_patterns_window(15, -8).
+async_patterns_window(15, -7). async_patterns_window(15, -6). async_patterns_window(15, -5). async_patterns_window(15, -4).
+async_patterns_window(15, -3). async_patterns_window(15, -2). async_patterns_window(15, -1). async_patterns_window(15, 0).
+async_patterns_window(15, 1). async_patterns_window(15, 2). async_patterns_window(15, 3). async_patterns_window(15, 4).
+async_patterns_window(15, 5). async_patterns_window(15, 6). async_patterns_window(15, 7). async_patterns_window(15, 8).
+async_patterns_window(15, 9). async_patterns_window(15, 10). async_patterns_window(15, 11). async_patterns_window(15, 12).
+async_patterns_window(15, 13). async_patterns_window(15, 14). async_patterns_window(15, 15).
+// The source lines within w lines of the call's first line.
+.decl async_patterns_context(c: node, w: number, s: symbol)
+async_patterns_context(c, w, s) :- async_patterns_call(fam, d, c, _), fam != "session-receiver", line(c, l0),
+    async_patterns_window(w, k), l = l0 + k, tape_line(d, l, sp), text(sp, s).
+// The waiver every clause but session-receiver's has: `ASYNC_FALLBACK:` within 5 lines, or both `TODO: Implement`
+// and `native async` within 5 lines.
+.decl async_patterns_waived(c: node)
+async_patterns_waived(c) :- async_patterns_context(c, 5, s), contains("ASYNC_FALLBACK:", s).
+async_patterns_waived(c) :- async_patterns_context(c, 5, s), contains("TODO: Implement", s),
+    async_patterns_context(c, 5, t), contains("native async", t).
+// executor-api/-conform: `_wrap_for_executor` within 15 lines.
+.decl async_patterns_wrapped(c: node)
+async_patterns_wrapped(c) :- async_patterns_context(c, 15, s), contains("_wrap_for_executor", s).
+
+// ---- to-thread --------------------------------------------------------------------------------------------------
+
+violation("data-layer-async-patterns", "to-thread-impl", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _),
+    async_patterns_plugin(d, p), prefix("impl/", p), !async_patterns_waived(c), line(c, l).
+violation("data-layer-async-patterns", "to-thread-api", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _),
+    async_patterns_plugin(d, p), prefix("api/", p), !async_patterns_waived(c), !async_patterns_in_marked_class(c),
+    line(c, l).
+violation("data-layer-async-patterns", "to-thread-conform", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _),
+    async_patterns_plugin(d, p), prefix("conform/", p), !async_patterns_waived(c), line(c, l).
+
+// ---- executor ---------------------------------------------------------------------------------------------------
+
+violation("data-layer-async-patterns", "executor-impl", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _),
+    async_patterns_plugin(d, p), prefix("impl/", p), !async_patterns_waived(c), line(c, l).
+violation("data-layer-async-patterns", "executor-api", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _),
+    async_patterns_plugin(d, p), prefix("api/", p), !async_patterns_waived(c), !async_patterns_in_marked_class(c),
+    !async_patterns_wrapped(c), line(c, l).
+violation("data-layer-async-patterns", "executor-conform", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _),
+    async_patterns_plugin(d, p), prefix("conform/", p), !async_patterns_waived(c), !async_patterns_wrapped(c), line(c, l).
+
+// ---- internal-io ------------------------------------------------------------------------------------------------
+
+violation("data-layer-async-patterns", "internal-io-impl", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _),
+    async_patterns_plugin(d, p), prefix("impl/", p), async_patterns_in_async(c), !async_patterns_waived(c), line(c, l).
+violation("data-layer-async-patterns", "internal-io-api", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _),
+    async_patterns_plugin(d, p), prefix("api/", p), async_patterns_in_async(c), !async_patterns_waived(c),
+    !async_patterns_in_marked_class(c), line(c, l).
+violation("data-layer-async-patterns", "internal-io-conform", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _),
+    async_patterns_plugin(d, p), prefix("conform/", p), async_patterns_in_async(c), !async_patterns_waived(c), line(c, l).
+
+// ---- transaction-receiver ---------------------------------------------------------------------------------------
+// The receiver is `self`, a txn-root, a query-root or a query-chain (the facade's utilities), and the call is not
+// in an async function decorated `@x.write_async(…)`/`@x.read_async(…)`.
+
+// The nearest function_definition/lambda is an async function_definition whose parent decorated_definition has a
+// decorator holding a call `x.write_async(…)` or `x.read_async(…)`.
+.decl transaction_receiver_decorated(c: node)
+transaction_receiver_decorated(c) :- async_patterns_call("transaction-receiver", _, c, _), nearest(c, f, async_patterns_fnk),
+    node(_, f, "function_definition", _, _), op(f, "async"), child(dd, f, _), node(_, dd, "decorated_definition", _, _),
+    child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, dc, _), node(_, dc, "call", _, _),
+    field(dc, "function", df), node(_, df, "attribute", _, _), field(df, "attribute", da), node(_, da, "identifier", _, _),
+    text(da, dm), (dm = "write_async" ; dm = "read_async").
+
+// The transaction parameter names (`^(?:wtxn|vtxn|rtxn|vrtxn|txn|tx)$`) and annotation names.
+.decl transaction_receiver_txn_param_name(s: symbol)
+transaction_receiver_txn_param_name("wtxn"). transaction_receiver_txn_param_name("vtxn").
+transaction_receiver_txn_param_name("rtxn"). transaction_receiver_txn_param_name("vrtxn").
+transaction_receiver_txn_param_name("txn"). transaction_receiver_txn_param_name("tx").
+.decl transaction_receiver_txn_type_name(s: symbol)
+transaction_receiver_txn_type_name("LazyVersionedReadTransaction").
+transaction_receiver_txn_type_name("LazyVersionedWriteTransaction").
+transaction_receiver_txn_type_name("ReadTransaction").
+transaction_receiver_txn_type_name("WriteTransaction").
+
+// txn-annotation: a transaction type name, as an identifier, `x.Name`, a string or concatenated_string whose value
+// names one, or a type, subscript, tuple, union or `|` holding one as a direct child.
+.decl transaction_receiver_annotation(t: node)
+transaction_receiver_annotation(t) :- transaction_receiver_txn_type_name(s), text(t, s), node(_, t, "identifier", _, _).
+transaction_receiver_annotation(t) :- transaction_receiver_txn_type_name(s), text(a, s), node(_, a, "identifier", _, _),
+    field(t, "attribute", a), node(_, t, "attribute", _, _).
+// W: `value: {regex: …}`, a search over the literal's decoded str value (escapes decoded, adjacent pieces joined;
+// no row for an f-string with an interpolation or bytes).
+transaction_receiver_annotation(t) :- transaction_receiver_literal(t), value(t, v), value_type_of(t, "str"),
+    match("(?s:.*)(?:LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|WriteTransaction)(?s:.*)", v).
+.decl transaction_receiver_literal(t: node)
+transaction_receiver_literal(t) :- node(_, t, "string", _, _).
+transaction_receiver_literal(t) :- node(_, t, "concatenated_string", _, _).
+transaction_receiver_annotation(t) :- transaction_receiver_annotation(x), child(t, x, _), transaction_receiver_annotation_wrapper(t).
+.decl transaction_receiver_annotation_wrapper(t: node)
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "type", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "type_parameter", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "generic_type", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "subscript", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "tuple", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "union_type", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "binary_operator", _, _).
+
+// transaction_receiver_param(q, s): parameter q (a direct child of a `parameters`) declares a transaction named s.
+.decl transaction_receiver_param(q: node, s: symbol)
+// A bare parameter with a transaction name.
+transaction_receiver_param(q, s) :- node(_, q, "identifier", _, _), text(q, s), transaction_receiver_txn_param_name(s),
+    child(ps, q, _), node(_, ps, "parameters", _, _).
+// `txn=…`.
+transaction_receiver_param(q, s) :- node(_, q, "default_parameter", _, _), field(q, "name", nm), node(_, nm, "identifier", _, _),
+    text(nm, s), transaction_receiver_txn_param_name(s).
+// `*txn` / `**txn`.
+transaction_receiver_param(q, s) :- transaction_receiver_splat(q), child(ps, q, _), node(_, ps, "parameters", _, _),
+    child(q, i, _), node(_, i, "identifier", _, _), text(i, s), transaction_receiver_txn_param_name(s).
+.decl transaction_receiver_splat(q: node)
+transaction_receiver_splat(q) :- node(_, q, "list_splat_pattern", _, _).
+transaction_receiver_splat(q) :- node(_, q, "dictionary_splat_pattern", _, _).
+.decl transaction_receiver_typed(q: node)
+transaction_receiver_typed(q) :- node(_, q, "typed_parameter", _, _).
+transaction_receiver_typed(q) :- node(_, q, "typed_default_parameter", _, _).
+// `txn: T` / `txn: T = …` with a transaction name, or any name with a transaction annotation. The name is the first
+// named child: an identifier, or a splat pattern holding one.
+.decl transaction_receiver_typed_name(q: node, first: node, s: symbol)
+transaction_receiver_typed_name(q, c, s) :- transaction_receiver_typed(q), child(q, c, 0), node(_, c, "identifier", _, _),
+    text(c, s).
+transaction_receiver_typed_name(q, c, s) :- transaction_receiver_typed(q), child(q, c, 0), child(c, i, _),
+    node(_, i, "identifier", _, _), text(i, s).
+transaction_receiver_param(q, s) :- transaction_receiver_typed_name(q, c, s), node(_, c, "identifier", _, _), text(c, t),
+    transaction_receiver_txn_param_name(t).
+transaction_receiver_param(q, s) :- transaction_receiver_typed_name(q, _, s), field(q, "type", ty),
+    transaction_receiver_annotation(ty).
+
+// Nodes whose txn-root/query-root/query-chain verdict is asked: the receiver chains of the candidate calls and the
+// right-hand sides of the assignments query-name reads, down through `.object`, `.function` and `[…].value`.
+.decl transaction_receiver_need(o: node)
+transaction_receiver_need(o) :- async_patterns_call("transaction-receiver", _, _, o).
+transaction_receiver_need(r) :- transaction_receiver_assign(_, _, _, r).
+transaction_receiver_need(x) :- transaction_receiver_need(o), transaction_receiver_down(o, x).
+transaction_receiver_need(x) :- transaction_receiver_need(o), node(_, o, "assignment", _, _), field(o, "right", x).
+// One step down a chain: `.object` of an attribute, `.function` of a call, `.value` of a subscript.
+.decl transaction_receiver_down(o: node, x: node)
+transaction_receiver_down(o, x) :- node(_, o, "attribute", _, _), field(o, "object", x).
+transaction_receiver_down(o, x) :- node(_, o, "call", _, _), field(o, "function", x).
+transaction_receiver_down(o, x) :- node(_, o, "subscript", _, _), field(o, "value", x).
+
+// txn-name: an identifier named as a transaction parameter of its nearest function_definition/lambda, an async
+// function_definition.
+.decl transaction_receiver_txn_name(x: node)
+transaction_receiver_txn_name(x) :- transaction_receiver_need(x), node(_, x, "identifier", _, _), text(x, s),
+    nearest(x, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async"),
+    field(f, "parameters", ps), child(ps, q, _), transaction_receiver_param(q, s).
+// txn-root: a txn-name, or an attribute/call/subscript over one.
+.decl transaction_receiver_txn_root(o: node)
+transaction_receiver_txn_root(o) :- transaction_receiver_txn_name(o).
+transaction_receiver_txn_root(o) :- transaction_receiver_need(o), transaction_receiver_down(o, x), transaction_receiver_txn_root(x).
+// query-chain: a call `r.select_at_revision(…)`/`r.query(…)`/`r.cross_branch(…)` on a txn-root, or any method call
+// on a query-chain.
+.decl transaction_receiver_query_chain(c: node)
+transaction_receiver_query_chain(c) :- transaction_receiver_need(c), node(_, c, "call", _, _), field(c, "function", f),
+    node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, m),
+    (m = "select_at_revision" ; m = "query" ; m = "cross_branch"), field(f, "object", o), transaction_receiver_txn_root(o).
+transaction_receiver_query_chain(c) :- transaction_receiver_need(c), node(_, c, "call", _, _), field(c, "function", f),
+    node(_, f, "attribute", _, _), field(f, "object", o), transaction_receiver_query_chain(o).
+
+// The assignments query-name reads: transaction_receiver_assign(f, l, s, r): `l = r` with l an identifier named s,
+// whose nearest function_definition/lambda f is an async function_definition (W: in f's body, not past a nested
+// function_definition or lambda).
+.decl transaction_receiver_assign(f: node, l: node, s: symbol, r: node)
+transaction_receiver_assign(f, l, s, r) :- node(_, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _),
+    text(l, s), field(a, "right", r), nearest(a, f, async_patterns_fnk), node(_, f, "function_definition", _, _),
+    op(f, "async").
+// query-value(v, at): v is a query-chain, an alias (query-name at `at`), or an assignment whose right side is one.
+// Asked of an assignment's right side (and the right sides chained under it), `at` the assignment's left identifier.
+.decl transaction_receiver_value_need(v: node, at: node)
+transaction_receiver_value_need(r, l) :- transaction_receiver_assign(_, l, _, r).
+transaction_receiver_value_need(x, at) :- transaction_receiver_value_need(v, at), node(_, v, "assignment", _, _),
+    field(v, "right", x).
+.decl transaction_receiver_value(v: node, at: node)
+transaction_receiver_value(v, at) :- transaction_receiver_value_need(v, at), transaction_receiver_query_chain(v).
+transaction_receiver_value(v, at) :- transaction_receiver_value_need(v, at), transaction_receiver_query_name(v, at).
+transaction_receiver_value(v, at) :- transaction_receiver_value_need(v, at), node(_, v, "assignment", _, _),
+    field(v, "right", x), transaction_receiver_value(x, at).
+// An assignment `l = <query-value at l>`.
+.decl transaction_receiver_query_assign(f: node, l: node, s: symbol)
+transaction_receiver_query_assign(f, l, s) :- transaction_receiver_assign(f, l, s, r), transaction_receiver_value(r, l).
+// query-name(x, at): identifier x's nearest function_definition/lambda is an async function_definition f holding an
+// assignment to x's name of a query-value, whose left identifier ends at or before `at` starts (W: `layout after`
+// to capture AT, breaks >= 0).
+.decl transaction_receiver_name_need(x: node, at: node)
+transaction_receiver_name_need(v, at) :- transaction_receiver_value_need(v, at), node(_, v, "identifier", _, _).
+transaction_receiver_name_need(o, c) :- transaction_receiver_root_need(o, c), node(_, o, "identifier", _, _).
+.decl transaction_receiver_query_name(x: node, at: node)
+transaction_receiver_query_name(x, at) :- transaction_receiver_name_need(x, at), text(x, s), nearest(x, f, async_patterns_fnk),
+    transaction_receiver_query_assign(f, l, s), node(_, l, _, _, le), node(_, at, _, ats, _), le <= ats.
+// query-root(o, c): o is an alias of a query (query-name at the reported call c), or an attribute/call/subscript
+// over one.
+.decl transaction_receiver_root_need(o: node, c: node)
+transaction_receiver_root_need(o, c) :- async_patterns_call("transaction-receiver", _, c, o).
+transaction_receiver_root_need(x, c) :- transaction_receiver_root_need(o, c), transaction_receiver_down(o, x).
+.decl transaction_receiver_query_root(o: node, c: node)
+transaction_receiver_query_root(o, c) :- transaction_receiver_root_need(o, c), transaction_receiver_query_name(o, c).
+transaction_receiver_query_root(o, c) :- transaction_receiver_root_need(o, c), transaction_receiver_down(o, x),
+    transaction_receiver_query_root(x, c).
+
+.decl transaction_receiver_receiver(c: node)
+transaction_receiver_receiver(c) :- async_patterns_call("transaction-receiver", _, c, o), node(_, o, "identifier", _, _),
+    text(o, "self").
+transaction_receiver_receiver(c) :- async_patterns_call("transaction-receiver", _, c, o), transaction_receiver_txn_root(o).
+transaction_receiver_receiver(c) :- async_patterns_call("transaction-receiver", _, c, o), transaction_receiver_query_root(o, c).
+transaction_receiver_receiver(c) :- async_patterns_call("transaction-receiver", _, c, o), transaction_receiver_query_chain(o).
+
+violation("data-layer-async-patterns", "transaction-receiver-impl", "ASYNC006", p, l) :-
+    async_patterns_call("transaction-receiver", d, c, _), async_patterns_plugin(d, p), prefix("impl/", p),
+    async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c),
+    !async_patterns_waived(c), line(c, l).
+violation("data-layer-async-patterns", "transaction-receiver-api", "ASYNC006", p, l) :-
+    async_patterns_call("transaction-receiver", d, c, _), async_patterns_plugin(d, p), prefix("api/", p),
+    async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c),
+    !async_patterns_waived(c), !async_patterns_in_marked_class(c), line(c, l).
+violation("data-layer-async-patterns", "transaction-receiver-conform", "ASYNC006", p, l) :-
+    async_patterns_call("transaction-receiver", d, c, _), async_patterns_plugin(d, p), prefix("conform/", p),
+    async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c),
+    !async_patterns_waived(c), line(c, l).
+
+// ---- session-receiver -------------------------------------------------------------------------------------------
+// `.read(…)`/`.write(…)` in an async function on a session-root, or on `self._conn`/`self.conn`/`self.connection`/
+// `self._connection`. session-value: a call `x.session(…)`, an alias (session-name), or an assignment of one.
+
+.decl session_receiver_value_need(v: node, at: node)
+session_receiver_value_need(r, l) :- transaction_receiver_assign(_, l, _, r).
+session_receiver_value_need(x, at) :- session_receiver_value_need(v, at), node(_, v, "assignment", _, _),
+    field(v, "right", x).
+.decl session_receiver_session_call(v: node)
+session_receiver_session_call(v) :- node(_, v, "call", _, _), field(v, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, "session").
+.decl session_receiver_value(v: node, at: node)
+session_receiver_value(v, at) :- session_receiver_value_need(v, at), session_receiver_session_call(v).
+session_receiver_value(v, at) :- session_receiver_value_need(v, at), session_receiver_session_name(v, at).
+session_receiver_value(v, at) :- session_receiver_value_need(v, at), node(_, v, "assignment", _, _),
+    field(v, "right", x), session_receiver_value(x, at).
+.decl session_receiver_session_assign(f: node, l: node, s: symbol)
+session_receiver_session_assign(f, l, s) :- transaction_receiver_assign(f, l, s, r), session_receiver_value(r, l).
+.decl session_receiver_name_need(x: node, at: node)
+session_receiver_name_need(v, at) :- session_receiver_value_need(v, at), node(_, v, "identifier", _, _).
+session_receiver_name_need(o, c) :- session_receiver_root_need(o, c), node(_, o, "identifier", _, _).
+.decl session_receiver_session_name(x: node, at: node)
+session_receiver_session_name(x, at) :- session_receiver_name_need(x, at), text(x, s), nearest(x, f, async_patterns_fnk),
+    session_receiver_session_assign(f, l, s), node(_, l, _, _, le), node(_, at, _, ats, _), le <= ats.
+.decl session_receiver_root_need(o: node, c: node)
+session_receiver_root_need(o, c) :- async_patterns_call("session-receiver", _, c, o).
+session_receiver_root_need(x, c) :- session_receiver_root_need(o, c), transaction_receiver_down(o, x).
+.decl session_receiver_session_root(o: node, c: node)
+session_receiver_session_root(o, c) :- session_receiver_root_need(o, c), session_receiver_session_name(o, c).
+session_receiver_session_root(o, c) :- session_receiver_root_need(o, c), transaction_receiver_down(o, x),
+    session_receiver_session_root(x, c).
+
+.decl session_receiver_receiver(c: node)
+session_receiver_receiver(c) :- async_patterns_call("session-receiver", _, c, o), session_receiver_session_root(o, c).
+session_receiver_receiver(c) :- async_patterns_call("session-receiver", _, c, o), node(_, o, "attribute", _, _),
+    field(o, "object", s), node(_, s, "identifier", _, _), text(s, "self"), field(o, "attribute", a),
+    node(_, a, "identifier", _, _), text(a, m), (m = "_conn" ; m = "conn" ; m = "connection" ; m = "_connection").
+
+violation("data-layer-async-patterns", "session-receiver-impl", "ASYNC007", p, l) :-
+    async_patterns_call("session-receiver", d, c, _), async_patterns_plugin(d, p), prefix("impl/", p),
+    async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+violation("data-layer-async-patterns", "session-receiver-api", "ASYNC007", p, l) :-
+    async_patterns_call("session-receiver", d, c, _), async_patterns_plugin(d, p), prefix("api/", p),
+    async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+violation("data-layer-async-patterns", "session-receiver-conform", "ASYNC007", p, l) :-
+    async_patterns_call("session-receiver", d, c, _), async_patterns_plugin(d, p), prefix("conform/", p),
+    async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+
+// ---- decorated-write, decorated-read, polymorphic; the raw analyzer (oracleAnalyzer true) ------------------------
+// The analyzer clauses are each family's matcher without its file path, waiver or class filters, in every checked
+// document. The decorated-*/polymorphic -impl/-api/-conform clauses are their family's analyzer matcher under a path
+// (the converter's form, here with the option gate).
+
+.decl async_patterns_analyzer(d: number, p: symbol)
+async_patterns_analyzer(d, p) :- async_patterns_doc(d, p), option_on("oracleAnalyzer").
+
+// The families of decorated-*, polymorphic.
+async_patterns_method("decorated-write", "insert").
+async_patterns_method("decorated-write", "insert_many").
+async_patterns_method("decorated-write", "update").
+async_patterns_method("decorated-write", "update_many").
+async_patterns_method("decorated-write", "delete_by_id").
+async_patterns_method("decorated-write", "delete_many").
+async_patterns_method("decorated-write", "delete_returning").
+async_patterns_method("decorated-write", "delete_many_returning").
+async_patterns_method("decorated-write", "delete_by_key_many").
+async_patterns_method("decorated-write", "upsert").
+async_patterns_method("decorated-write", "upsert_many").
+async_patterns_method("decorated-write", "commit").
+async_patterns_method("decorated-write", "rollback").
+async_patterns_method("decorated-read", "select_one").
+async_patterns_method("decorated-read", "execute").
+async_patterns_method("decorated-read", "execute_one").
+async_patterns_method("decorated-read", "count").
+async_patterns_method("decorated-read", "exists").
+async_patterns_method("decorated-read", "first").
+async_patterns_method("polymorphic", "ensure_dynamic_polymorphic_metadata").
+async_patterns_method("polymorphic", "register_polymorphic_metadata_for_schema_update").
+
+// The call's nearest function_definition/lambda is an async function_definition whose parent decorated_definition
+// has a decorator holding a call `x.<dm>(…)`.
+.decl decorated_write_analyzer_decorator(c: node, dm: symbol)
+decorated_write_analyzer_decorator(c, dm) :- async_patterns_call(fam, _, c, _), (fam = "decorated-write" ; fam = "decorated-read"),
+    nearest(c, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async"), child(dd, f, _),
+    node(_, dd, "decorated_definition", _, _), child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, dc, _),
+    node(_, dc, "call", _, _), field(dc, "function", df), node(_, df, "attribute", _, _), field(df, "attribute", da),
+    node(_, da, "identifier", _, _), text(da, dm).
+
+violation("data-layer-async-patterns", "to-thread-analyzer", "ASYNC001", p, l) :-
+    async_patterns_call("to-thread", d, c, _), async_patterns_analyzer(d, p), line(c, l).
+violation("data-layer-async-patterns", "executor-analyzer", "ASYNC002", p, l) :-
+    async_patterns_call("executor", d, c, _), async_patterns_analyzer(d, p), line(c, l).
+violation("data-layer-async-patterns", "decorated-write-analyzer", "ASYNC004", p, l) :-
+    async_patterns_call("decorated-write", d, c, _), async_patterns_analyzer(d, p),
+    decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-read-analyzer", "ASYNC004", p, l) :-
+    async_patterns_call("decorated-read", d, c, _), async_patterns_analyzer(d, p), decorated_write_analyzer_decorator(c, dm),
+    (dm = "write_async" ; dm = "read_async"), line(c, l).
+violation("data-layer-async-patterns", "internal-io-analyzer", "ASYNC005", p, l) :-
+    async_patterns_call("internal-io", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), line(c, l).
+violation("data-layer-async-patterns", "polymorphic-analyzer", "ASYNC008", p, l) :-
+    async_patterns_call("polymorphic", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), line(c, l).
+violation("data-layer-async-patterns", "transaction-receiver-analyzer", "ASYNC006", p, l) :-
+    async_patterns_call("transaction-receiver", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c),
+    !transaction_receiver_decorated(c), transaction_receiver_receiver(c), line(c, l).
+violation("data-layer-async-patterns", "session-receiver-analyzer", "ASYNC007", p, l) :-
+    async_patterns_call("session-receiver", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c),
+    session_receiver_receiver(c), line(c, l).
+
+.decl async_patterns_area(p: symbol, area: symbol)
+async_patterns_area(p, "impl") :- async_patterns_plugin(_, p), prefix("impl/", p).
+async_patterns_area(p, "api") :- async_patterns_plugin(_, p), prefix("api/", p).
+async_patterns_area(p, "conform") :- async_patterns_plugin(_, p), prefix("conform/", p).
+violation("data-layer-async-patterns", "decorated-write-impl", "ASYNC004", p, l) :-
+    async_patterns_call("decorated-write", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "impl"),
+    decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-write-api", "ASYNC004", p, l) :-
+    async_patterns_call("decorated-write", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "api"),
+    decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-write-conform", "ASYNC004", p, l) :-
+    async_patterns_call("decorated-write", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "conform"),
+    decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-read-impl", "ASYNC004", p, l) :-
+    async_patterns_call("decorated-read", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "impl"),
+    decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-read-api", "ASYNC004", p, l) :-
+    async_patterns_call("decorated-read", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "api"),
+    decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-read-conform", "ASYNC004", p, l) :-
+    async_patterns_call("decorated-read", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "conform"),
+    decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+violation("data-layer-async-patterns", "polymorphic-impl", "ASYNC008", p, l) :-
+    async_patterns_call("polymorphic", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "impl"),
+    async_patterns_in_async(c), line(c, l).
+violation("data-layer-async-patterns", "polymorphic-api", "ASYNC008", p, l) :-
+    async_patterns_call("polymorphic", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "api"),
+    async_patterns_in_async(c), line(c, l).
+violation("data-layer-async-patterns", "polymorphic-conform", "ASYNC008", p, l) :-
+    async_patterns_call("polymorphic", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "conform"),
+    async_patterns_in_async(c), line(c, l).

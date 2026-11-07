@@ -1,0 +1,364 @@
+// data-layer-post-op-side-effects, clause signed-surface: the policy's relational clause (SQL stages over AST
+// evidence rows) as Datalog. Each input is a relation over the documents in scope with a valid parse
+// (`syntax: valid`); each stage is a relation named after it (ss_<stage>). Every finding of `findings` and
+// POSTOP000 is at l2070_batching/post_op.py, start_byte 0 (the clause's `locations`), so line 1, whether or not
+// that file is in the corpus; the bypass-tree query's at each bypassing module's start, line 1.
+//
+// Options, read from the converter's option facts (the run's resolved options): entryPoint (option_value: the
+// `query` and `trusted_overrides` cases), fateOverrides (option_json: its items in the option's order, at their
+// pointers "/0", "/1", …, so the scalar subqueries' first override of a symbol is the least index), fatesSignature
+// and surfaceSignature (option_value, the signatures fate_valid and surface_valid check). All followed.
+//
+// Signatures. The stages fate_valid, surface_valid and runtime_valid are W's verify_ed25519(key, message,
+// rx_replace(signature, '[^A-Za-z0-9+/=]', '')): @ed25519_ok over @rx_replace, the message built as the stages
+// build it (ss_message): '{"allowlist":' || json_group_array(value ORDER BY value) || ',"linter":…,"version":1}',
+// each element @json_str (json_group_array's json_quote), ordered by code point as SQLite's ORDER BY over text.
+//
+// String values. W's `capture.DECODED.text` (substring with value: true) reads a string's decoded value: value(n,
+// v), escapes decoded and a concatenated_string's parts joined, exactly. An unknown value (a part that is an
+// f-string with an interpolation, or bytes) reads as the empty text, as W's transform has it
+// (matcher/transform.rs: ComputeError::Unknown is "").
+//
+// Findings are a set of (path, line, code): the oracle's several rows of one code (one per registry string, per
+// membership, …) are one key here.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl value(n: node, v: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl ss_unit(x: number)
+ss_unit(0).
+
+// ---- inputs -------------------------------------------------------------------------------------------------------
+
+// The documents the inputs read: in scope, with a valid parse (every input says `syntax: valid`).
+.decl ss_doc(d: number, p: symbol)
+ss_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+
+// A definition at module level: its parent is the module, or a decorated_definition whose parent is the module.
+.decl ss_top(n: node)
+ss_top(n) :- child(m, n, _), node(_, m, "module", _, _).
+ss_top(n) :- child(dd, n, _), node(_, dd, "decorated_definition", _, _), child(m, dd, _), node(_, m, "module", _, _).
+
+// An assignment that is a module-level statement: expression_statement (parent) under the module (grandparent).
+.decl ss_top_assign(a: node)
+ss_top_assign(a) :- node(_, a, "assignment", _, _), child(es, a, _), node(_, es, "expression_statement", _, _),
+    child(m, es, _), node(_, m, "module", _, _).
+
+// An assignment whose `left` is the identifier x.
+.decl ss_assign_to(a: node, x: symbol)
+ss_assign_to(a, x) :- node(_, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x).
+
+.decl ss_class_k(kind: symbol)
+ss_class_k("class_definition").
+.decl ss_assign_k(kind: symbol)
+ss_assign_k("assignment").
+.decl ss_import_k(kind: symbol)
+ss_import_k("import_statement"). ss_import_k("import_from_statement").
+
+// functions: module-level function_definitions, their name and span; ss_fn_def those whose text starts `def`
+// (`sync`: not async).
+.decl ss_fn(d: number, f: node, name: symbol, start: number, end: number)
+ss_fn(d, f, x, s, e) :- node(d, f, "function_definition", s, e), ss_doc(d, _), ss_top(f), field(f, "name", nm), text(nm, x).
+.decl ss_fn_def(f: node)
+ss_fn_def(f) :- ss_fn(_, f, _, _, _), !op(f, "async").
+
+// The first (least start) module-level function of a name in a document.
+.decl ss_fn_first(d: number, f: node, name: symbol, start: number, end: number)
+ss_fn_first(d, f, x, s, e) :- ss_fn(d, f, x, s, e), s = min t : { ss_fn(d, _, x, t, _) }.
+
+// members: an assignment to an identifier anywhere inside a module-level class (`inside`, stopBy end, so methods'
+// assignments too), with that class's name.
+.decl ss_member(d: number, cls: symbol, x: symbol)
+ss_member(d, c, x) :- ss_assign_to(a, x), node(d, a, _, _, _), ss_doc(d, _), inside(a, k, ss_class_k), ss_top(k),
+    field(k, "name", cn), text(cn, c).
+
+// specs: a module-level class named `…Spec`, decorated by `@dataclass` or `@dataclass(…)` (the decorator's own
+// child an identifier `dataclass`, or a call whose `function` is one).
+.decl ss_dataclass_decorator(dec: node)
+ss_dataclass_decorator(dec) :- node(_, dec, "decorator", _, _), child(dec, i, _), node(_, i, "identifier", _, _), text(i, "dataclass").
+ss_dataclass_decorator(dec) :- node(_, dec, "decorator", _, _), child(dec, c, _), node(_, c, "call", _, _), field(c, "function", f),
+    node(_, f, "identifier", _, _), text(f, "dataclass").
+.decl ss_spec(d: number, x: symbol)
+ss_spec(d, x) :- node(d, k, "class_definition", _, _), ss_doc(d, _), ss_top(k), field(k, "name", cn), text(cn, x), suffix("Spec", x),
+    child(dd, k, _), node(_, dd, "decorated_definition", _, _), child(dd, dec, _), ss_dataclass_decorator(dec).
+
+// The string evidence: a `string` or `concatenated_string` whose text starts with only r/u prefix letters
+// (`(?i)^[ru]*["']`; a concatenated string's text starts with its first part's), in a valid in-scope document.
+.decl ss_strnode(d: number, n: node, start: number, end: number)
+ss_strnode(d, n, s, e) :- node(d, n, "string", s, e), ss_doc(d, _), strprefix(n, p), match("[ru]*", p).
+ss_strnode(d, n, s, e) :- node(d, n, "concatenated_string", s, e), ss_doc(d, _), child(n, f, 0), strprefix(f, p), match("[ru]*", p).
+
+// Its value: W's decoded value, the empty text where W's is unknown.
+.decl ss_val(n: node, v: symbol)
+ss_val(n, v) :- ss_strnode(_, n, _, _), value(n, v).
+ss_val(n, "") :- ss_strnode(_, n, _, _), !value(n, _).
+
+// strings: every such string, with its value.
+.decl ss_string(d: number, n: node, start: number, end: number, v: symbol)
+ss_string(d, n, s, e, v) :- ss_strnode(d, n, s, e), ss_val(n, v).
+
+// registry: the strings anywhere inside a module-level `SIGNED_POST_OP_SYMBOLS = …`.
+.decl ss_registry_node(d: number, n: node)
+ss_registry_node(d, n) :- ss_strnode(d, n, _, _), inside(n, a, ss_assign_k), ss_assign_to(a, "SIGNED_POST_OP_SYMBOLS"), ss_top_assign(a).
+.decl ss_registry(d: number, n: node, v: symbol)
+ss_registry(d, n, v) :- ss_registry_node(d, n), ss_val(n, v).
+
+// signature: the strings anywhere inside a module-level annotated `ALLOWLIST_SIGNATURE: T = …`.
+.decl ss_signature(d: number, n: node, start: number)
+ss_signature(d, n, s) :- ss_strnode(d, n, s, _), inside(n, a, ss_assign_k), ss_assign_to(a, "ALLOWLIST_SIGNATURE"), field(a, "type", _),
+    ss_top_assign(a).
+
+// runtime_refs: a forbidden runtime-ref name as an identifier (not in an import, not the name of a def, class or
+// keyword argument, not an attribute's `attribute`), as an attribute's `attribute` (the attribute's row), or as a
+// string's value.
+.decl ss_ref_name(x: symbol)
+ss_ref_name("RebaseResultCollectorSpec"). ss_ref_name("ResolvedRefs"). ss_ref_name("RuntimeReferenceField").
+ss_ref_name("RuntimeStructuredResultSpec"). ss_ref_name("lookup_ref"). ss_ref_name("require_runtime_ref").
+ss_ref_name("runtime_ref"). ss_ref_name("runtime_ref_ids"). ss_ref_name("runtime_refs"). ss_ref_name("source_ref").
+ss_ref_name("source_ref_id"). ss_ref_name("sys_id_ref"). ss_ref_name("validated_expires_at_holder").
+ss_ref_name("validation_state_holder"). ss_ref_name("visible_rows_ref").
+.decl ss_ref_slot(n: node)
+ss_ref_slot(n) :- field(p, "name", n), node(_, p, "function_definition", _, _).
+ss_ref_slot(n) :- field(p, "name", n), node(_, p, "class_definition", _, _).
+ss_ref_slot(n) :- field(p, "name", n), node(_, p, "keyword_argument", _, _).
+ss_ref_slot(n) :- field(p, "attribute", n), node(_, p, "attribute", _, _).
+.decl ss_runtime_ref(d: number, n: node)
+ss_runtime_ref(d, n) :- node(d, n, "identifier", _, _), ss_doc(d, _), text(n, x), ss_ref_name(x), !inside(n, _, ss_import_k), !ss_ref_slot(n).
+ss_runtime_ref(d, n) :- node(d, n, "attribute", _, _), ss_doc(d, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, x), ss_ref_name(x).
+ss_runtime_ref(d, n) :- ss_string(d, n, _, _, v), ss_ref_name(v).
+
+// flags: a module-level `ENFORCE_POST_OP_RUNTIME_ALLOWLIST = …`.
+.decl ss_flag(d: number)
+ss_flag(d) :- ss_assign_to(a, "ENFORCE_POST_OP_RUNTIME_ALLOWLIST"), ss_top_assign(a), node(d, a, _, _, _), ss_doc(d, _).
+
+// verification: a call of `_post_op_allowlist_signature_valid` or `verify_allowlist` (bare, or as an attribute's
+// `attribute`), its span and line.
+.decl ss_verify_name(x: symbol)
+ss_verify_name("_post_op_allowlist_signature_valid"). ss_verify_name("verify_allowlist").
+.decl ss_verification(d: number, s: number, e: number, l: number)
+ss_verification(d, s, e, l) :- node(d, c, "call", s, e), ss_doc(d, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, x),
+    ss_verify_name(x), line(c, l).
+ss_verification(d, s, e, l) :- node(d, c, "call", s, e), ss_doc(d, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, x), ss_verify_name(x), line(c, l).
+
+// returns: every return_statement, its span and line.
+.decl ss_return(d: number, s: number, e: number, l: number)
+ss_return(d, s, e, l) :- node(d, r, "return_statement", s, e), ss_doc(d, _), line(r, l).
+
+// ---- stages -------------------------------------------------------------------------------------------------------
+
+// overrides: the fateOverrides items, each split at its first "=" as substr/instr do (no "=": symbol "" and the
+// whole entry as fate). ss_override_rest(e, q): q a suffix of e with no "=" before it (suffixes only).
+.decl ss_override_rest(e: symbol, q: symbol)
+ss_override_rest(e, e) :- option_json("fateOverrides", _, e).
+ss_override_rest(e, t) :- ss_override_rest(e, q), strlen(q) > 0, substr(q, 0, 1) != "=", t = substr(q, 1, 1000000000).
+.decl ss_override(entry: symbol, sym: symbol, fate: symbol)
+ss_override(e, s, f) :- ss_override_rest(e, q), substr(q, 0, 1) = "=", s = substr(e, 0, strlen(e) - strlen(q)), f = substr(q, 1, 1000000000).
+ss_override(e, "", e) :- ss_override_rest(e, "").
+.decl ss_override_sym(sym: symbol)
+ss_override_sym(s) :- ss_override(_, s, _).
+
+// The overrides in the option's order: item i at pointer "/i", the index read from its decimal digits (no
+// number-parsing functor: written out for indices below 1000000, more than any option list holds).
+.decl ss_digit(c: symbol, v: number)
+ss_digit("0", 0). ss_digit("1", 1). ss_digit("2", 2). ss_digit("3", 3). ss_digit("4", 4).
+ss_digit("5", 5). ss_digit("6", 6). ss_digit("7", 7). ss_digit("8", 8). ss_digit("9", 9).
+.decl ss_ov_digits(p: symbol, ds: symbol)
+ss_ov_digits(p, ds) :- option_json("fateOverrides", p, _), substr(p, 0, 1) = "/", ds = substr(p, 1, 1000000000).
+.decl ss_ov_index(i: number, e: symbol)
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 1, ss_digit(ds, i).
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 2, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), i = a * 10 + b.
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 3, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), ss_digit(substr(ds, 2, 1), c), i = a * 100 + b * 10 + c.
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 4, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), ss_digit(substr(ds, 2, 1), c), ss_digit(substr(ds, 3, 1), x), i = a * 1000 + b * 100 + c * 10 + x.
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 5, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), ss_digit(substr(ds, 2, 1), c), ss_digit(substr(ds, 3, 1), x), ss_digit(substr(ds, 4, 1), y),
+    i = a * 10000 + b * 1000 + c * 100 + x * 10 + y.
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 6, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), ss_digit(substr(ds, 2, 1), c), ss_digit(substr(ds, 3, 1), x), ss_digit(substr(ds, 4, 1), y),
+    ss_digit(substr(ds, 5, 1), z), i = a * 100000 + b * 10000 + c * 1000 + x * 100 + y * 10 + z.
+.decl ss_ov_at(i: number, sym: symbol, fate: symbol)
+ss_ov_at(i, s, f) :- ss_ov_index(i, e), ss_override(e, s, f).
+// The scalar subqueries' fate of a symbol (fates, POSTOP002): the first override's in the option's order (a scan of
+// the overrides stage, a UNION ALL of the items in order).
+.decl ss_first_override(sym: symbol, fate: symbol)
+ss_first_override(s, f) :- ss_ov_at(i, s, f), i = min j : { ss_ov_at(j, s, _) }.
+
+// memberships: PostOpKind/PostOpBehavior members of post_op.py and post_op_specs.py, "Class.NAME".
+.decl ss_membership(sym: symbol)
+ss_membership(cat(c, cat(".", x))) :- ss_member(d, c, x), ss_doc(d, p), (p = "l2070_batching/post_op.py" ; p = "l2070_batching/post_op_specs.py"),
+    (c = "PostOpKind" ; c = "PostOpBehavior").
+
+// fates: each membership's first override fate, else audit_required.
+.decl ss_fate(sym: symbol, fate: symbol)
+ss_fate(s, f) :- ss_membership(s), ss_first_override(s, f).
+ss_fate(s, "audit_required") :- ss_membership(s), !ss_override_sym(s).
+
+// ---- signatures: the stages fate_valid, surface_valid and runtime_valid ----------------------------------------
+.decl ss_key(hex: symbol)
+ss_key("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6").
+
+// fates' "symbol=fate" entries (one per membership: fates is a row per distinct membership).
+.decl ss_fate_entry(entry: symbol)
+ss_fate_entry(cat(s, cat("=", f))) :- ss_fate(s, f).
+
+// surface: post_op.py's PostOpKind/PostOpBehavior members and post_op_specs.py's DomainPostOpDecoderKind members,
+// post_op.py's module-level sync `…_post_op` functions, post_op_specs.py's spec classes.
+.decl ss_surface(sym: symbol)
+ss_surface(cat(c, cat(".", x))) :- ss_member(d, c, x), ss_doc(d, "l2070_batching/post_op.py"), (c = "PostOpKind" ; c = "PostOpBehavior").
+ss_surface(cat(c, cat(".", x))) :- ss_member(d, c, x), ss_doc(d, "l2070_batching/post_op_specs.py"), c = "DomainPostOpDecoderKind".
+ss_surface(cat("post_op_factory.", x)) :- ss_fn(d, f, x, _, _), ss_doc(d, "l2070_batching/post_op.py"), glob("*_post_op", x), ss_fn_def(f).
+ss_surface(cat("post_op_spec.", x)) :- ss_spec(d, x), ss_doc(d, "l2070_batching/post_op_specs.py").
+
+// ss_message(list, m): each stage's signed message. fates and surface are sets (DISTINCT, UNION); the registry keeps
+// a row per string (json_group_array keeps duplicates), so it is ordered by value and then by node, one element each.
+.decl ss_message(list: symbol, m: symbol)
+ss_message("fates", cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_side_effects\",\"version\":1}"))) :- ss_unit(0),
+    b = join q by e sep "," : { ss_fate_entry(e), q = @json_str(e) }.
+ss_message("surface", cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_surface\",\"version\":1}"))) :- ss_unit(0),
+    b = join q by e sep "," : { ss_surface(e), q = @json_str(e) }.
+ss_message("runtime", cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_runtime_allowlist\",\"version\":1}"))) :- ss_unit(0),
+    b = join q by (v, n) sep "," : { ss_reg(n, v), q = @json_str(v) }.
+
+// reachable: the `assertion.*`/`materializer.*` string values strictly inside post_op.py's first
+// `post_op_runtime_symbol` (f.start < s.start, s.end <= f.end), and "decoder.DomainPostOpDecoderKind.NAME" for
+// post_op_specs.py's DomainPostOpDecoderKind members.
+.decl ss_reachable(sym: symbol)
+ss_reachable(v) :- ss_string(d, _, s, e, v), ss_doc(d, "l2070_batching/post_op.py"), (prefix("assertion.", v) ; prefix("materializer.", v)),
+    ss_fn_first(d, _, "post_op_runtime_symbol", fs, fe), fs < s, fe >= e.
+ss_reachable(cat("decoder.", cat(c, cat(".", x)))) :- ss_member(d, c, x), ss_doc(d, "l2070_batching/post_op_specs.py"), c = "DomainPostOpDecoderKind".
+
+// The runtime registry: post_op_allowlist.py's registry strings.
+.decl ss_reg(n: node, v: symbol)
+ss_reg(n, v) :- ss_registry(d, n, v), ss_doc(d, "l2070_batching/post_op_allowlist.py").
+.decl ss_reg_value(v: symbol)
+ss_reg_value(v) :- ss_reg(_, v).
+
+// runtime_valid's signature: the value of post_op_allowlist.py's first ALLOWLIST_SIGNATURE string (least __start,
+// '' when there is none). At a tie (a concatenated_string and its first part start together) this takes the
+// concatenated_string [sig-tie]: APPROXIMATION, W's `ORDER BY __start LIMIT 1` leaves the choice among rows of
+// equal __start to SQLite, unspecified.
+.decl ss_sig_start(s: number)
+ss_sig_start(m) :- ss_signature(d, _, _), ss_doc(d, "l2070_batching/post_op_allowlist.py"), m = min s : { ss_signature(d, _, s) }.
+.decl ss_sig_node(n: node)
+ss_sig_node(n) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "concatenated_string", _, _).
+ss_sig_node(n) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "string", _, _), !ss_sig_concat_at(m).
+.decl ss_sig_concat_at(s: number)
+ss_sig_concat_at(m) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "concatenated_string", _, _).
+// Its decoded value (coalesce(…, '')).
+.decl ss_sig_value(s: symbol)
+ss_sig_value(s) :- ss_sig_node(n), ss_val(n, s).
+ss_sig_value("") :- ss_unit(0), !ss_sig_start(_).
+
+// ss_signed_with(list, s): the signature each stage checks, cleaned as rx_replace(…, '[^A-Za-z0-9+/=]', '').
+.decl ss_signed_with(list: symbol, sig: symbol)
+ss_signed_with("fates", c) :- option_value("fatesSignature", s), c = @rx_replace(s, "[^A-Za-z0-9+/=]", "").
+ss_signed_with("surface", c) :- option_value("surfaceSignature", s), c = @rx_replace(s, "[^A-Za-z0-9+/=]", "").
+ss_signed_with("runtime", c) :- ss_sig_value(s), c = @rx_replace(s, "[^A-Za-z0-9+/=]", "").
+.decl ss_verified(list: symbol)
+ss_verified(l) :- ss_message(l, m), ss_signed_with(l, s), ss_key(k), @ed25519_ok(k, m, s) = 1.
+.decl ss_fate_valid(x: number)
+ss_fate_valid(0) :- ss_verified("fates").
+.decl ss_surface_valid(x: number)
+ss_surface_valid(0) :- ss_verified("surface").
+.decl ss_runtime_valid(x: number)
+ss_runtime_valid(0) :- ss_verified("runtime").
+
+// verifiers: each document's first module-level `assert_post_op_symbol_signed`, and the least line of a
+// verification call within its span (none: no row of ss_verifier_first).
+.decl ss_verifier(d: number, s: number, e: number)
+ss_verifier(d, s, e) :- ss_fn_first(d, _, "assert_post_op_symbol_signed", s, e).
+.decl ss_verify_in(d: number, s: number, l: number)
+ss_verify_in(d, s, l) :- ss_verifier(d, s, e), ss_verification(d, vs, ve, l), vs >= s, ve <= e.
+.decl ss_verifier_first(d: number, s: number, l: number)
+ss_verifier_first(d, s, l) :- ss_verify_in(d, s, _), l = min x : { ss_verify_in(d, s, x) }.
+
+// bypass: the documents with the flag, without a verifier, whose verifier verifies nothing, or returns before its
+// first verification.
+.decl ss_bypass(d: number)
+ss_bypass(d) :- ss_doc(d, _), ss_flag(d).
+ss_bypass(d) :- ss_doc(d, _), !ss_verifier(d, _, _).
+ss_bypass(d) :- ss_verifier(d, s, _), !ss_verifier_first(d, s, _).
+ss_bypass(d) :- ss_verifier(d, s, e), ss_verifier_first(d, s, l), ss_return(d, rs, re, rl), rs >= s, re <= e, rl < l.
+
+// The entryPoint option.
+.decl ss_entry(ep: symbol)
+ss_entry(ep) :- option_value("entryPoint", ep).
+
+// trusted_overrides: every override for entryPoint _collect_violations, else the overrides when fate_valid.
+.decl ss_trusted(entry: symbol, sym: symbol, fate: symbol)
+ss_trusted(o, s, f) :- ss_override(o, s, f), ss_entry("_collect_violations").
+ss_trusted(o, s, f) :- ss_override(o, s, f), ss_entry(ep), ep != "_collect_violations", ss_fate_valid(0).
+.decl ss_trusted_sym(sym: symbol)
+ss_trusted_sym(s) :- ss_trusted(_, s, _).
+
+// ---- findings ------------------------------------------------------------------------------------------------------
+
+.decl ss_bad_fate(f: symbol)
+ss_bad_fate("audit_required"). ss_bad_fate("delete_after_inline"). ss_bad_fate("move_to_domain_step").
+ss_bad_fate("move_to_plan_effect"). ss_bad_fate("move_to_sql").
+.decl ss_broad(v: symbol)
+ss_broad("materializer.generic"). ss_broad("materializer.materialize_result"). ss_broad("materializer.terminal_array").
+ss_broad("materializer.terminal_object"). ss_broad("materializer.terminal_scalar").
+
+.decl ss_finding(code: symbol)
+// POSTOP200: a runtime ref in post_op.py, post_op_specs.py or post_op_domain_decoders.py.
+ss_finding("POSTOP200") :- ss_runtime_ref(d, _), ss_doc(d, p),
+    (p = "l2070_batching/post_op.py" ; p = "l2070_batching/post_op_specs.py" ; p = "l2070_batching/post_op_domain_decoders.py").
+// POSTOP203: post_op_allowlist.py bypasses verification.
+ss_finding("POSTOP203") :- ss_bypass(d), ss_doc(d, "l2070_batching/post_op_allowlist.py").
+// POSTOP204: a registry value outside assertion.*, decoder.DomainPostOpDecoderKind.*, materializer.*, or broad.
+ss_finding("POSTOP204") :- ss_reg(_, v), !prefix("assertion.", v), !prefix("decoder.DomainPostOpDecoderKind.", v), !prefix("materializer.", v).
+ss_finding("POSTOP204") :- ss_reg(_, v), ss_broad(v).
+// POSTOP205: a reachable symbol the registry lacks.
+ss_finding("POSTOP205") :- ss_reachable(s), !ss_reg_value(s).
+// POSTOP206: a registry value not reachable.
+ss_finding("POSTOP206") :- ss_reg_value(v), !ss_reachable(v).
+// POSTOP202, POSTOP201: the runtime, surface signature does not verify.
+ss_finding("POSTOP202") :- ss_unit(0), !ss_runtime_valid(0).
+ss_finding("POSTOP201") :- ss_unit(0), !ss_surface_valid(0).
+// POSTOP001: a trusted override naming no membership.
+ss_finding("POSTOP001") :- ss_trusted(_, s, _), !ss_membership(s).
+// POSTOP002: a membership whose first trusted fate (else audit_required) must be burnt down.
+ss_finding("POSTOP002") :- ss_membership(s), ss_trusted_sym(s), ss_first_override(s, f), ss_bad_fate(f).
+ss_finding("POSTOP002") :- ss_membership(s), !ss_trusted_sym(s).
+
+.decl ss_any_finding(x: number)
+ss_any_finding(0) :- ss_finding(_).
+
+// The query, by entryPoint.
+.decl ss_case(ep: symbol)
+ss_case("_collect_runtime_allowlist_bypass_violations_from_tree"). ss_case("_collect_violations").
+ss_case("_collect_broad_runtime_authority_violations"). ss_case("_collect_exact_runtime_symbol_coverage_violations").
+// Any other entryPoint (the default, plugin.reporter): findings, and POSTOP000 when fate_valid fails and there is
+// no finding.
+violation("data-layer-post-op-side-effects", "signed-surface", c, "l2070_batching/post_op.py", 1) :- ss_entry(ep), !ss_case(ep), ss_finding(c).
+violation("data-layer-post-op-side-effects", "signed-surface", "POSTOP000", "l2070_batching/post_op.py", 1) :- ss_entry(ep), !ss_case(ep),
+    !ss_fate_valid(0), !ss_any_finding(0).
+// _collect_runtime_allowlist_bypass_violations_from_tree: POSTOP203 at the start of each module that bypasses.
+violation("data-layer-post-op-side-effects", "signed-surface", "POSTOP203", p, 1) :-
+    ss_entry("_collect_runtime_allowlist_bypass_violations_from_tree"), ss_bypass(d), ss_doc(d, p).
+// _collect_violations: every finding.
+violation("data-layer-post-op-side-effects", "signed-surface", c, "l2070_batching/post_op.py", 1) :- ss_entry("_collect_violations"), ss_finding(c).
+// _collect_broad_runtime_authority_violations: POSTOP204 only.
+violation("data-layer-post-op-side-effects", "signed-surface", "POSTOP204", "l2070_batching/post_op.py", 1) :-
+    ss_entry("_collect_broad_runtime_authority_violations"), ss_finding("POSTOP204").
+// _collect_exact_runtime_symbol_coverage_violations: POSTOP205 and POSTOP206.
+violation("data-layer-post-op-side-effects", "signed-surface", c, "l2070_batching/post_op.py", 1) :-
+    ss_entry("_collect_exact_runtime_symbol_coverage_violations"), ss_finding(c), (c = "POSTOP205" ; c = "POSTOP206").

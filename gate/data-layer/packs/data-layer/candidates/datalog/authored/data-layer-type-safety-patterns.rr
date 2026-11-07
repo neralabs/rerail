@@ -1,0 +1,134 @@
+// data-layer-type-safety-patterns: the clauses the converter does not convert (decision 0043).
+// Policy: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-type-safety-patterns.json.
+// text-deprecated_filter_method is the converter's (../data-layer-type-safety-patterns.rr); every other clause is here.
+// Common to all: `syntax: valid` is !syntax_error(d); a W `regex` on a node is a search over its node_text (match() is
+// whole-string, so the pattern is wrapped as (?s:.*)(?:…)(?s:.*)); `file.path.notRegex` a negated match on the path;
+// the finding is at the matched node's line(n, l). `has {field, stopBy: neighbor}` tests the field child only
+// (W's FieldRelation::find_has, StopBy::Neighbor).
+// Regex dialect: W's `\b`/`\s` are Unicode (the regex crate's defaults), and so are match()'s (fixture: `str\b`
+// before `é` does not match in either).
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: loc, s: symbol)
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl node_text(n: node, s: symbol)
+.decl tape_line(d: number, l: number, sp: span)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.input node_text, tape_line, token
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// ---- text-str_union_expression, text-str_union_field (TSP001): `str | Expression`, `Expression | str` (Field alike) ----
+// A binary_operator whose operator token is `|` (`has {field: operator, regex: ^\|$}`: op(n, "|"), op being the
+// operator field's token text), its left and right field children's node_text searched. Exact.
+.decl text_str_union_bin(d: number, n: node, a: symbol, b: symbol)
+text_str_union_bin(d, n, sa, sb) :- node(d, n, "binary_operator", _, _), op(n, "|"), field(n, "left", x), node_text(x, sa),
+    field(n, "right", y), node_text(y, sb).
+violation("data-layer-type-safety-patterns", "text-str_union_expression", "TSP001", p, l) :- text_str_union_bin(d, n, sa, sb), match("(?s:.*)(?:\\bstr$)(?s:.*)", sa), match("(?s:.*)(?:^Expression)(?s:.*)", sb),
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l), !match("(?s:.*)(?:^(?:impl/common/l2060_query_spec/query_spec\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l5200_sql_query/_base\\.py|impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query\\.py|impl/common/l7300_cross_branch/sql_cross_branch_query\\.py|l2055_lazy_result/lazy_reads\\.py|l2055_lazy_result/query_spec\\.py|l9700_graph_query/graph_pattern\\.py)$)(?s:.*)", p).
+violation("data-layer-type-safety-patterns", "text-str_union_expression", "TSP001", p, l) :- text_str_union_bin(d, n, sa, sb), match("(?s:.*)(?:\\bExpression$)(?s:.*)", sa), match("(?s:.*)(?:^str)(?s:.*)", sb),
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l), !match("(?s:.*)(?:^(?:impl/common/l2060_query_spec/query_spec\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l5200_sql_query/_base\\.py|impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query\\.py|impl/common/l7300_cross_branch/sql_cross_branch_query\\.py|l2055_lazy_result/lazy_reads\\.py|l2055_lazy_result/query_spec\\.py|l9700_graph_query/graph_pattern\\.py)$)(?s:.*)", p).
+violation("data-layer-type-safety-patterns", "text-str_union_field", "TSP001", p, l) :- text_str_union_bin(d, n, sa, sb), match("(?s:.*)(?:\\bstr$)(?s:.*)", sa), match("(?s:.*)(?:^Field)(?s:.*)", sb),
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l), !match("(?s:.*)(?:^(?:impl/common/l2060_query_spec/query_spec\\.py|impl/common/l5200_sql_query/_base\\.py|impl/common/l7300_cross_branch/sql_cross_branch_query\\.py|impl/mongodb/query\\.py|l2060_query_builder/plan_query_builder\\.py)$)(?s:.*)", p).
+violation("data-layer-type-safety-patterns", "text-str_union_field", "TSP001", p, l) :- text_str_union_bin(d, n, sa, sb), match("(?s:.*)(?:\\bField$)(?s:.*)", sa), match("(?s:.*)(?:^str)(?s:.*)", sb),
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l), !match("(?s:.*)(?:^(?:impl/common/l2060_query_spec/query_spec\\.py|impl/common/l5200_sql_query/_base\\.py|impl/common/l7300_cross_branch/sql_cross_branch_query\\.py|impl/mongodb/query\\.py|l2060_query_builder/plan_query_builder\\.py)$)(?s:.*)", p).
+
+// ---- text-expression_any_any (TSP001): a subscript or generic_type whose text ends in Expression[Any, Any] ----
+// Exact.
+.decl text_expression_any_any_kind(kind: symbol)
+text_expression_any_any_kind("subscript"). text_expression_any_any_kind("generic_type").
+violation("data-layer-type-safety-patterns", "text-expression_any_any", "TSP001", p, l) :- node(d, n, k, _, _), text_expression_any_any_kind(k), node_text(n, s),
+    match("(?s:.*)(?:\\bExpression\\s*\\[\\s*Any\\s*,\\s*Any\\s*\\]$)(?s:.*)", s), doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l), !match("(?s:.*)(?:^(?:impl/common/l2070_server_plan/steps/intent_cross_branch\\.py|impl/common/l2070_server_plan/steps/intent_history\\.py|impl/common/l2070_server_plan/steps/intent_versioning\\.py|impl/common/l2100_sql_grammar/versioned_aggregate\\.py|impl/common/l4000_policy_expression/translator\\.py|impl/common/l7300_cross_branch/permission_expression_compiler\\.py|impl/common/l7300_sql_versioned_transactions/sql_write_transaction\\.py|impl/neo4j/backend_operations\\.py|l1000_schema/typed_field\\.py|l2000_connection/versioned_protocols\\.py|l2050_transaction/transaction\\.py|l2055_lazy_result/execution_context\\.py|l2055_lazy_result/lazy_reads\\.py|l2055_lazy_result/query_spec\\.py|l2060_query_builder/plan_query_builder\\.py|l2060_query_builder/query_builder\\.py|l2060_query_builder/tuple_query\\.py|l2080_lazy_orm/lazy_column\\.py|l2080_lazy_orm/lazy_table\\.py|l4000_permissions/permission_enforcement\\.py|l4000_permissions/policy_expressions\\.py|l4100_queue/hooks\\.py|l7200_versioned_transactions/revision_history_query\\.py|l7200_versioned_transactions/versioned_transactions\\.py)$)(?s:.*)", p).
+
+// ---- text-deprecated_comparison_op (TSP001): `_lt=`, `_lt:`, `_lt ==`, `_lt :=`, `x._lt =` … ----
+// W: an identifier `_lt|_gt|_le|_ge|_eq|_ne` (m = the identifier), or one that is the `attribute` field of an
+// attribute (m = that attribute), where `precedes {stopBy: neighbor, regex: ^(?:=|==|:|:=)$}` holds of m: m's next
+// sibling among ALL its parent's children (anonymous tokens, comments, line continuations) has that text. That is
+// `token`'s next row after m's own (m's row: the child of p with m's byte range), its text tested whole (the regex is
+// anchored, `$` the text's end); a named next sibling (`f"{_lt:}"`'s format_specifier `:`) is a row with its text
+// too. Exact.
+.decl text_deprecated_comparison_op_name(n: node)
+text_deprecated_comparison_op_name(n) :- node(_, n, "identifier", _, _), text(n, s),
+    (s = "_lt" ; s = "_gt" ; s = "_le" ; s = "_ge" ; s = "_eq" ; s = "_ne").
+// m for identifier n: n itself, or the attribute whose `attribute` field n is.
+.decl text_deprecated_comparison_op_m(n: node, m: node)
+text_deprecated_comparison_op_m(n, n) :- text_deprecated_comparison_op_name(n).
+text_deprecated_comparison_op_m(n, a) :- text_deprecated_comparison_op_name(n), field(a, "attribute", n), node(_, a, "attribute", _, _).
+.decl text_deprecated_comparison_op_hit(m: node)
+text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_m(_, m), child(p, m, _), node(_, m, _, s, e), token(p, i, _, s, e),
+    j = i + 1, token(p, j, t, _, _), match("=|==|:|:=", t).
+violation("data-layer-type-safety-patterns", "text-deprecated_comparison_op", "TSP001", p, l) :- text_deprecated_comparison_op_m(n, m), text_deprecated_comparison_op_hit(m), node(d, n, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+
+// ---- signature-where, signature-select, signature-group_by (TSP001): a def of that name whose text (body included)
+// matches the clause's regex (W's `regex` on the function_definition: its whole node_text). Exact.
+.decl signature_def(d: number, n: node, name: symbol)
+signature_def(d, n, s) :- node(d, n, "function_definition", _, _), field(n, "name", x), node(_, x, "identifier", _, _), text(x, s).
+violation("data-layer-type-safety-patterns", "signature-where", "TSP001", p, l) :- signature_def(d, n, "where"), node_text(n, s), match("(?s:.*)(?:expression\\s*:\\s*str\\b|:\\s*str\\s*\\|)(?s:.*)", s),
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-type-safety-patterns", "signature-select", "TSP001", p, l) :- signature_def(d, n, "select"), node_text(n, s), match("(?s:.*)(?:\\*columns\\s*:\\s*str\\b|columns\\s*:\\s*str\\b|:\\s*str\\s*\\|)(?s:.*)", s),
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l), !match("(?s:.*)(?:^(?:impl/common/l2060_query_spec/query_spec\\.py|impl/common/l5200_sql_query/_base\\.py|l9700_graph_query/graph_pattern\\.py|l9700_graph_query/query_builder\\.py)$)(?s:.*)", p).
+violation("data-layer-type-safety-patterns", "signature-group_by", "TSP001", p, l) :- signature_def(d, n, "group_by"), node_text(n, s), match("(?s:.*)(?:\\*columns\\s*:\\s*str\\b|columns\\s*:\\s*str\\b|:\\s*str\\s*\\|)(?s:.*)", s),
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l), !match("(?s:.*)(?:^(?:impl/common/l2060_query_spec/query_spec\\.py|impl/common/l5200_sql_query/_base\\.py|impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query\\.py)$)(?s:.*)", p).
+
+// ---- signature-order_by (TSP001): a def order_by whose signature window names column as a str ----
+// W (matcher/layout.rs, `context {after: 10, through, regex}`): with L the def's first line and last the file's last
+// line, the window is lines L..min(L+10, last), cut at the first line in it whose text (terminator left out) matches
+// `through`; `regex` is searched over source[start(L)..end(window's last)], the lines joined with their terminators.
+// Here: tape_line's lines (W's layout lines: \r\n, \r, \n) of the window joined with "\n" (signature_order_by_window,
+// one non-recursive rule per window length). The join changes no verdict of this regex: a terminator (\r\n, \r or
+// \n) and "\n" are each a non-empty run of characters all in \s and in [^,)] and none a word character, and these
+// are the only parts of the regex (\s*, [^,)]+, [^,)]*, \b) that can meet one; its literals (column, :, str, |)
+// never do. A missing empty last line (a file ending in a terminator) adds nothing a match needs either (every
+// alternative ends in \b or `column`, and \b holds at the text's end). Exact.
+.decl signature_order_by_fn(d: number, n: node, l: number)
+signature_order_by_fn(d, n, l) :- node(d, n, "function_definition", _, _), field(n, "name", x), node(_, x, "identifier", _, _), text(x, "order_by"),
+    doc(d, p, _), !match("(?s:.*)(?:^(?:impl/common/l2060_query_spec/query_spec\\.py|impl/common/l5200_sql_query/_base\\.py|impl/common/l7300_cross_branch/sql_cross_branch_query\\.py|l9750_graphql/executor\\.py)$)(?s:.*)", p), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+.decl signature_order_by_line(d: number, l: number, s: symbol)
+signature_order_by_line(d, l, s) :- signature_order_by_fn(d, _, l0), signature_order_by_offset(k), l = l0 + k, tape_line(d, l, sp), text(sp, s).
+.decl signature_order_by_offset(k: number)
+signature_order_by_offset(0). signature_order_by_offset(1). signature_order_by_offset(2). signature_order_by_offset(3). signature_order_by_offset(4). signature_order_by_offset(5). signature_order_by_offset(6). signature_order_by_offset(7). signature_order_by_offset(8). signature_order_by_offset(9). signature_order_by_offset(10).
+.decl signature_order_by_through(d: number, l: number)
+signature_order_by_through(d, l) :- signature_order_by_line(d, l, s), match("(?s:.*)(?:\\):|\\) ->)(?s:.*)", s).
+// j: the window's last line is L + j.
+.decl signature_order_by_end(n: node, j: number)
+signature_order_by_end(n, 0) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0).
+signature_order_by_end(n, 1) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0).
+signature_order_by_end(n, 2) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1).
+signature_order_by_end(n, 3) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2).
+signature_order_by_end(n, 4) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3).
+signature_order_by_end(n, 5) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4).
+signature_order_by_end(n, 6) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 6), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5).
+signature_order_by_end(n, 7) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 7), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0 + 6).
+signature_order_by_end(n, 8) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 8), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0 + 6), !signature_order_by_through(d, l0 + 7).
+signature_order_by_end(n, 9) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 9), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0 + 6), !signature_order_by_through(d, l0 + 7), !signature_order_by_through(d, l0 + 8).
+signature_order_by_end(n, 10) :- signature_order_by_fn(d, n, l0), signature_order_by_through(d, l0 + 10), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0 + 6), !signature_order_by_through(d, l0 + 7), !signature_order_by_through(d, l0 + 8), !signature_order_by_through(d, l0 + 9).
+signature_order_by_end(n, 0) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, _), !signature_order_by_line(d, l0 + 1, _), !signature_order_by_through(d, l0).
+signature_order_by_end(n, 1) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 1, _), !signature_order_by_line(d, l0 + 2, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1).
+signature_order_by_end(n, 2) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 2, _), !signature_order_by_line(d, l0 + 3, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2).
+signature_order_by_end(n, 3) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 3, _), !signature_order_by_line(d, l0 + 4, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3).
+signature_order_by_end(n, 4) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 4, _), !signature_order_by_line(d, l0 + 5, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4).
+signature_order_by_end(n, 5) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 5, _), !signature_order_by_line(d, l0 + 6, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5).
+signature_order_by_end(n, 6) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 6, _), !signature_order_by_line(d, l0 + 7, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0 + 6).
+signature_order_by_end(n, 7) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 7, _), !signature_order_by_line(d, l0 + 8, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0 + 6), !signature_order_by_through(d, l0 + 7).
+signature_order_by_end(n, 8) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 8, _), !signature_order_by_line(d, l0 + 9, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0 + 6), !signature_order_by_through(d, l0 + 7), !signature_order_by_through(d, l0 + 8).
+signature_order_by_end(n, 9) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 9, _), !signature_order_by_line(d, l0 + 10, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0 + 6), !signature_order_by_through(d, l0 + 7), !signature_order_by_through(d, l0 + 8), !signature_order_by_through(d, l0 + 9).
+signature_order_by_end(n, 10) :- signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0 + 10, _), !signature_order_by_through(d, l0), !signature_order_by_through(d, l0 + 1), !signature_order_by_through(d, l0 + 2), !signature_order_by_through(d, l0 + 3), !signature_order_by_through(d, l0 + 4), !signature_order_by_through(d, l0 + 5), !signature_order_by_through(d, l0 + 6), !signature_order_by_through(d, l0 + 7), !signature_order_by_through(d, l0 + 8), !signature_order_by_through(d, l0 + 9), !signature_order_by_through(d, l0 + 10).
+.decl signature_order_by_window(n: node, s: symbol)
+signature_order_by_window(n, s) :- signature_order_by_end(n, 0), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), s = s0.
+signature_order_by_window(n, s) :- signature_order_by_end(n, 1), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), s = cat(s0, cat("\n", s1)).
+signature_order_by_window(n, s) :- signature_order_by_end(n, 2), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), signature_order_by_line(d, l0 + 2, s2), s = cat(s0, cat("\n", cat(s1, cat("\n", s2)))).
+signature_order_by_window(n, s) :- signature_order_by_end(n, 3), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), signature_order_by_line(d, l0 + 2, s2), signature_order_by_line(d, l0 + 3, s3), s = cat(s0, cat("\n", cat(s1, cat("\n", cat(s2, cat("\n", s3)))))).
+signature_order_by_window(n, s) :- signature_order_by_end(n, 4), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), signature_order_by_line(d, l0 + 2, s2), signature_order_by_line(d, l0 + 3, s3), signature_order_by_line(d, l0 + 4, s4), s = cat(s0, cat("\n", cat(s1, cat("\n", cat(s2, cat("\n", cat(s3, cat("\n", s4)))))))).
+signature_order_by_window(n, s) :- signature_order_by_end(n, 5), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), signature_order_by_line(d, l0 + 2, s2), signature_order_by_line(d, l0 + 3, s3), signature_order_by_line(d, l0 + 4, s4), signature_order_by_line(d, l0 + 5, s5), s = cat(s0, cat("\n", cat(s1, cat("\n", cat(s2, cat("\n", cat(s3, cat("\n", cat(s4, cat("\n", s5)))))))))).
+signature_order_by_window(n, s) :- signature_order_by_end(n, 6), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), signature_order_by_line(d, l0 + 2, s2), signature_order_by_line(d, l0 + 3, s3), signature_order_by_line(d, l0 + 4, s4), signature_order_by_line(d, l0 + 5, s5), signature_order_by_line(d, l0 + 6, s6), s = cat(s0, cat("\n", cat(s1, cat("\n", cat(s2, cat("\n", cat(s3, cat("\n", cat(s4, cat("\n", cat(s5, cat("\n", s6)))))))))))).
+signature_order_by_window(n, s) :- signature_order_by_end(n, 7), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), signature_order_by_line(d, l0 + 2, s2), signature_order_by_line(d, l0 + 3, s3), signature_order_by_line(d, l0 + 4, s4), signature_order_by_line(d, l0 + 5, s5), signature_order_by_line(d, l0 + 6, s6), signature_order_by_line(d, l0 + 7, s7), s = cat(s0, cat("\n", cat(s1, cat("\n", cat(s2, cat("\n", cat(s3, cat("\n", cat(s4, cat("\n", cat(s5, cat("\n", cat(s6, cat("\n", s7)))))))))))))).
+signature_order_by_window(n, s) :- signature_order_by_end(n, 8), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), signature_order_by_line(d, l0 + 2, s2), signature_order_by_line(d, l0 + 3, s3), signature_order_by_line(d, l0 + 4, s4), signature_order_by_line(d, l0 + 5, s5), signature_order_by_line(d, l0 + 6, s6), signature_order_by_line(d, l0 + 7, s7), signature_order_by_line(d, l0 + 8, s8), s = cat(s0, cat("\n", cat(s1, cat("\n", cat(s2, cat("\n", cat(s3, cat("\n", cat(s4, cat("\n", cat(s5, cat("\n", cat(s6, cat("\n", cat(s7, cat("\n", s8)))))))))))))))).
+signature_order_by_window(n, s) :- signature_order_by_end(n, 9), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), signature_order_by_line(d, l0 + 2, s2), signature_order_by_line(d, l0 + 3, s3), signature_order_by_line(d, l0 + 4, s4), signature_order_by_line(d, l0 + 5, s5), signature_order_by_line(d, l0 + 6, s6), signature_order_by_line(d, l0 + 7, s7), signature_order_by_line(d, l0 + 8, s8), signature_order_by_line(d, l0 + 9, s9), s = cat(s0, cat("\n", cat(s1, cat("\n", cat(s2, cat("\n", cat(s3, cat("\n", cat(s4, cat("\n", cat(s5, cat("\n", cat(s6, cat("\n", cat(s7, cat("\n", cat(s8, cat("\n", s9)))))))))))))))))).
+signature_order_by_window(n, s) :- signature_order_by_end(n, 10), signature_order_by_fn(d, n, l0), signature_order_by_line(d, l0, s0), signature_order_by_line(d, l0 + 1, s1), signature_order_by_line(d, l0 + 2, s2), signature_order_by_line(d, l0 + 3, s3), signature_order_by_line(d, l0 + 4, s4), signature_order_by_line(d, l0 + 5, s5), signature_order_by_line(d, l0 + 6, s6), signature_order_by_line(d, l0 + 7, s7), signature_order_by_line(d, l0 + 8, s8), signature_order_by_line(d, l0 + 9, s9), signature_order_by_line(d, l0 + 10, s10), s = cat(s0, cat("\n", cat(s1, cat("\n", cat(s2, cat("\n", cat(s3, cat("\n", cat(s4, cat("\n", cat(s5, cat("\n", cat(s6, cat("\n", cat(s7, cat("\n", cat(s8, cat("\n", cat(s9, cat("\n", s10)))))))))))))))))))).
+violation("data-layer-type-safety-patterns", "signature-order_by", "TSP001", p, l) :- signature_order_by_window(n, s), match("(?s:.*)(?:column\\s*:\\s*str\\b|column\\s*:\\s*[^,)]+\\|\\s*str\\b|str\\s*\\|\\s*[^,)]*column)(?s:.*)", s), node(d, n, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).

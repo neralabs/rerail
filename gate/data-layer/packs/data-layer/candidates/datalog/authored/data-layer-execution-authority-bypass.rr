@@ -1,0 +1,181 @@
+// data-layer-execution-authority-bypass, clause authority-sites (relational, partitionBy file), options at their
+// defaults (oracleAnalyzer false, entryPoint "all"; no stage reads them). Started from
+// native/src/code_rule_dsl/logic/programs/data_layer/execution_authority_bypass.rr, with its `ast(...)` inputs
+// written out over the base relations, its @qualname folded in Datalog, its @replace(…, "/", ".") an @rx_replace
+// of the literal "/", and the module-text gate the rules-ast policy adds to raw_functions / raw_classes.
+//
+// Inputs (one relation each):
+//   raw_functions / raw_classes: every function_definition / class_definition, its name field's text, its WRAPPER
+//     the direct decorated_definition parent; only in a module whose full text matches
+//     `_legacy_boundary_var|_explicit_authority_var|explicit_execution_authority|execution_boundary`.
+//   private_symbols (AUTH001), explicit_calls (AUTH002), monkeypatches (AUTH003): the sites, as below.
+// Stages:
+//   frames: lexical_start = the wrapper's start, else the frame's own.
+//   parents: the frame p with p.start < f.start and p.end >= f.end of largest start: spans nest, so that is f's
+//     nearest function_definition / class_definition ancestor (every one is a frame where the gate holds).
+//   contexts: qualname folded down parents: a root's name; a child's parent qualname, then ".<locals>." when the
+//     child is a function and the parent's depth (functions on its chain) is > 0, else ".", then its name. The
+//     recursion runs along the tree (parents), one row per frame.
+//   sites: the frame f with f.lexical_start <= r.start and f.end >= r.end of largest start: r's def/class
+//     ancestors, and the frames whose decorated_definition wrapper holds r (r in a decorator); else "<module>".
+//     module = replace(rx_replace(path, '\.py$', ''), '/', '.'), computed as the SQL does:
+//     @rx_replace(@rx_replace(path, "\\.py$", ""), "/", ".") (a path ending `/__init__.py` gets a module ending
+//     `.__init__`, which no signed_callsites row has).
+//   private_exceptions, explicit_exceptions, signed_callsites: facts.
+// Query: AUTH001 off l2050_transaction/execution_boundary.py and not a private exception; AUTH002 not signed and
+// not an explicit exception; AUTH003 not a private exception. Key issue, code issue, at the site.
+// nthChild position k (ofRule not comment) is `child` index k-1 (`child` numbers named non-comment children).
+// The string sites read W's `value` (escapes decoded, a concatenated_string's pieces joined), whose `regex` reads
+// strings only: value(s, v) with value_type_of(s, "str").
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl node_text(n: node, s: symbol)
+.decl authority_string_kind(kind: symbol)
+authority_string_kind("string"). authority_string_kind("concatenated_string").
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl authority_frame_kinds(kind: symbol)
+authority_frame_kinds("function_definition"). authority_frame_kinds("class_definition").
+.decl authority_wrapper_kind(kind: symbol)
+authority_wrapper_kind("decorated_definition").
+.decl authority_import_kinds(kind: symbol)
+authority_import_kinds("import_statement"). authority_import_kinds("import_from_statement").
+
+// ---- the documents: parsed, in scope ----
+.decl authority_doc(d: number)
+authority_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d).
+.decl authority_gate(d: number)
+authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("_legacy_boundary_var", s).
+authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("_explicit_authority_var", s).
+authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("explicit_execution_authority", s).
+authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("execution_boundary", s).
+
+// ---- frames(f, is_function, name, lexical_start) ----
+.decl authority_frame(f: node, is_function: number, name: symbol)
+authority_frame(f, 1, x) :- node(d, f, "function_definition", _, _), authority_gate(d), field(f, "name", n), text(n, x).
+authority_frame(f, 0, x) :- node(d, f, "class_definition", _, _), authority_gate(d), field(f, "name", n), text(n, x).
+.decl authority_wrapped(f: node, w: node)
+authority_wrapped(f, w) :- authority_frame(f, _, _), child(w, f, _), node(_, w, "decorated_definition", _, _).
+
+// ---- parents and contexts ----
+.decl authority_parent(f: node, p: node)
+authority_parent(f, p) :- authority_frame(f, _, _), nearest(f, p, authority_frame_kinds), authority_frame(p, _, _).
+.decl authority_has_parent(f: node)
+authority_has_parent(f) :- authority_parent(f, _).
+.decl authority_context(f: node, qualname: symbol, depth: number)
+authority_context(f, x, k) :- authority_frame(f, k, x), !authority_has_parent(f).
+authority_context(c, q, k) :- authority_parent(c, p), authority_context(p, pq, pk), authority_frame(c, 1, x), pk > 0,
+    q = cat(pq, cat(".<locals>.", x)), k = pk + 1.
+authority_context(c, q, k) :- authority_parent(c, p), authority_context(p, pq, pk), authority_frame(c, 1, x), pk = 0,
+    q = cat(pq, cat(".", x)), k = pk + 1.
+authority_context(c, q, pk) :- authority_parent(c, p), authority_context(p, pq, pk), authority_frame(c, 0, x),
+    q = cat(pq, cat(".", x)).
+
+// ---- the sites ----
+.decl authority_private_name(s: symbol)
+authority_private_name("_explicit_authority_var"). authority_private_name("_legacy_boundary_var").
+.decl authority_name_owner(kind: symbol)
+authority_name_owner("keyword_argument"). authority_name_owner("function_definition"). authority_name_owner("class_definition").
+authority_name_owner("default_parameter"). authority_name_owner("typed_default_parameter").
+.decl authority_param_parent(kind: symbol)
+authority_param_parent("parameters"). authority_param_parent("list_splat_pattern"). authority_param_parent("dictionary_splat_pattern").
+
+// private_symbols, first branch: the identifier, not a definition, parameter, keyword or import name, nor an
+// attribute's attribute.
+.decl authority_private_excluded(r: node)
+authority_private_excluded(r) :- field(p, "attribute", r), node(_, p, "attribute", _, _).
+authority_private_excluded(r) :- field(p, "name", r), node(_, p, k, _, _), authority_name_owner(k).
+authority_private_excluded(r) :- child(p, r, _), node(_, p, k, _, _), authority_param_parent(k).
+authority_private_excluded(r) :- child(p, r, 0), node(_, p, "typed_parameter", _, _).
+.decl authority_site(r: node, issue: symbol)
+authority_site(r, "AUTH001") :- node(d, r, "identifier", _, _), authority_doc(d), text(r, s), authority_private_name(s),
+    !inside(r, _, authority_import_kinds), !authority_private_excluded(r).
+// second branch: an attribute whose attribute is one of the names.
+authority_site(r, "AUTH001") :- node(d, r, "attribute", _, _), authority_doc(d), field(r, "attribute", a),
+    node(_, a, "identifier", _, _), text(a, s), authority_private_name(s).
+// explicit_calls: a call of explicit_execution_authority, bare or as an attribute.
+authority_site(r, "AUTH002") :- node(d, r, "call", _, _), authority_doc(d), field(r, "function", f),
+    node(_, f, "identifier", _, _), text(f, "explicit_execution_authority").
+authority_site(r, "AUTH002") :- node(d, r, "call", _, _), authority_doc(d), field(r, "function", f),
+    node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _),
+    text(a, "explicit_execution_authority").
+
+// monkeypatches: `<x>.setattr(...)` whose first argument is a plain string naming a boundary private by its dotted
+// path, or whose second argument is a plain string naming one and whose first is execution_boundary.
+// A plain string: kind string or concatenated_string whose full text matches (?i)^[rub]*["'].
+.decl authority_setattr(r: node, args: node)
+authority_setattr(r, a) :- node(d, r, "call", _, _), authority_doc(d), field(r, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", x), node(_, x, "identifier", _, _), text(x, "setattr"), field(r, "arguments", a).
+.decl authority_plain_prefix(s: node)
+authority_plain_prefix(s) :- node(_, s, k, _, _), authority_string_kind(k), node_text(s, t),
+    match("(?i:[rub]*[\"'])(?s:.*)", t).
+.decl authority_dotted_private(v: symbol)
+authority_dotted_private(v) :- authority_plain_value(_, v), contains("execution_boundary._explicit_authority_var", v).
+authority_dotted_private(v) :- authority_plain_value(_, v), contains("execution_boundary._legacy_boundary_var", v).
+authority_dotted_private(v) :- authority_plain_value(_, v), contains("execution_boundary._caller_token", v).
+authority_dotted_private(v) :- authority_plain_value(_, v), contains("execution_boundary.verify_callsite_authorization", v).
+.decl authority_plain_value(s: node, v: symbol)
+authority_plain_value(s, v) :- authority_setattr(_, a), child(a, s, _), authority_plain_prefix(s), value(s, v),
+    value_type_of(s, "str").
+.decl authority_bare_private(v: symbol)
+authority_bare_private("_caller_token"). authority_bare_private("_explicit_authority_var").
+authority_bare_private("_legacy_boundary_var"). authority_bare_private("verify_callsite_authorization").
+.decl authority_boundary_ref(e: node)
+authority_boundary_ref(e) :- node(_, e, "identifier", _, _), text(e, "execution_boundary").
+authority_boundary_ref(e) :- node(_, e, "attribute", _, _), field(e, "attribute", a), node(_, a, "identifier", _, _),
+    text(a, "execution_boundary").
+authority_site(r, "AUTH003") :- authority_setattr(r, a), child(a, s, 0), authority_plain_value(s, v), authority_dotted_private(v).
+authority_site(r, "AUTH003") :- authority_setattr(r, a), child(a, s, 1), authority_plain_value(s, v), authority_bare_private(v),
+    child(a, e, 0), authority_boundary_ref(e).
+
+// ---- each site's qualname ----
+.decl authority_site_frame(r: node, f: node)
+authority_site_frame(r, f) :- authority_site(r, _), inside(r, f, authority_frame_kinds), authority_frame(f, _, _).
+authority_site_frame(r, f) :- authority_site(r, _), inside(r, w, authority_wrapper_kind), authority_wrapped(f, w).
+.decl authority_innermost(r: node, s: number)
+authority_innermost(r, s) :- authority_site_frame(r, _), s = max t : { authority_site_frame(r, f), node(_, f, _, t, _) }.
+.decl authority_qualname(r: node, q: symbol)
+authority_qualname(r, q) :- authority_site_frame(r, f), node(_, f, _, s, _), authority_innermost(r, s), authority_context(f, q, _).
+authority_qualname(r, "<module>") :- authority_site(r, _), !authority_site_frame(r, _).
+
+// ---- the exception lists ----
+.decl authority_private_exception(path: symbol, qualname: symbol)
+authority_private_exception("l2050_transaction/tests/test_execution_boundary.py", "test_explicit_execution_authority_uses_outer_callsite").
+authority_private_exception("l2050_transaction/tests/test_execution_boundary.py", "test_raw_explicit_authority_contextvar_value_does_not_authorize").
+.decl authority_explicit_exception(path: symbol, qualname: symbol)
+authority_explicit_exception("l2050_transaction/tests/test_execution_boundary.py", "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper").
+.decl authority_signed(module: symbol, qualname: symbol)
+authority_signed("impl.common.l2070_server_plan.execution_context", "explicit_plan_execution_scope").
+authority_signed("l1300_session.bootstrap", "ensure_system_session_exists.<locals>._insert_if_missing").
+authority_signed("l2000_connection.schema_transaction", "AsyncSchemaTransaction._enter_async").
+authority_signed("l2000_connection.schema_transaction", "LazySchemaTransaction._enter_sync").
+authority_signed("l2050_transaction.execution_boundary", "execute_server_plan_async").
+authority_signed("l2050_transaction.execution_boundary", "execute_server_plan_now").
+authority_signed("l3200_metadata.schema_lock", "_schema_lock_bootstrap_row").
+authority_signed("l3200_metadata.schema_lock", "_schema_lock_bootstrap_row_async").
+authority_signed("l4170_inbound_bridge.process", "_invoke_inbound_bridge_handler_eager").
+authority_signed("l7500_commit_triggers.registry", "CommitTriggerRegistry._materialize_pending_triggers_under_authority").
+authority_signed("l7500_commit_triggers.registry", "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async").
+.decl authority_signed_site(r: node)
+authority_signed_site(r) :- authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _),
+    m = @rx_replace(@rx_replace(p, "\\.py$", ""), "/", "."), authority_signed(m, q).
+
+// ---- the query ----
+violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH001", p, l) :- authority_site(r, "AUTH001"),
+    authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), p != "l2050_transaction/execution_boundary.py",
+    !authority_private_exception(p, q), line(r, l).
+violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH002", p, l) :- authority_site(r, "AUTH002"),
+    authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_signed_site(r),
+    !authority_explicit_exception(p, q), line(r, l).
+violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH003", p, l) :- authority_site(r, "AUTH003"),
+    authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_private_exception(p, q), line(r, l).

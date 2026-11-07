@@ -1,0 +1,96 @@
+// data-layer-bootstrap-lazy-sql (the same policy as data-layer-bootstrap-eager-resolve, id aside), clause `bootstrap-sql` (relational, partitionBy file), by hand.
+// Source: gate/data-layer/packs/data-layer/rules/data-layer-bootstrap-lazy-sql.json.
+//
+// The SQL reads CPython's `ast` (the `pythonAst` stage, `canonical`/`a`: one row per ast node, columns as
+// native/src/code_rule_dsl/value/python_ast/metadata.py at 40e7b6cac builds them). Here the same nodes are read
+// on tree-sitter's tree:
+// - Call is `call`; its `func` is the `function` field, parentheses dropped (CPython has no node for them);
+// - Name is `identifier` (ast_name its text), Attribute is `attribute` (ast_name its `attribute` field's text,
+//   its `value` the `object` field, parentheses dropped); every other func kind has ast_name '';
+// - For/AsyncFor is `for_statement` (its `iter` the `right` field);
+// - args[0] (field 'args', position 0) is the first child of the `argument_list` that is neither a keyword
+//   argument, a `**` splat nor a comment (CPython keeps keywords apart; `*x` is in args).
+// Lines: CPython's lineno of a Call or For is its first token's line, tree-sitter's start line.
+// The outer `WHERE instr(path,'bootstrap')>0` is contains("bootstrap", p). The gate (`syntax: valid`, an AST
+// matcher) is !syntax_error(d), tree-sitter's verdict (W's own). The `pythonAst` stage then runs CPython's
+// `ast.parse` on each gated file: the files it accepts are !cpython_syntax_error(d, _, _) (CPython 3.13's verdict).
+// In W a file it rejects fails the stage (its worker raises: the run errors); here it is skipped, no findings.
+// Options (entryPoint, parameters) are not read by this clause. Checked against the recorded batch 9-10 API
+// events (all exact) and fixtures.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// Expression slots the SQL reads through: a call's func, an attribute's value, a for's iter, a call's args[0].
+.decl bootstrap_sql_slot(n: node)
+bootstrap_sql_slot(f) :- node(_, c, "call", _, _), field(c, "function", f).
+bootstrap_sql_slot(o) :- node(_, a, "attribute", _, _), field(a, "object", o).
+bootstrap_sql_slot(v) :- node(_, s, "for_statement", _, _), field(s, "right", v).
+bootstrap_sql_slot(x) :- bootstrap_sql_arg0(_, x).
+bootstrap_sql_slot(x) :- bootstrap_sql_slot(p), node(_, p, "parenthesized_expression", _, _), child(p, x, _), !node(_, x, "comment", _, _).
+
+// bootstrap_sql_ast(n, e): e is the ast node slot n holds, parentheses dropped. Mirrors python/ast.rr unparen
+// (which takes child 0: here any non-comment child).
+.decl bootstrap_sql_ast(n: node, e: node)
+bootstrap_sql_ast(n, n) :- bootstrap_sql_slot(n), !node(_, n, "parenthesized_expression", _, _).
+bootstrap_sql_ast(n, e) :- bootstrap_sql_slot(n), node(_, n, "parenthesized_expression", _, _), child(n, x, _),
+    !node(_, x, "comment", _, _), bootstrap_sql_ast(x, e).
+
+// The `calls` stage: (call, callee_kind, callee).
+.decl bootstrap_sql_call(c: node, kind: symbol, callee: symbol)
+bootstrap_sql_call(c, "Name", s) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_sql_ast(f0, f),
+    node(_, f, "identifier", _, _), text(f, s).
+bootstrap_sql_call(c, "Attribute", s) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_sql_ast(f0, f),
+    node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s).
+// receiver: the Attribute func's value.
+.decl bootstrap_sql_receiver(c: node, r: node)
+bootstrap_sql_receiver(c, r) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_sql_ast(f0, f),
+    node(_, f, "attribute", _, _), field(f, "object", o0), bootstrap_sql_ast(o0, r).
+
+// args[0]: the first positional argument.
+.decl bootstrap_sql_positional(c: node, x: node, i: number)
+bootstrap_sql_positional(c, x, i) :- node(_, c, "call", _, _), field(c, "arguments", al), node(_, al, "argument_list", _, _),
+    child(al, x, i), !node(_, x, "keyword_argument", _, _), !node(_, x, "dictionary_splat", _, _), !node(_, x, "comment", _, _).
+.decl bootstrap_sql_first(c: node, i: number)
+bootstrap_sql_first(c, i) :- bootstrap_sql_positional(c, _, _), i = min j : { bootstrap_sql_positional(c, _, j) }.
+.decl bootstrap_sql_arg0(c: node, x: node)
+bootstrap_sql_arg0(c, x) :- bootstrap_sql_first(c, i), bootstrap_sql_positional(c, x, i).
+
+// The `iterations` stage: a For's iter, through list/tuple/set/sorted(args[0]).
+.decl bootstrap_sql_iter(f: node, v: node)
+bootstrap_sql_iter(f, v) :- node(_, f, "for_statement", _, _), field(f, "right", v0), bootstrap_sql_ast(v0, v).
+bootstrap_sql_iter(f, v) :- bootstrap_sql_iter(f, c), bootstrap_sql_call(c, "Name", s),
+    (s = "list" ; s = "tuple" ; s = "set" ; s = "sorted"), bootstrap_sql_arg0(c, a0), bootstrap_sql_ast(a0, v).
+
+// The documents the clause reads: in scope, parsed, a path holding "bootstrap".
+.decl bootstrap_sql_doc(d: number, p: symbol)
+bootstrap_sql_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _),
+    contains("bootstrap", p).
+
+// BLB-001: x.query_lazy(…).execute_lazy().
+violation("data-layer-bootstrap-lazy-sql", "bootstrap-sql", "BLB-001", p, l) :- bootstrap_sql_call(n, "Attribute", "execute_lazy"),
+    bootstrap_sql_receiver(n, r), bootstrap_sql_call(r, "Attribute", "query_lazy"),
+    node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).
+// BLB-004: an eager schema probe, any callee kind.
+violation("data-layer-bootstrap-lazy-sql", "bootstrap-sql", "BLB-004", p, l) :- bootstrap_sql_call(n, _, s),
+    (s = "physical_table_exists_many" ; s = "physical_table_exists_many_async" ; s = "table_exists_many" ;
+     s = "table_exists_many_async" ; s = "table_exists_many_for_schema_batch" ; s = "table_exists_many_for_schema_batch_async"),
+    node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).
+// BLB-003: a model materializer method.
+violation("data-layer-bootstrap-lazy-sql", "bootstrap-sql", "BLB-003", p, l) :- bootstrap_sql_call(n, "Attribute", s),
+    (s = "model_dump" ; s = "model_copy"), node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).
+// BLB-002: a For over row variables.
+violation("data-layer-bootstrap-lazy-sql", "bootstrap-sql", "BLB-002", p, l) :- bootstrap_sql_iter(n, v),
+    node(_, v, "identifier", _, _), text(v, s),
+    (s = "existing_rows" ; s = "generation_rows" ; s = "manifest_rows" ; s = "rows" ; s = "schema_state_rows" ; s = "system_session_rows"),
+    node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).

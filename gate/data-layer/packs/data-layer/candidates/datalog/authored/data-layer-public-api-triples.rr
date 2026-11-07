@@ -1,0 +1,642 @@
+// data-layer-public-api-triples, authored clause `exported-families` (relational SQL stages; decision 0043).
+// Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-public-api-triples.json.
+// Started from the `.rdl`-style design native/src/code_rule_dsl/logic/programs/data_layer/public_api_triples.rr,
+// rewritten into what the engine lowers: tree relations for its ast(...) inputs, text tests for rx_matches,
+// @rx_replace for rx_replace/rx_extract/trim (the same regex crate's replace_all W's SQL function runs), a walk
+// counted down a fixed string for the hierarchy (no lattice, no counter), and a character-table comparison where
+// SQL orders text.
+//
+// Options from the converter's facts (ConvertFoundation A9): executionOnly (`option_on("executionOnly")`) picks
+// stage `eligible_groups`' "true" or "false" case. oracleAnalyzer and sourceGate are not read by this clause's
+// stages or inputs.
+//
+// One relation (or a few) per SQL stage, prefixed `ef_`. A SQL row keyed by (__path, __start) is a node; the
+// clause has no partitionBy, so the stages join across documents on computed names (module, id, fqname), as the
+// SQL does. Inputs are `syntax: valid`: documents in scope with no syntax error (`ef_doc`).
+// The finding is the traits row of the violation's symbol: its declaration node's line, code = `issue`. Findings
+// are a set: SQL's UNION ALL multiplicities collapse.
+//
+// Approximations, each named where it is made:
+// - A1 ties: where SQL keeps one row of several equal under its ORDER BY (row_number()/LIMIT 1 with ties, LIMIT 1
+//   with no ORDER BY), every tied row is kept.
+// - A2 text order: SQL orders text bytewise; here a character table of ASCII (9, 10, 13, 32-126) compares the
+//   first differing character. Two strings that first differ at a character outside it are not ordered (both
+//   kept, as A1). Names, modules and paths are ASCII in practice; routes are compared as ordinal sequences.
+// - A4 import items: SQL splits the statement text at commas (after `#` comments), trims ` ()\n\r` and takes the
+//   first non-space run (and `\s+as\s+(\S+)$`); here the items are the statement's `name` children. They differ
+//   only where an item is preceded by a tab or a backslash continuation inside the list (SQL drops or garbles that
+//   item), or a dotted name holds whitespace (dropped here).
+// - A5 relative imports strip their package's trailing components in one regex (`(?:\.?[^.]+){k}$`) where SQL
+//   strips one per round: the two differ only on a module with an empty component (a path holding `//`, or a
+//   directory name starting or ending with `.`).
+// - A6 `lower(x) IN (…)`: a case-insensitive whole-string match (`(?i)`, Unicode simple folding) where SQLite's
+//   lower() folds ASCII only; they differ only on non-ASCII letters that fold to ASCII (e.g. U+212A).
+// - A8 the hierarchy is walked 63 hops up at most (the SQL's walk is unbounded): a hop counter over the base
+//   graph is a value-making recursion the cycle check refuses (it accepts one along the tree or along a node's
+//   child positions, and ef_base_edge is neither).
+// (`__all__` names are exact: W's TEXT is the string's decoded value, `value(n, v)`; an unknown value reads as ""
+// there, a name no export has, so it is left out.)
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.input node_text
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl value(n: node, v: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl option_on(name: symbol)
+
+// ---- kind sets ----
+.decl ef_fn(kind: symbol)
+ef_fn("function_definition").
+.decl ef_cls(kind: symbol)
+ef_cls("class_definition").
+.decl ef_type(kind: symbol)
+ef_type("type").
+.decl ef_blk(kind: symbol)
+ef_blk("block").
+.decl ef_all_block(kind: symbol)
+ef_all_block("function_definition"). ef_all_block("class_definition"). ef_all_block("if_statement"). ef_all_block("try_statement").
+
+// ---- text order (A2) ----
+.decl ef_chr(c: symbol, code: number)
+ef_chr("\t", 9). ef_chr("\n", 10). ef_chr("\r", 13).
+ef_chr(" ", 32). ef_chr("!", 33). ef_chr("\"", 34). ef_chr("#", 35). ef_chr("$", 36). ef_chr("%", 37).
+ef_chr("&", 38). ef_chr("'", 39). ef_chr("(", 40). ef_chr(")", 41). ef_chr("*", 42). ef_chr("+", 43). ef_chr(",", 44).
+ef_chr("-", 45). ef_chr(".", 46). ef_chr("/", 47). ef_chr("0", 48). ef_chr("1", 49). ef_chr("2", 50). ef_chr("3", 51).
+ef_chr("4", 52). ef_chr("5", 53). ef_chr("6", 54). ef_chr("7", 55). ef_chr("8", 56). ef_chr("9", 57). ef_chr(":", 58).
+ef_chr(";", 59). ef_chr("<", 60). ef_chr("=", 61). ef_chr(">", 62). ef_chr("?", 63). ef_chr("@", 64). ef_chr("A", 65).
+ef_chr("B", 66). ef_chr("C", 67). ef_chr("D", 68). ef_chr("E", 69). ef_chr("F", 70). ef_chr("G", 71). ef_chr("H", 72).
+ef_chr("I", 73). ef_chr("J", 74). ef_chr("K", 75). ef_chr("L", 76). ef_chr("M", 77). ef_chr("N", 78). ef_chr("O", 79).
+ef_chr("P", 80). ef_chr("Q", 81). ef_chr("R", 82). ef_chr("S", 83). ef_chr("T", 84). ef_chr("U", 85). ef_chr("V", 86).
+ef_chr("W", 87). ef_chr("X", 88). ef_chr("Y", 89). ef_chr("Z", 90). ef_chr("[", 91). ef_chr("\\", 92).
+ef_chr("]", 93). ef_chr("^", 94). ef_chr("_", 95). ef_chr("`", 96). ef_chr("a", 97). ef_chr("b", 98). ef_chr("c", 99).
+ef_chr("d", 100). ef_chr("e", 101). ef_chr("f", 102). ef_chr("g", 103). ef_chr("h", 104). ef_chr("i", 105).
+ef_chr("j", 106). ef_chr("k", 107). ef_chr("l", 108). ef_chr("m", 109). ef_chr("n", 110). ef_chr("o", 111).
+ef_chr("p", 112). ef_chr("q", 113). ef_chr("r", 114). ef_chr("s", 115). ef_chr("t", 116). ef_chr("u", 117).
+ef_chr("v", 118). ef_chr("w", 119). ef_chr("x", 120). ef_chr("y", 121). ef_chr("z", 122). ef_chr("{", 123).
+ef_chr("|", 124). ef_chr("}", 125). ef_chr("~", 126).
+// Each use has its own comparison (its pairs are asked for by rules the comparison's result feeds, so one shared
+// comparison would recurse through negation): `<p>_q(a, b)` asks, `<p>_lt(a, b)` holds where a sorts before b.
+// The walk drops the common first character of both (substr only: no value is made), to where they differ or one
+// ends. ef_oc: slot ordinals; ef_wc: family owners; ef_pc: wrapper paths.
+.decl ef_oc_q(a: symbol, b: symbol)
+.decl ef_oc_s(a: symbol, b: symbol, ta: symbol, tb: symbol)
+ef_oc_s(a, b, a, b) :- ef_oc_q(a, b).
+ef_oc_s(a, b, ta2, tb2) :- ef_oc_s(a, b, ta, tb), strlen(ta) > 0, strlen(tb) > 0, substr(ta, 0, 1) = substr(tb, 0, 1),
+    ta2 = substr(ta, 1, strlen(ta) - 1), tb2 = substr(tb, 1, strlen(tb) - 1).
+.decl ef_oc_lt(a: symbol, b: symbol)
+ef_oc_lt(a, b) :- ef_oc_s(a, b, "", tb), tb != "".
+ef_oc_lt(a, b) :- ef_oc_s(a, b, ta, tb), ef_chr(substr(ta, 0, 1), x), ef_chr(substr(tb, 0, 1), y), x < y.
+.decl ef_wc_q(a: symbol, b: symbol)
+.decl ef_wc_s(a: symbol, b: symbol, ta: symbol, tb: symbol)
+ef_wc_s(a, b, a, b) :- ef_wc_q(a, b).
+ef_wc_s(a, b, ta2, tb2) :- ef_wc_s(a, b, ta, tb), strlen(ta) > 0, strlen(tb) > 0, substr(ta, 0, 1) = substr(tb, 0, 1),
+    ta2 = substr(ta, 1, strlen(ta) - 1), tb2 = substr(tb, 1, strlen(tb) - 1).
+.decl ef_wc_lt(a: symbol, b: symbol)
+ef_wc_lt(a, b) :- ef_wc_s(a, b, "", tb), tb != "".
+ef_wc_lt(a, b) :- ef_wc_s(a, b, ta, tb), ef_chr(substr(ta, 0, 1), x), ef_chr(substr(tb, 0, 1), y), x < y.
+.decl ef_pc_q(a: symbol, b: symbol)
+.decl ef_pc_s(a: symbol, b: symbol, ta: symbol, tb: symbol)
+ef_pc_s(a, b, a, b) :- ef_pc_q(a, b).
+ef_pc_s(a, b, ta2, tb2) :- ef_pc_s(a, b, ta, tb), strlen(ta) > 0, strlen(tb) > 0, substr(ta, 0, 1) = substr(tb, 0, 1),
+    ta2 = substr(ta, 1, strlen(ta) - 1), tb2 = substr(tb, 1, strlen(tb) - 1).
+.decl ef_pc_lt(a: symbol, b: symbol)
+ef_pc_lt(a, b) :- ef_pc_s(a, b, "", tb), tb != "".
+ef_pc_lt(a, b) :- ef_pc_s(a, b, ta, tb), ef_chr(substr(ta, 0, 1), x), ef_chr(substr(tb, 0, 1), y), x < y.
+
+// ---- documents ----
+.decl ef_doc(d: number)
+ef_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d).
+// The file filter of raw_all / raw_all_names and export_names' path test: `^data_layer/[^/]+\.py$`.
+.decl ef_dl(d: number)
+ef_dl(d) :- ef_doc(d), doc(d, p, _), match("data_layer/[^/]+\\.py", p).
+
+// ---- input raw_functions: a function_definition under no function_definition, with a name and a body ----
+.decl ef_func(d: number, f: node, name: symbol)
+ef_func(d, f, s) :- node(d, f, "function_definition", _, _), ef_doc(d), !inside(f, _, ef_fn), field(f, "name", n), text(n, s),
+    field(f, "body", _).
+// CLASS / CLASS_NODE: `inside` a class_definition, stopping at the first one: the nearest class ancestor.
+.decl ef_func_class(f: node, c: node, cname: symbol)
+ef_func_class(f, c, s) :- ef_func(_, f, _), nearest(f, c, ef_cls), field(c, "name", n), text(n, s).
+// RET: the return_type child's full text (capture text).
+.decl ef_func_ret(f: node, s: symbol)
+ef_func_ret(f, s) :- ef_func(_, f, _), field(f, "return_type", t), node_text(t, s).
+
+// ---- input raw_classes: every class_definition with a name and a body ----
+.decl ef_class(d: number, c: node, name: symbol)
+ef_class(d, c, s) :- node(d, c, "class_definition", _, _), ef_doc(d), field(c, "name", n), text(n, s), field(c, "body", _).
+
+// ---- stages inventory, declarations ----
+// module: replace(rx_replace(__path, '/__init__\.py$|\.py$', ''), '/', '.'), as the SQL computes it.
+.decl ef_module(d: number, m: symbol)
+ef_module(d, m) :- ef_doc(d), doc(d, p, _), m = @rx_replace(@rx_replace(p, "/__init__\\.py$|\\.py$", ""), "/", ".").
+.decl ef_inv(id: symbol, d: number, x: node, st: number, name: symbol, kind: symbol, module: symbol, fq: symbol)
+ef_inv(id, d, f, st, n, "function", m, fq) :- ef_func(d, f, n), !ef_func_class(f, _, _), ef_module(d, m), node(d, f, _, st, _),
+    id = cat(cat(m, "::"), n), fq = cat(cat(m, "."), n).
+ef_inv(id, d, f, st, n, "method", m, fq) :- ef_func(d, f, n), ef_func_class(f, _, c), ef_module(d, m), node(d, f, _, st, _),
+    q = cat(cat(c, "."), n), id = cat(cat(m, "::"), q), fq = cat(cat(m, "."), q).
+ef_inv(id, d, c, st, n, "class", m, fq) :- ef_class(d, c, n), ef_module(d, m), node(d, c, _, st, _),
+    id = cat(cat(m, "::"), n), fq = cat(cat(m, "."), n).
+// row_number() OVER (PARTITION BY id ORDER BY __start DESC) = 1: the last definition of an id (A1: equal starts in
+// two documents of one module are both kept).
+.decl ef_inv_start(id: symbol, st: number)
+ef_inv_start(id, st) :- ef_inv(id, _, _, st, _, _, _, _).
+.decl ef_last(id: symbol, st: number)
+ef_last(id, s) :- ef_inv_start(id, _), s = max t : { ef_inv_start(id, t) }.
+.decl ef_decl(id: symbol, d: number, x: node, name: symbol, kind: symbol, module: symbol, fq: symbol)
+ef_decl(id, d, x, n, k, m, fq) :- ef_inv(id, d, x, st, n, k, m, fq), ef_last(id, st).
+// class_name and class_start of a method.
+.decl ef_decl_class(id: symbol, cname: symbol, c: node)
+ef_decl_class(id, cn, c) :- ef_decl(id, _, x, _, "method", _, _), ef_func_class(x, c, cn).
+.decl ef_declared_fq(fq: symbol)
+ef_declared_fq(fq) :- ef_decl(_, _, _, _, _, _, fq).
+
+// ---- input raw_decorators / stage decorators ----
+// A decorator child of a decorated_definition, owned by that definition (a function_definition or
+// class_definition child). name: group 1 of `^@\s*([^\s(]+)` over the decorator's text (no match: no name).
+.decl ef_deco_node(x: node, owner: node, s: symbol)
+ef_deco_node(x, o, s) :- node(d, x, "decorator", _, _), ef_doc(d), child(dd, x, _), node(_, dd, "decorated_definition", _, _),
+    child(dd, o, _), ef_def(o), node_text(x, s).
+.decl ef_def(o: node)
+ef_def(o) :- node(_, o, "function_definition", _, _).
+ef_def(o) :- node(_, o, "class_definition", _, _).
+.decl ef_decorator(owner: node, name: symbol)
+ef_decorator(o, n) :- ef_deco_node(_, o, s), match("@\\s*[^\\s(]+(?s:.*)", s), n = @rx_replace(s, "^@\\s*([^\\s(]+)(?s:.*)$", "${1}").
+
+// ---- input raw_parameters / stage parameters ----
+// util b5-common-1: an identifier (NAME itself), a typed_parameter with a direct identifier child, or a
+// (typed_)default_parameter's `name`; a direct child of `parameters` of a raw function (b5-common-2: its nearest
+// function ancestor, under no function); not before a positional_separator among its siblings. The splat kinds
+// the rule excludes are none of these (a typed_parameter holding a splat has no direct identifier child).
+.decl ef_param_name(p: node, s: symbol)
+ef_param_name(p, s) :- node(_, p, "identifier", _, _), text(p, s).
+ef_param_name(p, s) :- node(_, p, "typed_parameter", _, _), child(p, c, _), node(_, c, "identifier", _, _), text(c, s).
+ef_param_name(p, s) :- node(_, p, "default_parameter", _, _), field(p, "name", c), text(c, s).
+ef_param_name(p, s) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", c), text(c, s).
+.decl ef_slash_at(ps: node, i: number)
+ef_slash_at(ps, i) :- child(ps, c, i), node(_, c, "positional_separator", _, _).
+.decl ef_before_slash(ps: node, i: number)
+ef_before_slash(ps, i) :- child(ps, _, i), ef_slash_at(ps, j), i < j.
+.decl ef_param(p: node, f: node, name: symbol, st: number)
+ef_param(p, f, s, st) :- ef_func(_, f, _), field(f, "parameters", ps), node(_, ps, "parameters", _, _), child(ps, p, i),
+    ef_param_name(p, s), !ef_before_slash(ps, i), node(_, p, _, st, _).
+// parameters: joined to the declaration of its function; a method's self/cls left out.
+.decl ef_params(p: node, id: symbol, name: symbol, st: number)
+ef_params(p, id, n, st) :- ef_param(p, f, n, st), ef_decl(id, _, f, _, "function", _, _).
+ef_params(p, id, n, st) :- ef_param(p, f, n, st), ef_decl(id, _, f, _, "method", _, _), n != "self", n != "cls".
+
+// ---- inputs raw_return_annotations, raw_parameter_annotations / stage annotation_names ----
+// The identifiers within the return_type of a declared function, and within the `type` of a kept parameter.
+.decl ef_type_ident(t: node, s: symbol)
+ef_type_ident(t, s) :- node(_, t, "identifier", _, _), text(t, s).
+ef_type_ident(t, s) :- node(_, t, "type", _, _), inside(x, t, ef_type), node(_, x, "identifier", _, _), text(x, s).
+.decl ef_annot(id: symbol, name: symbol)
+ef_annot(id, s) :- ef_decl(id, _, f, _, k, _, _), k != "class", field(f, "return_type", t), ef_type_ident(t, s).
+ef_annot(id, s) :- ef_params(p, id, _, _), field(p, "type", t), ef_type_ident(t, s).
+
+// ---- input raw_imports / stage imports (symbol imports) ----
+// Only `from … import …` statements give kind 'symbol' rows; `import …` rows are kind 'module', deduplicated apart
+// (`base IS NULL` in the partition) and read by no later stage, so they are left out.
+// The statement's text must match `(?s)^(?:from\s+(?P<BASE>[^\s]+)\s+)?import\s+(?P<ITEMS>.*)$`; BASE is then
+// module_name's text (it holds no whitespace).
+.decl ef_import(d: number, i: node, st: number, module: symbol)
+ef_import(d, i, st, m) :- node(d, i, "import_from_statement", st, _), ef_doc(d), ef_module(d, m), node_text(i, s),
+    match("(?s)from\\s+\\S+\\s+import\\s+.*", s).
+.decl ef_import_top(i: node)
+ef_import_top(i) :- ef_import(_, i, _, _), child(mm, i, _), node(_, mm, "module", _, _).
+// (dots, rest): BASE's leading dots and the rest (ltrim(base, '.')).
+.decl ef_imp_base(i: node, dots: number, rest: symbol)
+ef_imp_base(i, 0, b) :- ef_import(_, i, _, _), field(i, "module_name", mn), node(_, mn, "dotted_name", _, _), node_text(mn, b),
+    match("\\S+", b).
+ef_imp_base(i, k, r) :- ef_import(_, i, _, _), field(i, "module_name", mn), node(_, mn, "relative_import", _, _), node_text(mn, b),
+    match("\\S+", b), child(mn, ip, _), node(_, ip, "import_prefix", _, _), node_text(ip, pt), k = strlen(pt),
+    r = substr(b, k, strlen(b) - k).
+// Items (A4): original and name (coalesce(alias, original)).
+.decl ef_imp_item(i: node, original: symbol, name: symbol)
+ef_imp_item(i, o, o) :- ef_import(_, i, _, _), field(i, "name", x), node(_, x, "dotted_name", _, _), node_text(x, o), match("\\S+", o).
+ef_imp_item(i, o, a) :- ef_import(_, i, _, _), field(i, "name", x), node(_, x, "aliased_import", _, _), field(x, "name", y),
+    node_text(y, o), match("\\S+", o), field(x, "alias", z), text(z, a).
+// relative: the package, less `dots - 1` trailing components. SQL starts from the module where the path is LIKE
+// '%/__init__.py' (ASCII case-insensitive, each `_` any one character), else from the module less its last
+// component, and takes one component per round (rx_replace(prefix, '\.?[^.]+$', '')), "" once none is left. So it
+// takes k components off the module, k = dots - 1 or dots: `(?:\.?[^.]+){k}$` removes the last k, and where there
+// are fewer it does not match and the result is "" (A5).
+.decl ef_init_path(d: number)
+ef_init_path(d) :- ef_doc(d), doc(d, p, _), match("(?s).*/..[iI][nN][iI][tT]..\\.[pP][yY]", p).
+.decl ef_rel_strip(i: node, s: symbol, k: number)
+ef_rel_strip(i, s, k) :- ef_imp_base(i, dots, _), dots > 0, ef_import(d, i, _, s), ef_init_path(d), k = dots - 1.
+ef_rel_strip(i, s, dots) :- ef_imp_base(i, dots, _), dots > 0, ef_import(d, i, _, s), !ef_init_path(d).
+.decl ef_rel_cut(i: node, s: symbol, r: symbol)
+ef_rel_cut(i, s, r) :- ef_rel_strip(i, s, k), k > 0, r = @rx_replace(s, cat(cat("(?:\\.?[^.]+){", to_string(k)), "}$"), "").
+.decl ef_rel_prefix(i: node, p: symbol)
+ef_rel_prefix(i, s) :- ef_rel_strip(i, s, 0).
+ef_rel_prefix(i, r) :- ef_rel_cut(i, s, r), r != s.
+ef_rel_prefix(i, "") :- ef_rel_cut(i, s, s).
+// resolved: target and name.
+.decl ef_imp_cand(i: node, st: number, module: symbol, name: symbol, target: symbol)
+ef_imp_cand(i, st, m, n, t) :- ef_import(_, i, st, m), ef_imp_base(i, 0, b), ef_imp_item(i, o, n), t = cat(cat(b, "."), o).
+ef_imp_cand(i, st, m, n, t) :- ef_import(_, i, st, m), ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, n), ef_rel_prefix(i, p),
+    ef_imp_join(p, r, o, t).
+// CASE WHEN prefix='' THEN '' ELSE prefix || '.' END || CASE WHEN rest='' THEN '' ELSE rest || '.' END || original.
+.decl ef_imp_join(p: symbol, r: symbol, o: symbol, t: symbol)
+ef_imp_join(p, r, o, t) :- ef_imp_parts(p, r, o), p != "", r != "", t = cat(cat(cat(p, "."), cat(r, ".")), o).
+ef_imp_join(p, r, o, t) :- ef_imp_parts(p, r, o), p = "", r != "", t = cat(cat(r, "."), o).
+ef_imp_join(p, r, o, t) :- ef_imp_parts(p, r, o), p != "", r = "", t = cat(cat(p, "."), o).
+ef_imp_join(p, r, o, o) :- ef_imp_parts(p, r, o), p = "", r = "".
+.decl ef_imp_parts(p: symbol, r: symbol, o: symbol)
+ef_imp_parts(p, r, o) :- ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, _), ef_rel_prefix(i, p).
+// row_number() OVER (PARTITION BY module, name, base IS NULL ORDER BY ordinal DESC) = 1: the last statement
+// importing a name into a module (A1: two items of one statement, or equal starts in two documents).
+.decl ef_imp_start(module: symbol, name: symbol, st: number)
+ef_imp_start(m, n, st) :- ef_imp_cand(_, st, m, n, _).
+.decl ef_imp_last(module: symbol, name: symbol, st: number)
+ef_imp_last(m, n, s) :- ef_imp_start(m, n, _), s = max t : { ef_imp_start(m, n, t) }.
+.decl ef_imports(i: node, module: symbol, name: symbol, target: symbol)
+ef_imports(i, m, n, t) :- ef_imp_cand(i, st, m, n, t), ef_imp_last(m, n, st).
+
+// ---- stage resolved_names ----
+.decl ef_reexport(target: symbol, fq: symbol)
+ef_reexport(t, fq) :- ef_imports(_, m, n, t), fq = cat(cat(m, "."), n), !ef_declared_fq(fq).
+.decl ef_resolved(fq: symbol, id: symbol)
+ef_resolved(fq, id) :- ef_decl(id, _, _, _, _, _, fq).
+ef_resolved(fq, id) :- ef_resolved(t, id), ef_reexport(t, fq).
+
+// ---- input raw_bases ----
+// An identifier, attribute, generic_type or subscript child of a class_definition's argument_list; its text.
+.decl ef_raw_base(c: node, b: node, st: number, s: symbol)
+ef_raw_base(c, b, st, s) :- ef_base_node(d, b, st), ef_doc(d), child(al, b, _), node(_, al, "argument_list", _, _),
+    child(c, al, _), node(_, c, "class_definition", _, _), node_text(b, s).
+.decl ef_base_node(d: number, b: node, st: number)
+ef_base_node(d, b, st) :- node(d, b, "identifier", st, _).
+ef_base_node(d, b, st) :- node(d, b, "attribute", st, _).
+ef_base_node(d, b, st) :- node(d, b, "generic_type", st, _).
+ef_base_node(d, b, st) :- node(d, b, "subscript", st, _).
+// trim(rx_replace(rx_replace(name, '(?s)\[.*$', ''), '^.*\.', '')): trim(x) takes spaces off both ends. An empty
+// result names no class (no lookup matches it).
+.decl ef_bs_name(s: symbol, bn: symbol)
+ef_bs_name(s, bn) :- ef_raw_base(_, _, _, s), x = @rx_replace(@rx_replace(s, "(?s)\\[.*$", ""), "^.*\\.", ""),
+    bn = @rx_replace(x, "^ +| +$", ""), bn != "".
+
+// ---- stage base_edges ----
+.decl ef_base_name(owner: symbol, module: symbol, bn: symbol, ord: number)
+ef_base_name(id, m, bn, st) :- ef_raw_base(c, _, st, s), ef_decl(id, _, c, _, _, m, _), ef_bs_name(s, bn).
+// coalesce of three lookups, per base row (owner, ordinal); the first two LIMIT 1 keep every row (A1).
+.decl ef_bv_import(owner: symbol, ord: number, base: symbol)
+ef_bv_import(id, o, b) :- ef_base_name(id, m, bn, o), ef_imports(_, m, bn, t), ef_decl(b, _, _, _, "class", _, t).
+.decl ef_bv_module(owner: symbol, ord: number, base: symbol)
+ef_bv_module(id, o, b) :- ef_base_name(id, m, bn, o), ef_decl(b, _, _, bn, "class", m, _).
+.decl ef_class_named(name: symbol, id: symbol)
+ef_class_named(n, id) :- ef_decl(id, _, _, n, "class", _, _).
+// (SELECT min(c.id) … HAVING count(*) = 1): the one class of that name.
+.decl ef_unique_class(name: symbol, id: symbol)
+ef_unique_class(n, id) :- ef_class_named(n, id), k = count : { ef_class_named(n, _) }, k = 1.
+.decl ef_has_bv_import(owner: symbol, ord: number)
+ef_has_bv_import(id, o) :- ef_bv_import(id, o, _).
+.decl ef_has_bv_module(owner: symbol, ord: number)
+ef_has_bv_module(id, o) :- ef_bv_module(id, o, _).
+.decl ef_base_edge(owner: symbol, base: symbol, ord: number)
+ef_base_edge(id, b, o) :- ef_bv_import(id, o, b).
+ef_base_edge(id, b, o) :- ef_bv_module(id, o, b), !ef_has_bv_import(id, o).
+ef_base_edge(id, b, o) :- ef_base_name(id, _, bn, o), ef_unique_class(bn, b), !ef_has_bv_import(id, o), !ef_has_bv_module(id, o).
+
+// ---- stage hierarchy: per (owner, base) the least (depth, route) over simple paths ----
+// depth: the least walk length (a shortest walk is simple). The walk counts its hops down a 64-character string
+// (substr only; A8: bases more than 63 hops up are not reached).
+.decl ef_class_id(id: symbol)
+ef_class_id(id) :- ef_decl(id, _, _, _, "class", _, _).
+.decl ef_walk(o: symbol, b: symbol, t: symbol)
+ef_walk(o, o, "0123456789012345678901234567890123456789012345678901234567890123") :- ef_class_id(o).
+ef_walk(o, b, t2) :- ef_walk(o, x, t), strlen(t) > 1, ef_base_edge(x, b, _), t2 = substr(t, 1, strlen(t) - 1).
+.decl ef_walk_k(o: symbol, b: symbol, k: number)
+ef_walk_k(o, b, k) :- ef_walk(o, b, t), k = 64 - strlen(t).
+.decl ef_depth(o: symbol, b: symbol, k: number)
+ef_depth(o, b, k) :- ef_walk_k(o, b, _), k = min j : { ef_walk_k(o, b, j) }.
+// route: printf('%012d.', ordinal) per hop; routes of one depth have one length, so they order as their ordinal
+// sequences. The least route to c (at depth k ≥ 1) starts with the least-ordinal hop o → x from which c is at depth
+// k - 1 (`ef_first_hop`), and continues as x's least route to c. So two classes at one depth from o compare by
+// those first hops, and on the same hop as seen from x (`ef_route_lt`), with no route text built.
+.decl ef_hop(o: symbol, c: symbol, e: number, x: symbol)
+ef_hop(o, c, e, x) :- ef_depth(o, c, k), k > 0, ef_base_edge(o, x, e), ef_depth(x, c, j), j = k - 1.
+.decl ef_hop_e(o: symbol, c: symbol, e: number)
+ef_hop_e(o, c, e) :- ef_hop(o, c, _, _), e = min f : { ef_hop(o, c, f, _) }.
+.decl ef_first_hop(o: symbol, c: symbol, e: number, x: symbol)
+ef_first_hop(o, c, e, x) :- ef_hop(o, c, e, x), ef_hop_e(o, c, e).
+// ef_route_q(o, c1, c2): asked (c1, c2 at one depth from o), closed under a shared first hop.
+.decl ef_route_q(o: symbol, c1: symbol, c2: symbol)
+ef_route_q(x, c1, c2) :- ef_route_q(o, c1, c2), ef_first_hop(o, c1, e, x), ef_first_hop(o, c2, e, x).
+.decl ef_route_lt(o: symbol, c1: symbol, c2: symbol)
+ef_route_lt(o, c1, c2) :- ef_route_q(o, c1, c2), ef_first_hop(o, c1, e1, _), ef_first_hop(o, c2, e2, _), e1 < e2.
+ef_route_lt(o, c1, c2) :- ef_route_q(o, c1, c2), ef_first_hop(o, c1, e, x), ef_first_hop(o, c2, e, x), ef_route_lt(x, c1, c2).
+
+// ---- stage public_methods ----
+.decl ef_pm_excluded(name: symbol)
+ef_pm_excluded("__aenter__"). ef_pm_excluded("__aexit__"). ef_pm_excluded("__enter__"). ef_pm_excluded("__exit__").
+ef_pm_excluded("__init__"). ef_pm_excluded("__repr__"). ef_pm_excluded("__str__"). ef_pm_excluded("authorize_internal_access").
+ef_pm_excluded("disable_thread_affinity_checks"). ef_pm_excluded("get_thread_checks_disabled").
+ef_pm_excluded("set_disable_thread_checks"). ef_pm_excluded("validate_legacy_delegates"). ef_pm_excluded("versioned_read").
+ef_pm_excluded("versioned_write").
+// rx_matches(x.name, 'property$|\.setter$|\.deleter$').
+.decl ef_property(x: node)
+ef_property(x) :- ef_decorator(x, n), (suffix("property", n) ; suffix(".setter", n) ; suffix(".deleter", n)).
+// Methods of a class named as a hierarchy base, in its module (d.module = c.module AND d.class_name = c.name).
+.decl ef_pm_cand(o: symbol, name: symbol, id: symbol, k: number, c: symbol)
+ef_pm_cand(o, n, id, k, c) :- ef_depth(o, c, k), ef_decl(c, _, _, cn, "class", cm, _),
+    ef_decl(id, _, x, n, "method", cm, _), ef_decl_class(id, cn, _), !prefix("_", n), !ef_pm_excluded(n), !ef_property(x).
+// row_number() OVER (PARTITION BY owner, name ORDER BY depth, route) = 1: the least depth, then the least route.
+.decl ef_pm_k(o: symbol, name: symbol, k: number)
+ef_pm_k(o, n, k) :- ef_pm_cand(o, n, _, _, _), k = min j : { ef_pm_cand(o, n, _, j, _) }.
+.decl ef_pm_best(o: symbol, name: symbol, id: symbol, c: symbol)
+ef_pm_best(o, n, id, c) :- ef_pm_cand(o, n, id, k, c), ef_pm_k(o, n, k).
+ef_route_q(o, c1, c2) :- ef_pm_best(o, n, _, c1), ef_pm_best(o, n, _, c2), c1 != c2.
+.decl ef_pm_beaten(o: symbol, name: symbol, c: symbol)
+ef_pm_beaten(o, n, c) :- ef_pm_best(o, n, _, c), ef_pm_best(o, n, _, c2), ef_route_lt(o, c2, c).
+.decl ef_public(o: symbol, name: symbol, id: symbol)
+ef_public(o, n, id) :- ef_pm_best(o, n, id, c), !ef_pm_beaten(o, n, c).
+
+// ---- inputs raw_all, raw_all_names / stages all_names, explicit_exports ----
+// raw_all: an assignment whose `left` is `__all__`, a child of an expression_statement, under no function,
+// class, if or try, in a data_layer/<file>.py. explicit_exports' selected=1: the first of a file.
+.decl ef_all(d: number, a: node, st: number)
+ef_all(d, a, st) :- node(d, a, "assignment", st, _), ef_dl(d), field(a, "left", l), node(_, l, "identifier", _, _), text(l, "__all__"),
+    child(es, a, _), node(_, es, "expression_statement", _, _), !inside(a, _, ef_all_block).
+.decl ef_has_all(d: number)
+ef_has_all(d) :- ef_all(d, _, _).
+.decl ef_all_first(d: number, a: node)
+ef_all_first(d, a) :- ef_all(d, a, st), st = min t : { ef_all(d, _, t) }.
+// ARRAY: the right side, a list or tuple; raw_all_names: its string / concatenated_string children (VALUE),
+// named by their value.
+.decl ef_all_array(a: node, v: node)
+ef_all_array(a, v) :- ef_all_first(_, a), field(a, "right", r), node(_, r, "list", _, _), child(r, v, _).
+ef_all_array(a, v) :- ef_all_first(_, a), field(a, "right", r), node(_, r, "tuple", _, _), child(r, v, _).
+.decl ef_all_name(d: number, name: symbol)
+ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), node(_, v, "string", _, _), value(v, s).
+ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), node(_, v, "concatenated_string", _, _), value(v, s).
+
+// ---- stages export_names, exported_roots ----
+.decl ef_export(d: number, module: symbol, name: symbol, target: symbol)
+ef_export(d, m, n, t) :- ef_imports(i, m, n, t), ef_import_top(i), node(d, i, _, _, _), ef_dl(d).
+ef_export(d, m, n, fq) :- ef_decl(_, d, _, n, k, m, fq), k != "method", ef_dl(d).
+.decl ef_root(d: number, module: symbol, name: symbol, id: symbol)
+ef_root(d, m, n, id) :- ef_export(d, m, n, t), ef_resolved(t, id), !prefix("_", n), !ef_has_all(d).
+ef_root(d, m, n, id) :- ef_export(d, m, n, t), ef_resolved(t, id), !prefix("_", n), ef_all_name(d, n).
+.decl ef_exported(id: symbol)
+ef_exported(id) :- ef_root(_, _, _, id).
+
+// ---- input raw_execution_calls / stage execution_calls ----
+// A call whose `function` is an identifier, or an attribute whose `attribute` is one, named per b5-common-3 and
+// `_lazy$|^lazy_`, under a block whose parent is a raw function whose parent decorated_definition has a decorator
+// child with text `^@\s*(?:\w+\.)*direct_legacy[^.\s(]*`. traits' re-test of the name (the same list, prefixes
+// and `_lazy$`/`lazy_` test) is implied by this one.
+.decl ef_xname(s: symbol)
+ef_xname(s) :- ef_xcallee(_, s), (s = "_fetchall" ; s = "_fetchone" ; s = "execute" ; s = "execute_async" ; s = "execute_fire_and_forget" ;
+    s = "execute_grammar" ; s = "execute_grammar_fetchall" ; s = "execute_grammar_fetchone" ; s = "execute_raw" ; s = "fetchall" ;
+    s = "fetchall_raw" ; s = "fetchone" ; s = "fetchone_raw" ; s = "grammar_effect_lazy" ; s = "grammar_fetchall" ;
+    s = "grammar_fetchall_async" ; s = "grammar_fetchone" ; s = "grammar_fetchone_async" ; s = "grammar_row_lazy" ;
+    s = "grammar_rows_lazy" ; s = "raw_execute").
+ef_xname(s) :- ef_xcallee(_, s), (prefix("execute_grammar", s) ; prefix("grammar_fetch", s)).
+.decl ef_xcallee(call: node, s: symbol)
+ef_xcallee(cl, s) :- node(d, cl, "call", _, _), ef_doc(d), field(cl, "function", fn), node(_, fn, "identifier", _, _), text(fn, s).
+ef_xcallee(cl, s) :- node(d, cl, "call", _, _), ef_doc(d), field(cl, "function", fn), node(_, fn, "attribute", _, _),
+    field(fn, "attribute", a), text(a, s).
+.decl ef_xlazy(s: symbol)
+ef_xlazy(s) :- ef_xname(s), suffix("_lazy", s).
+ef_xlazy(s) :- ef_xname(s), prefix("lazy_", s).
+.decl ef_xdeco_fn(f: node)
+ef_xdeco_fn(f) :- ef_func(_, f, _), child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(dd, x, _),
+    node(_, x, "decorator", _, _), node_text(x, s), match("(?s)@\\s*(?:\\w+\\.)*direct_legacy.*", s).
+.decl ef_xcall(owner: node, name: symbol)
+ef_xcall(f, s) :- ef_xcallee(cl, s), ef_xlazy(s), inside(cl, b, ef_blk), child(f, b, _), ef_xdeco_fn(f).
+
+// ---- stage traits: one relation per computed column, over the declaration's id ----
+.decl ef_own_deco(id: symbol, name: symbol)
+ef_own_deco(id, n) :- ef_decl(id, _, x, _, _, _, _), ef_decorator(x, n).
+// x.owner = d.__start OR x.owner = d.class_start.
+.decl ef_scoped_deco(id: symbol, name: symbol)
+ef_scoped_deco(id, n) :- ef_own_deco(id, n).
+ef_scoped_deco(id, n) :- ef_decl_class(id, _, c), ef_decorator(c, n).
+.decl ef_legacy_sync(id: symbol)
+ef_legacy_sync(id) :- ef_own_deco(id, n), (suffix("legacy_sync", n) ; suffix("legacy_module_sync", n) ; suffix("direct_legacy_module_sync", n)).
+.decl ef_legacy_async(id: symbol)
+ef_legacy_async(id) :- ef_own_deco(id, n), (suffix("legacy_async", n) ; suffix("legacy_module_async", n) ; suffix("direct_legacy_module_async", n)).
+// 'pure_lazy|apply_lazy_to_public_lazy_methods|(?:^|\.)lazy$'.
+.decl ef_lazy_deco(name: symbol)
+ef_lazy_deco(n) :- ef_scoped_deco(_, n), (contains("pure_lazy", n) ; contains("apply_lazy_to_public_lazy_methods", n)).
+ef_lazy_deco(n) :- ef_scoped_deco(_, n), n = "lazy".
+ef_lazy_deco(n) :- ef_scoped_deco(_, n), suffix(".lazy", n).
+.decl ef_lazy_decorated(id: symbol)
+ef_lazy_decorated(id) :- ef_own_deco(id, n), ef_lazy_deco(n).
+ef_lazy_decorated(id) :- ef_decl(id, _, _, name, _, _, _), !prefix("_", name), suffix("_lazy", name), ef_scoped_deco(id, n), ef_lazy_deco(n).
+// '(?:^|\.)(?:internal_api|private_api|private_public_api)$'.
+.decl ef_private(id: symbol)
+ef_private(id) :- ef_scoped_deco(id, n), (n = "internal_api" ; n = "private_api" ; n = "private_public_api").
+ef_private(id) :- ef_scoped_deco(id, n), (suffix(".internal_api", n) ; suffix(".private_api", n) ; suffix(".private_public_api", n)).
+.decl ef_abstract(id: symbol)
+ef_abstract(id) :- ef_own_deco(id, n), suffix("abstractmethod", n).
+// lower(a.name) IN ('lazyresult','lazyseq','serverplan') (A6).
+.decl ef_lazy_annot(id: symbol)
+ef_lazy_annot(id) :- ef_annot(id, a), match("(?i)lazyresult|lazyseq|serverplan", a).
+.decl ef_lazy_module(p: symbol)
+ef_lazy_module("l2055_lazy_result/lazy_reads.py"). ef_lazy_module("l2055_lazy_result/lazy_writes.py"). ef_lazy_module("l2055_lazy_result/transform.py").
+.decl ef_lazy_module_exc(id: symbol)
+ef_lazy_module_exc(id) :- ef_decl(id, d, _, n, "function", _, _), doc(d, p, _), ef_lazy_module(p), prefix("lazy_", n), suffix("_lazy", n).
+ef_lazy_module_exc(id) :- ef_decl(id, d, _, n, "function", _, _), doc(d, p, _), ef_lazy_module(p), prefix("lazy_", n), ef_lazy_annot(id).
+// coalesce((path IN … AND class_name IN …), 0): false without a class.
+.decl ef_ctx_path(p: symbol)
+ef_ctx_path("l2055_lazy_result/execution_context.py"). ef_ctx_path("l2055_lazy_result/lazy_result.py").
+ef_ctx_path("l2055_lazy_result/lazy_seq.py"). ef_ctx_path("l2055_lazy_result/transform.py").
+.decl ef_ctx_class(c: symbol)
+ef_ctx_class("BatchContext"). ef_ctx_class("EagerContext"). ef_ctx_class("LazyResult"). ef_ctx_class("LazySeq"). ef_ctx_class("OnAccessContext").
+.decl ef_ctx_exc(id: symbol)
+ef_ctx_exc(id) :- ef_decl(id, d, _, _, _, _, _), doc(d, p, _), ef_ctx_path(p), ef_decl_class(id, c, _), ef_ctx_class(c).
+// self_returning: trim(return_annotation, ' ''"') (spaces and quotes off both ends) is the class name, or starts
+// with it and `[`.
+.decl ef_rt(id: symbol, s: symbol)
+ef_rt(id, s) :- ef_decl_class(id, _, _), ef_decl(id, _, x, _, _, _, _), ef_func_ret(x, s).
+.decl ef_rt_u(s: symbol, u: symbol)
+ef_rt_u(s, u) :- ef_rt(_, s), u = @rx_replace(s, "^[ '\"]+|[ '\"]+$", "").
+.decl ef_self_ret(id: symbol)
+ef_self_ret(id) :- ef_rt(id, s), ef_rt_u(s, u), ef_decl_class(id, c, _), u = c.
+ef_self_ret(id) :- ef_rt(id, s), ef_rt_u(s, u), ef_decl_class(id, c, _), strlen(u) > strlen(c), substr(u, 0, strlen(c) + 1) = cat(c, "[").
+// rx_replace(name, '_(?:lazy|async|sync)$', ''), over declared names.
+.decl ef_base_of(n: symbol, b: symbol)
+ef_base_of(n, b) :- ef_decl(_, _, _, n, _, _, _), b = @rx_replace(n, "_(?:lazy|async|sync)$", "").
+.decl ef_verb(name: symbol)
+ef_verb("aggregate"). ef_verb("commit"). ef_verb("commit_branch"). ef_verb("count"). ef_verb("create_branch").
+ef_verb("cursor_paginate"). ef_verb("cursor_paginate_with_total"). ef_verb("delete_by_id"). ef_verb("delete_by_key").
+ef_verb("delete_by_key_many"). ef_verb("delete_many"). ef_verb("execute"). ef_verb("execute_one"). ef_verb("exists").
+ef_verb("find_object_branches"). ef_verb("find_object_revisions"). ef_verb("first"). ef_verb("fts_search").
+ef_verb("get_history"). ef_verb("graph"). ef_verb("graph_query"). ef_verb("insert"). ef_verb("insert_many").
+ef_verb("insert_many_raw"). ef_verb("keyset_paginate"). ef_verb("keyset_paginate_with_total"). ef_verb("query").
+ef_verb("query_unfiltered"). ef_verb("read"). ef_verb("read_version"). ef_verb("rollback"). ef_verb("search").
+ef_verb("select_at_revision"). ef_verb("select_many"). ef_verb("select_one"). ef_verb("table_exists"). ef_verb("traverse").
+ef_verb("update"). ef_verb("update_by_key"). ef_verb("update_by_key_many"). ef_verb("update_many"). ef_verb("upsert").
+ef_verb("upsert_many"). ef_verb("vector_search"). ef_verb("write"). ef_verb("write_version").
+// The verb's context: the path, the class name (lower(coalesce(class_name, ''))), an annotation (A6).
+.decl ef_surface_ctx(id: symbol)
+ef_surface_ctx(id) :- ef_decl(id, d, _, _, _, _, _), doc(d, p, _),
+    (contains("/graph_query", p) ; contains("/schema_transaction", p) ; contains("/transaction", p) ; contains("/versioned_transactions", p)).
+ef_surface_ctx(id) :- ef_decl_class(id, c, _),
+    (icontains("connection", c) ; icontains("query", c) ; icontains("schematransaction", c) ; icontains("transaction", c) ; icontains("versioned", c)).
+ef_surface_ctx(id) :- ef_annot(id, a),
+    match("(?i)databaseconnection|lazyresult|lazyseq|readtransaction|serverplan|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction", a).
+.decl ef_surface_reason(id: symbol)
+ef_surface_reason(id) :- ef_decl(id, _, _, n, _, _, _), ef_base_of(n, b), ef_verb(b), ef_surface_ctx(id).
+ef_surface_reason(id) :- ef_decl(id, _, _, n, _, _, _), suffix("_lazy", n).
+ef_surface_reason(id) :- ef_lazy_annot(id).
+ef_surface_reason(id) :- ef_legacy_sync(id).
+ef_surface_reason(id) :- ef_legacy_async(id).
+.decl ef_exec_surface(id: symbol)
+ef_exec_surface(id) :- ef_surface_reason(id), !ef_abstract(id), !ef_private(id), !ef_lazy_module_exc(id), !ef_ctx_exc(id), !ef_self_ret(id).
+// params: the parameter names by __start, as (position, name) and a count.
+.decl ef_pbefore(p: node, q: node)
+ef_pbefore(p, q) :- ef_params(p, id, _, sp), ef_params(q, id, _, sq), sq < sp.
+.decl ef_ppos(id: symbol, i: number, name: symbol)
+ef_ppos(id, i, n) :- ef_params(p, id, n, _), i = count : { ef_pbefore(p, _) }.
+.decl ef_plen(id: symbol, k: number)
+ef_plen(id, k) :- ef_decl(id, _, _, _, _, _, _), k = count : { ef_params(_, id, _, _) }.
+// direct_lazy_wrapper: an own decorator '(?:^|\.)direct_legacy[^.]*$' and an execution call of the declaration.
+.decl ef_direct_wrapper(id: symbol)
+ef_direct_wrapper(id) :- ef_own_deco(id, n), match("(?:.*\\.)?direct_legacy[^.]*", n), ef_decl(id, _, x, _, _, _, _), ef_xcall(x, _).
+
+// ---- stage surfaces ----
+// mixed: rx_matches(lower(name), 'lazy') AND rx_matches(lower(name), 'async|sync').
+.decl ef_mixed(name: symbol)
+ef_mixed(n) :- ef_decl(_, _, _, n, _, _, _), icontains("lazy", n), (icontains("async", n) ; icontains("sync", n)).
+// ordinal: a function row's is export_module || char(0) || export_name; within a slot or group (one owner, the
+// export module) it orders as export_name, which is the column kept. A method row's is its name.
+.decl ef_surf(scope: symbol, owner: symbol, ord: symbol, id: symbol, name: symbol)
+ef_surf("function", m, en, id, n) :- ef_root(_, m, en, id), ef_decl(id, d, _, n, "function", _, _), !prefix("_", n), doc(d, p, _),
+    !prefix("_internal/", p).
+ef_surf("method", cn, n, id, n) :- ef_exported(c), ef_decl(c, _, cx, cn, "class", _, _), ef_public(c, _, id), ef_decl(id, _, _, n, _, _, _),
+    !ef_private(c), !ef_private(id), !suffix("Protocol", cn), !prefix("Async", cn), !ef_protocol_base(cx).
+// NOT EXISTS raw_bases b … instr(b.name, 'Protocol') > 0.
+.decl ef_protocol_base(c: node)
+ef_protocol_base(c) :- ef_raw_base(c, _, _, s), contains("Protocol", s).
+// base_name: the name where mixed, else less its suffix.
+.decl ef_sb(scope: symbol, owner: symbol, ord: symbol, id: symbol, name: symbol, base: symbol)
+ef_sb(sc, o, ord, id, n, n) :- ef_surf(sc, o, ord, id, n), ef_mixed(n).
+ef_sb(sc, o, ord, id, n, b) :- ef_surf(sc, o, ord, id, n), !ef_mixed(n), ef_base_of(n, b).
+
+// ---- stage slots (surfaces less mixed function rows) ----
+.decl ef_slotrow(scope: symbol, owner: symbol, base: symbol, slot: symbol, ord: symbol, id: symbol)
+ef_slotrow("method", o, b, "__invalid_mixed_name__", ord, id) :- ef_sb("method", o, ord, id, n, b), ef_mixed(n).
+ef_slotrow(sc, o, b, "lazy", ord, id) :- ef_sb(sc, o, ord, id, n, b), !ef_mixed(n), suffix("_lazy", n).
+ef_slotrow(sc, o, b, "async", ord, id) :- ef_sb(sc, o, ord, id, n, b), !ef_mixed(n), !suffix("_lazy", n), suffix("_async", n).
+ef_slotrow(sc, o, b, "async", ord, id) :- ef_sb(sc, o, ord, id, n, b), !ef_mixed(n), !suffix("_lazy", n), !suffix("_async", n),
+    ef_legacy_async(id).
+ef_slotrow(sc, o, b, "sync", ord, id) :- ef_sb(sc, o, ord, id, n, b), !ef_mixed(n), !suffix("_lazy", n), !suffix("_async", n),
+    !ef_legacy_async(id).
+// Ordinals compared within a group (scope, owner, base_name).
+ef_oc_q(a, c) :- ef_slotrow(sc, o, b, _, a, _), ef_slotrow(sc, o, b, _, c, _), a != c.
+// selected (ORDER BY ordinal DESC) = 1, and first_ordinal = min(ordinal), per slot (A1, A2).
+.decl ef_slot_notlast(scope: symbol, owner: symbol, base: symbol, slot: symbol, ord: symbol)
+ef_slot_notlast(sc, o, b, sl, a) :- ef_slotrow(sc, o, b, sl, a, _), ef_slotrow(sc, o, b, sl, c, _), ef_oc_lt(a, c).
+.decl ef_slot_notfirst(scope: symbol, owner: symbol, base: symbol, slot: symbol, ord: symbol)
+ef_slot_notfirst(sc, o, b, sl, a) :- ef_slotrow(sc, o, b, sl, a, _), ef_slotrow(sc, o, b, sl, c, _), ef_oc_lt(c, a).
+.decl ef_slots(scope: symbol, owner: symbol, base: symbol, slot: symbol, id: symbol)
+ef_slots(sc, o, b, sl, id) :- ef_slotrow(sc, o, b, sl, a, id), !ef_slot_notlast(sc, o, b, sl, a).
+.decl ef_slot_first(scope: symbol, owner: symbol, base: symbol, slot: symbol, ord: symbol)
+ef_slot_first(sc, o, b, sl, a) :- ef_slotrow(sc, o, b, sl, a, _), !ef_slot_notfirst(sc, o, b, sl, a).
+
+// ---- stage family_groups ----
+// exemplar: the symbol of the slot with the least first_ordinal (LIMIT 1: A1, A2).
+.decl ef_ex_beaten(scope: symbol, owner: symbol, base: symbol, slot: symbol)
+ef_ex_beaten(sc, o, b, sl) :- ef_slot_first(sc, o, b, sl, f), ef_slot_first(sc, o, b, sl2, f2), sl2 != sl, ef_oc_lt(f2, f).
+.decl ef_exemplar(scope: symbol, owner: symbol, base: symbol, id: symbol)
+ef_exemplar(sc, o, b, id) :- ef_slot_first(sc, o, b, sl, _), !ef_ex_beaten(sc, o, b, sl), ef_slots(sc, o, b, sl, id).
+// sync_id / async_id / lazy_id IS NOT NULL: the slot is present.
+.decl ef_gslot(scope: symbol, owner: symbol, base: symbol, slot: symbol)
+ef_gslot(sc, o, b, sl) :- ef_slots(sc, o, b, sl, _).
+.decl ef_gmixed(scope: symbol, owner: symbol, base: symbol)
+ef_gmixed(sc, o, b) :- ef_slots(sc, o, b, _, id), ef_decl(id, _, _, n, _, _, _), ef_mixed(n).
+.decl ef_gsurface(scope: symbol, owner: symbol, base: symbol)
+ef_gsurface(sc, o, b) :- ef_slots(sc, o, b, _, id), ef_exec_surface(id).
+
+// ---- stage eligible_groups: the exceptions (both cases) ----
+.decl ef_excepted(scope: symbol, owner: symbol, base: symbol, ex: symbol)
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), (b = "plan" ; b = "query" ; b = "query_unfiltered"), ef_decl(ex, d, _, _, _, _, _),
+    doc(d, p, _), (p = "l2050_transaction/transaction.py" ; p = "l7200_versioned_transactions/versioned_transactions.py"),
+    (o = "ReadTransaction" ; o = "WriteTransaction" ; o = "LazyVersionedReadTransaction" ; o = "LazyVersionedWriteTransaction").
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), o = "CacheTransaction", (b = "commit" ; b = "rollback").
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), o = "BaseMigration", b = "rollback".
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), b = "execute_ddl", (o = "SchemaTransaction" ; o = "AsyncSchemaTransaction").
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), b = "execute_ddl", ef_decl(ex, d, _, _, _, _, _), doc(d, "l2000_connection/schema_transaction.py", _).
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), suffix("Connection", o), b = "table_exists".
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), ef_lazy_only(sc, o, b), icontains("bootstrap", b).
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), ef_lazy_only(sc, o, b), icontains("bootstrap", o).
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), ef_lazy_only(sc, o, b),
+    (b = "check_ddl_lockdown" ; b = "column_exists" ; b = "physical_table_exists_many" ; b = "seal_table_exists_cache").
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), (o = "LazyVersionedReadTransaction" ; o = "LazyVersionedWriteTransaction" ;
+    o = "SyncSessionHandle" ; o = "AsyncSessionHandle" ; o = "SyncVersionHandle" ; o = "AsyncVersionHandle").
+ef_excepted(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), match("(?:Sync|Async|Lazy).*(?:Transaction|SchemaTransaction|SessionHandle|VersionHandle)", o).
+.decl ef_lazy_only(scope: symbol, owner: symbol, base: symbol)
+ef_lazy_only(sc, o, b) :- ef_gslot(sc, o, b, "lazy"), !ef_gslot(sc, o, b, "sync"), !ef_gslot(sc, o, b, "async").
+// eligible_groups: mixed, or no exception names the group (executionOnly true: and it is an execution surface;
+// false: no more).
+.decl ef_eligible(scope: symbol, owner: symbol, base: symbol, ex: symbol)
+ef_eligible(sc, o, b, ex) :- ef_exemplar(sc, o, b, ex), ef_gmixed(sc, o, b).
+ef_eligible(sc, o, b, ex) :- option_on("executionOnly"), ef_exemplar(sc, o, b, ex), !ef_excepted(sc, o, b, ex), ef_gsurface(sc, o, b).
+ef_eligible(sc, o, b, ex) :- !option_on("executionOnly"), ef_exemplar(sc, o, b, ex), !ef_excepted(sc, o, b, ex).
+
+// ---- stage families: mixed groups, and per (scope, base_name, implementations) the least owner ----
+.decl ef_ekey(scope: symbol, owner: symbol, base: symbol)
+ef_ekey(sc, o, b) :- ef_eligible(sc, o, b, _).
+// implementations (json_group_array of (slot, symbol) ORDER BY slot) compared as sets: a slot holds one symbol
+// but under A1 ties.
+.decl ef_impl_missing(scope: symbol, base: symbol, o1: symbol, o2: symbol)
+ef_impl_missing(sc, b, o1, o2) :- ef_ekey(sc, o1, b), ef_ekey(sc, o2, b), o1 != o2, ef_slots(sc, o1, b, sl, id), !ef_slots(sc, o2, b, sl, id).
+.decl ef_same_impl(scope: symbol, base: symbol, o1: symbol, o2: symbol)
+ef_same_impl(sc, b, o1, o2) :- ef_ekey(sc, o1, b), ef_ekey(sc, o2, b), o1 != o2, !ef_impl_missing(sc, b, o1, o2), !ef_impl_missing(sc, b, o2, o1).
+ef_wc_q(a, c) :- ef_same_impl(_, _, a, c).
+.decl ef_dominated(scope: symbol, owner: symbol, base: symbol)
+ef_dominated(sc, o, b) :- ef_same_impl(sc, b, o, o2), ef_wc_lt(o2, o).
+.decl ef_family(scope: symbol, owner: symbol, base: symbol, ex: symbol)
+ef_family(sc, o, b, ex) :- ef_eligible(sc, o, b, ex), ef_gmixed(sc, o, b).
+ef_family(sc, o, b, ex) :- ef_eligible(sc, o, b, ex), !ef_dominated(sc, o, b).
+
+// ---- stage triple_violations ----
+.decl ef_plain(scope: symbol, owner: symbol, base: symbol, ex: symbol)
+ef_plain(sc, o, b, ex) :- ef_family(sc, o, b, ex), !ef_gmixed(sc, o, b).
+// s.params = l.params: equal length and no position whose names differ.
+.decl ef_pp(s: symbol, l: symbol)
+ef_pp(s, l) :- ef_plain(sc, o, b, _), ef_slots(sc, o, b, "sync", s), ef_slots(sc, o, b, "lazy", l).
+ef_pp(s, l) :- ef_plain(sc, o, b, _), ef_slots(sc, o, b, "async", s), ef_slots(sc, o, b, "lazy", l).
+.decl ef_pp_differ(s: symbol, l: symbol)
+ef_pp_differ(s, l) :- ef_pp(s, l), ef_plen(s, a), ef_plen(l, c), a != c.
+ef_pp_differ(s, l) :- ef_pp(s, l), ef_ppos(s, i, n), ef_ppos(l, i, m), n != m.
+.decl ef_same_params(s: symbol, l: symbol)
+ef_same_params(s, l) :- ef_pp(s, l), !ef_pp_differ(s, l).
+// direct_wrapper_bypasses_lazy_owner: per family the first wrapper slot by (path, start).
+.decl ef_dw_cand(scope: symbol, owner: symbol, base: symbol, id: symbol, p: symbol, st: number)
+ef_dw_cand(sc, o, b, id, p, st) :- ef_plain(sc, o, b, _), ef_gslot(sc, o, b, "lazy"), ef_slots(sc, o, b, sl, id), (sl = "sync" ; sl = "async"),
+    ef_direct_wrapper(id), ef_decl(id, d, x, _, _, _, _), doc(d, p, _), node(d, x, _, st, _).
+ef_pc_q(p1, p2) :- ef_dw_cand(sc, o, b, _, p1, _), ef_dw_cand(sc, o, b, _, p2, _), p1 != p2.
+.decl ef_dw_beaten(scope: symbol, owner: symbol, base: symbol, p: symbol)
+ef_dw_beaten(sc, o, b, p) :- ef_dw_cand(sc, o, b, _, p, _), ef_dw_cand(sc, o, b, _, p2, _), ef_pc_lt(p2, p).
+.decl ef_dw_path(scope: symbol, owner: symbol, base: symbol, p: symbol)
+ef_dw_path(sc, o, b, p) :- ef_dw_cand(sc, o, b, _, p, _), !ef_dw_beaten(sc, o, b, p).
+.decl ef_dw_first(scope: symbol, owner: symbol, base: symbol, p: symbol, st: number)
+ef_dw_first(sc, o, b, p, s) :- ef_dw_path(sc, o, b, p), s = min t : { ef_dw_cand(sc, o, b, _, p, t) }.
+.decl ef_tv(issue: symbol, id: symbol)
+ef_tv("invalid_mixed_lazy_execution_name", id) :- ef_surf("function", _, _, id, n), ef_mixed(n).
+ef_tv("invalid_mixed_lazy_execution_name", ex) :- ef_family(sc, o, b, ex), ef_gmixed(sc, o, b).
+ef_tv("missing_sync", ex) :- ef_plain(sc, o, b, ex), !ef_gslot(sc, o, b, "sync"), ef_gslot(sc, o, b, "async").
+ef_tv("missing_async", ex) :- ef_plain(sc, o, b, ex), !ef_gslot(sc, o, b, "async"), ef_gslot(sc, o, b, "sync").
+ef_tv("missing_lazy", ex) :- ef_plain(sc, o, b, ex), !ef_gslot(sc, o, b, "lazy").
+ef_tv("missing_legacy_sync", s) :- ef_plain(sc, o, b, _), ef_slots(sc, o, b, "sync", s), ef_slots(sc, o, b, "lazy", l), ef_same_params(s, l),
+    !ef_legacy_sync(s).
+ef_tv("missing_legacy_async", s) :- ef_plain(sc, o, b, _), ef_slots(sc, o, b, "async", s), ef_slots(sc, o, b, "lazy", l), ef_same_params(s, l),
+    !ef_legacy_async(s).
+ef_tv("missing_lazy_decorator", l) :- ef_plain(sc, o, b, _), ef_slots(sc, o, b, "lazy", l), !ef_lazy_decorated(l).
+ef_tv("direct_wrapper_bypasses_lazy_owner", id) :- ef_dw_cand(sc, o, b, id, p, st), ef_dw_first(sc, o, b, p, st).
+
+// ---- the clause's query: at the symbol's declaration (traits d ON d.id = v.symbol), code = issue ----
+violation("data-layer-public-api-triples", "exported-families", code, p, l) :- ef_tv(code, id), ef_decl(id, d, x, _, _, _, _), doc(d, p, _),
+    line(x, l).

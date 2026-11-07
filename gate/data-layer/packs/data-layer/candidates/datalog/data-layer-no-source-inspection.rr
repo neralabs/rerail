@@ -1,14 +1,20 @@
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl field(p: node, f: symbol, c: node)
-.decl name(n: node, s: symbol)
-.decl line(n: node, l: number)
-.input doc, node, field, name, line
 .decl in_scope(d: number)
-.decl m13(n: node)
-.decl m20(n: node)
+.decl inspection_3_alias_text(a: node, s: symbol)
+.decl inspection_3_from_inspect(d: number, n: node)
+.decl inspection_3_name(n: node)
+.decl inspection_4_name(n: node)
+.decl line(n: node, l: number)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, name, line, child, text, node_text
+.output violation
 in_scope(d) :- doc(d, p, _), glob("tests/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("conform/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
@@ -20,6 +26,11 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 violation("data-layer-no-source-inspection", "inspection-0", "NSI001", p, l) :- node(_, n, "call", _, _), field(n, "function", v1), node(_, v1, "attribute", _, _), name(v1, v2), (glob("*.inspect.getsource", v2) ; glob("inspect.getsource", v2)), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
 violation("data-layer-no-source-inspection", "inspection-1", "NSI001", p, l) :- node(_, n, "call", _, _), field(n, "function", v3), node(_, v3, "attribute", _, _), name(v3, v4), (glob("*.inspect.getsourcelines", v4) ; glob("inspect.getsourcelines", v4)), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
 violation("data-layer-no-source-inspection", "inspection-2", "NSI001", p, l) :- node(_, n, "call", _, _), field(n, "function", v5), node(_, v5, "attribute", _, _), name(v5, v6), (glob("*.inspect.getsourcefile", v6) ; glob("inspect.getsourcefile", v6)), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
-m13(n) :- field(v12, "module_name", n), node(_, v12, "import_from_statement", _, _).
-m20(n) :- field(v19, "module_name", n), node(_, v19, "import_from_statement", _, _).
-.output violation
+inspection_3_from_inspect(d, n) :- node(d, n, "import_from_statement", _, _), in_scope(d), !out_scope(d), field(n, "module_name", m), text(m, "inspect").
+inspection_3_alias_text(a, s) :- inspection_3_from_inspect(_, n), child(n, a, _), node(_, a, "aliased_import", _, _), node_text(a, s).
+inspection_3_name(n) :- inspection_3_from_inspect(_, n), child(n, c, _), node(_, c, "dotted_name", _, _), text(c, "getsource"), !field(n, "module_name", c).
+inspection_3_name(n) :- inspection_3_from_inspect(_, n), child(n, c, _), inspection_3_alias_text(c, s), match("(?s).*\\bgetsource\\b.*", s).
+violation("data-layer-no-source-inspection", "inspection-3", "NSI001", p, l) :- inspection_3_from_inspect(d, n), inspection_3_name(n), doc(d, p, _), line(n, l).
+inspection_4_name(n) :- inspection_3_from_inspect(_, n), child(n, c, _), node(_, c, "dotted_name", _, _), text(c, "getsourcelines"), !field(n, "module_name", c).
+inspection_4_name(n) :- inspection_3_from_inspect(_, n), child(n, c, _), inspection_3_alias_text(c, s), match("(?s).*\\bgetsourcelines\\b.*", s).
+violation("data-layer-no-source-inspection", "inspection-4", "NSI001", p, l) :- inspection_3_from_inspect(d, n), inspection_4_name(n), doc(d, p, _), line(n, l).

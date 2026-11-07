@@ -1,0 +1,443 @@
+// data-layer-sql-grammar-escape-hatches: every clause authored (decision 0043), from the policy
+// candidates/rules-ast/data-layer-sql-grammar-escape-hatches.json (the converter's first source).
+// Options are read from the converter-given option_on/option_item (sourceGate, ALLOWLISTED_CLASSES, DATA_VALUE_PARAMS,
+// OPERATOR_PARAMS, SCHEMA_METADATA_CLASSES, CALLSITE_PROTECTED_CLASSES, grammar_class_names, safe_param_types), the
+// report gate from report_when_gt. oracleAnalyzer is declared but no clause reads it.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl end_line(n: loc, l: number)
+.decl node_text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl prev_token(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl tape_line(d: number, l: number, sp: span)
+// Given by the converter (read only): the resolved options.
+.decl option_on(name: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
+// Given by the converter (read only): the report gate.
+.decl report_when_gt(k: number)
+.output violation
+
+// ---- shared: the documents every clause reads --------------------------------------------------------------------
+// `syntax: valid`, in scope, and the module's text matching the sourceGate regex (a W regex over the module node's
+// full text, comments and strings included: node_text). With sourceGate false the regex is `(?s).*`.
+.decl esc_gate(d: number)
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlRenderable", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlClause", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlFragment", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlParam", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlRaw", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlBuiltQuery", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlDdlStatement", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlAdminQuery", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlUnsafe", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlLegacy", s).
+esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("_SqlPrebuilt", s).
+esc_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
+.decl esc_doc(d: number)
+esc_doc(d) :- in_scope(d), !out_scope(d), !syntax_error(d), esc_gate(d).
+
+// The nine escape-hatch names (the forbidden-class and unsafe-parameter regex `^(?:SqlAdminQuery|…)$`).
+.decl esc_forbidden(s: symbol)
+esc_forbidden("SqlAdminQuery"). esc_forbidden("SqlBuiltQuery"). esc_forbidden("SqlDdlStatement"). esc_forbidden("SqlLegacy"). esc_forbidden("SqlRawSql").
+esc_forbidden("SqlRawSqlWithParams"). esc_forbidden("SqlUnsafe"). esc_forbidden("_SqlPrebuiltCondition"). esc_forbidden("_SqlPrebuiltQuery").
+
+// ---- forbidden-class ------------------------------------------------------------------------------------------------
+// A class_definition named one of the nine whose first line does NOT match the layout `line` regex
+// `(?:NAMES)\(|import (?:NAMES)|, (?:NAMES)` (W tests the whole physical line holding the node's first byte, as
+// W's layout numbers lines: tape_line). match() is a full match, hence the `(?s:.*)` around W's unanchored regex.
+.decl forbidden_class_line_ok(d: number, l: number)
+forbidden_class_line_ok(d, l) :- tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)\\(|import (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)|, (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery))(?s:.*)", s).
+.decl forbidden_class_hit(d: number, n: node)
+forbidden_class_hit(d, n) :-
+    node(d, n, "class_definition", _, _), esc_doc(d), field(n, "name", x), node(d, x, "identifier", _, _), text(x, s),
+    esc_forbidden(s), line(n, l), !forbidden_class_line_ok(d, l).
+
+// ---- unsafe-parameter (a budget over evidence rows with a name closure) ---------------------------------------------
+// Rows, over every file in scope (genuinely cross-file: the closure is global, one partition):
+//  A/B: each base-name of a class's superclass argument_list (BASE: an identifier's text, an attribute's `attribute`
+//       identifier, a subscript's `value` base-name, recursively) with the class's name: edge BASE -> CLASS_NAME.
+//  C:   each `ALIAS_TO = <alias-target>` assignment (an identifier ALIAS_TO on the left; on the right an identifier or an
+//       attribute's `attribute` identifier ALIAS_FROM, through `|` binary operators and parentheses): edge
+//       ALIAS_FROM -> ALIAS_TO.
+// closure `classes`: grammar_class_names plus everything reachable along class edges; `aliases`: `classes` plus
+// everything reachable from it along alias edges only (name_closure.rs). A B-row (a typed __init__ parameter's unsafe
+// leaf) is reported where its BASE is in `aliases` (grammar) and its LEAF is not (safe = false); one finding per
+// (path, the parameter's line, the class name), at the parameter.
+.decl unsafe_seed(s: symbol)
+unsafe_seed(s) :- option_item("grammar_class_names", _, s).
+.decl unsafe_class_arg(d: number, cls: node, arg: node)
+unsafe_class_arg(d, cls, arg) :-
+    node(d, cls, "class_definition", _, _), esc_doc(d), child(cls, al, _), node(d, al, "argument_list", _, _),
+    child(al, arg, _).
+// base-name: from each superclass argument down the subscript `value` chain.
+.decl unsafe_base_walk(arg: node, n: node)
+unsafe_base_walk(arg, arg) :- unsafe_class_arg(_, _, arg).
+unsafe_base_walk(arg, v) :- unsafe_base_walk(arg, n), node(_, n, "subscript", _, _), field(n, "value", v).
+.decl unsafe_base_of(arg: node, b: symbol)
+unsafe_base_of(arg, b) :- unsafe_base_walk(arg, n), node(_, n, "identifier", _, _), text(n, b).
+unsafe_base_of(arg, b) :-
+    unsafe_base_walk(arg, n), node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _),
+    text(x, b).
+.decl unsafe_class_name(cls: node, c: symbol)
+unsafe_class_name(cls, c) :- unsafe_class_arg(_, cls, _), field(cls, "name", x), text(x, c).
+.decl unsafe_class_edge(b: symbol, c: symbol)
+unsafe_class_edge(b, c) :- unsafe_class_arg(_, cls, arg), unsafe_base_of(arg, b), unsafe_class_name(cls, c).
+
+// alias-target, from each assignment's right side.
+.decl unsafe_alias_walk(a: node, n: node)
+unsafe_alias_walk(a, r) :- node(d, a, "assignment", _, _), esc_doc(d), field(a, "right", r).
+unsafe_alias_walk(a, c) :-
+    unsafe_alias_walk(a, n), node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "left", c).
+unsafe_alias_walk(a, c) :-
+    unsafe_alias_walk(a, n), node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "right", c).
+unsafe_alias_walk(a, c) :- unsafe_alias_walk(a, n), node(_, n, "parenthesized_expression", _, _), child(n, c, _).
+.decl unsafe_alias_from(a: node, f: symbol)
+unsafe_alias_from(a, f) :- unsafe_alias_walk(a, n), node(_, n, "identifier", _, _), text(n, f).
+unsafe_alias_from(a, f) :-
+    unsafe_alias_walk(a, n), node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _),
+    text(x, f).
+.decl unsafe_alias_edge(f: symbol, t: symbol)
+unsafe_alias_edge(f, t) :-
+    unsafe_alias_from(a, f), field(a, "left", x), node(_, x, "identifier", _, _), text(x, t).
+
+.decl unsafe_known_class(s: symbol)
+unsafe_known_class(s) :- unsafe_seed(s).
+unsafe_known_class(c) :- unsafe_known_class(b), unsafe_class_edge(b, c).
+.decl unsafe_known(s: symbol)
+unsafe_known(s) :- unsafe_known_class(s).
+unsafe_known(t) :- unsafe_known(f), unsafe_alias_edge(f, t).
+
+// The class (B): a grammar base, a name not allowlisted, schema-metadata, callsite-protected or forbidden, and an
+// `__init__` (plain `def`: the W regex `^def\s` on its text) directly in its body block, bare or decorated.
+.decl unsafe_excluded(s: symbol)
+unsafe_excluded(s) :- esc_forbidden(s).
+unsafe_excluded(s) :- option_item("ALLOWLISTED_CLASSES", _, s).
+unsafe_excluded(s) :- option_item("SCHEMA_METADATA_CLASSES", _, s).
+unsafe_excluded(s) :- option_item("CALLSITE_PROTECTED_CLASSES", _, s).
+.decl unsafe_grammar_class(d: number, cls: node, owner: symbol)
+unsafe_grammar_class(d, cls, owner) :-
+    unsafe_class_arg(d, cls, arg), unsafe_base_of(arg, b), unsafe_known(b), unsafe_class_name(cls, owner),
+    !unsafe_excluded(owner).
+.decl unsafe_init_def(f: node)
+unsafe_init_def(f) :-
+    node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, "__init__"),
+    node_text(f, s), match("def\\s(?s:.*)", s).
+.decl unsafe_init(cls: node, f: node)
+unsafe_init(cls, f) :-
+    unsafe_grammar_class(_, cls, _), field(cls, "body", b), child(b, f, _), unsafe_init_def(f).
+unsafe_init(cls, f) :-
+    unsafe_grammar_class(_, cls, _), field(cls, "body", b), child(b, dd, _), node(_, dd, "decorated_definition", _, _),
+    field(dd, "definition", f), unsafe_init_def(f).
+
+// The parameter: typed (default or not), no `self` identifier child, not a typed `*args`/`**kw`, no positional
+// separator `/` after it among its siblings, no `*`, `*args` or typed `*args` before it.
+.decl unsafe_param_kind(k: symbol)
+unsafe_param_kind("typed_parameter"). unsafe_param_kind("typed_default_parameter").
+.decl unsafe_self(p: node)
+unsafe_self(p) :- child(p, x, _), node(_, x, "identifier", _, _), text(x, "self").
+.decl unsafe_splat(p: node)
+unsafe_splat(p) :- node(_, p, "typed_parameter", _, _), child(p, x, _), node(_, x, "list_splat_pattern", _, _).
+unsafe_splat(p) :- node(_, p, "typed_parameter", _, _), child(p, x, _), node(_, x, "dictionary_splat_pattern", _, _).
+.decl unsafe_star(x: node)
+unsafe_star(x) :- node(_, x, "keyword_separator", _, _).
+unsafe_star(x) :- node(_, x, "list_splat_pattern", _, _).
+unsafe_star(x) :- node(_, x, "typed_parameter", _, _), child(x, y, _), node(_, y, "list_splat_pattern", _, _).
+.decl unsafe_candidate(f: node, ps: node, p: node, i: number)
+unsafe_candidate(f, ps, p, i) :-
+    unsafe_init(_, f), field(f, "parameters", ps), child(ps, p, i), node(_, p, k, _, _), unsafe_param_kind(k).
+.decl unsafe_positional(p: node)
+unsafe_positional(p) :- unsafe_candidate(_, ps, p, i), child(ps, x, j), j > i, node(_, x, "positional_separator", _, _).
+.decl unsafe_keyword_only(p: node)
+unsafe_keyword_only(p) :- unsafe_candidate(_, ps, p, i), child(ps, x, j), j < i, unsafe_star(x).
+.decl unsafe_param(f: node, p: node, t: node)
+unsafe_param(f, p, t) :-
+    unsafe_candidate(f, _, p, _), !unsafe_self(p), !unsafe_splat(p), !unsafe_positional(p), !unsafe_keyword_only(p),
+    field(p, "type", t).
+
+// unsafe-leaf, from the parameter's `type` down: an attribute's `attribute`; any named child of type, generic_type,
+// union_type, type_parameter, tuple, parenthesized_expression; a subscript's `value` and `subscript`; a `|`
+// binary_operator's `left` and `right`.
+.decl unsafe_wrapper(k: symbol)
+unsafe_wrapper("type"). unsafe_wrapper("generic_type"). unsafe_wrapper("union_type"). unsafe_wrapper("type_parameter").
+unsafe_wrapper("tuple"). unsafe_wrapper("parenthesized_expression").
+.decl unsafe_walk(p: node, n: node)
+unsafe_walk(p, t) :- unsafe_param(_, p, t).
+unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "attribute", _, _), field(n, "attribute", c).
+unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, k, _, _), unsafe_wrapper(k), child(n, c, _).
+unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "subscript", _, _), field(n, "value", c).
+unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "subscript", _, _), field(n, "subscript", c).
+unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "left", c).
+unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "right", c).
+
+// The names unsafe-leaf passes over: safe_param_types and the containers.
+.decl unsafe_safe_name(s: symbol)
+unsafe_safe_name(s) :- option_item("safe_param_types", _, s).
+.decl unsafe_container(s: symbol)
+unsafe_container("Iterable"). unsafe_container("Mapping"). unsafe_container("Optional"). unsafe_container("Sequence"). unsafe_container("dict").
+unsafe_container("frozenset"). unsafe_container("list"). unsafe_container("set"). unsafe_container("tuple").
+unsafe_safe_name(s) :- unsafe_container(s).
+// `str` is not a leaf in a parameter with an identifier child (its name) in DATA_VALUE_PARAMS or OPERATOR_PARAMS
+// (W: inside the nearest typed parameter, which for a leaf under the parameter's type is the parameter).
+.decl unsafe_str_exempt(p: node)
+unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("DATA_VALUE_PARAMS", _, s).
+unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("OPERATOR_PARAMS", _, s).
+// LEAF text, per parameter. An identifier leaf:
+.decl unsafe_leaf(p: node, s: symbol)
+unsafe_leaf(p, s) :- unsafe_walk(p, n), node(_, n, "identifier", _, _), text(n, s), !unsafe_safe_name(s), !unsafe_str_exempt_name(p, s).
+.decl unsafe_str_exempt_name(p: node, s: symbol)
+unsafe_str_exempt_name(p, "str") :- unsafe_str_exempt(p).
+// A literal leaf (integer, float, true, false): its text (a number, True or False) is never a class or alias name, so
+// never safe; its row is unsafe whatever the closure.
+.decl unsafe_literal_kind(k: symbol)
+unsafe_literal_kind("integer"). unsafe_literal_kind("float"). unsafe_literal_kind("true"). unsafe_literal_kind("false").
+.decl unsafe_literal(p: node)
+unsafe_literal(p) :- unsafe_walk(p, n), node(_, n, k, _, _), unsafe_literal_kind(k).
+
+// A string leaf: a non-f string, or a concatenated_string with no f-string part (the regex `(?i)^[rub]*f` on a part's
+// text: a prefix holding `f`), its DECODED text (literal/offsets.rs decode_python, the concatenation's parts joined)
+// parsed as identifierWords (each maximal run of [A-Za-z0-9_] gives one word, from its first [A-Za-z_] to the run's
+// end: literal/identifier_words.rs); each word not a safe name is a leaf. W's decoded text is the node's `value` as a
+// str: a bytes, t-string or malformed literal, or one decoding past 64 KiB, is unknown there (no words) and has no
+// str value here.
+.decl unsafe_fpart(n: node)
+unsafe_fpart(n) :- node(_, n, "string", _, _), strprefix(n, f), contains("f", f).
+.decl unsafe_fconcat(n: node)
+unsafe_fconcat(n) :- node(_, n, "concatenated_string", _, _), child(n, x, _), unsafe_fpart(x).
+.decl unsafe_text(p: node, v: symbol)
+unsafe_text(p, v) :-
+    unsafe_walk(p, n), node(_, n, "string", _, _), !unsafe_fpart(n), value_type_of(n, "str"), value(n, v).
+unsafe_text(p, v) :-
+    unsafe_walk(p, n), node(_, n, "concatenated_string", _, _), !unsafe_fconcat(n), value_type_of(n, "str"), value(n, v).
+.decl unsafe_len(v: symbol, k: number)
+unsafe_len(v, k) :- unsafe_text(_, v), k = strlen(v).
+.decl unsafe_ch(v: symbol, i: number, c: symbol)
+// Positions 0 … 262143 (a * 4096 + b * 64 + c), not a recursion (the engine refuses a value made inside one, and
+// match_all reads only document spans, not a value): every character of a value W decodes (at most 64 KiB).
+.decl unsafe_digit64(a: number)
+unsafe_digit64(0). unsafe_digit64(1). unsafe_digit64(2). unsafe_digit64(3). unsafe_digit64(4). unsafe_digit64(5). unsafe_digit64(6). unsafe_digit64(7). unsafe_digit64(8). unsafe_digit64(9). unsafe_digit64(10). unsafe_digit64(11). unsafe_digit64(12). unsafe_digit64(13). unsafe_digit64(14). unsafe_digit64(15).
+unsafe_digit64(16). unsafe_digit64(17). unsafe_digit64(18). unsafe_digit64(19). unsafe_digit64(20). unsafe_digit64(21). unsafe_digit64(22). unsafe_digit64(23). unsafe_digit64(24). unsafe_digit64(25). unsafe_digit64(26). unsafe_digit64(27). unsafe_digit64(28). unsafe_digit64(29). unsafe_digit64(30). unsafe_digit64(31).
+unsafe_digit64(32). unsafe_digit64(33). unsafe_digit64(34). unsafe_digit64(35). unsafe_digit64(36). unsafe_digit64(37). unsafe_digit64(38). unsafe_digit64(39). unsafe_digit64(40). unsafe_digit64(41). unsafe_digit64(42). unsafe_digit64(43). unsafe_digit64(44). unsafe_digit64(45). unsafe_digit64(46). unsafe_digit64(47).
+unsafe_digit64(48). unsafe_digit64(49). unsafe_digit64(50). unsafe_digit64(51). unsafe_digit64(52). unsafe_digit64(53). unsafe_digit64(54). unsafe_digit64(55). unsafe_digit64(56). unsafe_digit64(57). unsafe_digit64(58). unsafe_digit64(59). unsafe_digit64(60). unsafe_digit64(61). unsafe_digit64(62). unsafe_digit64(63).
+.decl unsafe_block(v: symbol, j: number)
+unsafe_block(v, j) :-
+    unsafe_len(v, k), unsafe_digit64(a), a * 4096 < k, unsafe_digit64(b), j = a * 4096 + b * 64, j < k.
+unsafe_ch(v, i, c) :- unsafe_block(v, j), unsafe_len(v, k), unsafe_digit64(e), i = j + e, i < k, c = substr(v, i, 1).
+// unsafe_next(v, i, j): j is the character after i.
+.decl unsafe_next(v: symbol, i: number, j: number)
+unsafe_next(v, i, j) :- unsafe_ch(v, i, _), j = i + 1, unsafe_ch(v, j, _).
+.decl unsafe_alpha(c: symbol)
+unsafe_alpha("a"). unsafe_alpha("b"). unsafe_alpha("c"). unsafe_alpha("d"). unsafe_alpha("e"). unsafe_alpha("f"). unsafe_alpha("g"). unsafe_alpha("h"). unsafe_alpha("i"). unsafe_alpha("j"). unsafe_alpha("k"). unsafe_alpha("l"). unsafe_alpha("m").
+unsafe_alpha("n"). unsafe_alpha("o"). unsafe_alpha("p"). unsafe_alpha("q"). unsafe_alpha("r"). unsafe_alpha("s"). unsafe_alpha("t"). unsafe_alpha("u"). unsafe_alpha("v"). unsafe_alpha("w"). unsafe_alpha("x"). unsafe_alpha("y"). unsafe_alpha("z").
+unsafe_alpha("A"). unsafe_alpha("B"). unsafe_alpha("C"). unsafe_alpha("D"). unsafe_alpha("E"). unsafe_alpha("F"). unsafe_alpha("G"). unsafe_alpha("H"). unsafe_alpha("I"). unsafe_alpha("J"). unsafe_alpha("K"). unsafe_alpha("L"). unsafe_alpha("M").
+unsafe_alpha("N"). unsafe_alpha("O"). unsafe_alpha("P"). unsafe_alpha("Q"). unsafe_alpha("R"). unsafe_alpha("S"). unsafe_alpha("T"). unsafe_alpha("U"). unsafe_alpha("V"). unsafe_alpha("W"). unsafe_alpha("X"). unsafe_alpha("Y"). unsafe_alpha("Z").
+unsafe_alpha("_").
+.decl unsafe_digit(c: symbol)
+unsafe_digit("0"). unsafe_digit("1"). unsafe_digit("2"). unsafe_digit("3"). unsafe_digit("4"). unsafe_digit("5"). unsafe_digit("6"). unsafe_digit("7"). unsafe_digit("8"). unsafe_digit("9").
+.decl unsafe_wc(c: symbol)
+unsafe_wc(c) :- unsafe_alpha(c).
+unsafe_wc(c) :- unsafe_digit(c).
+// unsafe_lead(v, i): i is in a run of word characters whose characters from the run's start to i are all digits.
+.decl unsafe_lead(v: symbol, i: number)
+unsafe_lead(v, 0) :- unsafe_ch(v, 0, c), unsafe_digit(c).
+unsafe_lead(v, i) :- unsafe_ch(v, i, c), unsafe_digit(c), i > 0, h = i - 1, unsafe_ch(v, h, b), !unsafe_wc(b).
+unsafe_lead(v, j) :- unsafe_lead(v, i), unsafe_next(v, i, j), unsafe_ch(v, j, c), unsafe_digit(c).
+.decl unsafe_word_start(v: symbol, i: number)
+unsafe_word_start(v, 0) :- unsafe_ch(v, 0, c), unsafe_alpha(c).
+unsafe_word_start(v, i) :- unsafe_ch(v, i, c), unsafe_alpha(c), i > 0, h = i - 1, unsafe_ch(v, h, b), !unsafe_wc(b).
+unsafe_word_start(v, i) :- unsafe_ch(v, i, c), unsafe_alpha(c), i > 0, h = i - 1, unsafe_lead(v, h).
+.decl unsafe_word_run(v: symbol, i: number, j: number)
+unsafe_word_run(v, i, i) :- unsafe_word_start(v, i).
+unsafe_word_run(v, i, j) :- unsafe_word_run(v, i, h), unsafe_next(v, h, j), unsafe_ch(v, j, c), unsafe_wc(c).
+.decl unsafe_word_end(v: symbol, j: number)
+unsafe_word_end(v, j) :- unsafe_word_run(v, _, j), unsafe_len(v, k), j + 1 = k.
+unsafe_word_end(v, j) :- unsafe_word_run(v, _, j), h = j + 1, unsafe_ch(v, h, c), !unsafe_wc(c).
+.decl unsafe_word(v: symbol, w: symbol)
+unsafe_word(v, w) :- unsafe_word_run(v, i, j), unsafe_word_end(v, j), w = substr(v, i, j - i + 1).
+unsafe_leaf(p, w) :- unsafe_text(p, v), unsafe_word(v, w), !unsafe_safe_name(w), !unsafe_str_exempt_name(p, w).
+
+// owner: the class's name, the budget's third group key (row.path, row.position, row.owner).
+.decl unsafe_parameter_hit(d: number, p: node, owner: symbol)
+unsafe_parameter_hit(d, p, owner) :-
+    unsafe_grammar_class(d, cls, owner), unsafe_init(cls, f), unsafe_param(f, p, _), unsafe_leaf(p, s), !unsafe_known(s).
+unsafe_parameter_hit(d, p, owner) :-
+    unsafe_grammar_class(d, cls, owner), unsafe_init(cls, f), unsafe_param(f, p, _), unsafe_literal(p).
+// One finding per group: (path, the parameter's line, owner).
+.decl unsafe_group(d: number, l: number, owner: symbol)
+unsafe_group(d, l, owner) :- unsafe_parameter_hit(d, p, owner), line(p, l).
+
+// ---- usage-0 … usage-8 --------------------------------------------------------------------------------------------
+// usage-i, for its name X, matches a node that is
+//  1. an identifier whose text ends with X (`X$`) that is a call's `function`, the `attribute` of an attribute that is a
+//     call's `function`, the `name` of a class_definition with a superclasses argument_list, or a function's `name`;
+//  2. a dotted_name or aliased_import whose text starts with X (`^X`, node_text) right after the `import` token;
+//  3. an identifier, call, attribute, subscript, dotted_name, aliased_import, generic_type or type whose text starts
+//     with X right after a `,` token;
+// less those with an earlier match (`earlier-usage-i`): a match m in the same module ending before the node starts,
+// on the node's first line (layout `after` to CURRENT, `breaks: 0`: the line of m's end is the node's line).
+.decl usage_call_slot(n: node)
+usage_call_slot(n) :- node(_, p, "call", _, _), field(p, "function", n).
+usage_call_slot(n) :-
+    node(_, a, "attribute", _, _), field(a, "attribute", n), node(_, p, "call", _, _), field(p, "function", a).
+usage_call_slot(n) :-
+    node(_, c, "class_definition", _, _), field(c, "name", n), field(c, "superclasses", al), node(_, al, "argument_list", _, _).
+usage_call_slot(n) :- node(_, f, "function_definition", _, _), field(f, "name", n).
+.decl usage_import_kind(k: symbol)
+usage_import_kind("dotted_name"). usage_import_kind("aliased_import").
+.decl usage_comma_kind(k: symbol)
+usage_comma_kind("identifier"). usage_comma_kind("call"). usage_comma_kind("attribute"). usage_comma_kind("subscript").
+usage_comma_kind("dotted_name"). usage_comma_kind("aliased_import"). usage_comma_kind("generic_type"). usage_comma_kind("type").
+// usage_prev(n, s): the token right before n among its parent's children, anonymous ones and comments included (W's
+// `follows`, stopBy neighbor, its regex `^,$` / `^import$` on that token's text).
+.decl usage_prev(n: node, s: symbol)
+usage_prev(n, s) :- prev_token(n, s).
+// usage-0: SqlAdminQuery
+.decl usage_0_hit(d: number, n: node)
+usage_0_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlAdminQuery", s), usage_call_slot(n).
+usage_0_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlAdminQuery", s).
+usage_0_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlAdminQuery", s).
+.decl usage_0_earlier(n: node)
+usage_0_earlier(n) :-
+    usage_0_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_0_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+.decl usage_0_current(d: number, n: node)
+usage_0_current(d, n) :- usage_0_hit(d, n), esc_doc(d), !usage_0_earlier(n).
+// usage-1: SqlBuiltQuery
+.decl usage_1_hit(d: number, n: node)
+usage_1_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlBuiltQuery", s), usage_call_slot(n).
+usage_1_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlBuiltQuery", s).
+usage_1_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlBuiltQuery", s).
+.decl usage_1_earlier(n: node)
+usage_1_earlier(n) :-
+    usage_1_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_1_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+.decl usage_1_current(d: number, n: node)
+usage_1_current(d, n) :- usage_1_hit(d, n), esc_doc(d), !usage_1_earlier(n).
+// usage-2: SqlDdlStatement
+.decl usage_2_hit(d: number, n: node)
+usage_2_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlDdlStatement", s), usage_call_slot(n).
+usage_2_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlDdlStatement", s).
+usage_2_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlDdlStatement", s).
+.decl usage_2_earlier(n: node)
+usage_2_earlier(n) :-
+    usage_2_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_2_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+.decl usage_2_current(d: number, n: node)
+usage_2_current(d, n) :- usage_2_hit(d, n), esc_doc(d), !usage_2_earlier(n).
+// usage-3: SqlLegacy
+.decl usage_3_hit(d: number, n: node)
+usage_3_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlLegacy", s), usage_call_slot(n).
+usage_3_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlLegacy", s).
+usage_3_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlLegacy", s).
+.decl usage_3_earlier(n: node)
+usage_3_earlier(n) :-
+    usage_3_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_3_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+.decl usage_3_current(d: number, n: node)
+usage_3_current(d, n) :- usage_3_hit(d, n), esc_doc(d), !usage_3_earlier(n).
+// usage-4: SqlRawSql
+.decl usage_4_hit(d: number, n: node)
+usage_4_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlRawSql", s), usage_call_slot(n).
+usage_4_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlRawSql", s).
+usage_4_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlRawSql", s).
+.decl usage_4_earlier(n: node)
+usage_4_earlier(n) :-
+    usage_4_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_4_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+.decl usage_4_current(d: number, n: node)
+usage_4_current(d, n) :- usage_4_hit(d, n), esc_doc(d), !usage_4_earlier(n).
+// usage-5: SqlRawSqlWithParams
+.decl usage_5_hit(d: number, n: node)
+usage_5_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlRawSqlWithParams", s), usage_call_slot(n).
+usage_5_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlRawSqlWithParams", s).
+usage_5_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlRawSqlWithParams", s).
+.decl usage_5_earlier(n: node)
+usage_5_earlier(n) :-
+    usage_5_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_5_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+.decl usage_5_current(d: number, n: node)
+usage_5_current(d, n) :- usage_5_hit(d, n), esc_doc(d), !usage_5_earlier(n).
+// usage-6: SqlUnsafe
+.decl usage_6_hit(d: number, n: node)
+usage_6_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlUnsafe", s), usage_call_slot(n).
+usage_6_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlUnsafe", s).
+usage_6_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlUnsafe", s).
+.decl usage_6_earlier(n: node)
+usage_6_earlier(n) :-
+    usage_6_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_6_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+.decl usage_6_current(d: number, n: node)
+usage_6_current(d, n) :- usage_6_hit(d, n), esc_doc(d), !usage_6_earlier(n).
+// usage-7: _SqlPrebuiltCondition
+.decl usage_7_hit(d: number, n: node)
+usage_7_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("_SqlPrebuiltCondition", s), usage_call_slot(n).
+usage_7_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("_SqlPrebuiltCondition", s).
+usage_7_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("_SqlPrebuiltCondition", s).
+.decl usage_7_earlier(n: node)
+usage_7_earlier(n) :-
+    usage_7_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_7_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+.decl usage_7_current(d: number, n: node)
+usage_7_current(d, n) :- usage_7_hit(d, n), esc_doc(d), !usage_7_earlier(n).
+// usage-8: _SqlPrebuiltQuery
+.decl usage_8_hit(d: number, n: node)
+usage_8_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("_SqlPrebuiltQuery", s), usage_call_slot(n).
+usage_8_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("_SqlPrebuiltQuery", s).
+usage_8_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("_SqlPrebuiltQuery", s).
+.decl usage_8_earlier(n: node)
+usage_8_earlier(n) :-
+    usage_8_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_8_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+.decl usage_8_current(d: number, n: node)
+usage_8_current(d, n) :- usage_8_hit(d, n), esc_doc(d), !usage_8_earlier(n).
+
+// ---- findings ---------------------------------------------------------------------------------------------------------
+// Each clause's findings as keys (a set: J1).
+.decl esc_found(clause: symbol, path: symbol, line: number)
+esc_found("forbidden-class", p, l) :- forbidden_class_hit(d, n), doc(d, p, _), line(n, l).
+esc_found("unsafe-parameter", p, l) :- unsafe_group(d, l, _), doc(d, p, _).
+esc_found("usage-0", p, l) :- usage_0_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-1", p, l) :- usage_1_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-2", p, l) :- usage_2_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-3", p, l) :- usage_3_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-4", p, l) :- usage_4_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-5", p, l) :- usage_5_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-6", p, l) :- usage_6_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-7", p, l) :- usage_7_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-8", p, l) :- usage_8_current(d, n), doc(d, p, _), line(n, l).
+// report_when (count > k, converter-given report_when_gt): nothing unless the rule's witnesses, all files and clauses
+// together, number more than k (eval/mod.rs, workspace/results.rs: W counts violations, one per witness). A forbid
+// clause's witness is its matched node (nested matches, `SqlUnsafe(x)` after a `,` and its `function`, are two); the
+// budget's is its group (path, the parameter's line, owner).
+.decl esc_usage_witness(clause: symbol, n: node)
+esc_usage_witness("usage-0", n) :- usage_0_current(_, n).
+esc_usage_witness("usage-1", n) :- usage_1_current(_, n).
+esc_usage_witness("usage-2", n) :- usage_2_current(_, n).
+esc_usage_witness("usage-3", n) :- usage_3_current(_, n).
+esc_usage_witness("usage-4", n) :- usage_4_current(_, n).
+esc_usage_witness("usage-5", n) :- usage_5_current(_, n).
+esc_usage_witness("usage-6", n) :- usage_6_current(_, n).
+esc_usage_witness("usage-7", n) :- usage_7_current(_, n).
+esc_usage_witness("usage-8", n) :- usage_8_current(_, n).
+.decl esc_n_class(k: number)
+esc_n_class(k) :- report_when_gt(_), k = count : { forbidden_class_hit(_, _) }.
+.decl esc_n_param(k: number)
+esc_n_param(k) :- report_when_gt(_), k = count : { unsafe_group(_, _, _) }.
+.decl esc_n_usage(k: number)
+esc_n_usage(k) :- report_when_gt(_), k = count : { esc_usage_witness(_, _) }.
+.decl esc_report(x: number)
+esc_report(1) :- esc_found(_, _, _), !report_when_gt(_).
+esc_report(1) :- report_when_gt(g), esc_n_class(a), esc_n_param(b), esc_n_usage(c), k = a + b + c, k > g.
+violation("data-layer-sql-grammar-escape-hatches", "forbidden-class", "escape_hatch", p, l) :- esc_found("forbidden-class", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "unsafe-parameter", "escape_hatch", p, l) :- esc_found("unsafe-parameter", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-0", "escape_hatch", p, l) :- esc_found("usage-0", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-1", "escape_hatch", p, l) :- esc_found("usage-1", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-2", "escape_hatch", p, l) :- esc_found("usage-2", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-3", "escape_hatch", p, l) :- esc_found("usage-3", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-4", "escape_hatch", p, l) :- esc_found("usage-4", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-5", "escape_hatch", p, l) :- esc_found("usage-5", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-6", "escape_hatch", p, l) :- esc_found("usage-6", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-7", "escape_hatch", p, l) :- esc_found("usage-7", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-8", "escape_hatch", p, l) :- esc_found("usage-8", p, l), esc_report(1).

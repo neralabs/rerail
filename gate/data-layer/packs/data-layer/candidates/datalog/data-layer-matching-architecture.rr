@@ -1,12 +1,630 @@
+.decl matching_file_class_kind(kind: symbol)
+matching_file_class_kind("class_definition").
+.decl matching_file_decorator_kind(kind: symbol)
+matching_file_decorator_kind("decorator").
+.decl matching_file_import_kind(kind: symbol)
+matching_file_import_kind("import_statement"). matching_file_import_kind("import_from_statement"). matching_file_import_kind("future_import_statement").
+.decl matching_file_kind(kind: symbol)
+matching_file_kind("function_definition").
+.decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl end_line(n: node, l: number)
+.decl field(p: node, f: symbol, c: node)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl matching_file_after_star(f: node, i: number)
+.decl matching_file_any_leaf(t: node, x: node)
+.decl matching_file_application(d: number)
+.decl matching_file_application_path(p: symbol)
+.decl matching_file_arg(c: node, e: node, i: number)
+.decl matching_file_assign_stmt(a: node)
+.decl matching_file_attr(a: node, x: symbol, v: node)
+.decl matching_file_backend(d: number, n: node)
+.decl matching_file_base(c: node, b: node)
+.decl matching_file_before_slash(f: node, i: number)
+.decl matching_file_binop(n: node, o: symbol, l: node, r: node)
+.decl matching_file_broad(n: node)
+.decl matching_file_call(c: node, f: node)
+.decl matching_file_call_of_call(e: node)
+.decl matching_file_callee(c: node, kind: symbol, x: symbol)
+.decl matching_file_calls_match(f: node)
+.decl matching_file_candidate(d: number)
+.decl matching_file_chain(a: node, x: node)
+.decl matching_file_class(c: node, x: symbol)
+.decl matching_file_class_field(c: node, a: node, x: symbol, ann: node, cls: symbol)
+.decl matching_file_concat_piece(n: node)
+.decl matching_file_conformance(d: number)
+.decl matching_file_const(n: node, kind: symbol, v: symbol)
+.decl matching_file_const_kind(n: node, kind: symbol)
+.decl matching_file_constant(n: node)
+.decl matching_file_constant_arg(c: node)
+.decl matching_file_contract_name(s: symbol)
+.decl matching_file_contract_text(s: symbol)
+.decl matching_file_contracts(d: number)
+.decl matching_file_contrib(n: node, x: node, s: number)
+.decl matching_file_contrib_window(n: node, x: node, s: number, m: number)
+.decl matching_file_count_value(v: node)
+.decl matching_file_decorated(f: node)
+.decl matching_file_decorator(f: node, e: node)
+.decl matching_file_def(f: node, x: symbol)
+.decl matching_file_def_call(f: node, c: node)
+.decl matching_file_def_match_text(s: symbol)
+.decl matching_file_def_node(f: node, n: node)
+.decl matching_file_dependency_count(x: symbol)
+.decl matching_file_doc(d: number)
+.decl matching_file_elt(t: node, e: node)
+.decl matching_file_empty_content(x: node)
+.decl matching_file_every_module(x: number)
+.decl matching_file_facade(d: number)
+.decl matching_file_field(n: node, x: node, s: number)
+.decl matching_file_field_rank(n: node, x: node, m: number)
+.decl matching_file_finding(d: number, code: symbol, n: node)
+.decl matching_file_finding_line(d: number, code: symbol, l: number)
+.decl matching_file_first(d: number, code: symbol, f: node, n: node)
+.decl matching_file_first_leaf(t: node, x: node)
+.decl matching_file_first_line(d: number, code: symbol, f: node, l: number)
+.decl matching_file_forward(d: number, x: symbol, f: node, c: node, i: number)
+.decl matching_file_forward_index(d: number, x: symbol, i: number)
+.decl matching_file_forward_last(d: number, x: symbol, f: node)
+.decl matching_file_from_alias(n: node, x: symbol)
+.decl matching_file_from_module(n: node, m: symbol)
+.decl matching_file_frozen_config(c: node)
+.decl matching_file_fstr(n: node)
+.decl matching_file_gate(d: number)
+.decl matching_file_handler(n: node, h: node, t: node)
+.decl matching_file_has_contrib(n: node, m: number)
+.decl matching_file_impl_module(m: symbol)
+.decl matching_file_implementation(d: number)
+.decl matching_file_import(d: number, n: node, module: symbol)
+.decl matching_file_in(x: node, r: node)
+.decl matching_file_interpolated(n: node)
+.decl matching_file_is_static(n: node)
+.decl matching_file_joined(n: node)
+.decl matching_file_joined_piece(n: node, p: node)
+.decl matching_file_joined_text(n: node, s: symbol)
+.decl matching_file_joined_value(n: node, s: symbol)
+.decl matching_file_keyword(c: node, k: node, x: symbol, v: node)
+.decl matching_file_keyword_child(e: node)
+.decl matching_file_label_any(t: node, s: symbol)
+.decl matching_file_label_first(t: node, s: symbol)
+.decl matching_file_label_is(t: node, s: symbol)
+.decl matching_file_label_last(t: node, s: symbol)
+.decl matching_file_last_leaf(t: node, x: node)
+.decl matching_file_layer_path(d: number)
+.decl matching_file_leaf(t: node, s: symbol)
+.decl matching_file_leaf_node(t: node)
+.decl matching_file_len_receipts(c: node)
+.decl matching_file_literal_kind(k: symbol)
+.decl matching_file_lower_layer(d: number)
+.decl matching_file_match_name(x: symbol)
+.decl matching_file_matching(d: number)
+.decl matching_file_module_text(d: number, s: symbol)
+.decl matching_file_multi(t: node)
+.decl matching_file_name(n: node, x: symbol)
+.decl matching_file_named_target(a: node, t: node, x: symbol)
+.decl matching_file_node(n: node)
+.decl matching_file_not_name(n: node)
+.decl matching_file_offset(i: number)
+.decl matching_file_param(f: node, p: node, i: number, x: symbol, fld: symbol)
+.decl matching_file_param_annotation(p: node, a: node)
+.decl matching_file_param_before(f: node, j: number, k: number)
+.decl matching_file_param_holder(k: symbol)
+.decl matching_file_param_node(f: node, p: node, i: number, x: symbol, form: symbol)
+.decl matching_file_part(n: node, i: number, v: symbol)
+.decl matching_file_part_line(n: node, i: number, l: number)
+.decl matching_file_part_window(n: node, i: number, m: number)
+.decl matching_file_physical(d: number, l: number)
+.decl matching_file_physical_kind(x: symbol)
+.decl matching_file_physical_word(w: symbol)
+.decl matching_file_poll(x: node)
+.decl matching_file_positional(c: node, e: node, j: number)
+.decl matching_file_positional_before(c: node, j: number, k: number)
+.decl matching_file_positional_param(f: node, p: node, i: number, x: symbol)
+.decl matching_file_predicted(d: number, x: symbol)
+.decl matching_file_probe(x: node, r: node)
+.decl matching_file_production(d: number)
+.decl matching_file_qual(n: node, q: symbol)
+.decl matching_file_qual_dotted(n: node)
+.decl matching_file_qual_last(n: node, x: symbol)
+.decl matching_file_qual_part(n: node, x: symbol)
+.decl matching_file_qual_root(n: node, x: symbol)
+.decl matching_file_raw_sql(d: number, c: node)
+.decl matching_file_receipts(x: symbol)
+.decl matching_file_recursive(s: symbol)
+.decl matching_file_ref(n: node, x: symbol)
+.decl matching_file_resolution(d: number, n: node)
+.decl matching_file_returns_call(n: node)
+.decl matching_file_root(d: number)
+.decl matching_file_separator(f: node, i: number, k: symbol)
+.decl matching_file_slice_subscript(n: node)
+.decl matching_file_source_text(d: number, s: symbol)
+.decl matching_file_span(f: node, d: number, s: number, e: number)
+.decl matching_file_spec(fs: node)
+.decl matching_file_sql_fstring(n: node)
+.decl matching_file_sql_text(s: symbol)
+.decl matching_file_static_leaf(n: node, s: symbol)
+.decl matching_file_static_part(n: node, w: symbol, i: number, j: number)
+.decl matching_file_subscript(n: node, v: node)
+.decl matching_file_target(a: node, t: node)
+.decl matching_file_try_handler(n: node, h: node)
+.decl matching_file_tuple(n: node)
+.decl matching_file_two_subscripts(n: node)
+.decl matching_file_two_targets(a: node)
+.decl matching_file_type_part(t: node)
+.decl matching_file_type_root(t: node)
+.decl matching_file_unparen(e: node, m: node)
+.decl matching_file_unsafe(n: node)
+.decl matching_file_unsafe_name(x: symbol)
+.decl matching_file_untype(e: node, m: node)
+.decl matching_file_uses_contracts(d: number)
+.decl matching_file_value(a: node, v: node)
+.decl matching_file_value_has(v: node, what: symbol)
+.decl matching_project_any_maintenance(x: number)
+.decl matching_project_any_policy(x: number)
+.decl matching_project_file(d: number, s: symbol)
+.decl matching_project_maintenance(d: number)
+.decl matching_project_policy(d: number)
+.decl matching_project_scan_sources(x: number)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(i: number, j: number, n: node)
+.decl rr_agg10(d: number, t: number, x: symbol)
+.decl rr_agg11(d: number, f: node, t: number, x: symbol)
+.decl rr_agg12(d: number, x: number)
+.decl rr_agg13(d: number, x: number)
+.decl rr_agg14(d: number, f: node, k: symbol, x: number)
+.decl rr_agg3(n: node, s: number, t: number)
+.decl rr_agg5(n: node, s: number, t: number)
+.decl rr_agg8(d: number, x: number)
+.decl rr_agg9(d: number, x: number)
+.decl rr_ctx2(i: number)
+.decl rr_ctx4(s: number)
+.decl rr_ctx6(s: number)
+.decl source(d: number, sp: node)
+.decl strprefix(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, source, node_text, text, syntax_error, cpython_syntax_error, node, child, field, strprefix, value_type_of, value, fstring_piece, line, end_line, op, name
+.output violation
+matching_file_contract_name("MatchSpec").
+matching_file_contract_name("MatchResult").
+matching_file_contract_name("MatchPhysicalPlanError").
+matching_file_contract_name("MatchAccessMethodKind").
+matching_file_dependency_count("completed_database_round_trips").
+matching_file_dependency_count("database_execution_operations").
+matching_file_dependency_count("database_round_trips").
+matching_file_dependency_count("dependency_traversal_operations").
+matching_file_literal_kind("string").
+matching_file_literal_kind("concatenated_string").
+matching_file_literal_kind("integer").
+matching_file_literal_kind("float").
+matching_file_literal_kind("true").
+matching_file_literal_kind("false").
+matching_file_literal_kind("none").
+matching_file_literal_kind("ellipsis").
+matching_file_match_name("match").
+matching_file_match_name("match_async").
+matching_file_match_name("match_lazy").
+matching_file_offset(0).
+matching_file_offset(1).
+matching_file_offset(2).
+matching_file_offset(3).
+matching_file_offset(4).
+matching_file_offset(5).
+matching_file_offset(6).
+matching_file_offset(7).
+matching_file_offset(8).
+matching_file_offset(9).
+matching_file_offset(10).
+matching_file_offset(11).
+matching_file_offset(12).
+matching_file_offset(13).
+matching_file_offset(14).
+matching_file_offset(15).
+matching_file_offset(16).
+matching_file_offset(17).
+matching_file_param_holder("parameters").
+matching_file_param_holder("lambda_parameters").
+matching_file_param_holder("typed_parameter").
+matching_file_physical_kind("MatchAccessMethodKind").
+matching_file_physical_kind("MatchPhysicalStageKind").
+matching_file_physical_word("bit_hamming_ops").
+matching_file_physical_word("halfvec").
+matching_file_physical_word("hnsw").
+matching_file_physical_word("ivfflat").
+matching_file_physical_word("pgvector").
+matching_file_physical_word("sql_table_hnsw").
+matching_file_physical_word("usearch").
+matching_file_physical_word("vector_cosine_ops").
+matching_file_receipts("completed_preflight_receipts").
+matching_file_receipts("database_receipts").
+matching_file_receipts("dependency_receipts").
+matching_file_receipts("executed_dependencies").
+matching_file_recursive("MatchArtifactState").
+matching_file_recursive("MatchComplexityBound").
+matching_file_recursive("MatchDuplicatePairPolicySpec").
+matching_file_recursive("MatchExplanationPolicy").
+matching_file_recursive("MatchFilterSpec").
+matching_file_recursive("MatchFreshnessDiagnostics").
+matching_file_recursive("MatchFreshnessPolicySpec").
+matching_file_recursive("MatchIdentitySpec").
+matching_file_recursive("MatchMissingRepresentationPolicySpec").
+matching_file_recursive("MatchPageState").
+matching_file_recursive("MatchPaginationSpec").
+matching_file_recursive("MatchPruningBound").
+matching_file_recursive("MatchRepresentationAvailabilitySpec").
+matching_file_recursive("MatchRepresentationSpec").
+matching_file_recursive("MatchResultShapeSpec").
+matching_file_recursive("MatchScoreExpression").
+matching_file_unsafe_name("Any").
+matching_file_unsafe_name("Mapping").
+matching_file_unsafe_name("bool").
+matching_file_unsafe_name("bytes").
+matching_file_unsafe_name("dict").
+matching_file_unsafe_name("float").
+matching_file_unsafe_name("int").
+matching_file_unsafe_name("list").
+matching_file_unsafe_name("object").
+matching_file_unsafe_name("set").
+matching_file_unsafe_name("str").
+matching_file_unsafe_name("tuple").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("conform/l5250_matching/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer_testing/matching_operator.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-.output violation
+matching_project_scan_sources(0) :- option_value("entryPoint", "scan_sources").
+matching_project_file(d, s) :- doc(d, p, _), in_scope(d), !out_scope(d), source(d, sp), text(sp, s).
+matching_project_maintenance(d) :- matching_project_file(d, _), doc(d, p, _), match("(.*/)?l5250_matching/.*", p), !prefix("conform/", p).
+matching_project_policy(d) :- matching_project_maintenance(d), matching_project_file(d, s), contains("BranchAwareIndexPolicy", s).
+matching_project_any_maintenance(0) :- matching_project_maintenance(_).
+matching_project_any_policy(0) :- matching_project_policy(_).
+violation("data-layer-matching-architecture", "matching-project-ownership", "MA033", "l5250_matching/maintenance.py", 1) :- !matching_project_scan_sources(0), matching_project_any_maintenance(0), !matching_project_any_policy(0).
+violation("data-layer-matching-architecture", "matching-project-ownership", "MA034", "data_layer_testing/matching_operator.py", 1) :- !matching_project_scan_sources(0), doc(d, "data_layer_testing/matching_operator.py", _), matching_project_file(d, s), contains("register_table_hook", s).
+matching_file_every_module(0) :- option_value("entryPoint", "scan_sources").
+matching_file_every_module(0) :- option_value("entryPoint", "_scan_tree").
+matching_file_application_path(p) :- option_json("parameters", k, p), match("/applicationPaths(/[^/]*)?", k).
+matching_file_candidate(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), node(d, _, "module", _, _).
+matching_file_contract_text(s) :- matching_file_module_text(_, s), match("(?s:.*)(?:data_layer\\.matching|l1470_matching_contracts|l5250_matching|MatchSpec|MatchResult|MatchPhysicalPlanError|MatchAccessMethodKind)(?s:.*)", s).
+matching_file_contract_text(s) :- matching_file_source_text(_, s), match("(?s:.*)(?:data_layer\\.matching|l1470_matching_contracts|l5250_matching|MatchSpec|MatchResult|MatchPhysicalPlanError|MatchAccessMethodKind)(?s:.*)", s).
+matching_file_def_match_text(s) :- matching_file_module_text(_, s), match("(?s:.*)(?:\\b(?:async\\s+)?def\\s+match(?:_async|_lazy)?\\s*\\()(?s:.*)", s).
+matching_file_def_match_text(s) :- matching_file_source_text(_, s), match("(?s:.*)(?:\\b(?:async\\s+)?def\\s+match(?:_async|_lazy)?\\s*\\()(?s:.*)", s).
+matching_file_module_text(d, s) :- matching_file_candidate(d), node(d, m, "module", _, _), node_text(m, s).
+matching_file_source_text(d, s) :- matching_file_candidate(d), source(d, sp), text(sp, s).
+matching_file_layer_path(d) :- matching_file_candidate(d), doc(d, p, _), match("(.*/)?l[0-9]{4}_.*", p).
+matching_file_gate(d) :- matching_file_candidate(d), matching_file_every_module(0).
+matching_file_gate(d) :- matching_file_candidate(d), !matching_file_every_module(0), !option_value("parameters", "{}").
+matching_file_gate(d) :- matching_file_candidate(d), !matching_file_every_module(0), option_value("parameters", "{}"), matching_file_production(d).
+matching_file_gate(d) :- matching_file_candidate(d), !matching_file_every_module(0), option_value("parameters", "{}"), matching_file_module_text(d, s), matching_file_contract_text(s).
+matching_file_gate(d) :- matching_file_candidate(d), !matching_file_every_module(0), option_value("parameters", "{}"), matching_file_layer_path(d), matching_file_module_text(d, s), matching_file_def_match_text(s).
+matching_file_root(d) :- matching_file_candidate(d), matching_file_every_module(0).
+matching_file_root(d) :- matching_file_candidate(d), !matching_file_every_module(0), matching_file_production(d).
+matching_file_root(d) :- matching_file_candidate(d), !matching_file_every_module(0), matching_file_source_text(d, s), matching_file_contract_text(s).
+matching_file_root(d) :- matching_file_candidate(d), !matching_file_every_module(0), matching_file_layer_path(d), matching_file_source_text(d, s), matching_file_def_match_text(s).
+matching_file_root(d) :- matching_file_candidate(d), !matching_file_every_module(0), doc(d, p, _), matching_file_application_path(p).
+matching_file_doc(d) :- matching_file_gate(d), matching_file_root(d).
+matching_file_production(d) :- doc(d, p, _), match("data_layer/matching\\.py|l1470_matching_contracts/.*|(.*/)?l5250_matching/.*", p).
+matching_file_application(d) :- matching_file_doc(d), doc(d, p, _), match("(applications|application|app)/.*|(.*/)?applications/.*", p).
+matching_file_application(d) :- matching_file_doc(d), doc(d, p, _), matching_file_application_path(p).
+matching_file_facade(d) :- matching_file_doc(d), doc(d, p, _), (p = "data_layer/matching.py" ; p = "l5250_matching/api.py" ; p = "l5250_matching/__init__.py").
+matching_file_conformance(d) :- matching_file_doc(d), doc(d, p, _), prefix("conform/l5250_matching/", p).
+matching_file_lower_layer(d) :- matching_file_doc(d), doc(d, p, _), match("(([^l/][^/]*|l|l[^0-9/][^/]*|l[0-9]|l[0-9][^0-9/][^/]*|l[0-9]{2}|l[0-9]{2}[^0-9/][^/]*|l[0-9]{3}|l[0-9]{3}[^0-9/][^/]*|l[0-9]{4}|l[0-9]{4}[^_/][^/]*)/)*l(0[0-9]{3}|[1-4][0-9]{3}|5[01][0-9]{2}|52[0-4][0-9])_.*", p).
+matching_file_uses_contracts(d) :- matching_file_import(d, _, m), m = "data_layer.matching".
+matching_file_uses_contracts(d) :- matching_file_import(d, _, m), match("l(1470_matching_contracts|5250_matching)(\\..*)?", m).
+matching_file_uses_contracts(d) :- matching_file_doc(d), node(d, n, _, _, _), matching_file_name(n, x), matching_file_contract_name(x).
+matching_file_uses_contracts(d) :- matching_file_doc(d), node(d, n, _, _, _), matching_file_attr(n, x, _), matching_file_contract_name(x).
+matching_file_matching(d) :- matching_file_doc(d), matching_file_production(d).
+matching_file_matching(d) :- matching_file_uses_contracts(d).
+matching_file_implementation(d) :- matching_file_doc(d), doc(d, p, _), prefix("impl/common/", p), match("(.*/)?l5250_matching/.*", p).
+matching_file_implementation(d) :- matching_file_uses_contracts(d), doc(d, p, _), prefix("impl/common/", p).
+matching_file_node(n) :- matching_file_doc(d), node(d, n, _, _, _).
+matching_file_unparen(e, e) :- matching_file_node(e), !node(_, e, "parenthesized_expression", _, _).
+matching_file_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), matching_file_node(e), child(e, i, 0), matching_file_unparen(i, m).
+matching_file_untype(e, m) :- matching_file_unparen(e, m), !node(_, m, "type", _, _).
+matching_file_untype(e, m) :- matching_file_unparen(e, t), node(_, t, "type", _, _), child(t, i, 0), matching_file_untype(i, m).
+matching_file_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
+matching_file_not_name(n) :- node(_, f, "function_definition", _, _), field(f, "name", n).
+matching_file_not_name(n) :- node(_, f, "class_definition", _, _), field(f, "name", n).
+matching_file_not_name(n) :- node(_, k, "keyword_argument", _, _), field(k, "name", n).
+matching_file_not_name(n) :- node(_, p, k, _, _), matching_file_param_holder(k), child(p, n, _), node(_, n, "identifier", _, _).
+matching_file_not_name(n) :- node(_, p, "default_parameter", _, _), field(p, "name", n).
+matching_file_not_name(n) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", n).
+matching_file_not_name(n) :- node(_, s, "list_splat_pattern", _, _), child(h, s, _), node(_, h, hk, _, _), matching_file_param_holder(hk), child(s, n, _).
+matching_file_not_name(n) :- node(_, s, "dictionary_splat_pattern", _, _), child(h, s, _), node(_, h, hk, _, _), matching_file_param_holder(hk), child(s, n, _).
+matching_file_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, matching_file_import_kind).
+matching_file_not_name(n) :- node(_, g, "global_statement", _, _), child(g, n, _).
+matching_file_not_name(n) :- node(_, g, "nonlocal_statement", _, _), child(g, n, _).
+matching_file_not_name(n) :- node(_, x, "except_clause", _, _), child(x, ap, _), node(_, ap, "as_pattern", _, _), field(ap, "alias", t), child(t, n, _).
+matching_file_name(n, x) :- matching_file_node(n), node(_, n, "identifier", _, _), text(n, x), !matching_file_not_name(n).
+matching_file_attr(a, x, v) :- matching_file_node(a), node(_, a, "attribute", _, _), field(a, "attribute", i), text(i, x), field(a, "object", o), matching_file_unparen(o, v).
+matching_file_ref(n, x) :- matching_file_name(n, x).
+matching_file_ref(n, x) :- matching_file_attr(n, x, _).
+matching_file_qual_root(n, x) :- matching_file_name(n, x).
+matching_file_qual_root(a, x) :- matching_file_attr(a, _, v), matching_file_qual_root(v, x).
+matching_file_qual_root(c, x) :- matching_file_call(c, f), matching_file_qual_root(f, x).
+matching_file_qual_last(n, x) :- matching_file_name(n, x).
+matching_file_qual_last(a, x) :- matching_file_attr(a, x, v), matching_file_qual_root(v, _).
+matching_file_qual_last(c, x) :- matching_file_call(c, f), matching_file_qual_last(f, x).
+matching_file_qual_part(n, x) :- matching_file_name(n, x).
+matching_file_qual_part(a, x) :- matching_file_attr(a, x, v), matching_file_qual_root(v, _).
+matching_file_qual_part(a, x) :- matching_file_attr(a, _, v), matching_file_qual_part(v, x).
+matching_file_qual_part(c, x) :- matching_file_call(c, f), matching_file_qual_part(f, x).
+matching_file_qual_dotted(a) :- matching_file_attr(a, _, v), matching_file_qual_root(v, _).
+matching_file_qual_dotted(c) :- matching_file_call(c, f), matching_file_qual_dotted(f).
+matching_file_qual(n, x) :- matching_file_qual_root(n, x), !matching_file_qual_dotted(n).
+matching_file_qual(a, q) :- matching_file_attr(a, x, v), matching_file_qual_root(v, r), !matching_file_qual_dotted(v), q = @concat(@concat(r, "."), x).
+matching_file_qual(c, q) :- matching_file_call(c, f), matching_file_qual_dotted(f), matching_file_qual(f, q).
+matching_file_call(c, f) :- matching_file_node(c), node(_, c, "call", _, _), field(c, "function", f0), matching_file_unparen(f0, f).
+matching_file_callee(c, "Name", x) :- matching_file_call(c, f), matching_file_name(f, x).
+matching_file_callee(c, "Attribute", x) :- matching_file_call(c, f), matching_file_attr(f, x, _).
+matching_file_keyword_child(e) :- node(_, e, "keyword_argument", _, _).
+matching_file_keyword_child(e) :- node(_, e, "dictionary_splat", _, _).
+matching_file_positional(c, e, j) :- matching_file_call(c, _), field(c, "arguments", al), node(_, al, "argument_list", _, _), child(al, e, j), !matching_file_keyword_child(e).
+matching_file_arg(c, e, i) :- matching_file_positional(c, e0, j), matching_file_unparen(e0, e), i = count : { matching_file_positional_before(c, j, _) }.
+matching_file_positional_before(c, j, k) :- matching_file_positional(c, _, j), matching_file_positional(c, _, k), k < j.
+matching_file_arg(c, g, 0) :- matching_file_call(c, _), field(c, "arguments", g), node(_, g, "generator_expression", _, _).
+matching_file_keyword(c, k, x, v) :- matching_file_call(c, _), field(c, "arguments", al), child(al, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", i), text(i, x), field(k, "value", v0), matching_file_unparen(v0, v).
+matching_file_fstr(n) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p).
+matching_file_fstr(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), matching_file_fstr(s).
+matching_file_constant(n) :- matching_file_node(n), node(_, n, k, _, _), matching_file_literal_kind(k), !matching_file_fstr(n), !matching_file_concat_piece(n).
+matching_file_const_kind(n, "none") :- matching_file_constant(n), value_type_of(n, "NoneType").
+matching_file_const_kind(n, t) :- matching_file_constant(n), value_type_of(n, t), t != "NoneType".
+matching_file_const(n, t, v) :- matching_file_const_kind(n, t), value(n, v).
+matching_file_joined(n) :- matching_file_node(n), matching_file_fstr(n), !matching_file_concat_piece(n).
+matching_file_concat_piece(n) :- child(p, n, _), node(_, p, "concatenated_string", _, _), matching_file_node(n).
+matching_file_joined_piece(n, n) :- matching_file_joined(n), node(_, n, "string", _, _).
+matching_file_joined_piece(n, p) :- matching_file_joined(n), node(_, n, "concatenated_string", _, _), child(n, p, _).
+matching_file_interpolated(n) :- matching_file_joined_piece(n, p), child(p, x, _), node(_, x, "interpolation", _, _).
+matching_file_joined_value(n, s) :- matching_file_joined(n), !matching_file_interpolated(n), value(n, s).
+matching_file_spec(fs) :- matching_file_node(fs), node(_, fs, "format_specifier", _, _).
+matching_file_part(n, i, v) :- matching_file_interpolated(n), fstring_piece(n, i, "literal", v).
+matching_file_part(n, i, v) :- matching_file_spec(n), fstring_piece(n, i, "literal", v).
+rr_ctx2(i) :- matching_file_part(n, i, _).
+rr_agg1(i, j, n) :- rr_ctx2(i), fstring_piece(n, j, "interpolation", _), j < i.
+matching_file_part_window(n, i, m) :- matching_file_part(n, i, _), m = count : { rr_agg1(i, _, n) }.
+matching_file_field(n, x, s) :- matching_file_interpolated(n), matching_file_joined_piece(n, p), child(p, x, _), node(_, x, "interpolation", s, _).
+matching_file_field(n, x, s) :- matching_file_spec(n), child(n, x, _), node(_, x, "format_expression", s, _).
+rr_ctx4(s) :- matching_file_field(n, x, s).
+rr_agg3(n, s, t) :- rr_ctx4(s), matching_file_field(n, _, t), t < s.
+matching_file_field_rank(n, x, m) :- matching_file_field(n, x, s), m = count : { rr_agg3(n, s, _) }.
+matching_file_empty_content(x) :- child(p, x, _), node(_, x, "string_content", _, _), strprefix(p, q), !contains("r", q), node_text(x, t), match("(?:\\\\(?:\\r\\n|\\n|\\r))+", t).
+matching_file_contrib(n, p, s) :- matching_file_interpolated(n), matching_file_joined_piece(n, p), node(_, p, "string", s, _), !matching_file_fstr(p).
+matching_file_contrib(n, x, s) :- matching_file_interpolated(n), matching_file_joined_piece(n, p), matching_file_fstr(p), child(p, x, _), node(_, x, "string_content", s, _), !matching_file_empty_content(x).
+rr_ctx6(s) :- matching_file_contrib(n, x, s).
+rr_agg5(n, s, t) :- rr_ctx6(s), matching_file_field(n, _, t), t < s.
+matching_file_contrib_window(n, x, s, m) :- matching_file_contrib(n, x, s), m = count : { rr_agg5(n, s, _) }.
+matching_file_has_contrib(n, m) :- matching_file_contrib_window(n, _, _, m).
+matching_file_part_line(n, i, l) :- matching_file_interpolated(n), matching_file_part_window(n, i, m), matching_file_has_contrib(n, m), s = min t : { matching_file_contrib_window(n, _, t, m) }, matching_file_contrib_window(n, x, s, m), line(x, l).
+matching_file_part_line(n, i, l) :- matching_file_interpolated(n), matching_file_part_window(n, i, m), !matching_file_has_contrib(n, m), matching_file_field_rank(n, x, m), line(x, l).
+matching_file_part_line(n, i, l) :- matching_file_spec(n), matching_file_part_window(n, i, 0), line(n, l).
+matching_file_part_line(n, i, l) :- matching_file_spec(n), matching_file_part_window(n, i, m), m > 0, rr_t7 = @sub(m, 1), matching_file_field_rank(n, x, rr_t7), end_line(x, l).
+matching_file_sql_text(s) :- matching_file_joined_text(_, s), match(" *(?:[sS][eE][lL][eE][cC][tT]|[iI][nN][sS][eE][rR][tT]|[uU][pP][dD][aA][tT][eE]|[dD][eE][lL][eE][tT][eE]|[cC][rR][eE][aA][tT][eE]|[aA][lL][tT][eE][rR])(?s:.*)", s).
+matching_file_joined_text(n, s) :- matching_file_joined_value(n, s).
+matching_file_joined_text(n, s) :- matching_file_interpolated(n), s = join v by (i) sep "" : { fstring_piece(n, i, "literal", v) }.
+matching_file_joined_text(n, s) :- matching_file_spec(n), s = join v by (i) sep "" : { fstring_piece(n, i, "literal", v) }.
+matching_file_sql_fstring(n) :- matching_file_joined_text(n, s), matching_file_sql_text(s).
+matching_file_binop(n, o, l, r) :- matching_file_node(n), node(_, n, "binary_operator", _, _), op(n, o), field(n, "left", l0), field(n, "right", r0), matching_file_untype(l0, l), matching_file_untype(r0, r).
+matching_file_binop(n, "|", l, r) :- matching_file_node(n), node(_, n, "union_type", _, _), child(n, l0, 0), child(n, r0, 1), matching_file_untype(l0, l), matching_file_untype(r0, r).
+matching_file_subscript(n, v) :- matching_file_node(n), node(_, n, "subscript", _, _), field(n, "value", v0), matching_file_unparen(v0, v).
+matching_file_subscript(n, v) :- matching_file_node(n), node(_, n, "generic_type", _, _), child(n, v, 0).
+matching_file_slice_subscript(n) :- matching_file_subscript(n, _), node(_, n, "subscript", _, _), field(n, "subscript", s), node(_, s, "slice", _, _), !matching_file_two_subscripts(n).
+matching_file_two_subscripts(n) :- node(_, n, "subscript", _, _), field(n, "subscript", a), field(n, "subscript", b), a != b.
+matching_file_assign_stmt(a) :- matching_file_node(a), node(_, a, "assignment", _, _), child(s, a, 0), node(_, s, "expression_statement", _, _).
+matching_file_chain(a, a) :- matching_file_assign_stmt(a).
+matching_file_chain(a, b) :- matching_file_chain(a, x), field(x, "right", b), node(_, b, "assignment", _, _).
+matching_file_target(a, t) :- matching_file_chain(a, x), field(x, "left", t0), matching_file_unparen(t0, t).
+matching_file_value(a, v) :- matching_file_chain(a, x), field(x, "right", v0), !node(_, v0, "assignment", _, _), matching_file_unparen(v0, v).
+matching_file_named_target(a, t, x) :- matching_file_target(a, t), matching_file_name(t, x).
+matching_file_def(f, x) :- matching_file_node(f), node(_, f, "function_definition", _, _), field(f, "name", i), text(i, x).
+matching_file_class(c, x) :- matching_file_node(c), node(_, c, "class_definition", _, _), field(c, "name", i), text(i, x).
+matching_file_span(f, d, s, e) :- matching_file_def(f, _), child(w, f, _), node(d, w, "decorated_definition", s, e).
+matching_file_span(f, d, s, e) :- matching_file_class(f, _), child(w, f, _), node(d, w, "decorated_definition", s, e).
+matching_file_span(f, d, s, e) :- matching_file_def(f, _), node(d, f, _, s, e), !matching_file_decorated(f).
+matching_file_span(f, d, s, e) :- matching_file_class(f, _), node(d, f, _, s, e), !matching_file_decorated(f).
+matching_file_decorated(f) :- child(w, f, _), node(_, w, "decorated_definition", _, _).
+matching_file_param_node(f, p, i, x, "plain") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "identifier", _, _), text(p, x).
+matching_file_param_node(f, p, i, x, "plain") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "typed_parameter", _, _), child(p, n, 0), node(_, n, "identifier", _, _), text(n, x).
+matching_file_param_node(f, p, i, x, "star") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "typed_parameter", _, _), child(p, s, 0), node(_, s, "list_splat_pattern", _, _), child(s, n, 0), text(n, x).
+matching_file_param_node(f, p, i, x, "dstar") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "typed_parameter", _, _), child(p, s, 0), node(_, s, "dictionary_splat_pattern", _, _), child(s, n, 0), text(n, x).
+matching_file_param_node(f, p, i, x, "plain") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "default_parameter", _, _), field(p, "name", n), text(n, x).
+matching_file_param_node(f, p, i, x, "plain") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "typed_default_parameter", _, _), field(p, "name", n), text(n, x).
+matching_file_param_node(f, p, i, x, "star") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "list_splat_pattern", _, _), child(p, n, 0), text(n, x).
+matching_file_param_node(f, p, i, x, "dstar") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "dictionary_splat_pattern", _, _), child(p, n, 0), text(n, x).
+matching_file_separator(f, i, "/") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, s, i), node(_, s, "positional_separator", _, _).
+matching_file_separator(f, i, "*") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, s, i), node(_, s, "keyword_separator", _, _).
+matching_file_separator(f, i, "*") :- matching_file_param_node(f, _, i, _, "star").
+matching_file_param(f, p, i, x, "vararg") :- matching_file_param_node(f, p, i, x, "star").
+matching_file_param(f, p, i, x, "kwarg") :- matching_file_param_node(f, p, i, x, "dstar").
+matching_file_param(f, p, i, x, "posonlyargs") :- matching_file_param_node(f, p, i, x, "plain"), matching_file_separator(f, j, "/"), i < j.
+matching_file_param(f, p, i, x, "kwonlyargs") :- matching_file_param_node(f, p, i, x, "plain"), matching_file_separator(f, j, "*"), j < i.
+matching_file_param(f, p, i, x, "args") :- matching_file_param_node(f, p, i, x, "plain"), !matching_file_before_slash(f, i), !matching_file_after_star(f, i).
+matching_file_before_slash(f, i) :- matching_file_param_node(f, _, i, _, "plain"), matching_file_separator(f, j, "/"), i < j.
+matching_file_after_star(f, i) :- matching_file_param_node(f, _, i, _, "plain"), matching_file_separator(f, j, "*"), j < i.
+matching_file_param_annotation(p, a) :- matching_file_param(_, p, _, _, _), field(p, "type", t), matching_file_untype(t, a).
+matching_file_positional_param(f, p, i, x) :- matching_file_param(f, p, i, x, k), (k = "posonlyargs" ; k = "args").
+matching_file_decorator(f, e) :- matching_file_def(f, _), child(w, f, _), node(_, w, "decorated_definition", _, _), child(w, k, _), node(_, k, "decorator", _, _), child(k, e0, 0), matching_file_unparen(e0, e).
+matching_file_decorator(f, e) :- matching_file_class(f, _), child(w, f, _), node(_, w, "decorated_definition", _, _), child(w, k, _), node(_, k, "decorator", _, _), child(k, e0, 0), matching_file_unparen(e0, e).
+matching_file_base(c, b) :- matching_file_class(c, _), field(c, "superclasses", al), child(al, b0, _), !matching_file_keyword_child(b0), matching_file_unparen(b0, b).
+matching_file_import(d, n, m) :- matching_file_doc(d), node(d, n, "import_statement", _, _), child(n, a, _), node(_, a, "dotted_name", _, _), name(a, m).
+matching_file_import(d, n, m) :- matching_file_doc(d), node(d, n, "import_statement", _, _), child(n, a, _), node(_, a, "aliased_import", _, _), field(a, "name", q), name(q, m).
+matching_file_import(d, n, m) :- matching_file_doc(d), node(d, n, "import_from_statement", _, _), matching_file_from_module(n, m).
+matching_file_from_module(n, m) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", q), node(_, q, "dotted_name", _, _), name(q, m).
+matching_file_from_module(n, m) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", r), node(_, r, "relative_import", _, _), child(r, q, _), node(_, q, "dotted_name", _, _), name(q, m).
+matching_file_from_alias(n, x) :- node(_, n, "import_from_statement", _, _), field(n, "name", q), node(_, q, "dotted_name", _, _), name(q, x).
+matching_file_from_alias(n, x) :- node(_, n, "import_from_statement", _, _), field(n, "name", a), node(_, a, "aliased_import", _, _), field(a, "name", q), name(q, x).
+matching_file_in(x, r) :- matching_file_probe(x, r), matching_file_span(r, d, s, e), node(d, x, _, xs, xe), xs >= s, xe <= e.
+matching_file_in(x, r) :- matching_file_probe(x, r), !matching_file_span(r, _, _, _), node(d, r, _, s, e), node(d, x, _, xs, xe), xs >= s, xe <= e.
+matching_file_type_root(a) :- matching_file_param_annotation(_, a).
+matching_file_type_root(a) :- matching_file_class_field(_, _, _, a, _).
+matching_file_type_root(b) :- matching_file_base(_, b).
+matching_file_type_root(t) :- matching_file_handler(_, _, t).
+matching_file_type_part(t) :- matching_file_type_root(t).
+matching_file_type_part(v) :- matching_file_type_part(t), matching_file_subscript(t, v0), matching_file_untype(v0, v).
+matching_file_type_part(l) :- matching_file_type_part(t), matching_file_binop(t, "|", l, _).
+matching_file_type_part(r) :- matching_file_type_part(t), matching_file_binop(t, "|", _, r).
+matching_file_leaf_node(t) :- matching_file_type_part(t), !matching_file_subscript(t, _), !matching_file_binop(t, "|", _, _).
+matching_file_leaf(t, s) :- matching_file_leaf_node(t), matching_file_ref(t, _), matching_file_qual(t, s).
+matching_file_leaf(t, "") :- matching_file_leaf_node(t), !matching_file_ref(t, _).
+matching_file_leaf(t, "") :- matching_file_leaf_node(t), matching_file_ref(t, _), !matching_file_qual_root(t, _).
+matching_file_first_leaf(t, t) :- matching_file_leaf_node(t).
+matching_file_first_leaf(t, x) :- matching_file_type_part(t), matching_file_subscript(t, v0), matching_file_untype(v0, v), matching_file_first_leaf(v, x).
+matching_file_first_leaf(t, x) :- matching_file_type_part(t), matching_file_binop(t, "|", l, _), matching_file_first_leaf(l, x).
+matching_file_last_leaf(t, t) :- matching_file_leaf_node(t).
+matching_file_last_leaf(t, x) :- matching_file_type_part(t), matching_file_subscript(t, v0), matching_file_untype(v0, v), matching_file_last_leaf(v, x).
+matching_file_last_leaf(t, x) :- matching_file_type_part(t), matching_file_binop(t, "|", _, r), matching_file_last_leaf(r, x).
+matching_file_any_leaf(t, t) :- matching_file_leaf_node(t).
+matching_file_any_leaf(t, x) :- matching_file_type_part(t), matching_file_subscript(t, v0), matching_file_untype(v0, v), matching_file_any_leaf(v, x).
+matching_file_any_leaf(t, x) :- matching_file_type_part(t), matching_file_binop(t, "|", l, _), matching_file_any_leaf(l, x).
+matching_file_any_leaf(t, x) :- matching_file_type_part(t), matching_file_binop(t, "|", _, r), matching_file_any_leaf(r, x).
+matching_file_multi(t) :- matching_file_type_part(t), matching_file_binop(t, "|", _, _).
+matching_file_multi(t) :- matching_file_type_part(t), matching_file_subscript(t, v0), matching_file_untype(v0, v), matching_file_multi(v).
+matching_file_label_is(t, s) :- matching_file_first_leaf(t, x), !matching_file_multi(t), matching_file_leaf(x, s).
+matching_file_label_first(t, s) :- matching_file_first_leaf(t, x), matching_file_ref(x, _), matching_file_qual_root(x, s).
+matching_file_label_last(t, s) :- matching_file_last_leaf(t, x), matching_file_ref(x, _), matching_file_qual_last(x, s).
+matching_file_label_any(t, s) :- matching_file_any_leaf(t, x), matching_file_ref(x, _), matching_file_qual_part(x, s).
+matching_file_unsafe(n) :- matching_file_type_part(n), matching_file_qual(n, q), matching_file_ref(n, _), matching_file_unsafe_name(q).
+matching_file_unsafe(n) :- matching_file_type_part(n), matching_file_const(n, "none", _).
+matching_file_unsafe(n) :- matching_file_binop(n, "|", l, _), matching_file_unsafe(l).
+matching_file_unsafe(n) :- matching_file_binop(n, "|", _, r), matching_file_unsafe(r).
+matching_file_class_field(c, a, x, v, k) :- matching_file_class(c, k), field(c, "body", b), child(b, s, _), node(_, s, "expression_statement", _, _), child(s, a, 0), matching_file_assign_stmt(a), field(a, "type", t), matching_file_untype(t, v), field(a, "left", t0), node(_, t0, "identifier", _, _), text(t0, x).
+matching_file_static_leaf(n, s) :- matching_file_const(n, "str", s).
+matching_file_static_leaf(n, s) :- matching_file_joined_value(n, s).
+matching_file_is_static(n) :- matching_file_const_kind(n, "str").
+matching_file_is_static(n) :- matching_file_joined(n), !matching_file_interpolated(n).
+matching_file_is_static(n) :- matching_file_binop(n, "+", l, r), matching_file_is_static(l), matching_file_is_static(r).
+matching_file_static_part(n, w, i, j) :- matching_file_static_leaf(n, s), matching_file_physical_word(w), matching_file_offset(i), k = @strlen(s), j = @add(i, k), j <= @strlen(w), p = @concat(@concat("(?i-u:", @substr(w, i, k)), ")"), match(p, s).
+matching_file_static_part(n, w, i, j) :- matching_file_binop(n, "+", l, r), matching_file_static_part(l, w, i, k), matching_file_static_part(r, w, k, j).
+matching_file_handler(n, h, t) :- matching_file_try_handler(n, h), child(h, e, 0), !node(_, e, "block", _, _), !node(_, e, "as_pattern", _, _), matching_file_unparen(e, t).
+matching_file_handler(n, h, t) :- matching_file_try_handler(n, h), child(h, e, 0), node(_, e, "as_pattern", _, _), child(e, e1, 0), matching_file_unparen(e1, t).
+matching_file_try_handler(n, h) :- matching_file_node(n), node(_, n, "try_statement", _, _), child(n, h, _), node(_, h, "except_clause", _, _).
+matching_file_try_handler(n, h) :- matching_file_node(n), node(_, n, "try_statement", _, _), child(n, h, _), node(_, h, "except_group_clause", _, _).
+matching_file_tuple(n) :- matching_file_node(n), node(_, n, "tuple", _, _).
+matching_file_tuple(n) :- matching_file_node(n), node(_, n, "expression_list", _, _).
+matching_file_finding_line(d, c, l) :- matching_file_finding(d, c, n), line(n, l).
+matching_file_backend(d, n) :- matching_file_ref(n, "BackendType"), node(d, n, _, _, _).
+rr_agg8(d, x) :- matching_file_backend(d, n), line(n, x).
+matching_file_finding_line(d, "MA001", l) :- matching_file_application(d), matching_file_backend(d, _), l = min x : { rr_agg8(d, x) }.
+rr_agg9(d, x) :- matching_file_backend(d, n), line(n, x).
+matching_file_finding_line(d, "MA026", l) :- matching_file_implementation(d), matching_file_backend(d, _), l = min x : { rr_agg9(d, x) }.
+matching_file_physical(d, l) :- matching_file_is_static(n), matching_file_static_part(n, w, 0, j), j = @strlen(w), node(d, n, _, _, _), line(n, l).
+matching_file_physical(d, l) :- matching_file_part(n, i, v), node(d, n, _, _, _), match("(?i-u:bit_hamming_ops|halfvec|hnsw|ivfflat|pgvector|sql_table_hnsw|usearch|vector_cosine_ops)", v), matching_file_part_line(n, i, l).
+matching_file_finding_line(d, "MA002", l) :- matching_file_application(d), matching_file_physical(d, _), l = min x : { matching_file_physical(d, x) }.
+matching_file_impl_module(m) :- matching_file_import(_, _, m), m = "impl".
+matching_file_impl_module(m) :- matching_file_import(_, _, m), prefix("impl.", m).
+matching_file_finding(d, "MA015", n) :- matching_file_conformance(d), matching_file_import(d, n, m), matching_file_impl_module(m).
+matching_file_finding(d, "MA015", n) :- matching_file_conformance(d), matching_file_import(d, n, m), match("l[0-9]{4}_.*", m).
+matching_file_finding(d, "MA036", n) :- matching_file_conformance(d), matching_file_import(d, n, "data_layer_testing.matching_operator").
+matching_file_finding(d, "MA036", n) :- matching_file_conformance(d), matching_file_import(d, n, "data_layer_testing"), matching_file_from_alias(n, "matching_operator").
+matching_file_finding(d, "MA010", n) :- matching_file_application(d), matching_file_import(d, n, m), matching_file_impl_module(m).
+matching_file_finding(d, "MA041", n) :- matching_file_facade(d), matching_file_import(d, n, m), m = "data_layer_testing".
+matching_file_finding(d, "MA041", n) :- matching_file_facade(d), matching_file_import(d, n, m), prefix("data_layer_testing.", m).
+matching_file_finding(d, "MA019", n) :- matching_file_facade(d), matching_file_import(d, n, m), matching_file_impl_module(m).
+matching_file_finding(d, "MA008", n) :- matching_file_lower_layer(d), matching_file_import(d, n, m), m = "l5250_matching".
+matching_file_finding(d, "MA008", n) :- matching_file_lower_layer(d), matching_file_import(d, n, m), prefix("l5250_matching.", m).
+matching_file_finding(d, "MA016", c) :- matching_file_conformance(d), matching_file_callee(c, _, "nonportably_execute_sql"), node(d, c, _, _, _).
+matching_file_finding(d, "MA006", c) :- matching_file_matching(d), matching_file_callee(c, "Attribute", "import_module"), node(d, c, _, _, _).
+matching_file_finding(d, "MA006", c) :- matching_file_matching(d), matching_file_callee(c, "Name", x), (x = "__import__" ; x = "import_module"), node(d, c, _, _, _).
+matching_file_finding(d, "MA031", c) :- matching_file_implementation(d), matching_file_callee(c, _, "len"), matching_file_arg(c, a, 0), matching_file_name(a, x), suffix("_SQL_STAGES", x), node(d, c, _, _, _).
+matching_file_predicted(d, x) :- matching_file_named_target(a, _, x), matching_file_value(a, v), node(d, a, _, _, _), matching_file_value_has(v, "binop"), matching_file_value_has(v, "counter_name").
+matching_file_probe(x, v) :- matching_file_named_target(a, _, _), matching_file_value(a, v), node(d, v, _, _, _), node(d, x, _, _, _), matching_file_binop(x, _, _, _).
+matching_file_probe(x, v) :- matching_file_named_target(a, _, _), matching_file_value(a, v), node(d, v, _, _, _), node(d, x, _, _, _), matching_file_name(x, y), (y = "pair_evaluations" ; y = "expression_node_count").
+matching_file_value_has(v, "binop") :- matching_file_in(x, v), matching_file_binop(x, _, _, _).
+matching_file_value_has(v, "counter_name") :- matching_file_in(x, v), matching_file_name(x, y), (y = "pair_evaluations" ; y = "expression_node_count").
+matching_file_finding(d, "MA031", c) :- matching_file_implementation(d), matching_file_callee(c, _, "MatchDatabaseRoundTripCount"), matching_file_arg(c, v, 0), matching_file_callee(v, _, "len"), matching_file_arg(v, a, 0), matching_file_name(a, x), !match(".*[a-z].*", x), node(d, c, _, _, _).
+matching_file_probe(x, v) :- matching_file_callee(c, _, "MatchExpressionEvaluationCount"), matching_file_arg(c, v, 0), node(d, v, _, _, _), node(d, x, _, _, _), matching_file_name(x, "pair_evaluations").
+matching_file_finding(d, "MA031", c) :- matching_file_implementation(d), matching_file_callee(c, _, "MatchExpressionEvaluationCount"), matching_file_arg(c, v, 0), matching_file_in(x, v), matching_file_name(x, "pair_evaluations"), node(d, c, _, _, _).
+matching_file_finding(d, "MA031", c) :- matching_file_implementation(d), matching_file_callee(c, _, "MatchExpressionEvaluationCount"), matching_file_arg(c, v, 0), matching_file_name(v, x), node(d, c, _, _, _), matching_file_predicted(d, x).
+matching_file_finding(d, "MA031", c) :- matching_file_implementation(d), matching_file_callee(c, _, "MatchStageOperationCount"), matching_file_arg(c, v, 0), matching_file_name(v, "hydration_operations"), node(d, c, _, _, _).
+matching_file_finding(d, "MA031", a) :- matching_file_implementation(d), matching_file_named_target(a, _, "planned_database_round_trips"), node(d, a, _, _, _).
+matching_file_probe(c, f) :- matching_file_def(f, _), matching_file_callee(c, _, m), (m = "match" ; m = "match_async" ; m = "match_lazy"), node(d, f, _, _, _), node(d, c, _, _, _).
+matching_file_forward(d, x, f, c, i) :- matching_file_def(f, x), matching_file_callee(c, _, m), matching_file_match_name(m), matching_file_in(c, f), matching_file_positional_param(f, _, j, y), matching_file_arg(c, a, 1), matching_file_name(a, y), node(d, f, _, _, _), i = count : { matching_file_param_before(f, j, _) }.
+matching_file_param_before(f, j, k) :- matching_file_positional_param(f, _, j, _), matching_file_positional_param(f, _, k, _), k < j.
+rr_agg10(d, t, x) :- matching_file_forward(d, x, g, _, _), node(_, g, _, t, _).
+matching_file_forward_last(d, x, f) :- matching_file_forward(d, x, _, _, _), s = max t : { rr_agg10(d, t, x) }, matching_file_forward(d, x, f, _, _), node(_, f, _, s, _).
+rr_agg11(d, f, t, x) :- matching_file_forward(d, x, f, k, _), node(_, k, _, t, _).
+matching_file_forward_index(d, x, i) :- matching_file_forward_last(d, x, f), s = max t : { rr_agg11(d, f, t, x) }, matching_file_forward(d, x, f, c, i), node(_, c, _, s, _).
+matching_file_finding(d, "MA011", c) :- matching_file_application(d), matching_file_callee(c, _, m), (m = "match" ; m = "match_async" ; m = "match_lazy"), matching_file_arg(c, a, 1), matching_file_is_static(a), node(d, c, _, _, _).
+matching_file_finding(d, "MA011", c) :- matching_file_application(d), matching_file_callee(c, _, x), node(d, c, _, _, _), !matching_file_match_name(x), matching_file_forward_index(d, x, i), matching_file_arg(c, a, i), matching_file_is_static(a).
+matching_file_finding(d, "MA007", n) :- matching_file_matching(d), matching_file_sql_fstring(n), node(d, n, _, _, _).
+matching_file_broad(n) :- matching_file_try_handler(n, h), !matching_file_handler(n, h, _).
+matching_file_broad(n) :- matching_file_handler(n, _, t), matching_file_label_is(t, s), (s = "Exception" ; s = "BaseException").
+matching_file_broad(n) :- matching_file_handler(n, _, t), matching_file_label_first(t, s), prefix("Match", s).
+matching_file_probe(r, h) :- matching_file_try_handler(_, h), node(d, h, _, _, _), node(d, r, "return_statement", _, _).
+matching_file_returns_call(n) :- matching_file_try_handler(n, h), matching_file_in(r, h), node(_, r, "return_statement", _, _), child(r, v0, 0), matching_file_unparen(v0, v), matching_file_call(v, _).
+matching_file_finding(d, "MA004", n) :- matching_file_matching(d), matching_file_broad(n), matching_file_returns_call(n), node(d, n, _, _, _).
+matching_file_raw_sql(d, c) :- matching_file_callee(c, _, x), (x = "nonportably_execute_sql" ; x = "SqlRaw" ; x = "SqlFragment"), node(d, c, _, _, _).
+matching_file_raw_sql(d, c) :- matching_file_callee(c, _, x), (x = "execute" ; x = "executemany"), matching_file_arg(c, a, 0), matching_file_constant(a), node(d, c, _, _, _).
+matching_file_raw_sql(d, c) :- matching_file_callee(c, _, x), (x = "execute" ; x = "executemany"), matching_file_arg(c, a, 0), matching_file_joined(a), node(d, c, _, _, _).
+rr_agg12(d, x) :- matching_file_raw_sql(d, c), line(c, x).
+matching_file_finding_line(d, "MA027", l) :- matching_file_implementation(d), matching_file_raw_sql(d, _), l = min x : { rr_agg12(d, x) }.
+matching_file_resolution(d, n) :- matching_file_attr(n, _, v), matching_file_qual(v, q), matching_file_physical_kind(q), node(d, n, _, _, _).
+matching_file_resolution(d, c) :- matching_file_callee(c, _, x), prefix("build_", x), contains("match", x), node(d, c, _, _, _).
+rr_agg13(d, x) :- matching_file_resolution(d, n), line(n, x).
+matching_file_finding_line(d, "MA021", l) :- matching_file_facade(d), matching_file_resolution(d, _), l = min x : { rr_agg13(d, x) }.
+matching_file_contracts(d) :- matching_file_doc(d), doc(d, p, _), prefix("l1470_matching_contracts/", p).
+matching_file_finding(d, "MA020", a) :- matching_file_contracts(d), matching_file_class_field(c, a, x, _, "MatchSpec"), node(d, c, _, _, _), match(".*([aA][rR][tT][iI][fF][aA][cC][tT]|[aA][cC][cC][eE][sS][sS]_[mM][eE][tT][hH][oO][dD]|[pP][hH][yY][sS][iI][cC][aA][lL]|[iI][nN][dD][eE][xX]_[gG][eE][nN][eE][rR][aA][tT][iI][oO][nN]|[wW][aA][tT][eE][rR][mM][aA][rR][kK]).*", x).
+matching_file_finding(d, "MA030", a) :- matching_file_contracts(d), matching_file_class_field(c, a, _, v, k), prefix("Match", k), node(d, c, _, _, _), matching_file_label_is(v, s), matching_file_recursive(s).
+matching_file_finding(d, "MA009", a) :- matching_file_contracts(d), matching_file_class_field(c, a, _, v, k), prefix("Match", k), node(d, c, _, _, _), matching_file_unsafe(v).
+matching_file_finding(d, "MA012", c) :- matching_file_contracts(d), matching_file_class(c, k), prefix("Match", k), node(d, c, _, _, _), matching_file_base(c, b), matching_file_label_last(b, s), suffix("Protocol", s).
+matching_file_finding(d, "MA013", c) :- matching_file_contracts(d), matching_file_class(c, k), prefix("Match", k), node(d, c, _, _, _), matching_file_decorator(c, e), !matching_file_call_of_call(e), matching_file_qual(e, q), (q = "dataclass" ; q = "dataclasses.dataclass").
+matching_file_call_of_call(e) :- matching_file_call(e, f), matching_file_call(f, _).
+matching_file_two_targets(a) :- matching_file_target(a, t1), matching_file_target(a, t2), t1 != t2.
+matching_file_frozen_config(c) :- matching_file_class(c, _), field(c, "body", b), child(b, s, _), node(_, s, "expression_statement", _, _), child(s, a, 0), matching_file_assign_stmt(a), !field(a, "type", _), matching_file_named_target(a, _, "model_config"), !matching_file_two_targets(a), matching_file_value(a, v), matching_file_call(v, f), matching_file_qual(f, "ConfigDict"), matching_file_keyword(v, _, "frozen", k), matching_file_const(k, "bool", "True").
+matching_file_finding(d, "MA014", c) :- matching_file_contracts(d), matching_file_class(c, k), prefix("Match", k), node(d, c, _, _, _), matching_file_base(c, b), matching_file_label_last(b, s), suffix("BaseModel", s), !matching_file_frozen_config(c).
+matching_file_probe(c, f) :- matching_file_call(c, _), inside(c, f, matching_file_kind), matching_file_def(f, _).
+matching_file_probe(c, f) :- matching_file_call(c, _), inside(c, k, matching_file_decorator_kind), child(w, k, _), field(w, "definition", f), matching_file_def(f, _).
+matching_file_def_call(f, c) :- matching_file_def(f, _), matching_file_call(c, _), matching_file_in(c, f).
+matching_file_probe(n, f) :- matching_file_slice_subscript(n), inside(n, f, matching_file_kind), matching_file_def(f, _).
+matching_file_probe(n, f) :- matching_file_slice_subscript(n), inside(n, k, matching_file_decorator_kind), child(w, k, _), field(w, "definition", f), matching_file_def(f, _).
+matching_file_def_node(f, n) :- matching_file_def(f, _), matching_file_slice_subscript(n), matching_file_in(n, f).
+matching_file_finding(d, "MA028", c) :- matching_file_matching(d), !matching_file_conformance(d), matching_file_def_call(_, c), matching_file_callee(c, "Attribute", "model_copy"), matching_file_keyword(c, _, "update", _), node(d, c, _, _, _).
+matching_file_finding(d, "MA025", c) :- matching_file_conformance(d), matching_file_def_call(_, c), matching_file_callee(c, "Attribute", x), (x = "model_construct" ; x = "model_copy"), node(d, c, _, _, _).
+matching_file_probe(x, c) :- matching_file_callee(c, _, "SqlIsNull"), node(d, c, _, _, _), node(d, x, _, _, _), matching_file_attr(x, "candidate_kernel", _).
+matching_file_first(d, "MA039", f, c) :- matching_file_implementation(d), matching_file_def(f, x), contains("expression_operation_receipt", x), matching_file_def_call(f, c), matching_file_callee(c, _, "_sql_canonical_identity"), node(d, f, _, _, _).
+matching_file_first(d, "MA040", f, c) :- matching_file_implementation(d), matching_file_def(f, x), contains("candidate", x), matching_file_def_call(f, c), matching_file_callee(c, _, "SqlIsNull"), matching_file_in(k, c), matching_file_attr(k, "candidate_kernel", _), node(d, f, _, _, _).
+matching_file_first(d, "MA029", f, c) :- matching_file_implementation(d), matching_file_def(f, x), match(".*([dD][eE][dD][uU][pP][lL][iI][cC][aA][tT]|[rR][aA][nN][kK]).*", x), matching_file_def_call(f, c), matching_file_callee(c, _, y), (y = "sorted" ; y = "setdefault"), node(d, f, _, _, _).
+matching_file_first(d, "MA022", f, n) :- matching_file_implementation(d), matching_file_def(f, x), match(".*[pP][aA][gG][iI][nN][aA][tT].*", x), matching_file_def_node(f, n), node(d, f, _, _, _).
+matching_file_probe(k, a) :- matching_file_arg(c, a, _), matching_file_binop(a, _, _, _), matching_file_callee(c, _, _), node(d, a, _, _, _), node(d, k, _, _, _), matching_file_constant(k).
+matching_file_constant_arg(c) :- matching_file_arg(c, a, _), matching_file_constant(a).
+matching_file_constant_arg(c) :- matching_file_arg(c, a, _), matching_file_binop(a, _, _, _), matching_file_in(k, a), matching_file_constant(k).
+matching_file_first(d, "MA023", f, c) :- matching_file_implementation(d), matching_file_def_call(f, c), matching_file_callee(c, _, x), prefix("Match", x), suffix("Count", x), matching_file_constant_arg(c), node(d, f, _, _, _).
+matching_file_first(d, "MA018", f, c) :- matching_file_matching(d), matching_file_def(f, x), contains("dispatch", x), matching_file_def_call(f, c), matching_file_callee(c, "Attribute", "get"), matching_file_arg(c, _, 1), node(d, f, _, _, _).
+matching_file_first(d, "MA017", f, p) :- matching_file_matching(d), matching_file_def(f, x), contains("dispatch", x), matching_file_param(f, p, _, _, k), (k = "posonlyargs" ; k = "args" ; k = "kwonlyargs"), matching_file_param_annotation(p, a), matching_file_label_is(a, "str"), node(d, f, _, _, _).
+rr_agg14(d, f, k, x) :- matching_file_first(d, k, f, n), line(n, x).
+matching_file_first_line(d, k, f, l) :- matching_file_first(d, k, f, _), l = min x : { rr_agg14(d, f, k, x) }.
+matching_file_finding_line(d, k, l) :- matching_file_first_line(d, k, _, l).
+matching_file_finding(d, "MA003", f) :- matching_file_lower_layer(d), matching_file_def(f, x), (x = "match" ; x = "match_async" ; x = "match_lazy"), nearest(f, c, matching_file_class_kind), node(d, f, _, _, _), node(d, c, _, _, _).
+matching_file_finding(d, "MA005", p) :- matching_file_matching(d), matching_file_def(f, x), (x = "match" ; x = "match_async" ; x = "match_lazy"), matching_file_param(f, p, _, _, k), (k = "posonlyargs" ; k = "args" ; k = "kwonlyargs"), matching_file_param_annotation(p, a), matching_file_label_any(a, s), contains("Connection", s), node(d, f, _, _, _).
+matching_file_probe(x, f) :- matching_file_def(f, _), node(d, f, _, _, _), matching_file_attr(x, y, _), (y = "execution_classes" ; y = "proof_test_ids"), node(d, x, _, _, _).
+matching_file_calls_match(f) :- matching_file_def_call(f, c), matching_file_callee(c, _, x), (x = "match" ; x = "match_async" ; x = "match_lazy").
+matching_file_finding(d, "MA024", f) :- matching_file_conformance(d), doc(d, p, _), match("(.*/)?test_[^/]*", p), matching_file_def(f, _), node(d, f, _, _, _), matching_file_in(x, f), matching_file_attr(x, y, _), (y = "execution_classes" ; y = "proof_test_ids"), !matching_file_calls_match(f).
+matching_file_len_receipts(c) :- matching_file_callee(c, _, "len"), matching_file_arg(c, a, _), matching_file_ref(a, x), matching_file_receipts(x).
+matching_file_count_value(v) :- matching_file_named_target(a, _, x), matching_file_dependency_count(x), matching_file_value(a, v).
+matching_file_count_value(v) :- node(_, k, "keyword_argument", _, _), field(k, "name", i), text(i, x), matching_file_dependency_count(x), field(k, "value", v0), matching_file_unparen(v0, v), matching_file_node(v).
+matching_file_probe(c, v) :- matching_file_count_value(v), node(d, v, _, _, _), matching_file_len_receipts(c), node(d, c, _, _, _).
+matching_file_finding(d, "MA037", a) :- matching_file_implementation(d), matching_file_named_target(a, _, x), matching_file_dependency_count(x), matching_file_value(a, v), matching_file_in(c, v), matching_file_len_receipts(c), node(d, a, _, _, _).
+matching_file_finding(d, "MA037", v) :- matching_file_implementation(d), node(_, k, "keyword_argument", _, _), field(k, "name", i), text(i, x), matching_file_dependency_count(x), field(k, "value", v0), matching_file_unparen(v0, v), matching_file_in(c, v), matching_file_len_receipts(c), node(d, v, _, _, _).
+matching_file_probe(x, c) :- matching_file_callee(c, _, "SqlBinaryOp"), node(d, c, _, _, _), node(d, x, _, _, _), matching_file_name(x, "pair_count").
+matching_file_probe(x, c) :- matching_file_callee(c, _, "SqlBinaryOp"), node(d, c, _, _, _), node(d, x, _, _, _), matching_file_attr(x, "expression_node_count", _).
+matching_file_finding(d, "MA035", c) :- matching_file_implementation(d), matching_file_callee(c, _, "SqlBinaryOp"), matching_file_in(x, c), matching_file_name(x, "pair_count"), matching_file_in(y, c), matching_file_attr(y, "expression_node_count", _), node(d, c, _, _, _).
+matching_file_poll(x) :- matching_file_node(x), node(_, x, "for_statement", _, _).
+matching_file_poll(x) :- matching_file_node(x), node(_, x, "while_statement", _, _).
+matching_file_poll(x) :- matching_file_attr(x, "wait_limit", _).
+matching_file_probe(x, f) :- matching_file_def(f, y), contains("bounded_watermark", y), node(d, f, _, _, _), matching_file_poll(x), node(d, x, _, _, _).
+matching_file_finding(d, "MA038", f) :- matching_file_implementation(d), matching_file_def(f, x), contains("bounded_watermark", x), matching_file_in(y, f), matching_file_poll(y), node(d, f, _, _, _).
+matching_file_elt(t, e) :- matching_file_tuple(t), child(t, e0, _), matching_file_unparen(e0, e).
+matching_file_finding(d, "MA032", t) :- matching_file_implementation(d), matching_file_elt(t, a), matching_file_const(a, _, "working_memory_bytes"), matching_file_elt(t, b), matching_file_name(b, "payload_bytes"), node(d, t, _, _, _).
+violation("data-layer-matching-architecture", "matching-file-checks", k, p, l) :- matching_file_finding_line(d, k, l), matching_file_doc(d), doc(d, p, _).

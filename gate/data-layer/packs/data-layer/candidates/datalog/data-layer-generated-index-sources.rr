@@ -1,8 +1,44 @@
+.decl generated_fn_marks(kind: symbol)
+generated_fn_marks("function_definition"). generated_fn_marks("decorator").
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
+.decl generated_after_star(ps: node, i: number)
+.decl generated_annotated(p: node)
+.decl generated_before_slash(ps: node, i: number)
+.decl generated_doc(d: number)
+.decl generated_factory(f: node)
+.decl generated_first_kw(c: node, at: number)
+.decl generated_fn(n: node, f: node)
+.decl generated_fn_at(x: node)
+.decl generated_forwards(c: node)
+.decl generated_from_module(m: node)
+.decl generated_function(f: node, x: symbol)
+.decl generated_has_source(f: node)
+.decl generated_in_factory(n: node)
+.decl generated_index_alias(d: number, x: symbol, at: number)
+.decl generated_index_call(c: node)
+.decl generated_issue(n: node)
+.decl generated_param(f: node, p: node, x: symbol, kind: symbol)
+.decl generated_param_name(p: node, x: symbol)
+.decl generated_schema_alias(d: number, x: symbol, at: number)
+.decl generated_schema_module(m: node)
+.decl generated_source_kw(c: node, k: node, at: number)
+.decl generated_source_param(f: node, p: node)
+.decl generated_star(p: node)
+.decl generated_unparen(e: node, m: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl visit_index(n: node, i: number)
+.input doc, syntax_error, node, node_text, child, text, field, visit_index, op, line
+.output violation
 in_scope(d) :- doc(d, p, _), glob("impl/common/l7245_versioned_backends/generic_sparse.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
@@ -11,4 +47,48 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-.output violation
+generated_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, m, "module", _, _), node_text(m, s), (contains("Index(", s) ; contains("IndexSource", s) ; contains("_generated_index", s)).
+generated_unparen(e, e) :- node(d, e, k, _, _), generated_doc(d), k != "parenthesized_expression".
+generated_unparen(e, m) :- node(d, e, "parenthesized_expression", _, _), generated_doc(d), child(e, i, 0), generated_unparen(i, m).
+generated_schema_module(m) :- node(d, m, "dotted_name", _, _), generated_doc(d), child(m, a, 0), text(a, "l1000_schema"), child(m, b, 1), text(b, "schema_def"), !child(m, _, 2).
+generated_from_module(m) :- generated_schema_module(m).
+generated_from_module(r) :- node(_, r, "relative_import", _, _), child(r, m, _), generated_schema_module(m).
+generated_index_alias(d, x, k) :- node(d, i, "import_from_statement", _, _), generated_doc(d), field(i, "module_name", m), generated_from_module(m), field(i, "name", a), node(_, a, "aliased_import", _, _), field(a, "name", n), text(n, "Index"), field(a, "alias", y), text(y, x), visit_index(i, k).
+generated_schema_alias(d, "schema_def", k) :- node(d, i, "import_statement", _, _), generated_doc(d), field(i, "name", n), generated_schema_module(n), visit_index(i, k).
+generated_schema_alias(d, x, k) :- node(d, i, "import_statement", _, _), generated_doc(d), field(i, "name", a), node(_, a, "aliased_import", _, _), field(a, "name", n), generated_schema_module(n), field(a, "alias", y), text(y, x), visit_index(i, k).
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "identifier", _, _), text(f, "Index").
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "identifier", _, _), text(f, x), generated_index_alias(d, x, s), visit_index(c, k), s < k.
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "Index"), field(f, "object", o0), generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, "schema_def").
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "Index"), field(f, "object", o0), generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, x), generated_schema_alias(d, x, s), visit_index(c, k), s < k.
+generated_function(f, x) :- node(d, f, "function_definition", _, _), generated_doc(d), field(f, "name", n), text(n, x).
+generated_fn_at(n) :- generated_index_call(n).
+generated_fn_at(dd) :- generated_fn_at(x), nearest(x, dc, generated_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _).
+generated_fn(n, f) :- generated_fn_at(n), nearest(n, f, generated_fn_marks), node(_, f, "function_definition", _, _).
+generated_fn(n, f) :- generated_fn_at(n), nearest(n, dc, generated_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+generated_fn(n, f) :- generated_fn_at(n), nearest(n, dc, generated_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _), generated_fn(dd, f).
+generated_in_factory(n) :- generated_fn(n, f), generated_function(f, "_generated_index").
+generated_factory(f) :- generated_function(f, "_generated_index"), !op(f, "async").
+generated_param_name(p, x) :- node(_, p, "identifier", _, _), text(p, x).
+generated_param_name(p, x) :- node(_, p, "typed_parameter", _, _), child(p, n, 0), node(_, n, "identifier", _, _), text(n, x).
+generated_param_name(p, x) :- node(_, p, "default_parameter", _, _), field(p, "name", n), text(n, x).
+generated_param_name(p, x) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", n), text(n, x).
+generated_star(p) :- node(_, p, "keyword_separator", _, _).
+generated_star(p) :- node(_, p, "list_splat_pattern", _, _).
+generated_star(p) :- node(_, p, "typed_parameter", _, _), child(p, n, 0), node(_, n, "list_splat_pattern", _, _).
+generated_param(f, p, x, "kwonlyargs") :- generated_factory(f), field(f, "parameters", ps), child(ps, p, i), generated_param_name(p, x), child(ps, s, j), j < i, generated_star(s).
+generated_param(f, p, x, "args") :- generated_factory(f), field(f, "parameters", ps), child(ps, p, i), generated_param_name(p, x), !generated_after_star(ps, i), !generated_before_slash(ps, i).
+generated_after_star(ps, i) :- generated_factory(f), field(f, "parameters", ps), child(ps, _, i), child(ps, s, j), j < i, generated_star(s).
+generated_before_slash(ps, i) :- generated_factory(f), field(f, "parameters", ps), child(ps, _, i), child(ps, s, j), j > i, node(_, s, "positional_separator", _, _).
+generated_source_param(f, p) :- generated_param(f, p, "source", _).
+generated_has_source(f) :- generated_source_param(f, _).
+generated_annotated(p) :- field(p, "type", t), child(t, e0, 0), generated_unparen(e0, e), node(_, e, "identifier", _, _), text(e, "IndexSource").
+generated_source_kw(c, k, s) :- generated_index_call(c), field(c, "arguments", a), child(a, k, _), node(_, k, "keyword_argument", s, _), field(k, "name", n), text(n, "source").
+generated_first_kw(c, s) :- generated_source_kw(c, _, _), s = min t : { generated_source_kw(c, _, t) }.
+generated_forwards(c) :- generated_first_kw(c, s), generated_source_kw(c, k, s), field(k, "value", v0), generated_unparen(v0, v), node(_, v, "identifier", _, _), text(v, "source").
+generated_issue(n) :- generated_index_call(n), !generated_in_factory(n).
+generated_issue(n) :- generated_index_call(n), generated_in_factory(n), !generated_forwards(n).
+generated_issue(f) :- generated_factory(f), !generated_has_source(f).
+generated_issue(f) :- generated_source_param(f, p), !generated_annotated(p).
+generated_issue(f) :- generated_param(f, p, "source", "kwonlyargs"), field(p, "value", v0), generated_unparen(v0, v), node(_, v, "identifier", _, _), text(v, "MODEL_DECLARED").
+generated_issue(f) :- generated_param(f, p, "source", "kwonlyargs"), field(p, "value", v0), generated_unparen(v0, v), node(_, v, "attribute", _, _), field(v, "attribute", a), text(a, "MODEL_DECLARED"), field(v, "object", o0), generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, "IndexSource").
+violation("data-layer-generated-index-sources", "generated-index-source", "missing_source", p, l) :- generated_issue(n), node(d, n, _, _, _), doc(d, p, _), line(n, l).

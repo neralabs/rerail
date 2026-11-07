@@ -1,0 +1,87 @@
+// data-layer-serverplan-name-inference, authored from candidates/rules-ast/data-layer-serverplan-name-inference.json
+// (no options; no `syntax` condition, so files with a syntax error are read too, as W reads them): every clause,
+// column-shape, reference-parse, reference-synthesis and column-type.
+//
+// Each clause ends in W's `layout: {line: R}`: R searched in the physical line the node starts on (the node's first
+// byte, `line(n, l)`), without its terminator, the lines split as W splits them (Ruff's \n, \r\n, \r): that line is
+// `tape_line(d, l, sp)`, its text `text(sp, s)`.
+// `regex` over a node is W's regex over its full source text (`node_text`), comments and strings included; an
+// identifier's text is `text`. `match(re, s)` is Soufflé's, a match of the whole of s: W's unanchored search R is
+// written `(?s:.*)(?:R)(?s:.*)`.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: loc, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.decl tape_line(d: number, l: number, sp: span)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl op_at(n: node, i: number, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// The text of the line node n starts on.
+.decl column_shape_line_of(n: node, s: symbol)
+column_shape_line_of(n, s) :- node(d, n, _, _, _), line(n, l), tape_line(d, l, sp), text(sp, s).
+
+// ---- column-shape (SPNI001) ----
+// A comparison_operator with a `==` or `!=` token among its children (`has` stopBy neighbor: every child, anonymous
+// tokens included; no named child's text is `==`, so only an operator token can be: `op_at`, a comparison's tokens
+// in field `operators`), its text naming a column, `.keys(` or `set(row…)`, on a line quoting a shape column.
+.decl column_shape_cmp(n: node)
+column_shape_cmp(n) :- node(_, n, "comparison_operator", _, _), op_at(n, _, "==").
+column_shape_cmp(n) :- node(_, n, "comparison_operator", _, _), op_at(n, _, "!=").
+violation("data-layer-serverplan-name-inference", "column-shape", "SPNI001", p, l) :-
+    column_shape_cmp(n),
+    node_text(n, t), match("(?s:.*)(?:column|\.keys\s*\(|set\s*\(\s*(?:row|rows|value)\s*\))(?s:.*)", t),
+    column_shape_line_of(n, s), match("(?s:.*)['\"](?:count|deleted_count|ok|message|__exists|__result)['\"](?s:.*)", s),
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- the calls `x.<method>(…)`: function an attribute whose attribute field is the method name ----
+// (`has` field function / field attribute, stopBy neighbor: the field's child itself.)
+.decl reference_parse_call(n: node)
+reference_parse_call(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, m),
+    (m = "endswith" ; m = "partition" ; m = "removeprefix" ; m = "removesuffix" ; m = "rpartition" ; m = "rsplit" ;
+     m = "split" ; m = "startswith").
+
+// ---- reference-parse (SPNI002) ----
+// Such a call with an argument (a child of its arguments field) that is a plain one-quoted string literal naming a
+// reference suffix, on a line with `ref` before the method call.
+violation("data-layer-serverplan-name-inference", "reference-parse", "SPNI002", p, l) :-
+    reference_parse_call(n),
+    field(n, "arguments", g), child(g, s, _), node(_, s, "string", _, _), node_text(s, t),
+    match("^['\"](?:\.raw|\.raw_rows|\.write|\.updated_rows|\.updated_count|_count|_updated_rows|_updated_count)['\"]$", t),
+    column_shape_line_of(n, ls), match("(?s:.*)ref[^\n]*?\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\s*\((?s:.*)", ls),
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- reference-synthesis (SPNI003) ----
+// `x.get/pop/setdefault(f"…{…ref…}….raw…")`: the f-string the arguments' first named child (`nthChild: 1`). W's
+// nthChild counts named siblings, comments included; `child`'s index leaves comments out, so the string is
+// `child(g, s, 0)` with no comment token of g (`token`: comments included, a comment's text starts with `#`, which
+// no other token of an argument list's does) before it.
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl reference_synthesis_comment_before(g: node, st: number)
+reference_synthesis_comment_before(g, st) :-
+    field(_, "arguments", g), child(g, s, 0), node(_, s, _, st, _), token(g, _, t, s0, _), s0 < st, match("#(?s:.*)", t).
+.decl reference_synthesis_call(n: node)
+reference_synthesis_call(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, m),
+    (m = "get" ; m = "pop" ; m = "setdefault").
+violation("data-layer-serverplan-name-inference", "reference-synthesis", "SPNI003", p, l) :-
+    reference_synthesis_call(n),
+    field(n, "arguments", g), child(g, s, 0), node(_, s, "string", st, _), !reference_synthesis_comment_before(g, st), node_text(s, t),
+    match("f['\"][^\n]*?\{[^}]*ref[^}]*\}[^\n]*?(?:\.raw|\.raw_rows|\.write|\.updated_rows|\.updated_count|_count|_updated_rows|_updated_count)(?s:.*)", t),
+    column_shape_line_of(n, ls), match("(?s:.*)ref[^\n]*?\.(?:get|pop|setdefault)\s*\((?s:.*)", ls),
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- column-type (SPNI004) ----
+// In sql_column_type_hints.py, a string-method call on a line with `column` before it.
+violation("data-layer-serverplan-name-inference", "column-type", "SPNI004", p, l) :-
+    reference_parse_call(n),
+    column_shape_line_of(n, ls), match("(?s:.*)column[^\n]*?\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\s*\((?s:.*)", ls),
+    node(d, n, _, _, _), doc(d, path, _), match("(?:(?s:.*)/)?sql_column_type_hints\.py", path),
+    in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).

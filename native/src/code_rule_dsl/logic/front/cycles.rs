@@ -29,8 +29,9 @@
 //!      regex around the group matches at least one character (`gap`: `pct_rest`'s `%%`);
 //!    - either, with a count beside it (an integer column), in order of the two: a key moves strictly when its
 //!      column does, or when the column stays and the count goes up by a positive integer from a value bound
-//!      outside the component (`tpl_upto(t, i + 1, …) :- tpl_upto(t, i, …), child(t, c, i)`); a relation
-//!      with no count is above every count (`const_str(n, v) :- tpl_upto(n, i, v)`).
+//!      outside the component (`tpl_upto(t, i + 1, …) :- tpl_upto(t, i, …), child(t, c, i)`), or to one (a
+//!      node's parts joined in child order, decision 0043: `j(c, i + 1, …) :- j(c, i, …), child(c, p, i + 1)`); a
+//!      relation with no count is above every count (`const_str(n, v) :- tpl_upto(n, i, v)`).
 //!
 //!    A non-strict move between unequal keys (`e != n`) is strict. Along the rows a made value passes through,
 //!    keys never move back, and a rule making a value is used again only after a strict move; keys are finitely
@@ -514,8 +515,9 @@ fn summarize(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
 type Key = (usize, Option<usize>);
 
 /// How a rule's count moves from a recursive atom's (`body`, None for a relation with none) to its head's
-/// (column `head`): `Some(true)` up by a positive integer from a value bound outside the component, so through
-/// finitely many values; `Some(false)` the same; a relation with no count is above every count.
+/// (column `head`): `Some(true)` up by a positive integer from a value bound outside the component, or to one (a
+/// child's index: `j(c, i + 1, …) :- j(c, i, …), child(c, p, i + 1)`), so through finitely many values;
+/// `Some(false)` the same; a relation with no count is above every count.
 fn count_step(rule: &Rule, outside: &BTreeSet<String>, head: Option<usize>, body: Option<&Term>) -> Option<bool> {
     let (j, b) = match (head, body) {
         (None, None) => return Some(false),
@@ -524,14 +526,18 @@ fn count_step(rule: &Rule, outside: &BTreeSet<String>, head: Option<usize>, body
         _ => return None,
     };
     let up = |t: &Term| matches!(t, Term::Call(f, args) if f == "add" && matches!(args.as_slice(), [Term::Var(x), Term::Int(c)] | [Term::Int(c), Term::Var(x)] if x == b && *c > 0));
+    // `t` is the value of a variable bound outside the component (`$k = t`, either way round).
+    let outside_value = |t: &Term| {
+        rule.body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } if outside.contains(v) && r == t))
+    };
     match rule.head.args.get(j)? {
         Term::Var(x) if x == b => Some(false),
         Term::Var(x) => rule.body.iter().find_map(|l| match l {
             Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Var(y) } | Literal::Cmp { l: Term::Var(y), op: "=", r: Term::Var(v) } if v == x && y == b => Some(false),
-            Literal::Cmp { l: Term::Var(v), op: "=", r } if v == x && up(r) && outside.contains(b) => Some(true),
+            Literal::Cmp { l: Term::Var(v), op: "=", r } if v == x && up(r) && (outside.contains(b) || outside.contains(x)) => Some(true),
             _ => None,
         }),
-        t if up(t) && outside.contains(b) => Some(true),
+        t if up(t) && (outside.contains(b) || outside_value(t)) => Some(true),
         _ => None,
     }
 }

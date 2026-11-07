@@ -1,0 +1,1782 @@
+// data-layer-serverplan-state-tripwires, authored (decision 0043): all 31 clauses of
+// gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-serverplan-state-tripwires.json (the converter's
+// first source). Options are read from the converter's facts (option_on, option_value), so every configuration
+// runs as the oracle runs it; defaults oracleAnalyzer false, entryPoint "all", sourceProvided true, returnKindsHex.
+// Not started from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_state_tripwires*.rr: those port the
+// older candidates/rules/ policy (SQL over the syntax table, `ast(…)` atoms), not the rules-ast one.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl str(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl intval(n: node, v: number)
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+// A node's full source text, exact bytes (W's `regex` and captures read it): comments and strings included.
+.decl node_text(n: node, s: symbol)
+.input node_text
+
+// ---- shared by every clause ----
+// The policy's `state-project-source` admit, `any [matches it, inside it (stopBy end)]`: the document's module, whose
+// whole text (comments and strings too) the regex searches (`match` is a full match: the search is wrapped in `(?s:.*)`). The regex's `def\ compile` is `def compile`.
+.decl spt_project(d: number)
+spt_project(d) :- node(d, m, "module", _, _), node_text(m, s),
+    match("(?s:.*)(?:CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|def compile|execute_runtime|execute_runtime_nested_steps|grammar_|in_server_plan_execution|pending_pipeline_effects|post_op|pre_op|preprocess|runtime_builder|runtime_ref|runtime_result)(?s:.*)", s).
+// The options, as the run resolves them (given by the converter, read only).
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
+// `$option oracleAnalyzer` cases: true admits every file (`filePath (?s).*`), false (the default) the admit above.
+.decl spt_admitted(d: number)
+spt_admitted(d) :- spt_project(d).
+spt_admitted(d) :- doc(d, _, _), option_on("oracleAnalyzer").
+// The 28 ast clauses' `when: {option: {entryPoint: {in: [...]}}}` (state-projection-recovery's evidence has the same
+// four cases, `filePath (?s).*` each, and `\b\B` (nothing) by default).
+.decl spt_entry_point(v: symbol)
+spt_entry_point("all"). spt_entry_point("scan_source"). spt_entry_point("scan_tree"). spt_entry_point("scan_project_sources").
+// A document the policy runs on: in scope, valid syntax (`syntax: valid`), admitted, at one of the entry points.
+.decl spt_doc(d: number, p: symbol)
+spt_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), spt_admitted(d), option_value("entryPoint", e), spt_entry_point(e).
+// `filePath: {regex: "/tests/"}`.
+.decl spt_tests_path(d: number)
+spt_tests_path(d) :- doc(d, p, _), contains("/tests/", p).
+
+// W's value of a literal (strings unescaped, a concatenated_string joined; no row for bytes, an interpolating
+// f-string or a name), read by queue-udf-symbols, serverplan-ddl, private-lazy-ref, state-signatures,
+// state-flow-narrow and state-projection-recovery: each tests it only on a string/concatenated_string node, whose
+// value, where it has one, is a str (so W's `value: {regex}`, which reads strings only, needs no value_type_of).
+.decl value(n: node, v: symbol)
+// p's children in order, anonymous tokens and comments included (a Python comment is in no `child` row).
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+
+// ---- the 28 ast clauses ----
+// Every one is `all [<its rule>, <state-project-source admit>]` (`spt_doc`), under `when: entryPoint in [all,
+// scan_source, scan_tree, scan_project_sources]` (true at the default "all"), anchored at the matched node
+// (`witness.span`): the finding is the node's path and start line.
+
+.decl spt_fdef(kind: symbol)
+spt_fdef("function_definition").
+.decl spt_defs(kind: symbol)
+spt_defs("function_definition"). spt_defs("class_definition").
+.decl spt_type_kind(kind: symbol)
+spt_type_kind("type").
+.decl spt_block_kind(kind: symbol)
+spt_block_kind("block").
+.decl spt_arglist_kind(kind: symbol)
+spt_arglist_kind("argument_list").
+// Kind tests read as atoms (a kind compared in a disjunction does not type-check: "$k is a Kind and a Name").
+.decl spt_string_kind(kind: symbol)
+spt_string_kind("string"). spt_string_kind("concatenated_string").
+.decl spt_typed_param_kind(kind: symbol)
+spt_typed_param_kind("typed_parameter"). spt_typed_param_kind("typed_default_parameter").
+
+// `any [identifier ~ /^S$/, all [attribute, has (neighbor, field attribute) identifier ~ /^S$/]]`: n is named s.
+.decl spt_named(n: node, s: symbol)
+spt_named(n, s) :- node(_, n, "identifier", _, _), text(n, s).
+spt_named(n, s) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s).
+// A call whose `function` is named s (an identifier s, or an attribute whose attribute is s).
+.decl spt_callee(c: node, s: symbol)
+spt_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), spt_named(f, s).
+// A call whose `function` is the identifier s.
+.decl spt_bare_callee(c: node, s: symbol)
+spt_bare_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, s).
+// A call `o.s(…)`: its function an attribute with attribute s and object o.
+.decl spt_method(c: node, s: symbol, o: node)
+spt_method(c, s, o) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), field(f, "object", o).
+// A function_definition's name.
+.decl spt_fn_name(f: node, s: symbol)
+spt_fn_name(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, s).
+// A call's keyword argument: `has (neighbor, field arguments) has (neighbor) keyword_argument` named k, value v.
+.decl spt_kwarg(c: node, k: symbol, v: node)
+spt_kwarg(c, k, v) :- node(_, c, "call", _, _), field(c, "arguments", args), child(args, a, _), node(_, a, "keyword_argument", _, _),
+    field(a, "name", x), node(_, x, "identifier", _, _), text(x, k), field(a, "value", v).
+.decl spt_kwarg_name(c: node, k: symbol)
+spt_kwarg_name(c, k) :- node(_, c, "call", _, _), field(c, "arguments", args), child(args, a, _), node(_, a, "keyword_argument", _, _),
+    field(a, "name", x), node(_, x, "identifier", _, _), text(x, k).
+
+// The planning scope every `inside (stopBy end) any [...]` names: a function_definition named compile, lower, post_op,
+// pre_op, preprocess, pending_pipeline_effects, *_lazy or apply_*_effect, or one decorated (its parent a
+// decorated_definition with a decorator whose child is named pure_lazy).
+.decl spt_planning_fn(f: node)
+spt_planning_fn(f) :- spt_fn_name(f, s), (s = "compile" ; s = "lower" ; s = "post_op" ; s = "pre_op" ; s = "preprocess" ; s = "pending_pipeline_effects").
+spt_planning_fn(f) :- spt_fn_name(f, s), suffix("_lazy", s).
+// `^apply_.*_effect$` over an identifier (no `/`, no newline) is this glob.
+spt_planning_fn(f) :- spt_fn_name(f, s), glob("apply_*_effect", s).
+spt_planning_fn(f) :- node(_, f, "function_definition", _, _), child(w, f, _), node(_, w, "decorated_definition", _, _),
+    child(w, dec, _), node(_, dec, "decorator", _, _), child(dec, x, _), spt_named(x, "pure_lazy").
+.decl spt_in_planning(n: node)
+spt_in_planning(n) :- inside(n, f, spt_fdef), spt_planning_fn(f).
+// `inside (stopBy end) all [any [function_definition, class_definition], has (neighbor, field name) identifier ~ /^preprocess$/]`.
+.decl spt_in_preprocess(n: node)
+spt_in_preprocess(n) :- inside(n, a, spt_defs), field(a, "name", x), node(_, x, "identifier", _, _), text(x, "preprocess").
+
+// The names the policy lists.
+.decl spt_queue_auth_name(s: symbol)
+spt_queue_auth_name("_apply_sql_session_queue_token_async"). spt_queue_auth_name("_authorize_trigger_queues_if_needed").
+spt_queue_auth_name("_authorize_trigger_queues_if_needed_async"). spt_queue_auth_name("_configure_ripple_queue_auth").
+spt_queue_auth_name("_configure_ripple_queue_auth_async"). spt_queue_auth_name("_get_current_ripple_queue_token").
+spt_queue_auth_name("_reset_queue_auth_token_now"). spt_queue_auth_name("_revoke_ripple_queue_auth").
+spt_queue_auth_name("_revoke_ripple_queue_auth_async"). spt_queue_auth_name("authorize_ripple_trigger_queue_insert").
+spt_queue_auth_name("authorize_ripple_trigger_queue_insert_async"). spt_queue_auth_name("revoke_ripple_trigger_queue_insert").
+spt_queue_auth_name("revoke_ripple_trigger_queue_insert_async"). spt_queue_auth_name("set_queue_auth_token").
+spt_queue_auth_name("set_queue_auth_token_async").
+.decl spt_grammar_name(s: symbol)
+spt_grammar_name("execute_grammar_fetchall_direct"). spt_grammar_name("execute_grammar_fetchall_direct_async").
+spt_grammar_name("execute_grammar_fetchall_with_params_direct"). spt_grammar_name("execute_grammar_fetchall_with_params_direct_async").
+spt_grammar_name("execute_grammar_fetchone_direct"). spt_grammar_name("execute_grammar_fetchone_direct_async").
+spt_grammar_name("execute_grammar_fetchone_with_params_direct"). spt_grammar_name("execute_grammar_fetchone_with_params_direct_async").
+spt_grammar_name("grammar_effect_lazy"). spt_grammar_name("grammar_execute"). spt_grammar_name("grammar_execute_async").
+spt_grammar_name("grammar_fetchall"). spt_grammar_name("grammar_fetchall_async"). spt_grammar_name("grammar_fetchone").
+spt_grammar_name("grammar_fetchone_async"). spt_grammar_name("grammar_row_lazy"). spt_grammar_name("grammar_rows_lazy").
+spt_grammar_name("grammar_scalar"). spt_grammar_name("grammar_scalar_async"). spt_grammar_name("grammar_value_lazy").
+// `all [regex /grammar_/, call named one of spt_grammar_name]`: every listed name contains `grammar_`, and the call's
+// text contains its function's, so the regex is implied (exact, no text read).
+.decl spt_grammar_call(c: node)
+spt_grammar_call(c) :- spt_callee(c, s), spt_grammar_name(s).
+
+// `state-tail-<w>`: an identifier w, an attribute whose attribute is w, a call whose function is one, or a
+// parenthesized_expression whose child is one (recursive along the tree).
+.decl spt_tail_word(w: symbol)
+spt_tail_word("query"). spt_tail_word("conn"). spt_tail_word("connection"). spt_tail_word("cursor"). spt_tail_word("txn").
+spt_tail_word("PlanExecutor"). spt_tail_word("executor").
+.decl spt_tail(n: node, w: symbol)
+spt_tail(n, w) :- spt_named(n, w), spt_tail_word(w).
+spt_tail(n, w) :- node(_, n, "call", _, _), field(n, "function", f), spt_tail(f, w).
+spt_tail(n, w) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), spt_tail(c, w).
+// A call `<tail w>.m(…)`.
+.decl spt_tail_call(c: node, m: symbol, w: symbol)
+spt_tail_call(c, m, w) :- spt_method(c, m, o), spt_tail(o, w).
+
+// The planning IO of preprocess-io and provider-io: a grammar call, a bare execute/fetch call, or a method call on a
+// connection, cursor, query or transaction tail.
+.decl spt_io_bare(s: symbol)
+spt_io_bare("execute"). spt_io_bare("execute_async"). spt_io_bare("execute_ddl"). spt_io_bare("execute_ddl_async").
+spt_io_bare("executemany"). spt_io_bare("executemany_async"). spt_io_bare("fetchall"). spt_io_bare("fetchall_async").
+spt_io_bare("fetchone"). spt_io_bare("fetchone_async"). spt_io_bare("scalar"). spt_io_bare("scalar_async").
+.decl spt_io_pair(w: symbol, m: symbol)
+spt_io_pair("conn", "execute"). spt_io_pair("conn", "execute_async"). spt_io_pair("conn", "fetchall"). spt_io_pair("conn", "fetchall_async"). spt_io_pair("conn", "fetchone"). spt_io_pair("conn", "fetchone_async").
+spt_io_pair("connection", "execute"). spt_io_pair("connection", "execute_async"). spt_io_pair("connection", "fetchall"). spt_io_pair("connection", "fetchall_async"). spt_io_pair("connection", "fetchone"). spt_io_pair("connection", "fetchone_async").
+spt_io_pair("query", "execute"). spt_io_pair("query", "execute_async"). spt_io_pair("query", "fetchall"). spt_io_pair("query", "fetchall_async"). spt_io_pair("query", "fetchone"). spt_io_pair("query", "fetchone_async").
+spt_io_pair("txn", "execute"). spt_io_pair("txn", "execute_async"). spt_io_pair("txn", "fetchall"). spt_io_pair("txn", "fetchall_async"). spt_io_pair("txn", "fetchone"). spt_io_pair("txn", "fetchone_async").
+spt_io_pair("cursor", "execute"). spt_io_pair("cursor", "executemany").
+.decl spt_io_call(c: node)
+spt_io_call(c) :- spt_grammar_call(c).
+spt_io_call(c) :- spt_bare_callee(c, s), spt_io_bare(s).
+spt_io_call(c) :- spt_tail_call(c, m, w), spt_io_pair(w, m).
+
+violation("data-layer-serverplan-state-tripwires", "queue-auth-definitions", "SPT-001", p, l) :-
+    spt_fn_name(n, s), spt_queue_auth_name(s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "queue-auth-calls", "SPT-001", p, l) :-
+    spt_callee(n, s), spt_queue_auth_name(s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "terminal-hydration-definitions", "SPT-002", p, l) :-
+    spt_fn_name(n, s), (s = "hydrate_many_post_op" ; s = "hydrate_one_post_op" ; s = "runtime_sql_conn_from_hydrator"),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "large-column-reentry", "SPT-002", p, l) :-
+    spt_callee(n, s), (s = "explicit_plan_execution_scope" ; s = "hydrate_many_post_op" ; s = "hydrate_one_post_op" ; s = "runtime_sql_conn_from_hydrator"),
+    spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "large-column-hydration", "SPT-002", p, l) :-
+    spt_callee(n, "convert_row_to_model"), spt_in_planning(n), spt_kwarg(n, "hydrate_large_columns", v), node(_, v, "true", _, _),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "direct-planning-io", "SPT-003", p, l) :-
+    spt_grammar_call(n), spt_in_planning(n), !spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "query-planning-io", "SPT-003", p, l) :-
+    spt_tail_call(n, m, "query"), (m = "execute" ; m = "execute_async"), spt_in_planning(n), !spt_in_preprocess(n),
+    node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "preprocess-io", "SPT-011", p, l) :-
+    spt_io_call(n), spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// provider-io: inside (stopBy end) a function_definition of impl/common/l2070_server_plan/backend_profiles.py whose
+// name (an identifier: the regex reads its text) contains component or score.
+.decl spt_provider_fn(f: node)
+spt_provider_fn(f) :- spt_fn_name(f, s), (contains("component", s) ; contains("score", s)), node(d, f, _, _, _),
+    doc(d, "impl/common/l2070_server_plan/backend_profiles.py", _).
+violation("data-layer-serverplan-state-tripwires", "provider-io", "SPT-019", p, l) :-
+    spt_io_call(n), inside(n, f, spt_fdef), spt_provider_fn(f), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "nested-plan-execution", "SPT-005", p, l) :-
+    spt_callee(n, s), (s = "execute_runtime_nested_steps_async" ; s = "execute_runtime_nested_steps_sync"), spt_in_planning(n),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "executor-plan-execution", "SPT-005", p, l) :-
+    spt_tail_call(n, m, w), (m = "execute" ; m = "execute_async"), (w = "PlanExecutor" ; w = "executor"), spt_in_planning(n),
+    node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "materialized-pipeline", "SPT-012", p, l) :-
+    node(d, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "materialized_pipeline"),
+    spt_in_planning(n), spt_doc(d, p), line(n, l).
+
+// context-authority: `ctx.materialized_pipeline|sql_connection|txn` in planning scope or in a *sql_builder function
+// with a parameter typed CompilationContext (the name's `not ^(?:compile|lower|…)$` is implied by the suffix) (the parameter's `type` field is a `type` node: its identifier branch is
+// never true, its `has (stopBy end)` branch is an identifier below it).
+.decl spt_ctx_builder_fn(f: node)
+spt_ctx_builder_fn(f) :- spt_fn_name(f, s), suffix("sql_builder", s),
+    field(f, "parameters", ps), child(ps, q, _), node(_, q, k, _, _), spt_typed_param_kind(k),
+    field(q, "type", t), node(_, i, "identifier", _, _), text(i, "CompilationContext"), inside(i, t, spt_type_kind).
+.decl spt_ctx_scope(n: node)
+spt_ctx_scope(n) :- spt_in_planning(n).
+spt_ctx_scope(n) :- inside(n, f, spt_fdef), spt_ctx_builder_fn(f).
+violation("data-layer-serverplan-state-tripwires", "context-authority", "SPT-020", p, l) :-
+    node(d, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "ctx"),
+    field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "materialized_pipeline" ; s = "sql_connection" ; s = "txn"),
+    spt_ctx_scope(n), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// resolved-ref-access: `<resolved>.get|peek|resolve_server_ref(…)`, the object named resolved/resolved_refs, or of
+// another kind than identifier/attribute with `resolved` in its full text.
+.decl spt_resolved_object(o: node)
+spt_resolved_object(o) :- spt_named(o, s), (s = "resolved" ; s = "resolved_refs").
+spt_resolved_object(o) :- node(_, o, k, _, _), k != "identifier", k != "attribute", node_text(o, s), contains("resolved", s).
+violation("data-layer-serverplan-state-tripwires", "resolved-ref-access", "SPT-010", p, l) :-
+    spt_method(n, m, o), (m = "get" ; m = "peek" ; m = "resolve_server_ref"), spt_resolved_object(o), spt_in_planning(n),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+// production-ir-class: a class not named SqlStepIR with a base (a child of its superclasses argument_list) named
+// PipelineResolvedIR/StepIR or with such a name below it: some node strictly below the argument_list.
+.decl spt_ir_base_name(s: symbol)
+spt_ir_base_name("PipelineResolvedIR"). spt_ir_base_name("StepIR").
+violation("data-layer-serverplan-state-tripwires", "production-ir-class", "SPT-006", p, l) :-
+    node(d, n, "class_definition", _, _), field(n, "name", x), !text(x, "SqlStepIR"), field(n, "superclasses", bs),
+    spt_named(b, s), spt_ir_base_name(s), inside(b, bs, spt_arglist_kind), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// `all [identifier, regex /^(?:StepIR|PipelineResolvedIR|[A-Za-z_]\w*IR)$/, not SqlStepIR]`: over an identifier's text
+// (word characters only) the regex is the glob `[A-Za-z_]*IR`.
+.decl spt_ir_ident(n: node)
+spt_ir_ident(n) :- node(_, n, "identifier", _, _), text(n, s), glob("[A-Za-z_]*IR", s), s != "SqlStepIR".
+violation("data-layer-serverplan-state-tripwires", "production-ir-construction", "SPT-006", p, l) :-
+    node(d, n, "call", _, _), field(n, "function", f), spt_ir_ident(f), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "production-ir-construction", "SPT-006", p, l) :-
+    node(d, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), spt_ir_ident(a),
+    spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "compiled-ir-value", "SPT-006", p, l) :-
+    spt_callee(n, "CompiledStep"), spt_kwarg(n, "ir", v), !spt_callee(v, "SqlStepIR"), node(d, n, _, _, _), spt_doc(d, p),
+    !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "test-only-acknowledgement", "SPT-006", p, l) :-
+    spt_kwarg_name(n, "tripwire_acknowledged_test_only"), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// executor-ir-dispatch: isinstance(x, <IR>) in the two executors: the second argument (nthChild 2 of the non-comment
+// children: child index 1) an IR identifier or with one below it (an identifier, a leaf, is below a exactly when its
+// span is within a's and it is not a).
+violation("data-layer-serverplan-state-tripwires", "executor-ir-dispatch", "SPT-006", p, l) :-
+    spt_callee(n, "isinstance"), node(d, n, _, _, _), spt_doc(d, p),
+    (p = "impl/common/l2070_server_plan/sql_backend_executor.py" ; p = "l2070_batching/executor.py"),
+    field(n, "arguments", args), child(args, a, 1), spt_ir_ident(a), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "executor-ir-dispatch", "SPT-006", p, l) :-
+    spt_callee(n, "isinstance"), node(d, n, _, _, _), spt_doc(d, p),
+    (p = "impl/common/l2070_server_plan/sql_backend_executor.py" ; p = "l2070_batching/executor.py"),
+    field(n, "arguments", args), child(args, a, 1), node(d, a, _, a0, a1), spt_ir_ident(x), node(d, x, _, xs, xe), x != a,
+    xs >= a0, xe <= a1, line(n, l).
+
+// step-aware-eager-helper: a grammar call in the FTS searcher whose own function (inside with stopBy
+// function_definition: the nearest one) has a step-execution check somewhere in its body.
+.decl spt_step_aware_fn(f: node)
+spt_step_aware_fn(f) :- node(_, f, "function_definition", _, _), field(f, "body", b), inside(c, b, spt_block_kind),
+    spt_callee(c, s), (s = "in_server_plan_execution" ; s = "in_server_plan_step_execution").
+violation("data-layer-serverplan-state-tripwires", "step-aware-eager-helper", "SPT-025", p, l) :-
+    spt_grammar_call(n), node(d, n, _, _, _), spt_doc(d, p), prefix("impl/common/l5150_fts_polyfill/searcher/", p),
+    nearest(n, f, spt_fdef), spt_step_aware_fn(f), !spt_tests_path(d), line(n, l).
+
+// graph-id-config: `<…graph_id…>: T = …` in a dataclass Graph…Config, T naming Any/LazyResult/object/str or naming no
+// …ServerRef (the assignment's `type` field is a `type` node, so only the `has (stopBy end)` branches can hold).
+.decl spt_gid_loose(t: node)
+spt_gid_loose(t) :- node(_, i, "identifier", _, _), text(i, s), (s = "Any" ; s = "LazyResult" ; s = "object" ; s = "str"), inside(i, t, spt_type_kind).
+.decl spt_gid_server_ref(t: node)
+spt_gid_server_ref(t) :- node(_, i, "identifier", _, _), text(i, s), suffix("ServerRef", s), inside(i, t, spt_type_kind).
+.decl spt_gid_type(t: node)
+spt_gid_type(t) :- spt_gid_loose(t).
+spt_gid_type(t) :- node(_, t, _, _, _), !spt_gid_server_ref(t).
+.decl spt_gid_stop(kind: symbol)
+spt_gid_stop("class_definition"). spt_gid_stop("function_definition").
+.decl spt_gid_config(c: node)
+spt_gid_config(c) :- node(_, c, "class_definition", _, _), field(c, "name", x), text(x, s),
+    (s = "ContainmentEdgesReadConfig" ; s = "GraphSearchReadConfig").
+spt_gid_config(c) :- node(d, c, "class_definition", _, _), field(c, "name", x), text(x, s), contains("Graph", s), suffix("Config", s),
+    doc(d, p, _), contains("graph_read", p).
+.decl spt_gid_dataclass(c: node)
+spt_gid_dataclass(c) :- child(w, c, _), node(_, w, "decorated_definition", _, _), child(w, dec, _), node(_, dec, "decorator", _, _),
+    child(dec, x, _), spt_named(x, "dataclass").
+spt_gid_dataclass(c) :- child(w, c, _), node(_, w, "decorated_definition", _, _), child(w, dec, _), node(_, dec, "decorator", _, _),
+    child(dec, x, _), spt_callee(x, "dataclass").
+violation("data-layer-serverplan-state-tripwires", "graph-id-config", "SPT-032", p, l) :-
+    node(d, n, "assignment", _, _), field(n, "left", x), node(_, x, "identifier", _, _), text(x, s), contains("graph_id", s),
+    field(n, "type", t), spt_gid_type(t), nearest(n, c, spt_gid_stop), spt_gid_config(c), spt_gid_dataclass(c),
+    spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "legacy-preop", "SPT-008", p, l) :-
+    spt_callee(n, "CompiledStep"), spt_kwarg_name(n, k), (k = "async_pre_op" ; k = "pre_op"), node(d, n, _, _, _), spt_doc(d, p),
+    !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "mcp-default-graph", "SPT-034", p, l) :-
+    spt_callee(n, "resolve_defaults"), nearest(n, f, spt_fdef), spt_fn_name(f, s), (s = "_get_neighbors" ; s = "_get_overview" ; s = "_traverse"),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+// graph-terminal-chain: `<chain from graph_query_builder_lazy(…)>.<terminal>(…)`.
+.decl spt_graph_chain(n: node)
+spt_graph_chain(n) :- spt_callee(n, "graph_query_builder_lazy").
+spt_graph_chain(n) :- node(_, n, "attribute", _, _), field(n, "object", o), spt_graph_chain(o).
+spt_graph_chain(n) :- node(_, n, "call", _, _), field(n, "function", f), spt_graph_chain(f).
+.decl spt_lazy_terminal(s: symbol)
+spt_lazy_terminal("aggregate_later"). spt_lazy_terminal("bindings_later"). spt_lazy_terminal("count_lazy").
+spt_lazy_terminal("execute_aggregate_lazy"). spt_lazy_terminal("execute_bindings_lazy"). spt_lazy_terminal("execute_graph_lazy").
+spt_lazy_terminal("execute_lazy"). spt_lazy_terminal("exists_lazy").
+violation("data-layer-serverplan-state-tripwires", "graph-terminal-chain", "SPT-031", p, l) :-
+    spt_method(n, m, o), spt_lazy_terminal(m), spt_graph_chain(o), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+// lazy-callback-terminal: map_lazy_result/flat_map_lazy_result with a lazy terminal, plan builder or `._step_ref_id`
+// as (or below) a positional argument after the first, or as (or below) a callback/fn/func/transform keyword's value.
+.decl spt_lct_mark(n: node)
+spt_lct_mark(n) :- spt_callee(n, s), spt_lazy_terminal(s).
+spt_lct_mark(n) :- spt_callee(n, s), (s = "LazyBuilderContext" ; s = "_add_intent" ; s = "_add_intent_by_ref" ; s = "_get_lazy_plan").
+spt_lct_mark(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "_step_ref_id").
+// a is a mark or has one below it (span within, not it).
+.decl spt_lct_holds(a: node)
+spt_lct_holds(a) :- spt_lct_arg(a), spt_lct_mark(a).
+spt_lct_holds(a) :- spt_lct_arg(a), node(d, a, _, a0, a1), spt_lct_mark(x), node(d, x, _, xs, xe), x != a, xs >= a0, xe <= a1.
+.decl spt_lct_call(c: node)
+spt_lct_call(c) :- spt_callee(c, s), (s = "flat_map_lazy_result" ; s = "map_lazy_result").
+// The candidates: positional (not keyword_argument) children of the arguments other than the first, and the values of
+// the callback keywords.
+.decl spt_lct_arg(a: node)
+spt_lct_arg(a) :- spt_lct_positional(_, a).
+spt_lct_arg(v) :- spt_lct_keyword(_, v).
+.decl spt_lct_positional(c: node, a: node)
+spt_lct_positional(c, a) :- spt_lct_call(c), field(c, "arguments", args), child(args, a, i), i != 0, !node(_, a, "keyword_argument", _, _).
+.decl spt_lct_keyword(c: node, v: node)
+spt_lct_keyword(c, v) :- spt_lct_call(c), spt_kwarg(c, k, v), (k = "callback" ; k = "fn" ; k = "func" ; k = "transform").
+violation("data-layer-serverplan-state-tripwires", "lazy-callback-terminal", "SPT-030", p, l) :-
+    spt_lct_positional(n, a), spt_lct_holds(a), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "lazy-callback-terminal", "SPT-030", p, l) :-
+    spt_lct_keyword(n, v), spt_lct_holds(v), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+// ---- queue-udf-symbols, serverplan-ddl, private-lazy-ref (ast clauses) ----
+// queue-udf-symbols: a string or concatenated_string whose semantic value is one of the two UDF names.
+violation("data-layer-serverplan-state-tripwires", "queue-udf-symbols", "SPT-004", p, l) :-
+    node(d, n, k, _, _), spt_string_kind(k), value(n, v),
+    (v = "nera_current_queue_token" ; v = "nera_is_authorized_queue_token"), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// serverplan-ddl: ddl_effect_lazy/grammar_effect_lazy called as ddl_* (always, for ddl_effect_lazy) or with a first
+// argument (nthChild 1 of the non-comment children: child index 0) that is, or has below it (span within, not it), a
+// DDL string (its value; W's search `(?i)^\s*(?:CREATE|ALTER|DROP)\b` as a whole-string `match`) or a
+// SqlCreate*/SqlAlter*/SqlDrop* call.
+.decl spt_ddl_mark(n: node)
+spt_ddl_mark(n) :- node(_, n, "string", _, _), value(n, v), match("(?i)\s*(?:CREATE|ALTER|DROP)\b(?s:.*)", v).
+spt_ddl_mark(n) :- spt_callee(n, s), (prefix("SqlCreate", s) ; prefix("SqlAlter", s) ; prefix("SqlDrop", s)).
+.decl spt_ddl_arg(c: node)
+spt_ddl_arg(c) :- field(c, "arguments", args), child(args, a, 0), spt_ddl_mark(a).
+spt_ddl_arg(c) :- field(c, "arguments", args), child(args, a, 0), node(d, a, _, a0, a1), spt_ddl_mark(x), node(d, x, _, xs, xe), x != a,
+    xs >= a0, xe <= a1.
+violation("data-layer-serverplan-state-tripwires", "serverplan-ddl", "SPT-009", p, l) :-
+    spt_callee(n, s), (s = "ddl_effect_lazy" ; s = "grammar_effect_lazy"), (prefix("ddl_", s) ; spt_ddl_arg(n)),
+    node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// private-lazy-ref: in the six graph files (the path regex is unanchored at the start: a suffix).
+.decl spt_plr_file(d: number)
+spt_plr_file(d) :- doc(d, p, _), (suffix("l9900_auto_api/graph_read_core.py", p) ; suffix("l7200_versioned_transactions/graph_lazy_sql.py", p) ;
+    suffix("impl/common/l2070_server_plan/steps/intent_graph.py", p) ; suffix("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", p) ;
+    suffix("l9700_graph_query/graph_pattern.py", p) ; suffix("impl/common/l2100_sql_grammar/domain/graph/graph_select_conditions.py", p)).
+.decl spt_plr_call(c: node)
+spt_plr_call(c) :- spt_callee(c, "_lazy_result_step_ref_id").
+spt_plr_call(c) :- spt_method(c, "_step_ref_id", _).
+spt_plr_call(c) :- spt_bare_callee(c, "getattr"), field(c, "arguments", args), child(args, a, 1), node(_, a, k, _, _),
+    spt_string_kind(k), value(a, "_step_ref_id").
+violation("data-layer-serverplan-state-tripwires", "private-lazy-ref", "SPT-033", p, l) :-
+    spt_plr_call(n), node(d, n, _, _, _), spt_plr_file(d), spt_doc(d, p), line(n, l).
+
+
+// ---- state-projection-recovery (relational: one evidence input `facts`, five stages, SPT-029) ----
+// The evidence rows are nodes of an admitted file (`spt_pr_file`); a row's captures come from the first branch of the
+// first `any` that matches and from the two `any [..., $_]` after it. Per row kind (no node matches two branches whose
+// captures the stages read):
+// - candidates (`cand`): an if_statement/elif_clause matching `state-projection-candidate` (`spt_pr_candidate`);
+//   `atom` where its condition holds an atom (`spt_pr_atom_in`), `alt` where it has an elif/else child with a
+//   recovery call below it (`spt_pr_alternative`);
+// - functions (`fndef`): every function_definition;
+// - body_statements (`fn`): a child of a function's body block with a recovery call below it, `fn` the function;
+// - row_constants: a module-level `NAME = "row"|"rows"` (a string without interpolation, by its value);
+// - condition_names: an identifier in a candidate's condition (the condition itself or below it), `if_start` the
+//   candidate, in a file with a row constant.
+// The final query: a candidate with a local atom or a condition identifier named as a row constant, and with an
+// alternative or a body statement of its own function (the nearest enclosing function_definition: the nearest by
+// start of those enclosing it) on a later line. Key (issue, identity = the candidate's start): one finding per
+// candidate, at its line.
+
+.decl spt_pr_kind(kind: symbol)
+spt_pr_kind("function_definition"). spt_pr_kind("class_definition").
+.decl spt_pr_def_kind(kind: symbol)
+spt_pr_def_kind("function_definition"). spt_pr_def_kind("class_definition").
+.decl spt_pr_else_kind(kind: symbol)
+spt_pr_else_kind("elif_clause"). spt_pr_else_kind("else_clause").
+.decl spt_pr_if_kind(kind: symbol)
+spt_pr_if_kind("if_statement"). spt_pr_if_kind("elif_clause").
+.decl spt_pr_str_kind(kind: symbol)
+spt_pr_str_kind("string"). spt_pr_str_kind("concatenated_string").
+
+// The file-level conditions of every row: the path (`auto_api|lazy_orm|query_builder`, not `/tests/`), the module's
+// text (the `state-projection-recovery-text` and `-scope-text` regexes, each a set of literals: `execute_async`
+// contains `execute`, `projected`/`projection` contain `project`), and `state-projection-source`: a function or
+// class below the module whose name contains one of the scope words.
+.decl spt_pr_scope_name(f: node)
+spt_pr_scope_name(f) :- node(_, f, k, _, _), spt_pr_def_kind(k), field(f, "name", x), text(x, s),
+    (contains("alias", s) ; contains("extract", s) ; contains("project", s) ; contains("tuple", s)).
+.decl spt_pr_file(d: number)
+spt_pr_file(d) :- spt_doc(d, p), (contains("auto_api", p) ; contains("lazy_orm", p) ; contains("query_builder", p)), !spt_tests_path(d),
+    node(d, m, "module", _, _), node_text(m, s), (contains("evaluate", s) ; contains("execute", s) ; contains("resolve", s)),
+    (contains("alias", s) ; contains("extract", s) ; contains("project", s) ; contains("tuple", s)),
+    node(d, f, _, _, _), spt_pr_scope_name(f).
+
+// A call named evaluate/execute/execute_async/resolve/resolve_async.
+.decl spt_pr_recovery_call(c: node)
+spt_pr_recovery_call(c) :- spt_callee(c, s), (s = "evaluate" ; s = "execute" ; s = "execute_async" ; s = "resolve" ; s = "resolve_async").
+// n has such a call strictly below it (span within, not n: a call below n, or n's only-child chain of one span).
+.decl spt_pr_has_recovery(n: node)
+spt_pr_has_recovery(n) :- spt_pr_recovery_call(c), node(d, c, _, cs, ce), node(d, n, _, ns, ne), n != c, cs >= ns, ce <= ne,
+    spt_pr_recovery_holder(n).
+// The nodes the clause asks this of: statements of a function body, and elif/else clauses.
+.decl spt_pr_recovery_holder(n: node)
+spt_pr_recovery_holder(n) :- child(b, n, _), node(_, b, "block", _, _), child(f, b, _), field(f, "body", b), node(_, f, "function_definition", _, _).
+spt_pr_recovery_holder(n) :- node(_, n, k, _, _), spt_pr_else_kind(k).
+
+// `state-projection-candidate`: an if_statement/elif_clause whose condition is, or has below it, a comparison whose
+// text has the word `in` or `is`, or an isinstance call; inside a function or class named for a scope word.
+.decl spt_pr_test(n: node)
+spt_pr_test(n) :- node(_, n, "comparison_operator", _, _), node_text(n, s), match("(?s:.*)\b(?:in|is)\b(?s:.*)", s).
+spt_pr_test(n) :- spt_callee(n, "isinstance").
+// x is the condition of if/elif c, or below it (span within the condition's).
+.decl spt_pr_in_condition(x: node, c: node)
+spt_pr_in_condition(x, c) :- node(d, c, k, _, _), spt_pr_if_kind(k), spt_pr_file(d), field(c, "condition", q),
+    node(d, q, _, qs, qe), node(d, x, _, xs, xe), xs >= qs, xe <= qe.
+.decl spt_pr_candidate(c: node)
+spt_pr_candidate(c) :- spt_pr_in_condition(x, c), spt_pr_test(x), inside(c, f, spt_pr_kind), spt_pr_scope_name(f).
+
+// An atom: an identifier alias/key/keys/row/rows, or a string/concatenated_string without interpolation whose value
+// is row/rows.
+.decl spt_pr_interpolated(s: node)
+spt_pr_interpolated(s) :- node(_, i, "interpolation", _, _), inside(i, s, spt_pr_str_kind).
+.decl spt_pr_row_string(n: node)
+spt_pr_row_string(n) :- node(_, n, k, _, _), spt_string_kind(k), value(n, v), (v = "row" ; v = "rows"), !spt_pr_interpolated(n).
+.decl spt_pr_atom(n: node)
+spt_pr_atom(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "alias" ; s = "key" ; s = "keys" ; s = "row" ; s = "rows").
+spt_pr_atom(n) :- spt_pr_row_string(n).
+.decl spt_pr_atom_in(c: node)
+spt_pr_atom_in(c) :- spt_pr_candidate(c), spt_pr_in_condition(x, c), spt_pr_atom(x).
+
+// row_constants: `NAME = "row"` as a module-level expression statement.
+.decl spt_pr_row_constant(d: number, name: symbol)
+spt_pr_row_constant(d, s) :- node(d, a, "assignment", _, _), spt_pr_file(d), child(e, a, _), node(_, e, "expression_statement", _, _),
+    child(m, e, _), node(_, m, "module", _, _), field(a, "left", x), node(_, x, "identifier", _, _), text(x, s),
+    field(a, "right", r), spt_pr_row_string(r).
+// condition_names joined with row_constants.
+.decl spt_pr_named_constant(c: node)
+spt_pr_named_constant(c) :- spt_pr_candidate(c), spt_pr_in_condition(x, c), node(d, x, "identifier", _, _), text(x, s), spt_pr_row_constant(d, s).
+
+.decl spt_pr_alternative(c: node)
+spt_pr_alternative(c) :- spt_pr_candidate(c), child(c, a, _), node(_, a, k, _, _), spt_pr_else_kind(k), spt_pr_has_recovery(a).
+// A later body statement of the candidate's own function.
+.decl spt_pr_later_recovery(c: node)
+spt_pr_later_recovery(c) :- spt_pr_candidate(c), line(c, cl), nearest(c, f, spt_fdef), field(f, "body", b), child(b, s, _),
+    spt_pr_has_recovery(s), line(s, sl), sl > cl.
+
+.decl spt_pr_local(c: node)
+spt_pr_local(c) :- spt_pr_atom_in(c).
+spt_pr_local(c) :- spt_pr_named_constant(c).
+.decl spt_pr_recovered(c: node)
+spt_pr_recovered(c) :- spt_pr_alternative(c).
+spt_pr_recovered(c) :- spt_pr_later_recovery(c).
+violation("data-layer-serverplan-state-tripwires", "state-projection-recovery", "SPT-029", p, l) :-
+    spt_pr_candidate(n), spt_pr_local(n), spt_pr_recovered(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+// ==== state-signatures (relational; code = the final query's `issue`: SPT-013, SPT-014, SPT-015, SPT-016, SPT-017, SPT-018) ====
+// Source: the clause's `relational` object in rules-ast/data-layer-serverplan-state-tripwires.json. Options: the
+// clause reads oracleAnalyzer (through `state-signature-admit`'s `state-project-source` case: the header's
+// spt_project, in spt_doc) and entryPoint, whose four cases (all, scan_source, scan_tree, scan_project_sources) give
+// the same evidence filter (`filePath (?s).*`) and the same final SQL; the default case (`\b\B`) is no entryPoint the
+// policy defines. So this part holds for every recorded configuration; returnKindsHex and sourceProvided are not read.
+//
+// The evidence `nodes_in`: one row per node the ast query matches, its outer `any` taking the first role that matches
+// (R0 … R6), so a node has one role. Roles only overlap on kind for identifiers (R0 parameter vs R3 identifier) and
+// assignments (R2 dataclass field vs R4 method assignment): R3 is "not R0", R4 "not R2". Each role's captures are
+// relations on the row's node; a capture `has`/`inside` binds is the first node of the search (nearest ancestor for
+// `inside … stopBy end`). A row is the node itself (`__path/__start/__end`); joins on spans are node joins where the
+// span is one node's, and span comparisons where the SQL compares spans. partitionBy file: every join is per document.
+// Stage relations are named after the stages (sig_params → spt_sig_param, …); a nullable column is a side relation
+// holding where it is not NULL.
+//
+// `match(re, s)` is a full match: W's unanchored regex searches are written `(?s:.*)(?:re)(?s:.*)` (flags kept
+// inside), its `^…$` ones without the anchors.
+// Comments: `node` and `child` have none (a Python comment is a token of its parent, `token`, text starting `#`): the
+// admit's `state-signature-source` does not exclude them, so a `# IntentStep` comment directly in a class's
+// superclasses argument list admits the file (its token branch); the step-class chains exclude them (`not comment`).
+// head (`coalesce(rx_extract(ann, '^\s*(?:[\w.]+\.)?([A-Za-z_]\w*)', 1), '')`) is compared only with 'type' and
+// dataclass names, so it is read as `spt_sig_head(t, X)` for those X, each a whole-string `match` of the annotation's
+// text with X put in a pattern that holds exactly where the regex's group 1 is X (spt_sig_head below).
+// SPT-014's `instr(lower(name), …)`: SQLite's lower() folds ASCII only, so each letter is an ASCII class.
+
+// ---- kind sets ----
+.decl spt_sig_fdef(kind: symbol)
+spt_sig_fdef("function_definition").
+.decl spt_sig_typek(kind: symbol)
+spt_sig_typek("type").
+.decl spt_sig_param_kind(kind: symbol)
+spt_sig_param_kind("identifier"). spt_sig_param_kind("typed_parameter"). spt_sig_param_kind("default_parameter").
+spt_sig_param_kind("typed_default_parameter").
+.decl spt_sig_branch_kind(kind: symbol)
+spt_sig_branch_kind("if_statement"). spt_sig_branch_kind("elif_clause"). spt_sig_branch_kind("while_statement").
+spt_sig_branch_kind("conditional_expression"). spt_sig_branch_kind("not_operator"). spt_sig_branch_kind("boolean_operator").
+// The kinds a row of R3 … R6 is (the nodes whose owning method is looked up).
+.decl spt_sig_ownk(kind: symbol)
+spt_sig_ownk("identifier"). spt_sig_ownk("assignment"). spt_sig_ownk("attribute"). spt_sig_ownk("if_statement").
+spt_sig_ownk("elif_clause"). spt_sig_ownk("while_statement"). spt_sig_ownk("conditional_expression").
+spt_sig_ownk("not_operator"). spt_sig_ownk("boolean_operator").
+// The stub test's statements before the raise, and an expression statement's value kinds.
+.decl spt_sig_prefix_kind(kind: symbol)
+spt_sig_prefix_kind("expression_statement"). spt_sig_prefix_kind("delete_statement"). spt_sig_prefix_kind("pass_statement").
+.decl spt_sig_value_kind(kind: symbol)
+spt_sig_value_kind("assignment"). spt_sig_value_kind("string"). spt_sig_value_kind("concatenated_string").
+spt_sig_value_kind("integer"). spt_sig_value_kind("float"). spt_sig_value_kind("none"). spt_sig_value_kind("true").
+spt_sig_value_kind("false").
+.decl spt_sig_string_kind(kind: symbol)
+spt_sig_string_kind("string"). spt_sig_string_kind("concatenated_string").
+
+// ---- the admit: `state-signature-admit` = state-signature-source (here) and the oracleAnalyzer case (spt_doc) ----
+// A module with a class (anywhere) whose superclasses argument list has a direct child, not a keyword_argument, whose
+// text, or (a string) value, matches `ServerPlanStep|IntentStep`.
+.decl spt_sig_source(d: number)
+spt_sig_source(d) :- node(d, c, "class_definition", _, _), field(c, "superclasses", s), child(s, x, _), node(d, x, k, _, _),
+    k != "keyword_argument", node_text(x, t), match("(?s:.*)(?:ServerPlanStep|IntentStep)(?s:.*)", t).
+spt_sig_source(d) :- node(d, c, "class_definition", _, _), field(c, "superclasses", s), child(s, x, _), node(d, x, k, _, _),
+    spt_sig_string_kind(k), value(x, v), match("(?s:.*)(?:ServerPlanStep|IntentStep)(?s:.*)", v).
+// A comment child of the argument list (the only Python token whose text starts `#`), its text marker included.
+spt_sig_source(d) :- node(d, c, "class_definition", _, _), field(c, "superclasses", s), token(s, _, t, _, _), prefix("#", t),
+    match("(?s:.*)(?:ServerPlanStep|IntentStep)(?s:.*)", t).
+.decl spt_sig_doc(d: number, p: symbol)
+spt_sig_doc(d, p) :- spt_doc(d, p), spt_sig_source(d).
+
+// ---- step classes and their methods (the roles' shared `inside` chain) ----
+// A class whose superclasses have a direct child, not a keyword_argument (nor a comment), matching
+// `(?:ServerPlanStep|IntentStep)`; intent (`$Rk_MCI`): one matching `IntentStep`.
+.decl spt_sig_step_class(d: number, c: node)
+spt_sig_step_class(d, c) :- spt_sig_doc(d, _), node(d, c, "class_definition", _, _), field(c, "superclasses", s), child(s, x, _),
+    node(d, x, k, _, _), k != "keyword_argument", node_text(x, t), match("(?s:.*)(?:ServerPlanStep|IntentStep)(?s:.*)", t).
+.decl spt_sig_intent_class(c: node)
+spt_sig_intent_class(c) :- spt_sig_step_class(d, c), field(c, "superclasses", s), child(s, x, _), node(d, x, k, _, _),
+    k != "keyword_argument", node_text(x, t), match("(?s:.*)IntentStep(?s:.*)", t).
+// A function_definition in a step class's body block, directly or under a decorated_definition (`$Rk_M`, its name
+// `$Rk_MN`, its class `$Rk_MC`).
+.decl spt_sig_method(d: number, m: node, c: node, mn: symbol)
+spt_sig_method(d, m, c, mn) :- spt_sig_step_class(d, c), field(c, "body", b), node(d, b, "block", _, _), child(b, m, _),
+    node(d, m, "function_definition", _, _), field(m, "name", x), text(x, mn).
+spt_sig_method(d, m, c, mn) :- spt_sig_step_class(d, c), field(c, "body", b), node(d, b, "block", _, _), child(b, w, _),
+    node(d, w, "decorated_definition", _, _), child(w, m, _), node(d, m, "function_definition", _, _), field(m, "name", x),
+    text(x, mn).
+// R0's `not inside function_definition (stopBy end)`.
+.decl spt_sig_nested(m: node)
+spt_sig_nested(m) :- spt_sig_method(_, m, _, _), inside(m, _, spt_sig_fdef).
+
+// ---- R0's stub: `$R0_STUB`, a body whose direct child is `raise NotImplementedError(` with no non-comment statement
+// after it, only expression/delete/pass statements before it, every earlier expression statement holding an
+// assignment or literal child ----
+.decl spt_sig_stub_raise(m: node, s: node, b: node, i: number)
+spt_sig_stub_raise(m, s, b, i) :- spt_sig_method(d, m, _, _), field(m, "body", b), child(b, s, i), node(d, s, "raise_statement", _, _),
+    node_text(s, t), match("raise\\s+NotImplementedError\\s*\\((?s:.*)", t).
+.decl spt_sig_valued(e: node)
+spt_sig_valued(e) :- node(_, e, "expression_statement", _, _), child(e, v, _), node(_, v, k, _, _), spt_sig_value_kind(k).
+.decl spt_sig_stub_spoiled(s: node)
+spt_sig_stub_spoiled(s) :- spt_sig_stub_raise(_, s, b, i), child(b, _, j), j > i.
+spt_sig_stub_spoiled(s) :- spt_sig_stub_raise(_, s, b, i), child(b, o, j), j < i, node(_, o, k, _, _), !spt_sig_prefix_kind(k).
+spt_sig_stub_spoiled(s) :- spt_sig_stub_raise(_, s, b, i), child(b, o, j), j < i, node(_, o, "expression_statement", _, _),
+    !spt_sig_valued(o).
+.decl spt_sig_stub(m: node)
+spt_sig_stub(m) :- spt_sig_stub_raise(m, s, _, _), !spt_sig_stub_spoiled(s).
+
+// ---- R0 rows (sig_params): a parameter, direct child of a step method's `parameters` (the method not nested in a
+// function), with a name (`$R0_PN`: the identifier itself, or its first named child when that is an identifier) ----
+.decl spt_sig_pname(p: node, s: symbol)
+spt_sig_pname(p, s) :- node(_, p, "identifier", _, _), text(p, s).
+spt_sig_pname(p, s) :- node(_, p, k, _, _), k != "identifier", spt_sig_param_kind(k), child(p, x, 0), node(_, x, "identifier", _, _),
+    text(x, s).
+.decl spt_sig_param(d: number, p: node, kind: symbol, name: symbol, m: node)
+spt_sig_param(d, p, k, s, m) :- spt_sig_method(d, m, _, _), !spt_sig_nested(m), field(m, "parameters", ps), node(d, ps, "parameters", _, _),
+    child(ps, p, _), node(d, p, k, _, _), spt_sig_param_kind(k), spt_sig_pname(p, s).
+// The role, for R3's "not R0".
+.decl spt_sig_r0(p: node)
+spt_sig_r0(p) :- spt_sig_param(_, p, _, _, _).
+
+// ---- annotations (`$R0_T`, `$R2_T`: a `type` field child) and their contract columns ----
+.decl spt_sig_typed(t: node)
+spt_sig_typed(t) :- spt_sig_param(_, p, _, _, _), field(p, "type", t).
+spt_sig_typed(t) :- spt_sig_field(_, f, _), field(f, "type", t).
+// un: a union_type/binary_operator descendant whose text holds `|`, or an identifier `Optional`/`Union`.
+.decl spt_sig_un(t: node)
+spt_sig_un(t) :- spt_sig_typed(t), node(d, t, _, _, _), node(d, x, "union_type", _, _), inside(x, t, spt_sig_typek), node_text(x, s), contains("|", s).
+spt_sig_un(t) :- spt_sig_typed(t), node(d, t, _, _, _), node(d, x, "binary_operator", _, _), inside(x, t, spt_sig_typek), node_text(x, s), contains("|", s).
+spt_sig_un(t) :- spt_sig_typed(t), node(d, t, _, _, _), node(d, x, "identifier", _, _), inside(x, t, spt_sig_typek), text(x, "Optional").
+spt_sig_un(t) :- spt_sig_typed(t), node(d, t, _, _, _), node(d, x, "identifier", _, _), inside(x, t, spt_sig_typek), text(x, "Union").
+// sr: an identifier descendant ending `ServerRef`; rb: one of bool/bytes/float/int/str; hs: `str`.
+.decl spt_sig_tid(t: node, s: symbol)
+spt_sig_tid(t, s) :- spt_sig_typed(t), node(d, t, _, _, _), node(d, x, "identifier", _, _), inside(x, t, spt_sig_typek), text(x, s).
+.decl spt_sig_sr(t: node)
+spt_sig_sr(t) :- spt_sig_tid(t, s), suffix("ServerRef", s).
+.decl spt_sig_rb_name(s: symbol)
+spt_sig_rb_name("bool"). spt_sig_rb_name("bytes"). spt_sig_rb_name("float"). spt_sig_rb_name("int"). spt_sig_rb_name("str").
+.decl spt_sig_rb(t: node)
+spt_sig_rb(t) :- spt_sig_tid(t, s), spt_sig_rb_name(s).
+.decl spt_sig_hs(t: node)
+spt_sig_hs(t) :- spt_sig_tid(t, "str").
+// head = X, for X 'type' or a dataclass name of the document (the only values head is compared with). The regex is
+// anchored and its match is the leftmost-first (greedy) one: the optional prefix `[\w.]+\.` ends at the last `.` of
+// the leading [\w.] run W (not at its first character) that is followed by [A-Za-z_]; group 1 is the \w run after it
+// (or, with no such `.`, W's leading \w run, where it starts [A-Za-z_]). So group 1 is X exactly where X starts
+// [A-Za-z_] and the text is `\s*`, an optional `[\w.]+\.`, X, then the rest of W, holding no `.` followed by
+// [A-Za-z_] (each \w run in it after a `.` starts [\w&&[^A-Za-z_]]), then the end or a character not in [\w.].
+.decl spt_sig_head_cand(t: node, x: symbol)
+spt_sig_head_cand(t, "type") :- spt_sig_typed(t).
+spt_sig_head_cand(t, x) :- spt_sig_typed(t), node(d, t, _, _, _), spt_sig_dc_named(d, x).
+.decl spt_sig_head(t: node, h: symbol)
+spt_sig_head(t, x) :- spt_sig_head_cand(t, x), match("[A-Za-z_]\\w*", x), node_text(t, a),
+    q = cat(cat("\\s*(?:[\\w.]+\\.)?", x), "(?:\\.+[\\w&&[^A-Za-z_]]\\w*)*\\.*(?:[^\\w.](?s:.*))?"), match(q, a).
+// basic (ann not NULL): sr AND NOT un, or NOT un AND (head = 'type' AND ann holds `[`, or ann is a basic name, or
+// nested frozensets of one).
+.decl spt_sig_basic(t: node)
+spt_sig_basic(t) :- spt_sig_sr(t), !spt_sig_un(t).
+spt_sig_basic(t) :- spt_sig_head(t, "type"), !spt_sig_un(t), node_text(t, a), contains("[", a).
+spt_sig_basic(t) :- spt_sig_typed(t), !spt_sig_un(t), node_text(t, a),
+    match("\\s*(?:[A-Za-z_]\\w*\\.)*(?:BackendType|BranchTipMaterialization|CommitBranchContextRefId|ScopedCleanupMode|ServerPlanRefId|SessionId|SqlIndexName|SqlTableName|SysId|VectorBackendKind|VectorIndexMaintenanceOperation)\\s*", a).
+spt_sig_basic(t) :- spt_sig_typed(t), !spt_sig_un(t), node_text(t, a),
+    match("\\s*(?:(?:[A-Za-z_]\\w*\\.)*frozenset\\s*\\[\\s*)+(?:[A-Za-z_]\\w*\\.)*(?:BackendType|BranchTipMaterialization|CommitBranchContextRefId|ScopedCleanupMode|ServerPlanRefId|SessionId|SqlIndexName|SqlTableName|SysId|VectorBackendKind|VectorIndexMaintenanceOperation)\\s*(?:\\]\\s*)+", a).
+
+// ---- R1 rows (sig_dataclasses) and the dataclasses stage ----
+// A class whose parent is a decorated_definition whose text has a `@…dataclass` line; fz: `@…dataclass(… frozen=True`.
+.decl spt_sig_dcdeco(w: node)
+spt_sig_dcdeco(w) :- spt_sig_doc(d, _), node(d, w, "decorated_definition", _, _), node_text(w, s),
+    match("(?s:.*)(?m:^\\s*@(?:[\\w.]*\\.)?dataclass\\b)(?s:.*)", s).
+.decl spt_sig_dc(d: number, c: node, name: symbol)
+spt_sig_dc(d, c, n) :- spt_sig_dcdeco(w), child(w, c, _), node(d, c, "class_definition", _, _), field(c, "name", x), text(x, n).
+.decl spt_sig_dc_fz(c: node)
+spt_sig_dc_fz(c) :- spt_sig_dc(_, c, _), child(w, c, _), spt_sig_dcdeco(w), node_text(w, s),
+    match("(?s:.*)@(?:[\\w.]*\\.)?dataclass\\s*\\([^)]*\\bfrozen\\s*=\\s*True(?s:.*)", s).
+// static = fz IS NOT NULL AND name ends Config/Payload.
+.decl spt_sig_static(c: node)
+spt_sig_static(c) :- spt_sig_dc_fz(c), spt_sig_dc(_, c, n), suffix("Config", n).
+spt_sig_static(c) :- spt_sig_dc_fz(c), spt_sig_dc(_, c, n), suffix("Payload", n).
+.decl spt_sig_dc_named(d: number, name: symbol)
+spt_sig_dc_named(d, n) :- spt_sig_dc(d, _, n).
+
+// ---- R2 rows (sig_fields) and config_fields: a typed assignment, the expression statement of a dataclass's body
+// block (`$R2_DC`, the class: an R1 row, its decorated parent being the same test) ----
+.decl spt_sig_field(d: number, f: node, dc: node)
+spt_sig_field(d, f, c) :- spt_sig_dc(d, c, _), field(c, "body", b), node(d, b, "block", _, _), child(b, e, _),
+    node(d, e, "expression_statement", _, _), child(e, f, _), node(d, f, "assignment", _, _), field(f, "type", t), node(d, t, "type", _, _).
+// config_fields (path, cls, head, basic), per field.
+.decl spt_sig_cf(d: number, f: node, cls: symbol)
+spt_sig_cf(d, f, n) :- spt_sig_field(d, f, c), spt_sig_dc(d, c, n).
+.decl spt_sig_cf_head(f: node, h: symbol)
+spt_sig_cf_head(f, h) :- spt_sig_cf(_, f, _), field(f, "type", t), spt_sig_head(t, h).
+// A field whose head names a dataclass of its document (the SQL's EXISTS(other.name = f.head)).
+.decl spt_sig_cf_dchead(f: node)
+spt_sig_cf_dchead(f) :- spt_sig_cf(d, f, _), spt_sig_cf_head(f, h), spt_sig_dc_named(d, h).
+.decl spt_sig_cf_basic(f: node)
+spt_sig_cf_basic(f) :- spt_sig_cf(_, f, _), field(f, "type", t), spt_sig_basic(t).
+.decl spt_sig_has_cf(d: number, cls: symbol)
+spt_sig_has_cf(d, n) :- spt_sig_cf(d, _, n).
+
+// ---- bad_configs: the recursion over the field-type graph ----
+.decl spt_sig_bad(d: number, name: symbol)
+spt_sig_bad(d, n) :- spt_sig_dc(d, c, n), !spt_sig_static(c), !spt_sig_has_cf(d, n).
+spt_sig_bad(d, n) :- spt_sig_dc(d, c, n), !spt_sig_static(c), spt_sig_cf(d, f, n), !spt_sig_cf_basic(f), !spt_sig_cf_dchead(f).
+spt_sig_bad(d, n) :- spt_sig_dc(d, c, n), !spt_sig_static(c), spt_sig_cf(d, f, n), !spt_sig_cf_basic(f), spt_sig_cf_head(f, h),
+    spt_sig_bad(d, h).
+
+// ---- signature_parameters: R0 rows of non-stub methods ----
+.decl spt_sig_sp(d: number, p: node, kind: symbol, name: symbol, m: node, method: symbol, cls: node)
+spt_sig_sp(d, p, k, s, m, mn, c) :- spt_sig_param(d, p, k, s, m), spt_sig_method(d, m, c, mn), !spt_sig_stub(m).
+.decl spt_sig_sp_intent(p: node)
+spt_sig_sp_intent(p) :- spt_sig_sp(_, p, _, _, _, _, c), spt_sig_intent_class(c).
+.decl spt_sig_sp_type(p: node, t: node)
+spt_sig_sp_type(p, t) :- spt_sig_sp(_, p, _, _, _, _, _), field(p, "type", t).
+.decl spt_sig_sp_head(p: node, h: symbol)
+spt_sig_sp_head(p, h) :- spt_sig_sp_type(p, t), spt_sig_head(t, h).
+// allowed = coalesce(basic, 0) OR a dataclass named head that is not bad.
+.decl spt_sig_allowed(p: node)
+spt_sig_allowed(p) :- spt_sig_sp_type(p, t), spt_sig_basic(t).
+spt_sig_allowed(p) :- spt_sig_sp(d, p, _, _, _, _, _), spt_sig_sp_head(p, h), spt_sig_dc_named(d, h), !spt_sig_bad(d, h).
+.decl spt_sig_sp_un(p: node)
+spt_sig_sp_un(p) :- spt_sig_sp_type(p, t), spt_sig_un(t).
+.decl spt_sig_sp_sr(p: node)
+spt_sig_sp_sr(p) :- spt_sig_sp_type(p, t), spt_sig_sr(t).
+.decl spt_sig_sp_rb(p: node)
+spt_sig_sp_rb(p) :- spt_sig_sp_type(p, t), spt_sig_rb(t).
+.decl spt_sig_sp_hs(p: node)
+spt_sig_sp_hs(p) :- spt_sig_sp_type(p, t), spt_sig_hs(t).
+// The name test every issue but SPT-013/014 applies: name NOT IN ('self', 'ref_id').
+.decl spt_sig_sp_named(p: node)
+spt_sig_sp_named(p) :- spt_sig_sp(_, p, _, s, _, _, _), s != "self", s != "ref_id".
+// An intent __init__ parameter, named: SPT-016/017 and shape_attributes.
+.decl spt_sig_sp_ctor(p: node)
+spt_sig_sp_ctor(p) :- spt_sig_sp(_, p, _, _, _, "__init__", _), spt_sig_sp_intent(p), spt_sig_sp_named(p).
+
+// ---- R3 … R6: the owning method, `inside` (stopBy end) a step method named __init__ or lower: the nearest one ----
+.decl spt_sig_lm(d: number, m: node)
+spt_sig_lm(d, m) :- spt_sig_method(d, m, _, "__init__").
+spt_sig_lm(d, m) :- spt_sig_method(d, m, _, "lower").
+.decl spt_sig_owner_at(n: node, m: node, s: number)
+spt_sig_owner_at(n, m, s) :- node(d, n, k, _, _), spt_sig_ownk(k), inside(n, m, spt_sig_fdef), spt_sig_lm(d, m), node(d, m, _, s, _).
+.decl spt_sig_owner(n: node, m: node)
+spt_sig_owner(n, m) :- spt_sig_owner_at(n, m, s), s = max x : { spt_sig_owner_at(n, _, x) }.
+
+// R3 rows (sig_idents): an identifier, not an R0 row, with an owner.
+.decl spt_sig_ident(d: number, i: node, s: symbol, start: number, end: number)
+spt_sig_ident(d, i, s, a, b) :- node(d, i, "identifier", a, b), spt_sig_owner(i, _), !spt_sig_r0(i), text(i, s).
+
+// R4 rows (sig_assigns): an assignment, not an R2 row, with an owner and a right side; fn the nearest
+// function_definition (`$R4_FN`), lt the left identifier's text, x the attribute of a `self.x` left side.
+.decl spt_sig_r2(f: node)
+spt_sig_r2(f) :- spt_sig_field(_, f, _).
+.decl spt_sig_assign(d: number, a: node, fn: node, rs: number, re: number)
+spt_sig_assign(d, a, f, rs, re) :- node(d, a, "assignment", _, _), spt_sig_owner(a, _), !spt_sig_r2(a), nearest(a, f, spt_sig_fdef),
+    field(a, "right", r), node(d, r, _, rs, re).
+.decl spt_sig_assign_lt(a: node, lt: symbol)
+spt_sig_assign_lt(a, s) :- spt_sig_assign(_, a, _, _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, s).
+.decl spt_sig_self_attr(n: node, x: symbol)
+spt_sig_self_attr(n, x) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "self"),
+    field(n, "attribute", i), text(i, x).
+.decl spt_sig_assign_x(a: node, x: symbol)
+spt_sig_assign_x(a, x) :- spt_sig_assign(_, a, _, _, _), field(a, "left", l), spt_sig_self_attr(l, x).
+
+// R5 rows (sig_selfattrs): a `self.x` attribute with an owner (mname, mc: the owner's name and class).
+.decl spt_sig_selfattr(d: number, n: node, x: symbol, m: node, mn: symbol, c: node)
+spt_sig_selfattr(d, n, x, m, mn, c) :- spt_sig_self_attr(n, x), spt_sig_owner(n, m), spt_sig_method(d, m, c, mn).
+
+// R6 rows (sig_branches) with the tested span (t_start, t_end): a conditional_expression's second named child
+// (`$R6_CE`), an if/elif/while's condition (`$R6_C`), a not/boolean operator itself.
+.decl spt_sig_branch(d: number, b: node, m: node, ts: number, te: number)
+spt_sig_branch(d, b, m, ts, te) :- node(d, b, "conditional_expression", _, _), spt_sig_owner(b, m), child(b, x, 1), node(d, x, _, ts, te).
+spt_sig_branch(d, b, m, ts, te) :- node(d, b, k, _, _), spt_sig_owner(b, m), k != "conditional_expression", k != "not_operator",
+    k != "boolean_operator", spt_sig_branch_kind(k), field(b, "condition", x), node(d, x, _, ts, te).
+spt_sig_branch(d, b, m, ts, te) :- node(d, b, "not_operator", ts, te), spt_sig_owner(b, m).
+spt_sig_branch(d, b, m, ts, te) :- node(d, b, "boolean_operator", ts, te), spt_sig_owner(b, m).
+
+// ---- shape_attributes: (cls, x) of `self.x = <rhs naming a disallowed intent __init__ parameter>` in the method ----
+.decl spt_sig_shape_attr(d: number, c: node, x: symbol)
+spt_sig_shape_attr(d, c, x) :- spt_sig_sp_ctor(p), !spt_sig_allowed(p), spt_sig_sp(d, p, _, s, m, _, c), spt_sig_assign(d, a, m, rs, re),
+    spt_sig_assign_x(a, x), spt_sig_ident(d, _, s, is, ie), is >= rs, ie <= re.
+
+// ---- shape_values: spans in a `lower` method, from `self.x` of a shape attribute, through local assignments ----
+.decl spt_sig_shape(d: number, m: node, s: number, e: number)
+spt_sig_shape(d, m, s, e) :- spt_sig_selfattr(d, n, x, m, "lower", c), spt_sig_shape_attr(d, c, x), node(d, n, _, s, e).
+spt_sig_shape(d, m, is, ie) :- spt_sig_shape(d, m, s, e), spt_sig_assign(d, a, m, rs, re), rs <= s, re >= e, spt_sig_assign_lt(a, t),
+    spt_sig_ident(d, _, t, is, ie), node(d, m, _, ms, me), is >= ms, ie <= me.
+
+// ---- shape_branches: a branch in a `lower` method whose tested span holds a shape value ----
+.decl spt_sig_shape_branch(d: number, b: node)
+spt_sig_shape_branch(d, b) :- spt_sig_branch(d, b, m, ts, te), spt_sig_method(d, m, _, "lower"),
+    spt_sig_shape(d, m, s, e), s >= ts, e <= te.
+
+// ---- the final query (every entryPoint case: one SQL); anchor the row's node ----
+.decl spt_sig_config_param(p: node)
+spt_sig_config_param(p) :- spt_sig_sp(d, p, _, "config", _, _, _), spt_sig_sp_head(p, h), spt_sig_dc_named(d, h).
+.decl spt_sig_alias_name(p: node)
+spt_sig_alias_name(p) :- spt_sig_sp(_, p, _, s, _, _, _), match("(?s:.*)[aA][lL][iI][aA][sS](?s:.*)", s).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-015", p, l) :- spt_sig_sp(d, n, _, _, _, _, _), spt_sig_sp_named(n),
+    spt_sig_sp_rb(n), !spt_sig_config_param(n), spt_sig_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-016", p, l) :- spt_sig_sp_ctor(n), spt_sig_sp(d, n, "default_parameter", _, _, _, _),
+    spt_sig_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-016", p, l) :- spt_sig_sp_ctor(n), spt_sig_sp(d, n, "typed_default_parameter", _, _, _, _),
+    spt_sig_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-017", p, l) :- spt_sig_sp_ctor(n), !spt_sig_allowed(n), spt_sig_sp(d, n, _, _, _, _, _),
+    spt_sig_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-013", p, l) :- spt_sig_sp(d, n, _, s, _, "__init__", _), s != "self",
+    spt_sig_sp_sr(n), spt_sig_sp_un(n), spt_sig_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-014", p, l) :- spt_sig_sp(d, n, _, s, _, "__init__", _), s != "self",
+    match("(?s:.*)[tT][aA][bB][lL][eE](?s:.*)", s), !spt_sig_alias_name(n), spt_sig_sp_hs(n), spt_sig_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-018", p, l) :- spt_sig_shape_branch(d, b), spt_sig_doc(d, p), line(b, l).
+
+// ==== clause state-flow-narrow (relational) ====
+// The clause's six evidence inputs and 34 SQL stages as relations, one per stage, named after it (`spt_flow_<stage>`
+// or close). Conventions:
+// - A row the SQL keys by (__path, start*16777216+end) is a node here (n), its document d; a stage's nullable
+//   column is a side relation that holds where it is not NULL. Range identity is node identity (two distinct nodes
+//   with one span would share an SQL id; no join here compares such a pair).
+// - `fn` columns are the outermost enclosing function_definition (the evidence's TOP), always a `contexts` row.
+// - Everything joins within a document (the SQL's __path equalities) except, under entryPoint
+//   "scan_project_sources" (partitionBy repository), the name-only joins: semantic_builders, helper_names,
+//   project_mode and return_kinds' `OR EXISTS(project_mode)`.
+// - Evidence `any`: the first branch that matches gives the captures; `has`/`inside` the first node found.
+
+// Not exact, each noted where it is made (tagged GAP) with what blocks it: transitive_sinks' tie on (length(route),
+// __start) between origins (the SQL's row_number() order among tied rows is unspecified: no exact form); routes
+// longer than 99999 characters, and returnKindsHex past its 99999th byte (both read from the finite number table
+// spt_flow_num: value-making recursion over the call graph or along a string is an UnboundedValueCycle);
+// returnKindsHex keys holding characters outside printable ASCII, and the JSON5 forms SQLite's json_each also reads.
+// Options: the converter's facts (option_on / option_value, the run's resolved options, the replay's per event), so
+// the part follows every configuration; no dev swap.
+
+// ---- options ------------------------------------------------------------------------------------------------
+// entryPoint / oracleAnalyzer / sourceProvided, as text.
+.decl spt_flow_opt(name: symbol, v: symbol)
+spt_flow_opt("entryPoint", v) :- option_value("entryPoint", v).
+spt_flow_opt("oracleAnalyzer", "true") :- option_on("oracleAnalyzer").
+spt_flow_opt("oracleAnalyzer", "false") :- spt_flow_digit(0), !option_on("oracleAnalyzer").
+spt_flow_opt("sourceProvided", "true") :- option_on("sourceProvided").
+spt_flow_opt("sourceProvided", "false") :- spt_flow_digit(0), !option_on("sourceProvided").
+
+// returnKindsHex: stage return_kinds' `json_each(CAST(X'…' AS TEXT)) entry, json_each(entry.value) kind`, a row
+// (entry.key, kind.value) per entry of the decoded top-level object and member of the entry's value (an array's
+// elements, an object's values). Parsed by byte position (spt_flow_num) with counts and least positions, no
+// recursion: a byte's value from its hex pair (either case, as X'…' reads it); the quotes not after an odd run of
+// backslashes pair up in order into strings; a bracket, `:` or `,` outside every string is structure; a position's
+// depth is the structural opens before it less the closes. A key is a string at depth 1 followed by `:`, its value
+// the container opened next (a string or scalar value makes the SQL's json_each(entry.value) fail or give no
+// string), the value's members the strings at depth 2 inside it not followed by `:`. A string's text is its units
+// joined in order: plain bytes, `\"`, `\\`, `\/` and `\uXXXX`.
+// GAP (blocker: no functor makes a character from a byte or code point): a string holding a character outside
+// printable ASCII (a byte ≥ 0x80, a control, `\b \f \n \r \t`, `\u` outside 0020–007e) gets no text, so a non-ASCII
+// callee name (Python allows them) never matches its key; every kind the stages read and every ASCII name is exact.
+// GAP (blocker: UnboundedValueCycle, see spt_flow_num): bytes past the 99999th are not read.
+// GAP (no form here): the JSON5 extensions SQLite's json_each also accepts (unquoted keys, single quotes, comments,
+// trailing commas) are not read; malformed JSON, where the SQL fails, is out of scope.
+.decl spt_flow_rkh(h: symbol)
+spt_flow_rkh(h) :- option_value("returnKindsHex", h).
+.decl spt_flow_hexd(c: symbol, v: number)
+spt_flow_hexd("0", 0). spt_flow_hexd("1", 1). spt_flow_hexd("2", 2). spt_flow_hexd("3", 3). spt_flow_hexd("4", 4).
+spt_flow_hexd("5", 5). spt_flow_hexd("6", 6). spt_flow_hexd("7", 7). spt_flow_hexd("8", 8). spt_flow_hexd("9", 9).
+spt_flow_hexd("a", 10). spt_flow_hexd("b", 11). spt_flow_hexd("c", 12). spt_flow_hexd("d", 13). spt_flow_hexd("e", 14).
+spt_flow_hexd("f", 15). spt_flow_hexd("A", 10). spt_flow_hexd("B", 11). spt_flow_hexd("C", 12). spt_flow_hexd("D", 13).
+spt_flow_hexd("E", 14). spt_flow_hexd("F", 15).
+// Printable ASCII by code.
+.decl spt_flow_chr(v: number, c: symbol)
+spt_flow_chr(32, " "). spt_flow_chr(33, "!"). spt_flow_chr(34, "\""). spt_flow_chr(35, "#"). spt_flow_chr(36, "$").
+spt_flow_chr(37, "%"). spt_flow_chr(38, "&"). spt_flow_chr(39, "'"). spt_flow_chr(40, "("). spt_flow_chr(41, ")").
+spt_flow_chr(42, "*"). spt_flow_chr(43, "+"). spt_flow_chr(44, ","). spt_flow_chr(45, "-"). spt_flow_chr(46, ".").
+spt_flow_chr(47, "/"). spt_flow_chr(48, "0"). spt_flow_chr(49, "1"). spt_flow_chr(50, "2"). spt_flow_chr(51, "3").
+spt_flow_chr(52, "4"). spt_flow_chr(53, "5"). spt_flow_chr(54, "6"). spt_flow_chr(55, "7"). spt_flow_chr(56, "8").
+spt_flow_chr(57, "9"). spt_flow_chr(58, ":"). spt_flow_chr(59, ";"). spt_flow_chr(60, "<"). spt_flow_chr(61, "=").
+spt_flow_chr(62, ">"). spt_flow_chr(63, "?"). spt_flow_chr(64, "@"). spt_flow_chr(65, "A"). spt_flow_chr(66, "B").
+spt_flow_chr(67, "C"). spt_flow_chr(68, "D"). spt_flow_chr(69, "E"). spt_flow_chr(70, "F"). spt_flow_chr(71, "G").
+spt_flow_chr(72, "H"). spt_flow_chr(73, "I"). spt_flow_chr(74, "J"). spt_flow_chr(75, "K"). spt_flow_chr(76, "L").
+spt_flow_chr(77, "M"). spt_flow_chr(78, "N"). spt_flow_chr(79, "O"). spt_flow_chr(80, "P"). spt_flow_chr(81, "Q").
+spt_flow_chr(82, "R"). spt_flow_chr(83, "S"). spt_flow_chr(84, "T"). spt_flow_chr(85, "U"). spt_flow_chr(86, "V").
+spt_flow_chr(87, "W"). spt_flow_chr(88, "X"). spt_flow_chr(89, "Y"). spt_flow_chr(90, "Z"). spt_flow_chr(91, "[").
+spt_flow_chr(92, "\\"). spt_flow_chr(93, "]"). spt_flow_chr(94, "^"). spt_flow_chr(95, "_"). spt_flow_chr(96, "`").
+spt_flow_chr(97, "a"). spt_flow_chr(98, "b"). spt_flow_chr(99, "c"). spt_flow_chr(100, "d"). spt_flow_chr(101, "e").
+spt_flow_chr(102, "f"). spt_flow_chr(103, "g"). spt_flow_chr(104, "h"). spt_flow_chr(105, "i"). spt_flow_chr(106, "j").
+spt_flow_chr(107, "k"). spt_flow_chr(108, "l"). spt_flow_chr(109, "m"). spt_flow_chr(110, "n"). spt_flow_chr(111, "o").
+spt_flow_chr(112, "p"). spt_flow_chr(113, "q"). spt_flow_chr(114, "r"). spt_flow_chr(115, "s"). spt_flow_chr(116, "t").
+spt_flow_chr(117, "u"). spt_flow_chr(118, "v"). spt_flow_chr(119, "w"). spt_flow_chr(120, "x"). spt_flow_chr(121, "y").
+spt_flow_chr(122, "z"). spt_flow_chr(123, "{"). spt_flow_chr(124, "|"). spt_flow_chr(125, "}"). spt_flow_chr(126, "~").
+// Byte i of the decoded text, its value.
+.decl spt_flow_jb(i: number, v: number)
+spt_flow_jb(i, v) :- spt_flow_rkh(h), n = strlen(h), spt_flow_num(i), 2 * i + 1 < n, hi = substr(h, 2 * i, 1), spt_flow_hexd(hi, x),
+    lo = substr(h, 2 * i + 1, 1), spt_flow_hexd(lo, y), v = 16 * x + y.
+.decl spt_flow_jws(i: number)
+spt_flow_jws(i) :- spt_flow_jb(i, v), (v = 32 ; v = 9 ; v = 10 ; v = 13).
+.decl spt_flow_jnws(i: number)
+spt_flow_jnws(i) :- spt_flow_jb(i, _), !spt_flow_jws(i).
+// After an odd run of backslashes: the run is the bytes from the last other byte before p.
+.decl spt_flow_jbs_odd(p: number)
+spt_flow_jbs_odd(p) :- spt_flow_jb(p, _), spt_flow_jb(p - 1, 92), m = max j : { spt_flow_jb(j, v), v != 92, j < p }, r = p - 1 - m,
+    r - 2 * (r / 2) = 1.
+// The delimiting quotes, numbered in order; strings from an even one to the next.
+.decl spt_flow_juq(q: number)
+spt_flow_juq(q) :- spt_flow_jb(q, 34), !spt_flow_jbs_odd(q).
+.decl spt_flow_juqn(q: number, k: number)
+spt_flow_juqn(q, k) :- spt_flow_juq(q), k = count : { spt_flow_juq(j), j < q }.
+.decl spt_flow_jstr(o: number, c: number)
+spt_flow_jstr(o, c) :- spt_flow_juqn(o, k), k - 2 * (k / 2) = 0, spt_flow_juqn(c, k + 1).
+// Structure: a bracket, `:` or `,` outside every string.
+.decl spt_flow_jcand(i: number, v: number)
+spt_flow_jcand(i, v) :- spt_flow_jb(i, v), (v = 123 ; v = 125 ; v = 91 ; v = 93 ; v = 58 ; v = 44).
+.decl spt_flow_jinstr(i: number)
+spt_flow_jinstr(i) :- spt_flow_jcand(i, _), spt_flow_jstr(o, c), o < i, i < c.
+.decl spt_flow_js(i: number, v: number)
+spt_flow_js(i, v) :- spt_flow_jcand(i, v), !spt_flow_jinstr(i).
+.decl spt_flow_jopen(i: number)
+spt_flow_jopen(i) :- spt_flow_js(i, 123).
+spt_flow_jopen(i) :- spt_flow_js(i, 91).
+.decl spt_flow_jclose(i: number)
+spt_flow_jclose(i) :- spt_flow_js(i, 125).
+spt_flow_jclose(i) :- spt_flow_js(i, 93).
+// The depth before a string, an open or a close.
+.decl spt_flow_jpt(p: number)
+spt_flow_jpt(p) :- spt_flow_jstr(p, _).
+spt_flow_jpt(p) :- spt_flow_jopen(p).
+spt_flow_jpt(p) :- spt_flow_jclose(p).
+.decl spt_flow_jdepth(p: number, x: number)
+spt_flow_jdepth(p, x) :- spt_flow_jpt(p), a = count : { spt_flow_jopen(j), j < p }, b = count : { spt_flow_jclose(j), j < p }, x = a - b.
+// The next byte not whitespace after a string or a `:`.
+.decl spt_flow_jafter(p: number)
+spt_flow_jafter(c) :- spt_flow_jstr(_, c).
+spt_flow_jafter(i) :- spt_flow_js(i, 58).
+.decl spt_flow_jnext(p: number, i: number)
+spt_flow_jnext(p, i) :- spt_flow_jafter(p), i = p + 1, spt_flow_jnws(i).
+spt_flow_jnext(p, i) :- spt_flow_jafter(p), spt_flow_jws(p + 1), i = min j : { spt_flow_jnws(j), j > p }.
+// The top-level value is an object.
+.decl spt_flow_jobj(t: number)
+spt_flow_jobj(t) :- spt_flow_rkh(_), t = min j : { spt_flow_jnws(j) }, spt_flow_js(t, 123).
+// A string followed by `:` (at depth 1 an entry's key; at depth 2 a member's key, not a member).
+.decl spt_flow_jkeyish(o: number)
+spt_flow_jkeyish(o) :- spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_js(i, 58).
+// An entry: its key at o, its value the container from v to its close m (the first close after v at depth 2).
+.decl spt_flow_jentry(o: number, v: number, m: number)
+spt_flow_jentry(o, v, m) :- spt_flow_jobj(_), spt_flow_jkeyish(o), spt_flow_jdepth(o, 1), spt_flow_jstr(o, c), spt_flow_jnext(c, i),
+    spt_flow_jnext(i, v), spt_flow_jopen(v), m = min j : { spt_flow_jclose(j), spt_flow_jdepth(j, 2), j > v }.
+.decl spt_flow_jmember(v: number, o: number)
+spt_flow_jmember(v, o) :- spt_flow_jentry(_, v, m), spt_flow_jstr(o, _), o > v, o < m, spt_flow_jdepth(o, 2), !spt_flow_jkeyish(o).
+// A string's escapes: a backslash in it not after an odd run of backslashes, x the byte it escapes; the bytes an
+// escape takes after its backslash; `\uXXXX`'s code.
+.decl spt_flow_jesc(o: number, p: number, x: number)
+spt_flow_jesc(o, p, x) :- spt_flow_jstr(o, c), spt_flow_jb(p, 92), o < p, p < c, !spt_flow_jbs_odd(p), spt_flow_jb(p + 1, x).
+.decl spt_flow_jcons(q: number)
+spt_flow_jcons(q) :- spt_flow_jesc(_, p, _), q = p + 1.
+spt_flow_jcons(q) :- spt_flow_jesc(_, p, 117), spt_flow_digit(k), k >= 2, k <= 5, q = p + k.
+.decl spt_flow_jhexv(i: number, x: number)
+spt_flow_jhexv(i, x) :- spt_flow_jb(i, v), spt_flow_chr(v, ch), spt_flow_hexd(ch, x).
+.decl spt_flow_jhex4(p: number, u: number)
+spt_flow_jhex4(p, u) :- spt_flow_jesc(_, p, 117), spt_flow_jhexv(p + 2, a), spt_flow_jhexv(p + 3, b), spt_flow_jhexv(p + 4, c),
+    spt_flow_jhexv(p + 5, e), u = 4096 * a + 256 * b + 16 * c + e.
+// The units: (string, position, character).
+.decl spt_flow_junit(o: number, p: number, ch: symbol)
+spt_flow_junit(o, p, ch) :- spt_flow_jstr(o, c), spt_flow_jb(p, v), o < p, p < c, v != 92, !spt_flow_jcons(p), spt_flow_chr(v, ch).
+spt_flow_junit(o, p, ch) :- spt_flow_jesc(o, p, x), (x = 34 ; x = 92 ; x = 47), spt_flow_chr(x, ch).
+spt_flow_junit(o, p, ch) :- spt_flow_jesc(o, p, 117), spt_flow_jhex4(p, u), spt_flow_chr(u, ch).
+// GAP (above): a string with a unit outside printable ASCII has no text.
+.decl spt_flow_jnonprint(p: number)
+spt_flow_jnonprint(p) :- spt_flow_jb(p, v), !spt_flow_chr(v, _).
+.decl spt_flow_jbad(o: number)
+spt_flow_jbad(o) :- spt_flow_jnonprint(p), spt_flow_jstr(o, c), o < p, p < c.
+spt_flow_jbad(o) :- spt_flow_jesc(o, _, x), x != 34, x != 92, x != 47, x != 117.
+spt_flow_jbad(o) :- spt_flow_jesc(o, p, 117), !spt_flow_jhex4_print(p).
+.decl spt_flow_jhex4_print(p: number)
+spt_flow_jhex4_print(p) :- spt_flow_jhex4(p, u), spt_flow_chr(u, _).
+.decl spt_flow_jtext(o: number, s: symbol)
+spt_flow_jtext(o, s) :- spt_flow_jstr(o, _), !spt_flow_jbad(o), s = join ch by p : { spt_flow_junit(o, p, ch) }.
+.decl spt_flow_return_kind(name: symbol, kind: symbol)
+spt_flow_return_kind(x, k) :- spt_flow_jentry(o, v, _), spt_flow_jtext(o, x), spt_flow_jmember(v, e), spt_flow_jtext(e, k).
+
+.decl spt_flow_ep_ok(x: number)
+spt_flow_ep_ok(1) :- spt_flow_opt("entryPoint", "all").
+spt_flow_ep_ok(1) :- spt_flow_opt("entryPoint", "scan_source").
+spt_flow_ep_ok(1) :- spt_flow_opt("entryPoint", "scan_tree").
+spt_flow_ep_ok(1) :- spt_flow_opt("entryPoint", "scan_project_sources").
+.decl spt_flow_sps(x: number)
+spt_flow_sps(1) :- spt_flow_opt("entryPoint", "scan_project_sources").
+// The final query's entryPoint "all" + oracleAnalyzer false branch: the only one that reads signed_exceptions. Its
+// other branches (all+true, scan_source, scan_tree) are the same query without that test; scan_project_sources adds
+// the project-builder SPT-028; any other entryPoint reports nothing (`WHERE 0`, and every input is empty).
+.decl spt_flow_signed_on(x: number)
+spt_flow_signed_on(1) :- spt_flow_opt("entryPoint", "all"), spt_flow_opt("oracleAnalyzer", "false").
+
+// ---- kind sets ----------------------------------------------------------------------------------------------
+.decl spt_flow_k_fdef(kind: symbol)
+spt_flow_k_fdef("function_definition").
+.decl spt_flow_k_cdef(kind: symbol)
+spt_flow_k_cdef("class_definition").
+.decl spt_flow_k_params(kind: symbol)
+spt_flow_k_params("parameters").
+.decl spt_flow_k_str(kind: symbol)
+spt_flow_k_str("string"). spt_flow_k_str("concatenated_string").
+// The same, as a tree-axis set (a set read only by inside/has).
+.decl spt_flow_ks_str(kind: symbol)
+spt_flow_ks_str("string"). spt_flow_ks_str("concatenated_string").
+// nthChild's ofRule `not any [comment, keyword_argument, list_splat, dictionary_splat]` (comments are not in child).
+.decl spt_flow_k_nonpos(kind: symbol)
+spt_flow_k_nonpos("keyword_argument"). spt_flow_k_nonpos("list_splat"). spt_flow_k_nonpos("dictionary_splat").
+// The SQL's `kind NOT IN ('argument_list','block','decorated_definition','expression_statement','module','type')`.
+.decl spt_flow_k_excl(kind: symbol)
+spt_flow_k_excl("argument_list"). spt_flow_k_excl("block"). spt_flow_k_excl("decorated_definition").
+spt_flow_k_excl("expression_statement"). spt_flow_k_excl("module"). spt_flow_k_excl("type").
+.decl spt_flow_k_comp(kind: symbol)
+spt_flow_k_comp("list_comprehension"). spt_flow_k_comp("set_comprehension").
+spt_flow_k_comp("dictionary_comprehension"). spt_flow_k_comp("generator_expression").
+// nodes_in's kinds (its first `any`), less `string` (a row only with an interpolation child).
+.decl spt_flow_k_row(kind: symbol)
+spt_flow_k_row("function_definition"). spt_flow_k_row("class_definition"). spt_flow_k_row("assignment").
+spt_flow_k_row("call"). spt_flow_k_row("attribute"). spt_flow_k_row("subscript"). spt_flow_k_row("keyword_argument").
+spt_flow_k_row("list_splat"). spt_flow_k_row("dictionary_splat"). spt_flow_k_row("for_in_clause").
+spt_flow_k_row("for_statement"). spt_flow_k_row("as_pattern"). spt_flow_k_row("assert_statement").
+spt_flow_k_row("augmented_assignment"). spt_flow_k_row("await"). spt_flow_k_row("binary_operator").
+spt_flow_k_row("boolean_operator"). spt_flow_k_row("case_clause"). spt_flow_k_row("case_pattern").
+spt_flow_k_row("chevron"). spt_flow_k_row("class_pattern"). spt_flow_k_row("comparison_operator").
+spt_flow_k_row("complex_pattern"). spt_flow_k_row("concatenated_string"). spt_flow_k_row("conditional_expression").
+spt_flow_k_row("constrained_type"). spt_flow_k_row("decorator"). spt_flow_k_row("default_parameter").
+spt_flow_k_row("delete_statement"). spt_flow_k_row("dict_pattern"). spt_flow_k_row("dictionary").
+spt_flow_k_row("dictionary_comprehension"). spt_flow_k_row("dictionary_splat_pattern").
+spt_flow_k_row("elif_clause"). spt_flow_k_row("else_clause"). spt_flow_k_row("except_clause").
+spt_flow_k_row("exec_statement"). spt_flow_k_row("expression_list"). spt_flow_k_row("finally_clause").
+spt_flow_k_row("format_expression"). spt_flow_k_row("format_specifier"). spt_flow_k_row("generator_expression").
+spt_flow_k_row("generic_type"). spt_flow_k_row("if_clause"). spt_flow_k_row("if_statement").
+spt_flow_k_row("interpolation"). spt_flow_k_row("keyword_pattern"). spt_flow_k_row("lambda").
+spt_flow_k_row("lambda_parameters"). spt_flow_k_row("list"). spt_flow_k_row("list_comprehension").
+spt_flow_k_row("list_pattern"). spt_flow_k_row("list_splat_pattern"). spt_flow_k_row("match_statement").
+spt_flow_k_row("member_type"). spt_flow_k_row("named_expression"). spt_flow_k_row("not_operator").
+spt_flow_k_row("pair"). spt_flow_k_row("parameters"). spt_flow_k_row("parenthesized_list_splat").
+spt_flow_k_row("pattern_list"). spt_flow_k_row("print_statement"). spt_flow_k_row("raise_statement").
+spt_flow_k_row("return_statement"). spt_flow_k_row("set"). spt_flow_k_row("set_comprehension").
+spt_flow_k_row("slice"). spt_flow_k_row("splat_pattern"). spt_flow_k_row("splat_type"). 
+spt_flow_k_row("try_statement"). spt_flow_k_row("tuple"). spt_flow_k_row("tuple_pattern").
+spt_flow_k_row("type_alias_statement"). spt_flow_k_row("type_parameter"). spt_flow_k_row("typed_default_parameter").
+spt_flow_k_row("typed_parameter"). spt_flow_k_row("unary_operator"). spt_flow_k_row("union_pattern").
+spt_flow_k_row("union_type"). spt_flow_k_row("while_statement"). spt_flow_k_row("with_clause").
+spt_flow_k_row("with_item"). spt_flow_k_row("with_statement"). spt_flow_k_row("yield").
+spt_flow_k_row("type_default"). spt_flow_k_row("as_pattern_target").
+
+// ---- name sets ----------------------------------------------------------------------------------------------
+.decl spt_flow_n_plan(x: symbol)
+spt_flow_n_plan("compile"). spt_flow_n_plan("lower"). spt_flow_n_plan("post_op"). spt_flow_n_plan("pre_op").
+spt_flow_n_plan("preprocess").
+.decl spt_flow_n_ctxattr(x: symbol)
+spt_flow_n_ctxattr("materialized_pipeline"). spt_flow_n_ctxattr("sql_connection"). spt_flow_n_ctxattr("txn").
+.decl spt_flow_n_carattr(x: symbol)
+spt_flow_n_carattr("_conn"). spt_flow_n_carattr("_serverplan_runtime_txn"). spt_flow_n_carattr("_serverplan_sql_conn").
+spt_flow_n_carattr("_txn"). spt_flow_n_carattr("conn"). spt_flow_n_carattr("connection"). spt_flow_n_carattr("sql_conn").
+spt_flow_n_carattr("txn").
+// strings_in's `value` regex `^(?:_conn|…|txn)$`: the carrier names, materialized_pipeline and sql_connection.
+.decl spt_flow_n_strval(x: symbol)
+spt_flow_n_strval(x) :- spt_flow_n_carattr(x).
+spt_flow_n_strval("materialized_pipeline"). spt_flow_n_strval("sql_connection").
+.decl spt_flow_n_authparam(x: symbol)
+spt_flow_n_authparam("txn"). spt_flow_n_authparam("read_txn"). spt_flow_n_authparam("write_txn").
+spt_flow_n_authparam("conn"). spt_flow_n_authparam("connection"). spt_flow_n_authparam("sql_conn").
+.decl spt_flow_n_carparam(x: symbol)
+spt_flow_n_carparam("hydrator"). spt_flow_n_carparam("runtime_hydrator"). spt_flow_n_carparam("runtime_refs").
+// R3_FULL's attribute names.
+.decl spt_flow_n_fullattr(x: symbol)
+spt_flow_n_fullattr("array"). spt_flow_n_fullattr("ascontiguousarray"). spt_flow_n_fullattr("execute").
+spt_flow_n_fullattr("execute_async"). spt_flow_n_fullattr("executemany"). spt_flow_n_fullattr("fetchall").
+spt_flow_n_fullattr("fetchall_async"). spt_flow_n_fullattr("fetchone"). spt_flow_n_fullattr("fetchone_async").
+spt_flow_n_fullattr("isinf"). spt_flow_n_fullattr("isnan").
+.decl spt_flow_n_grammar(x: symbol)
+spt_flow_n_grammar("execute_grammar_fetchall_direct"). spt_flow_n_grammar("execute_grammar_fetchall_direct_async").
+spt_flow_n_grammar("execute_grammar_fetchall_with_params_direct").
+spt_flow_n_grammar("execute_grammar_fetchall_with_params_direct_async").
+spt_flow_n_grammar("execute_grammar_fetchone_direct"). spt_flow_n_grammar("execute_grammar_fetchone_direct_async").
+spt_flow_n_grammar("execute_grammar_fetchone_with_params_direct").
+spt_flow_n_grammar("execute_grammar_fetchone_with_params_direct_async").
+spt_flow_n_grammar("grammar_effect_lazy"). spt_flow_n_grammar("grammar_execute"). spt_flow_n_grammar("grammar_execute_async").
+spt_flow_n_grammar("grammar_fetchall"). spt_flow_n_grammar("grammar_fetchall_async"). spt_flow_n_grammar("grammar_fetchone").
+spt_flow_n_grammar("grammar_fetchone_async"). spt_flow_n_grammar("grammar_row_lazy"). spt_flow_n_grammar("grammar_rows_lazy").
+spt_flow_n_grammar("grammar_scalar"). spt_flow_n_grammar("grammar_scalar_async"). spt_flow_n_grammar("grammar_value_lazy").
+.decl spt_flow_n_exec(x: symbol)
+spt_flow_n_exec("execute"). spt_flow_n_exec("execute_async"). spt_flow_n_exec("execute_ddl"). spt_flow_n_exec("execute_ddl_async").
+spt_flow_n_exec("executemany"). spt_flow_n_exec("executemany_async"). spt_flow_n_exec("fetchall"). spt_flow_n_exec("fetchall_async").
+spt_flow_n_exec("fetchone"). spt_flow_n_exec("fetchone_async"). spt_flow_n_exec("scalar"). spt_flow_n_exec("scalar_async").
+.decl spt_flow_n_native(x: symbol)
+spt_flow_n_native("create_usearch_index_class"). spt_flow_n_native("deserialize_embedding").
+spt_flow_n_native("get_similarity_function"). spt_flow_n_native("serialize_embedding").
+.decl spt_flow_n_large(x: symbol)
+spt_flow_n_large("explicit_plan_execution_scope"). spt_flow_n_large("hydrate_many_post_op").
+spt_flow_n_large("hydrate_one_post_op"). spt_flow_n_large("runtime_sql_conn_from_hydrator").
+.decl spt_flow_n_semfn(x: symbol)
+spt_flow_n_semfn("all"). spt_flow_n_semfn("any"). spt_flow_n_semfn("filter"). spt_flow_n_semfn("len"). spt_flow_n_semfn("map").
+spt_flow_n_semfn("max"). spt_flow_n_semfn("min"). spt_flow_n_semfn("reversed"). spt_flow_n_semfn("sorted"). spt_flow_n_semfn("sum").
+.decl spt_flow_n_semmeth(x: symbol)
+spt_flow_n_semmeth("count"). spt_flow_n_semmeth("index"). spt_flow_n_semmeth("reverse"). spt_flow_n_semmeth("sort").
+.decl spt_flow_n_postproc(x: symbol)
+spt_flow_n_postproc("_post_process"). spt_flow_n_postproc("post_op_with_refs"). spt_flow_n_postproc("post_process").
+spt_flow_n_postproc("postprocess").
+.decl spt_flow_n_builder(x: symbol)
+spt_flow_n_builder("RuntimeBuilderSpec"). spt_flow_n_builder("runtime_builder_post_op").
+// signed_exceptions: (code, qualified name, path), the SQL's `code::qualname::path` keys.
+.decl spt_flow_signed(code: symbol, q: symbol, p: symbol)
+spt_flow_signed("SPT-003", "USearchVectorIndex.search_lazy", "l5200_vector_index/index_implementations/usearch_index.py").
+spt_flow_signed("SPT-026", "_USearchScopedPersistStep.compile", "impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+spt_flow_signed("SPT-027", "_ComputeContentHashKeyedHnswPlanStep._compute_plan", "impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+spt_flow_signed("SPT-027", "_ComputeSourceKeyedHnswPlanStep._compute_plan", "impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+spt_flow_signed("SPT-027", "_USearchScopedPersistStep._build_instance", "impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+spt_flow_signed("SPT-027", "_USearchScopedPersistStep.tables_written", "impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+spt_flow_signed("SPT-027", "_build_source_keyed_usearch_steps", "impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+spt_flow_signed("SPT-027", "_coerce_sql_table_hnsw_query_vector", "impl/common/l2070_server_plan/backend_profiles.py").
+spt_flow_signed("SPT-027", "_compute_similarity", "impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+spt_flow_signed("SPT-027", "_runtime_embedding_vector_rows", "impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+spt_flow_signed("SPT-027", "_sql_table_hnsw_query_vector", "impl/common/l2070_server_plan/steps/versioned_hybrid_search.py").
+spt_flow_signed("SPT-027", "_sql_table_hnsw_query_vector", "impl/common/l2070_server_plan/steps/versioned_vector_search.py").
+spt_flow_signed("SPT-027", "_usearch_scoped_persist_post_op", "impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+spt_flow_signed("SPT-027", "runtime_materialize_embedding_projection_rows_compiled_step", "impl/common/l2070_server_plan/steps/intent_embedding_runtime_projection.py").
+
+// ---- state-flow-admit (the evidence's `matches` / `inside module matching it`) -------------------------------
+// state-function-source: the module's whole text (node_text) searched by the regex (`def\ x` is `def x`), or the path.
+.decl spt_flow_fsrc(d: number)
+spt_flow_fsrc(d) :- node(d, m, "module", _, _), node_text(m, s),
+    match("(?s:.*)(?:CompilationContext|CompiledStep|Hydrator|PipelineLifecycleEffect|PlanExecutor|ResolvedRefs|RuntimeBuilderName|RuntimeBuilderSpec|_lazy|_serverplan_runtime_txn|_serverplan_sql_conn|active_pipeline_txn_for_callbacks|builder_name|convert_row_to_model|create_usearch_index_class|def compile|def lower|def post_op|def pre_op|def preprocess|deserialize_embedding|execute_runtime|execute_runtime_nested_steps|get_similarity_function|json\.dumps|materialized_pipeline|np\.array|pending_pipeline_effects|post_op_with_refs|pre_op_with_refs|runtime_builder|runtime_builder_post_op|runtime_hydrator|runtime_ref|runtime_refs)(?s:.*)", s).
+spt_flow_fsrc(d) :- doc(d, p, _), p = "impl/common/l2070_server_plan/backend_profiles.py".
+// state-flow-source: the path, or a function_definition anywhere in the module (`has`, stopBy end) of one of its forms.
+.decl spt_flow_fdname(f: node, x: symbol)
+spt_flow_fdname(f, x) :- node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
+.decl spt_flow_pure_lazy_ref(x: node)
+spt_flow_pure_lazy_ref(x) :- node(_, x, "identifier", _, _), text(x, "pure_lazy").
+spt_flow_pure_lazy_ref(x) :- node(_, x, "attribute", _, _), field(x, "attribute", a), node(_, a, "identifier", _, _), text(a, "pure_lazy").
+.decl spt_flow_compiledstep_call(c: node)
+spt_flow_compiledstep_call(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "CompiledStep").
+spt_flow_compiledstep_call(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, "CompiledStep").
+.decl spt_flow_flsrc_fn(f: node)
+spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, x), spt_flow_n_plan(x).
+spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, x), suffix("_lazy", x).
+spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, "pending_pipeline_effects").
+spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, x), match("(?s:.*)(?:^apply_.*_effect$)(?s:.*)", x).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), child(dd, f, _), node(_, dd, "decorated_definition", _, _),
+    child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, x, _), spt_flow_pure_lazy_ref(x).
+spt_flow_flsrc_fn(f) :- spt_flow_fdname(f, x), suffix("sql_builder", x).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), has(ps, x, spt_flow_k_params),
+    node(_, x, "identifier", _, _), text(x, "runtime_refs").
+// `has {regex: RuntimeBuilderSpec}` under the parameters: a node below them, or a comment (a token whose text starts
+// `#`, of the parameters or of a node below them).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), has(ps, x, spt_flow_k_params),
+    node_text(x, s), contains("RuntimeBuilderSpec", s).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), node(_, ps, "parameters", _, _),
+    token(ps, _, s, _, _), prefix("#", s), contains("RuntimeBuilderSpec", s).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), has(ps, x, spt_flow_k_params),
+    token(x, _, s, _, _), prefix("#", s), contains("RuntimeBuilderSpec", s).
+spt_flow_flsrc_fn(f) :- node(_, f, "function_definition", _, _), has(f, c, spt_flow_k_fdef), spt_flow_compiledstep_call(c).
+.decl spt_flow_flsrc(d: number)
+spt_flow_flsrc(d) :- doc(d, p, _), match("(?s:.*)(?:(?:^|/)(?:impl/common/l2070_server_plan/|impl/common/l2070_server_plan/backend_profiles\.py$))(?s:.*)", p).
+spt_flow_flsrc(d) :- spt_flow_flsrc_fn(f), node(d, f, _, _, _).
+.decl spt_flow_a1(d: number)
+spt_flow_a1(d) :- doc(d, _, _), spt_flow_sps(1).
+spt_flow_a1(d) :- spt_flow_fsrc(d), spt_flow_opt("sourceProvided", "true").
+spt_flow_a1(d) :- doc(d, _, _), spt_flow_opt("sourceProvided", "false").
+.decl spt_flow_a2(d: number)
+spt_flow_a2(d) :- doc(d, _, _), spt_flow_sps(1).
+spt_flow_a2(d) :- spt_flow_flsrc(d).
+.decl spt_flow_a3(d: number)
+spt_flow_a3(d) :- doc(d, _, _), spt_flow_opt("oracleAnalyzer", "true").
+spt_flow_a3(d) :- spt_project(d).
+// A document every evidence input reads (`syntax: valid`, admitted, a known entryPoint). Also flow_gate's row: the
+// clause's requireNonemptyInput holds in a partition exactly where it has one (every row here is in such a document).
+.decl spt_flow_adoc(d: number)
+spt_flow_adoc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), spt_flow_ep_ok(1), spt_flow_a1(d), spt_flow_a2(d), spt_flow_a3(d).
+// flow_gate's PM capture, so project_mode: only under scan_project_sources, over the whole repository partition.
+.decl spt_flow_pmode(x: number)
+spt_flow_pmode(1) :- spt_flow_sps(1), spt_flow_adoc(_).
+
+// ---- TOP: the outermost enclosing function_definition ------------------------------------------------------
+.decl spt_flow_nested(f: node)
+spt_flow_nested(f) :- node(d, f, "function_definition", _, _), spt_flow_adoc(d), inside(f, _, spt_flow_k_fdef).
+.decl spt_flow_top(n: node, t: node)
+spt_flow_top(n, t) :- node(d, n, _, _, _), spt_flow_adoc(d), inside(n, t, spt_flow_k_fdef), !spt_flow_nested(t).
+
+// ---- stage fns / classes (nodes_in roles R0, R1) -----------------------------------------------------------
+.decl spt_flow_fn(d: number, f: node, s: number, e: number, name: symbol)
+spt_flow_fn(d, f, s, e, x) :- node(d, f, "function_definition", s, e), spt_flow_adoc(d), field(f, "name", i), text(i, x).
+// rt: R0_RT, the return_type's text.
+.decl spt_flow_fn_rt(f: node, s: symbol)
+spt_flow_fn_rt(f, s) :- spt_flow_fn(_, f, _, _, _), field(f, "return_type", r), node_text(r, s).
+// dec: R0_DEC, the parent decorated_definition whose text has a `@…pure_lazy` line.
+.decl spt_flow_fn_dec(f: node)
+spt_flow_fn_dec(f) :- spt_flow_fn(_, f, _, _, _), child(dd, f, _), node(_, dd, "decorated_definition", _, _), node_text(dd, s),
+    match("(?s:.*)(?:(?m)^\s*@(?:[\w.]*\.)?pure_lazy\b)(?s:.*)", s).
+.decl spt_flow_cls_name(k: node, x: symbol)
+spt_flow_cls_name(k, x) :- node(d, k, "class_definition", _, _), spt_flow_adoc(d), field(k, "name", i), text(i, x).
+
+// ---- stage b_params (idents_in with PFN) ---------------------------------------------------------------------
+// A parameter name of f: an identifier directly in f's parameters, or the identifier child of a typed_parameter
+// there, or the `name` of a default_parameter / typed_default_parameter there. ann: the parameter's `type` text.
+.decl spt_flow_pfn(i: node, f: node, p: node)
+spt_flow_pfn(i, f, i) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, i, _), node(_, i, "identifier", _, _).
+spt_flow_pfn(i, f, tp) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, tp, _),
+    node(_, tp, "typed_parameter", _, _), child(tp, i, _), node(_, i, "identifier", _, _).
+spt_flow_pfn(i, f, dp) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, dp, _),
+    node(_, dp, "default_parameter", _, _), field(dp, "name", i), node(_, i, "identifier", _, _).
+spt_flow_pfn(i, f, dp) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, dp, _),
+    node(_, dp, "typed_default_parameter", _, _), field(dp, "name", i), node(_, i, "identifier", _, _).
+.decl spt_flow_param(d: number, f: node, i: node, x: symbol)
+spt_flow_param(d, f, i, x) :- spt_flow_pfn(i, f, _), node(d, i, _, _, _), spt_flow_top(i, _), text(i, x).
+.decl spt_flow_param_ann(i: node, a: symbol)
+spt_flow_param_ann(i, a) :- spt_flow_param(_, _, i, _), spt_flow_pfn(i, _, p), p != i, field(p, "type", t), node_text(t, a).
+.decl spt_flow_fn_ann(f: node, a: symbol)
+spt_flow_fn_ann(f, a) :- spt_flow_param(_, f, i, _), spt_flow_param_ann(i, a).
+// position: row_number() by start within the function, from 0.
+.decl spt_flow_param_before(i: node, j: node)
+spt_flow_param_before(i, j) :- spt_flow_param(d, f, i, _), node(d, i, _, s, _), spt_flow_param(d, f, j, _), node(d, j, _, t, _), t < s.
+.decl spt_flow_param_first(i: node)
+spt_flow_param_first(i) :- spt_flow_param(_, _, i, _), !spt_flow_has_param_before(i).
+.decl spt_flow_has_param_before(i: node)
+spt_flow_has_param_before(i) :- spt_flow_param_before(i, _).
+.decl spt_flow_param_pos(i: node, k: number)
+spt_flow_param_pos(i, 0) :- spt_flow_param_first(i).
+spt_flow_param_pos(i, k) :- spt_flow_has_param_before(i), k = count : { spt_flow_param_before(i, _) }.
+
+// ---- stage contexts -----------------------------------------------------------------------------------------
+// fns not inside another (the SQL's o.__start < f.__start, o.__end >= f.__end: an enclosing function_definition).
+.decl spt_flow_ctx(d: number, f: node, s: number, e: number, name: symbol)
+spt_flow_ctx(d, f, s, e, x) :- spt_flow_fn(d, f, s, e, x), !spt_flow_nested(f).
+// class_name: the enclosing classes' names, outermost first, joined by ".", or "" (spt_flow_ctx_incls absent).
+.decl spt_flow_cls_inner(k: node)
+spt_flow_cls_inner(k) :- spt_flow_cls_name(k, _), inside(k, _, spt_flow_k_cdef).
+.decl spt_flow_cls_path(k: node, p: symbol)
+spt_flow_cls_path(k, x) :- spt_flow_cls_name(k, x), !spt_flow_cls_inner(k).
+spt_flow_cls_path(k, p) :- spt_flow_cls_name(k, x), nearest(k, o, spt_flow_k_cdef), spt_flow_cls_path(o, q), p = cat(cat(q, "."), x).
+.decl spt_flow_ctx_cls(f: node, p: symbol)
+spt_flow_ctx_cls(f, p) :- spt_flow_ctx(_, f, _, _, _), nearest(f, k, spt_flow_k_cdef), spt_flow_cls_path(k, p).
+.decl spt_flow_ctx_incls(f: node)
+spt_flow_ctx_incls(f) :- spt_flow_ctx_cls(f, _).
+.decl spt_flow_planning(f: node)
+spt_flow_planning(f) :- spt_flow_ctx(_, f, _, _, x), suffix("_lazy", x).
+spt_flow_planning(f) :- spt_flow_ctx(_, f, _, _, x), spt_flow_n_plan(x).
+spt_flow_planning(f) :- spt_flow_ctx(_, f, _, _, "pending_pipeline_effects").
+spt_flow_planning(f) :- spt_flow_ctx(_, f, _, _, x), match("(?s:.*)(?:^apply_.*_effect$)(?s:.*)", x).
+spt_flow_planning(f) :- spt_flow_ctx(_, f, _, _, _), spt_flow_fn_dec(f).
+.decl spt_flow_preprocess(f: node)
+spt_flow_preprocess(f) :- spt_flow_ctx(_, f, _, _, "preprocess").
+// ctx_helper: `substr(name,-11)='sql_builder'` (so never one of the planning names) with a CompilationContext param.
+.decl spt_flow_ctx_helper(f: node)
+spt_flow_ctx_helper(f) :- spt_flow_ctx(_, f, _, _, x), suffix("sql_builder", x), spt_flow_fn_ann(f, a), match("(?s:.*)(?:\bCompilationContext\b)(?s:.*)", a).
+.decl spt_flow_provider_helper(f: node)
+spt_flow_provider_helper(f) :- spt_flow_ctx(d, f, _, _, x), doc(d, "impl/common/l2070_server_plan/backend_profiles.py", _),
+    match("(?s:.*)(?:component|components|score|scores)(?s:.*)", x).
+.decl spt_flow_materializer(f: node)
+spt_flow_materializer(f) :- spt_flow_ctx(d, f, _, _, x), spt_flow_param(d, f, _, "runtime_refs"), match("(?s:.*)(?:^materialize_.*builder$)(?s:.*)", x).
+spt_flow_materializer(f) :- spt_flow_ctx(d, f, _, _, _), spt_flow_param(d, f, _, "runtime_refs"), spt_flow_fn_ann(f, a),
+    match("(?s:.*)(?:\bRuntimeBuilderSpec\b)(?s:.*)", a).
+
+// ---- shared captures ----------------------------------------------------------------------------------------
+// AC: x is a direct child of a call's argument_list or generator_expression `arguments`.
+.decl spt_flow_argof(x: node, c: node)
+spt_flow_argof(x, c) :- node(_, c, "call", _, _), field(c, "arguments", al), child(al, x, _).
+// A string without an interpolation anywhere under it.
+.decl spt_flow_interp(s: node)
+spt_flow_interp(s) :- node(_, x, "interpolation", _, _), inside(x, s, spt_flow_ks_str).
+// Positional children (nthChild's ofRule): the first (pos0) and the second (pos1).
+.decl spt_flow_poschild(p: node, c: node, i: number)
+spt_flow_poschild(p, c, i) :- child(p, c, i), node(_, c, k, _, _), !spt_flow_k_nonpos(k).
+.decl spt_flow_pos0(p: node, c: node)
+spt_flow_pos0(p, c) :- spt_flow_poschild(p, c, i), i = min j : { spt_flow_poschild(p, _, j) }.
+.decl spt_flow_after0(p: node, c: node, i: number)
+spt_flow_after0(p, c, i) :- spt_flow_pos0(p, c0), spt_flow_poschild(p, c0, i0), spt_flow_poschild(p, c, i), i > i0.
+.decl spt_flow_pos1(p: node, c: node)
+spt_flow_pos1(p, c) :- spt_flow_after0(p, c, i), i = min j : { spt_flow_after0(p, _, j) }.
+
+// ---- stage interest_names, b_idents (idents_in) --------------------------------------------------------------
+// R2: an assignment (any, in an admitted document); LT its left identifier's text; MODS: a module-level statement.
+.decl spt_flow_asg_any(d: number, a: node)
+spt_flow_asg_any(d, a) :- node(d, a, "assignment", _, _), spt_flow_adoc(d).
+.decl spt_flow_asg_lt(a: node, x: symbol)
+spt_flow_asg_lt(a, x) :- spt_flow_asg_any(_, a), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x).
+.decl spt_flow_asg_mods(a: node)
+spt_flow_asg_mods(a) :- spt_flow_asg_any(_, a), child(es, a, _), node(_, es, "expression_statement", _, _), child(m, es, _),
+    node(_, m, "module", _, _).
+// R10: a for_statement inside a function.
+.decl spt_flow_forst(d: number, fs: node, f: node)
+spt_flow_forst(d, fs, f) :- node(d, fs, "for_statement", _, _), spt_flow_top(fs, f), field(fs, "right", _), field(fs, "left", _).
+.decl spt_flow_forleft_ident(fs: node, i: node, x: symbol)
+spt_flow_forleft_ident(fs, i, x) :- spt_flow_forst(d, fs, _), field(fs, "left", l), node(d, l, _, ls, le), node(d, i, "identifier", s, e),
+    s >= ls, e <= le, spt_flow_top(i, _), text(i, x).
+.decl spt_flow_interest(d: number, x: symbol)
+spt_flow_interest(d, x) :- spt_flow_param(d, _, _, x).
+spt_flow_interest(d, x) :- spt_flow_asg_any(d, a), spt_flow_asg_lt(a, x).
+spt_flow_interest(d, x) :- spt_flow_forst(d, fs, _), spt_flow_forleft_ident(fs, _, x).
+.decl spt_flow_bid(d: number, i: node, f: node, x: symbol)
+spt_flow_bid(d, i, f, x) :- node(d, i, "identifier", _, _), spt_flow_top(i, f), text(i, x), spt_flow_interest(d, x).
+.decl spt_flow_bid_ks(i: node, ks: node, kr: symbol)
+spt_flow_bid_ks(i, ks, kr) :- spt_flow_bid(_, i, _, _), field(ks, "subscript", i), node(_, ks, "subscript", _, _), field(ks, "value", v),
+    node(_, v, "identifier", _, _), text(v, kr).
+// CMP: the parent comparison_operator whose text matches `\bin\b`.
+.decl spt_flow_bid_cmp(i: node, c: node)
+spt_flow_bid_cmp(i, c) :- spt_flow_bid(_, i, _, _), child(c, i, _), node(_, c, "comparison_operator", _, _), node_text(c, s), match("(?s:.*)(?:\bin\b)(?s:.*)", s).
+.decl spt_flow_bid_kwn(i: node)
+spt_flow_bid_kwn(i) :- spt_flow_bid(_, i, _, _), field(k, "name", i), node(_, k, "keyword_argument", _, _).
+
+// ---- stage b_attrs (R4) -------------------------------------------------------------------------------------
+.decl spt_flow_attr(d: number, a: node, f: node, x: symbol, o: node)
+spt_flow_attr(d, a, f, x, o) :- node(d, a, "attribute", _, _), spt_flow_top(a, f), field(a, "attribute", n), text(n, x), field(a, "object", o).
+.decl spt_flow_attr_objt(a: node, s: symbol)
+spt_flow_attr_objt(a, s) :- spt_flow_attr(_, a, _, _, o), node(_, o, "identifier", _, _), text(o, s).
+
+// ---- stage b_calls (R3) -------------------------------------------------------------------------------------
+.decl spt_flow_call(d: number, c: node, f: node, fk: symbol)
+spt_flow_call(d, c, f, fk) :- node(d, c, "call", _, _), spt_flow_top(c, f), field(c, "function", fn), node(_, fn, fk, _, _), field(c, "arguments", _).
+.decl spt_flow_call_attr(c: node, x: symbol, r: node)
+spt_flow_call_attr(c, x, r) :- spt_flow_call(_, c, _, "attribute"), field(c, "function", fn), field(fn, "attribute", a), text(a, x), field(fn, "object", r).
+// callee: coalesce(attr, name).
+.decl spt_flow_callee(c: node, x: symbol)
+spt_flow_callee(c, x) :- spt_flow_call_attr(c, x, _).
+spt_flow_callee(c, x) :- spt_flow_call(_, c, _, "identifier"), field(c, "function", fn), text(fn, x).
+.decl spt_flow_recvt(c: node, s: symbol)
+spt_flow_recvt(c, s) :- spt_flow_call_attr(c, _, r), node(_, r, "identifier", _, _), text(r, s).
+// full_callee: coalesce(full, name); full is the function attribute's whole text where its attribute is one of R3_FULL's.
+.decl spt_flow_full_callee(c: node, s: symbol)
+spt_flow_full_callee(c, s) :- spt_flow_call_attr(c, x, _), spt_flow_n_fullattr(x), field(c, "function", fn), node_text(fn, s).
+spt_flow_full_callee(c, s) :- spt_flow_call(_, c, _, "identifier"), field(c, "function", fn), text(fn, s).
+.decl spt_flow_has_full(c: node)
+spt_flow_has_full(c) :- spt_flow_call_attr(c, x, _), spt_flow_n_fullattr(x).
+.decl spt_flow_call_kw(c: node, k: node, x: symbol)
+spt_flow_call_kw(c, k, x) :- spt_flow_call(_, c, _, _), field(c, "arguments", al), child(al, k, _), node(_, k, "keyword_argument", _, _),
+    field(k, "name", kn), node(_, kn, "identifier", _, _), text(kn, x).
+.decl spt_flow_call_refs(c: node)
+spt_flow_call_refs(c) :- spt_flow_call_kw(c, _, "post_op_with_refs").
+spt_flow_call_refs(c) :- spt_flow_call_kw(c, _, "pre_op_with_refs").
+.decl spt_flow_call_hyd(c: node)
+spt_flow_call_hyd(c) :- spt_flow_call_kw(c, k, "hydrate_large_columns"), field(k, "value", v), node(_, v, "true", _, _).
+.decl spt_flow_resolved_name(x: symbol)
+spt_flow_resolved_name("resolved"). spt_flow_resolved_name("resolved_refs").
+.decl spt_flow_call_res(c: node)
+spt_flow_call_res(c) :- spt_flow_call_attr(c, _, o), node(_, o, "identifier", _, _), text(o, x), spt_flow_resolved_name(x).
+spt_flow_call_res(c) :- spt_flow_call_attr(c, _, o), node(_, o, "attribute", _, _), field(o, "attribute", a), node(_, a, "identifier", _, _),
+    text(a, x), spt_flow_resolved_name(x).
+spt_flow_call_res(c) :- spt_flow_call_attr(c, _, o), node(_, o, k, _, _), !spt_flow_k_idattr(k), node_text(o, s), contains("resolved", s).
+.decl spt_flow_k_idattr(kind: symbol)
+spt_flow_k_idattr("identifier"). spt_flow_k_idattr("attribute").
+.decl spt_flow_call_args(c: node, al: node)
+spt_flow_call_args(c, al) :- spt_flow_call(_, c, _, _), field(c, "arguments", al).
+// A0 / A1: the first and second positional arguments, only of `getattr(…)` and `….get(…)` (and A1 only with an A0).
+.decl spt_flow_ga(c: node)
+spt_flow_ga(c) :- spt_flow_call(_, c, _, "identifier"), spt_flow_callee(c, "getattr").
+spt_flow_ga(c) :- spt_flow_call_attr(c, "get", _).
+.decl spt_flow_call_pos(c: node, k: number, a: node)
+spt_flow_call_pos(c, 0, a) :- spt_flow_ga(c), field(c, "arguments", al), spt_flow_pos0(al, a).
+spt_flow_call_pos(c, 1, a) :- spt_flow_ga(c), field(c, "arguments", al), spt_flow_pos1(al, a).
+
+// ---- stage b_kws (R6), splats (R7, R8), b_assigns (R2 in a function), b_subs (R5) ----------------------------
+.decl spt_flow_kw(d: number, k: node, c: node, x: symbol, v: node)
+spt_flow_kw(d, k, c, x, v) :- node(d, k, "keyword_argument", _, _), child(al, k, _), node(_, al, "argument_list", _, _), field(c, "arguments", al),
+    node(_, c, "call", _, _), spt_flow_top(k, _), field(k, "name", kn), text(kn, x), field(k, "value", v).
+.decl spt_flow_splat(d: number, sp: node, c: node)
+spt_flow_splat(d, sp, c) :- node(d, sp, "list_splat", _, _), child(al, sp, _), node(_, al, "argument_list", _, _),
+    field(c, "arguments", al), node(_, c, "call", _, _), spt_flow_top(sp, _).
+spt_flow_splat(d, sp, c) :- node(d, sp, "dictionary_splat", _, _), child(al, sp, _), node(_, al, "argument_list", _, _),
+    field(c, "arguments", al), node(_, c, "call", _, _), spt_flow_top(sp, _).
+.decl spt_flow_asg(d: number, a: node, f: node, lk: symbol, v: node)
+spt_flow_asg(d, a, f, lk, v) :- spt_flow_asg_any(d, a), spt_flow_top(a, f), field(a, "left", l), node(_, l, lk, _, _), field(a, "right", v).
+.decl spt_flow_sub(d: number, s: node, f: node, v: node)
+spt_flow_sub(d, s, f, v) :- node(d, s, "subscript", _, _), spt_flow_top(s, f), field(s, "value", v).
+.decl spt_flow_sub_vt(s: node, x: symbol)
+spt_flow_sub_vt(s, x) :- spt_flow_sub(_, s, _, v), node(_, v, "identifier", _, _), text(v, x).
+.decl spt_flow_sub_slice(s: node)
+spt_flow_sub_slice(s) :- spt_flow_sub(_, s, _, _), child(s, x, _), node(_, x, "slice", _, _).
+// SKEY: the first `subscript` child that is a string (no interpolation) whose value is a carrier name.
+.decl spt_flow_sub_keycand(s: node, k: node, t: number)
+spt_flow_sub_keycand(s, k, t) :- spt_flow_sub(_, s, _, _), field(s, "subscript", k), node(_, k, kk, t, _), spt_flow_k_str(kk), !spt_flow_interp(k),
+    value(k, v), spt_flow_n_carattr(v).
+.decl spt_flow_sub_skey(s: node, k: node)
+spt_flow_sub_skey(s, k) :- spt_flow_sub_keycand(s, k, t), t = min u : { spt_flow_sub_keycand(s, _, u) }.
+
+// ---- stage b_args --------------------------------------------------------------------------------------------
+.decl spt_flow_barg(d: number, x: node, c: node)
+spt_flow_barg(d, x, c) :- spt_flow_bid(d, x, _, _), spt_flow_argof(x, c).
+spt_flow_barg(d, x, c) :- spt_flow_attr(d, x, _, _, _), spt_flow_argof(x, c).
+spt_flow_barg(d, x, c) :- spt_flow_call(d, x, _, _), spt_flow_argof(x, c).
+spt_flow_barg(d, x, c) :- spt_flow_sub(d, x, _, _), spt_flow_argof(x, c).
+
+// ---- stage callback_parameters, parameter_kinds --------------------------------------------------------------
+.decl spt_flow_cbparam(d: number, c: node, x: symbol, kn: symbol, pos: number)
+spt_flow_cbparam(d, c, x, kn, pos) :- spt_flow_ctx(d, c, cs, ce, _), spt_flow_call(d, call, c, _), spt_flow_callee(call, "CompiledStep"),
+    spt_flow_kw(d, _, call, kn, v), (kn = "post_op" ; kn = "post_op_with_refs"), node(_, v, "identifier", _, _), text(v, vt),
+    spt_flow_fn(d, nf, ns, ne, vt), ns > cs, ne <= ce, spt_flow_param(d, nf, i, x), spt_flow_param_pos(i, pos), (pos = 1 ; pos = 2).
+.decl spt_flow_pkind(d: number, f: node, x: symbol, k: symbol)
+spt_flow_pkind(d, f, x, "authority") :- spt_flow_param(d, f, _, x), spt_flow_n_authparam(x).
+spt_flow_pkind(d, f, x, "authority") :- spt_flow_param(d, f, i, x), spt_flow_param_ann(i, a),
+    match("(?s:.*)(?:\b(?:ReadTransaction|SyncDatabaseConnection|SyncSqlConnection|WriteTransaction)\b)(?s:.*)", a).
+spt_flow_pkind(d, f, x, "provider") :- spt_flow_param(d, f, i, x), spt_flow_param_ann(i, a),
+    match("(?s:.*)(?:\b(?:CrossBranchQueryProvider|HybridSearchProvider|VectorCandidateProvider|VersionedLoweringProvider|VersionedStorageProvider)\b)(?s:.*)", a).
+spt_flow_pkind(d, f, "resolved", "runtime_value") :- spt_flow_param(d, f, _, "resolved").
+spt_flow_pkind(d, f, x, "runtime_value") :- spt_flow_param(d, f, i, x), spt_flow_param_ann(i, a), match("(?s:.*)(?:\bResolvedRefs\b)(?s:.*)", a).
+spt_flow_pkind(d, f, "runtime_refs", "runtime_value") :- spt_flow_param(d, f, _, "runtime_refs"), spt_flow_materializer(f).
+spt_flow_pkind(d, f, x, "carrier") :- spt_flow_param(d, f, _, x), spt_flow_n_carparam(x).
+spt_flow_pkind(d, f, x, "carrier") :- spt_flow_param(d, f, i, x), spt_flow_param_ann(i, a), match("(?s:.*)(?:\bHydrator\b)(?s:.*)", a).
+spt_flow_pkind(d, f, x, "carrier") :- spt_flow_cbparam(d, f, x, _, 1).
+spt_flow_pkind(d, f, x, "runtime_value") :- spt_flow_cbparam(d, f, x, "post_op_with_refs", 2).
+spt_flow_pkind(d, f, x, "carrier") :- spt_flow_cbparam(d, f, x, "post_op_with_refs", 2).
+
+// ---- stage string_values (strings_in, and module constants read by name) -------------------------------------
+.decl spt_flow_strin(d: number, s: node, v: symbol)
+spt_flow_strin(d, s, v) :- node(d, s, k, _, _), spt_flow_k_str(k), spt_flow_adoc(d), !spt_flow_interp(s), spt_flow_strpos(s), value(s, v),
+    spt_flow_n_strval(v).
+.decl spt_flow_strpos(s: node)
+spt_flow_strpos(s) :- child(p, s, _), node(_, p, "argument_list", _, _).
+spt_flow_strpos(s) :- child(p, s, _), node(_, p, "subscript", _, _).
+spt_flow_strpos(s) :- field(a, "right", s), node(_, a, "assignment", _, _), spt_flow_asg_mods(a).
+.decl spt_flow_sval(d: number, n: node, v: symbol)
+spt_flow_sval(d, s, v) :- spt_flow_strin(d, s, v).
+spt_flow_sval(d, i, v) :- spt_flow_asg_mods(a), spt_flow_asg_lt(a, x), field(a, "right", s), spt_flow_strin(d, s, v), spt_flow_bid(d, i, _, x).
+
+// ---- stage special_attributes --------------------------------------------------------------------------------
+.decl spt_flow_sattr(d: number, f: node, n: node, nk: symbol, owner: symbol, x: symbol)
+spt_flow_sattr(d, f, a, "attribute", "context", x) :- spt_flow_attr(d, a, f, x, _), spt_flow_attr_objt(a, "ctx"), spt_flow_n_ctxattr(x).
+spt_flow_sattr(d, f, a, "attribute", "carrier", x) :- spt_flow_attr(d, a, f, x, _), spt_flow_n_carattr(x), spt_flow_attr_objt(a, o), o != "ctx",
+    spt_flow_pkind(d, f, o, "carrier").
+spt_flow_sattr(d, f, a, "attribute", "carrier", x) :- spt_flow_attr(d, a, f, x, _), spt_flow_n_carattr(x), !spt_flow_n_ctxattr(x),
+    spt_flow_attr_objt(a, "ctx"), spt_flow_pkind(d, f, "ctx", "carrier").
+// getattr(o, NAME): owner context where o is `ctx`.
+.decl spt_flow_getattr(d: number, c: node, f: node, o: symbol, v: symbol)
+spt_flow_getattr(d, c, f, o, v) :- spt_flow_call(d, c, f, "identifier"), spt_flow_callee(c, "getattr"), spt_flow_call_pos(c, 0, a0),
+    node(_, a0, "identifier", _, _), text(a0, o), spt_flow_call_pos(c, 1, a1), spt_flow_sval(d, a1, v).
+spt_flow_sattr(d, f, c, "call", "context", v) :- spt_flow_getattr(d, c, f, "ctx", v), spt_flow_n_ctxattr(v).
+spt_flow_sattr(d, f, c, "call", "context", v) :- spt_flow_getattr(d, c, f, "ctx", v), spt_flow_n_carattr(v), spt_flow_pkind(d, f, "ctx", "carrier").
+spt_flow_sattr(d, f, c, "call", "carrier", v) :- spt_flow_getattr(d, c, f, o, v), o != "ctx", spt_flow_n_carattr(v), spt_flow_pkind(d, f, o, "carrier").
+// r.get(NAME), r a carrier parameter.
+spt_flow_sattr(d, f, c, "call", "carrier", v) :- spt_flow_call(d, c, f, "attribute"), spt_flow_callee(c, "get"), spt_flow_call_pos(c, 0, a0),
+    spt_flow_sval(d, a0, v), spt_flow_n_carattr(v), spt_flow_recvt(c, r), spt_flow_pkind(d, f, r, "carrier").
+// r["NAME"] (SKEY), r a carrier parameter.
+spt_flow_sattr(d, f, s, "subscript", "carrier", v) :- spt_flow_sub(d, s, f, _), spt_flow_sub_skey(s, k), spt_flow_sval(d, k, v),
+    spt_flow_sub_vt(s, r), spt_flow_pkind(d, f, r, "carrier").
+// r[NAME], NAME a module constant (KS / KR).
+spt_flow_sattr(d, f, ks, "subscript", "carrier", v) :- spt_flow_bid(d, i, f, _), spt_flow_bid_ks(i, ks, r), spt_flow_sval(d, i, v),
+    spt_flow_n_carattr(v), spt_flow_pkind(d, f, r, "carrier").
+
+// ---- stage return_kinds ---------------------------------------------------------------------------------------
+.decl spt_flow_in_splat(c: node, n: node)
+spt_flow_in_splat(c, n) :- spt_flow_splat(d, sp, c), node(d, sp, _, s, e), node(d, n, _, ns, ne), ns >= s, ne <= e.
+.decl spt_flow_in_kw(c: node, n: node)
+spt_flow_in_kw(c, n) :- spt_flow_kw(d, k, c, _, _), node(d, k, _, s, e), node(d, n, _, ns, ne), ns >= s, ne <= e.
+// A b_ident in call c's arguments naming one of f's carrier parameters, outside its splats and keyword arguments.
+// The SQL's `NOT (n spans the arguments node)` always holds for an identifier (the node has its parentheses).
+.decl spt_flow_rt_arg(d: number, f: node, c: node)
+spt_flow_rt_arg(d, f, c) :- spt_flow_call(d, c, f, "identifier"), spt_flow_call_args(c, al), node(d, al, _, as, ae), spt_flow_bid(d, n, _, x),
+    node(d, n, _, ns, ne), ns >= as, ne <= ae, spt_flow_pkind(d, f, x, "carrier"), !spt_flow_in_splat(c, n), !spt_flow_in_kw(c, n).
+.decl spt_flow_runtime(d: number, x: symbol)
+spt_flow_runtime(d, x) :- spt_flow_ctx(d, c, _, _, x), spt_flow_sattr(d, c, _, _, "carrier", _), spt_flow_pkind(d, c, _, "carrier").
+spt_flow_runtime(d, x) :- spt_flow_ctx(d, c, _, _, x), spt_flow_call(d, call, c, "identifier"), spt_flow_callee(call, y), spt_flow_runtime(d, y),
+    spt_flow_rt_arg(d, c, call).
+.decl spt_flow_rk(d: number, x: symbol, k: symbol)
+spt_flow_rk(d, x, "runtime_authority") :- spt_flow_runtime(d, x).
+spt_flow_rk(d, x, "authority") :- spt_flow_ctx(d, c, _, _, x), spt_flow_fn_rt(c, s),
+    match("(?s:.*)(?:\b(?:ReadTransaction|SyncDatabaseConnection|SyncSqlConnection|WriteTransaction)\b)(?s:.*)", s).
+spt_flow_rk(d, x, "provider") :- spt_flow_ctx(d, c, _, _, x), spt_flow_fn_rt(c, s),
+    match("(?s:.*)(?:\b(?:CrossBranchQueryProvider|HybridSearchProvider|VectorCandidateProvider|VersionedLoweringProvider|VersionedStorageProvider)\b)(?s:.*)", s).
+// The option's entries hold in every document with a context, so for every call (each call is in one).
+
+// ---- stage expression_edges, taints ---------------------------------------------------------------------------
+.decl spt_flow_edge(d: number, f: node, dst: node, src: node)
+spt_flow_edge(d, f, a, o) :- spt_flow_attr(d, a, f, _, o).
+spt_flow_edge(d, f, c, r) :- spt_flow_call(d, c, f, _), spt_flow_call_attr(c, _, r).
+spt_flow_edge(d, f, s, v) :- spt_flow_sub(d, s, f, v).
+.decl spt_flow_taint(d: number, f: node, n: node, k: symbol)
+spt_flow_taint(d, f, n, k) :- spt_flow_bid(d, n, f, x), spt_flow_pkind(d, f, x, k), k != "carrier".
+spt_flow_taint(d, f, n, "authority") :- spt_flow_sattr(d, f, n, _, "carrier", _).
+spt_flow_taint(d, f, n, "authority") :- spt_flow_sattr(d, f, n, _, _, "txn").
+spt_flow_taint(d, f, n, "authority") :- spt_flow_sattr(d, f, n, _, _, "sql_connection").
+spt_flow_taint(d, f, c, k) :- spt_flow_call(d, c, f, _), spt_flow_callee(c, x), spt_flow_rk(d, x, k).
+spt_flow_taint(d, f, c, k) :- spt_flow_call(d, c, f, _), spt_flow_callee(c, x), spt_flow_return_kind(x, k).
+spt_flow_taint(d, f, c, k) :- spt_flow_pmode(1), spt_flow_call(d, c, f, _), spt_flow_callee(c, x), spt_flow_rk(_, x, k).
+spt_flow_taint(d, f, e, k) :- spt_flow_taint(d, f, n, k), spt_flow_edge(d, f, e, n).
+spt_flow_taint(d, f, i, k) :- spt_flow_taint(d, f, n, k), spt_flow_flowkind(k), spt_flow_asg(d, a, f, "identifier", n), spt_flow_asg_lt(a, x),
+    spt_flow_bid(d, i, f, x).
+.decl spt_flow_flowkind(k: symbol)
+spt_flow_flowkind("authority"). spt_flow_flowkind("provider"). spt_flow_flowkind("runtime_value").
+
+// ---- stage semantic_seeds -------------------------------------------------------------------------------------
+.decl spt_flow_seed(d: number, f: node, n: node)
+spt_flow_seed(d, f, n) :- spt_flow_taint(d, f, n, "runtime_value").
+spt_flow_seed(d, f, n) :- spt_flow_bid(d, n, f, x), spt_flow_pkind(d, f, x, "carrier").
+spt_flow_seed(d, f, i) :- spt_flow_seed(d, f, s), node(d, s, _, ss, se), spt_flow_asg(d, a, f, "identifier", v), node(d, v, vk, vs, ve),
+    vs <= ss, se <= ve, !spt_flow_k_excl(vk), spt_flow_asg_lt(a, x), spt_flow_bid(d, i, f, x).
+spt_flow_seed(d, f, i) :- spt_flow_seed(d, f, s), spt_flow_asg(d, a, f, "identifier", s), spt_flow_asg_lt(a, x), spt_flow_bid(d, i, f, x).
+// A seed within node r: under it where r's kind is not excluded, else r itself.
+.decl spt_flow_seed_in(d: number, f: node, r: node)
+spt_flow_seed_in(d, f, r) :- spt_flow_seedable(d, f, r), node(d, r, rk, rs, re), !spt_flow_k_excl(rk), spt_flow_seed(d, f, v), node(d, v, _, vs, ve),
+    vs >= rs, ve <= re.
+spt_flow_seed_in(d, f, r) :- spt_flow_seedable(d, f, r), spt_flow_seed(d, f, r).
+.decl spt_flow_seedable(d: number, f: node, r: node)
+spt_flow_seedable(d, f, r) :- spt_flow_call(d, c, f, _), spt_flow_callee(c, x), spt_flow_n_semmeth(x), spt_flow_call_attr(c, _, r).
+spt_flow_seedable(d, f, v) :- spt_flow_sub(d, s, f, v), spt_flow_sub_slice(s).
+spt_flow_seedable(d, f, r) :- spt_flow_comp(d, _, f, _, r).
+spt_flow_seedable(d, f, r) :- spt_flow_forst(d, fs, f), spt_flow_forright(fs, r).
+
+// ---- stage direct_events --------------------------------------------------------------------------------------
+.decl spt_flow_ev(d: number, f: node, n: node, k: symbol, p: number)
+spt_flow_ev(d, f, n, "eager_sql", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, x), spt_flow_n_grammar(x).
+spt_flow_ev(d, f, n, "eager_sql", 1) :- spt_flow_call(d, n, f, "identifier"), spt_flow_callee(n, x), spt_flow_n_exec(x).
+spt_flow_ev(d, f, n, "eager_sql", 1) :- spt_flow_call(d, n, f, _), spt_flow_has_full(n), spt_flow_full_callee(n, s),
+    match("(?s:.*)(?:(?:^|\.)(?:conn(?:\([^)]*\))?\.execute|conn(?:\([^)]*\))?\.execute_async|conn(?:\([^)]*\))?\.fetchall|conn(?:\([^)]*\))?\.fetchall_async|conn(?:\([^)]*\))?\.fetchone|conn(?:\([^)]*\))?\.fetchone_async|connection(?:\([^)]*\))?\.execute|connection(?:\([^)]*\))?\.execute_async|connection(?:\([^)]*\))?\.fetchall|connection(?:\([^)]*\))?\.fetchall_async|connection(?:\([^)]*\))?\.fetchone|connection(?:\([^)]*\))?\.fetchone_async|cursor(?:\([^)]*\))?\.execute|cursor(?:\([^)]*\))?\.executemany|query(?:\([^)]*\))?\.execute|query(?:\([^)]*\))?\.execute_async|query(?:\([^)]*\))?\.fetchall|query(?:\([^)]*\))?\.fetchall_async|query(?:\([^)]*\))?\.fetchone|query(?:\([^)]*\))?\.fetchone_async|txn(?:\([^)]*\))?\.execute|txn(?:\([^)]*\))?\.execute_async|txn(?:\([^)]*\))?\.fetchall|txn(?:\([^)]*\))?\.fetchall_async|txn(?:\([^)]*\))?\.fetchone|txn(?:\([^)]*\))?\.fetchone_async)$)(?s:.*)", s).
+spt_flow_ev(d, f, n, "eager_sql", 1) :- spt_flow_taint(d, f, t, "authority"), spt_flow_call(d, n, f, _), spt_flow_call_attr(n, x, t), spt_flow_n_exec(x).
+spt_flow_ev(d, f, n, "native_python_work", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, x), spt_flow_n_native(x).
+spt_flow_ev(d, f, n, "native_python_work", 1) :- spt_flow_call(d, n, f, _), spt_flow_has_full(n), spt_flow_full_callee(n, s),
+    match("(?s:.*)(?:(?:^|\.)(?:np(?:\([^)]*\))?\.array|np(?:\([^)]*\))?\.ascontiguousarray|np(?:\([^)]*\))?\.isinf|np(?:\([^)]*\))?\.isnan|numpy(?:\([^)]*\))?\.array|numpy(?:\([^)]*\))?\.ascontiguousarray|numpy(?:\([^)]*\))?\.isinf|numpy(?:\([^)]*\))?\.isnan)$)(?s:.*)", s).
+spt_flow_ev(d, f, n, "runtime_callback", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, "CompiledStep"), spt_flow_call_refs(n).
+spt_flow_ev(d, f, n, "large_column", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, x), spt_flow_n_large(x).
+spt_flow_ev(d, f, n, "large_column", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, "convert_row_to_model"), spt_flow_call_hyd(n).
+spt_flow_ev(d, f, n, "resolved_refs", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, "get"), spt_flow_call_res(n).
+spt_flow_ev(d, f, n, "resolved_refs", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, "peek"), spt_flow_call_res(n).
+spt_flow_ev(d, f, n, "resolved_refs", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, "resolve_server_ref"), spt_flow_call_res(n).
+spt_flow_ev(d, f, n, "nested_execute", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, "execute_runtime_nested_steps_async").
+spt_flow_ev(d, f, n, "nested_execute", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, "execute_runtime_nested_steps_sync").
+spt_flow_ev(d, f, n, "nested_execute", 1) :- spt_flow_call(d, n, f, _), spt_flow_has_full(n), spt_flow_full_callee(n, s),
+    match("(?s:.*)(?:(?:^|\.)(?:PlanExecutor(?:\([^)]*\))?\.execute|PlanExecutor(?:\([^)]*\))?\.execute_async|executor(?:\([^)]*\))?\.execute|executor(?:\([^)]*\))?\.execute_async)$)(?s:.*)", s).
+spt_flow_ev(d, f, n, "materialized_pipeline", 1) :- spt_flow_attr(d, n, f, "materialized_pipeline", _).
+spt_flow_ev(d, f, n, "materialized_pipeline", 1) :- spt_flow_sattr(d, f, n, _, "context", "materialized_pipeline").
+spt_flow_ev(d, f, n, "ctx_access", 1) :- spt_flow_sattr(d, f, n, _, "context", _).
+spt_flow_ev(d, f, n, "runtime_authority", 1) :- spt_flow_sattr(d, f, n, "attribute", "carrier", _).
+spt_flow_ev(d, f, n, "runtime_authority", 1) :- spt_flow_sattr(d, f, n, "call", "carrier", _).
+spt_flow_ev(d, f, n, "runtime_authority", 1) :- spt_flow_call(d, n, f, _), spt_flow_callee(n, "active_pipeline_txn_for_callbacks").
+spt_flow_ev(d, f, n, "runtime_authority", 1) :- spt_flow_taint(d, f, n, "runtime_authority"), spt_flow_call(d, n, f, _).
+spt_flow_ev(d, f, n, "runtime_authority", 0) :- spt_flow_taint(d, f, t, "runtime_authority"), spt_flow_asg(d, n, f, _, t).
+spt_flow_ev(d, f, n, "runtime_value", 0) :- spt_flow_taint(d, f, t, "runtime_value"), spt_flow_asg(d, n, f, _, t).
+spt_flow_ev(d, f, n, "runtime_value", 1) :- spt_flow_taint(d, f, n, "runtime_value"), spt_flow_call(d, n, f, _).
+spt_flow_ev(d, f, n, "runtime_value", 1) :- spt_flow_taint(d, f, t, "runtime_value"), spt_flow_call(d, n, f, _), spt_flow_call_attr(n, _, t).
+spt_flow_ev(d, f, n, "runtime_value", 1) :- spt_flow_taint(d, f, t, "runtime_value"), spt_flow_barg(d, t, n), spt_flow_call(d, n, f, _).
+spt_flow_ev(d, f, n, "runtime_value", 1) :- spt_flow_taint(d, f, t, "runtime_value"), spt_flow_kw(d, _, n, _, t), spt_flow_call(d, n, f, _).
+spt_flow_ev(d, f, n, "runtime_value", 1) :- spt_flow_taint(d, f, t, "runtime_value"), spt_flow_sub(d, n, f, t), node(_, t, "identifier", _, _).
+spt_flow_ev(d, f, c, "runtime_value", 1) :- spt_flow_taint(d, f, n, "runtime_value"), spt_flow_bid(d, n, f, _), spt_flow_bid_cmp(n, c).
+spt_flow_ev(d, f, n, "provider_authority", 1) :- spt_flow_taint(d, f, t, "provider"), spt_flow_call(d, n, f, _), spt_flow_call_attr(n, _, t),
+    spt_flow_authority_arg(d, f, n).
+.decl spt_flow_authority_arg(d: number, f: node, c: node)
+spt_flow_authority_arg(d, f, c) :- spt_flow_barg(d, a, c), spt_flow_taint(d, f, a, "authority").
+spt_flow_authority_arg(d, f, c) :- spt_flow_kw(d, _, c, _, v), spt_flow_taint(d, f, v, "authority").
+// runtime_semantic_projection: all/any/…(seed…) outside splats, the seed not a keyword's name (the SQL's `NOT (v spans
+// the arguments node)` always holds: no seed is an argument list); count/index/…, slices, filtered comprehensions.
+.decl spt_flow_semarg(d: number, f: node, c: node)
+spt_flow_semarg(d, f, c) :- spt_flow_call(d, c, f, _), spt_flow_callee(c, x), spt_flow_n_semfn(x), spt_flow_call_args(c, al), node(d, al, _, as, ae),
+    spt_flow_seed(d, f, v), node(d, v, _, vs, ve), vs >= as, ve <= ae, !spt_flow_in_splat(c, v), !spt_flow_bid_kwn(v).
+spt_flow_ev(d, f, c, "runtime_semantic_projection", 1) :- spt_flow_semarg(d, f, c).
+spt_flow_ev(d, f, c, "runtime_semantic_projection", 1) :- spt_flow_call(d, c, f, _), spt_flow_callee(c, x), spt_flow_n_semmeth(x),
+    spt_flow_call_attr(c, _, r), spt_flow_seed_in(d, f, r).
+spt_flow_ev(d, f, s, "runtime_semantic_projection", 1) :- spt_flow_sub(d, s, f, v), spt_flow_sub_slice(s), spt_flow_seed_in(d, f, v).
+// R9: a for_in_clause in a function whose parent comprehension has an if_clause; its first `right` (the `has`).
+.decl spt_flow_comp_right(fic: node, r: node, s: number)
+spt_flow_comp_right(fic, r, s) :- node(_, fic, "for_in_clause", _, _), field(fic, "right", r), node(_, r, _, s, _).
+.decl spt_flow_comp(d: number, fic: node, f: node, comp: node, r: node)
+spt_flow_comp(d, fic, f, comp, r) :- node(d, fic, "for_in_clause", _, _), spt_flow_top(fic, f), spt_flow_comp_right(fic, r, s),
+    s = min t : { spt_flow_comp_right(fic, _, t) }, child(comp, fic, _), node(_, comp, ck, _, _), spt_flow_k_comp(ck),
+    child(comp, ic, _), node(_, ic, "if_clause", _, _).
+spt_flow_ev(d, f, comp, "runtime_semantic_projection", 1) :- spt_flow_comp(d, _, f, comp, r), spt_flow_seed_in(d, f, r).
+// R10: a for loop over a seed that appends/extends, and reads (subscript / get / getattr) a name its target binds.
+.decl spt_flow_forright(fs: node, r: node)
+spt_flow_forright(fs, r) :- spt_flow_forst(_, fs, _), field(fs, "right", r).
+.decl spt_flow_forapp(fs: node)
+spt_flow_forapp(fs) :- spt_flow_forst(d, fs, _), node(d, fs, _, s, e), spt_flow_call(d, c, _, _), spt_flow_callee(c, x), (x = "append" ; x = "extend"),
+    node(d, c, _, cs, ce), cs >= s, ce <= e.
+.decl spt_flow_prnode(d: number, p: node)
+spt_flow_prnode(d, p) :- spt_flow_sub(d, p, _, _).
+spt_flow_prnode(d, p) :- spt_flow_call(d, p, _, _), spt_flow_callee(p, "get").
+spt_flow_prnode(d, p) :- spt_flow_call(d, p, _, _), spt_flow_callee(p, "getattr").
+.decl spt_flow_forleft_bid(fs: node, x: symbol)
+spt_flow_forleft_bid(fs, x) :- spt_flow_forleft_ident(fs, i, x), spt_flow_bid(_, i, _, _).
+.decl spt_flow_forpr(fs: node)
+spt_flow_forpr(fs) :- spt_flow_forst(d, fs, _), node(d, fs, _, s, e), spt_flow_prnode(d, p), node(d, p, _, ps, pe), ps >= s, pe <= e,
+    spt_flow_bid(d, u, _, x), node(d, u, _, us, ue), us >= ps, ue <= pe, spt_flow_forleft_bid(fs, x).
+.decl spt_flow_forproj(d: number, f: node, fs: node)
+spt_flow_forproj(d, f, fs) :- spt_flow_forst(d, fs, f), spt_flow_forright(fs, r), spt_flow_seed_in(d, f, r), spt_flow_forapp(fs), spt_flow_forpr(fs).
+spt_flow_ev(d, f, fs, "runtime_semantic_projection", 1) :- spt_flow_forproj(d, f, fs).
+spt_flow_ev(d, f, fs, "runtime_sequence_projection", 1) :- spt_flow_forproj(d, f, fs).
+
+// ---- stage direct_sinks: per (fn, kind) the event of least (priority, depth, start) ------------------------------
+// depth: the nodes_in rows from the context's start that span the event (the SQL computes it only for two or more
+// events; one event is chosen whatever it is). nodes_in's rows: every listed kind that some role matches, i.e.
+// function/class definitions and assignments anywhere, the rest inside a function (R11) unless a string without
+// an interpolation child.
+.decl spt_flow_row(d: number, b: node, s: number, e: number)
+spt_flow_row(d, b, s, e) :- node(d, b, "function_definition", s, e), spt_flow_adoc(d).
+spt_flow_row(d, b, s, e) :- node(d, b, "class_definition", s, e), spt_flow_adoc(d).
+spt_flow_row(d, b, s, e) :- node(d, b, "assignment", s, e), spt_flow_adoc(d).
+spt_flow_row(d, b, s, e) :- node(d, b, k, s, e), spt_flow_k_row(k), spt_flow_top(b, _).
+spt_flow_row(d, b, s, e) :- node(d, b, "string", s, e), spt_flow_top(b, _), child(b, x, _), node(_, x, "interpolation", _, _).
+.decl spt_flow_ds_prio(d: number, f: node, k: symbol, p: number)
+spt_flow_ds_prio(d, f, k, p) :- spt_flow_ev(d, f, _, k, _), p = min q : { spt_flow_ev(d, f, _, k, q) }.
+.decl spt_flow_ev_depth(d: number, f: node, n: node, k: symbol, x: number)
+.decl spt_flow_ev_span(d: number, f: node, n: node, k: symbol, b: node)
+spt_flow_ev_span(d, f, n, k, b) :- spt_flow_ds_prio(d, f, k, p), spt_flow_ev(d, f, n, k, p), node(d, n, _, es, ee), node(d, f, _, cs, _),
+    spt_flow_row(d, b, bs, be), bs >= cs, bs <= es, be >= ee.
+spt_flow_ev_depth(d, f, n, k, x) :- spt_flow_ev_span(d, f, n, k, _), x = count : { spt_flow_ev_span(d, f, n, k, _) }.
+.decl spt_flow_ds_depth(d: number, f: node, k: symbol, x: number)
+spt_flow_ds_depth(d, f, k, x) :- spt_flow_ds_prio(d, f, k, _), x = min y : { spt_flow_ev_depth(d, f, _, k, y) }.
+.decl spt_flow_ds_cand(d: number, f: node, k: symbol, n: node, s: number)
+spt_flow_ds_cand(d, f, k, n, s) :- spt_flow_ds_depth(d, f, k, x), spt_flow_ev_depth(d, f, n, k, x), node(d, n, _, s, _).
+.decl spt_flow_ds(d: number, f: node, k: symbol, n: node)
+spt_flow_ds(d, f, k, n) :- spt_flow_ds_cand(d, f, k, n, s), s = min t : { spt_flow_ds_cand(d, f, k, _, t) }.
+.decl spt_flow_dk(d: number, f: node, k: symbol)
+spt_flow_dk(d, f, k) :- spt_flow_ds(d, f, k, _).
+
+// ---- stage call_graph, reachable --------------------------------------------------------------------------------
+.decl spt_flow_cg(d: number, f: node, c: node, t: node)
+spt_flow_cg(d, f, c, t) :- spt_flow_call(d, c, f, "identifier"), spt_flow_callee(c, x), spt_flow_ctx(d, t, _, _, x), t != f, !spt_flow_ctx_incls(t).
+spt_flow_cg(d, f, c, t) :- spt_flow_call(d, c, f, "attribute"), spt_flow_callee(c, x), spt_flow_ctx(d, t, _, _, x), t != f,
+    spt_flow_ctx_cls(f, cn), spt_flow_ctx_cls(t, cn), spt_flow_recvt(c, "self").
+spt_flow_cg(d, f, c, t) :- spt_flow_call(d, c, f, "attribute"), spt_flow_callee(c, x), spt_flow_ctx(d, t, _, _, x), t != f,
+    spt_flow_ctx_cls(f, cn), spt_flow_ctx_cls(t, cn), spt_flow_recvt(c, "cls").
+.decl spt_flow_reach(d: number, f: node)
+spt_flow_reach(d, f) :- spt_flow_ctx(d, f, _, _, _), spt_flow_planning(f).
+spt_flow_reach(d, f) :- spt_flow_ctx(d, f, _, _, _), spt_flow_preprocess(f).
+spt_flow_reach(d, f) :- spt_flow_ctx(d, f, _, _, _), spt_flow_materializer(f).
+spt_flow_reach(d, f) :- spt_flow_ctx(d, f, _, _, _), spt_flow_ctx_helper(f).
+spt_flow_reach(d, f) :- spt_flow_ctx(d, f, _, _, _), spt_flow_provider_helper(f).
+spt_flow_reach(d, f) :- spt_flow_ctx(d, f, _, _, _), spt_flow_l2070(d), spt_flow_dk(d, f, "native_python_work").
+spt_flow_reach(d, t) :- spt_flow_reach(d, f), spt_flow_cg(d, f, _, t).
+.decl spt_flow_l2070(d: number)
+spt_flow_l2070(d) :- doc(d, p, _), match("(?s:.*)(?:(?:^|/)impl/common/l2070_server_plan/)(?s:.*)", p).
+
+// ---- stage transitive_sinks -------------------------------------------------------------------------------------
+// The SQL walks every simple route '|origin|…|fn|' up the call graph (callers reachable, without a direct sink of the
+// kind) and keeps per (fn, kind) the row of least (length(route), __start). length(route) = 1 + Σ (digits of the
+// fn's SQL id + 1) over the route: a shortest path with fn weight w. spt_flow_tl holds every walk's length up to
+// spt_flow_bound (no simple route is longer); a walk through a cycle is longer than the simple route inside it, so the
+// least lengths are the simple routes'. A propagated row's node is the call site in fn; its start the least among the
+// sites on a least route. origin: among rows tied on (length(route), __start) the SQL's row_number() keeps whichever
+// SQLite orders first; here the origin with the least start. GAP (no exact form: SQL leaves the order of tied rows
+// unspecified): only SPT-024's origin-name test reads it (a propagated row's origin is never fn, whichever is kept).
+.decl spt_flow_w(d: number, f: node, w: number)
+spt_flow_w(d, f, w) :- spt_flow_ctx(d, f, s, e, _), w = strlen(to_string(s * 16777216 + e)) + 1.
+// The recursion runs over the call graph, not a tree edge, so it may not make values (front/cycles.rs,
+// UnboundedValueCycle): a step's length is read from spt_flow_add, a finite table of l + w for every l up to the
+// document's bound (no simple route is longer: 1 + Σ w over the functions it may visit). spt_flow_num: 0..99999 from
+// digit facts (num3: 0..999). GAP (blocker: UnboundedValueCycle): a route longer than 99999 characters (one simple
+// call chain through ~6500 functions, w being 15 for a file of a megabyte) is not followed.
+.decl spt_flow_digit(x: number)
+spt_flow_digit(0). spt_flow_digit(1). spt_flow_digit(2). spt_flow_digit(3). spt_flow_digit(4). spt_flow_digit(5).
+spt_flow_digit(6). spt_flow_digit(7). spt_flow_digit(8). spt_flow_digit(9).
+.decl spt_flow_num3(x: number)
+spt_flow_num3(x) :- spt_flow_digit(a), spt_flow_digit(b), spt_flow_digit(c), x = a * 100 + b * 10 + c.
+.decl spt_flow_num(x: number)
+spt_flow_num(x) :- spt_flow_num3(y), spt_flow_digit(a), spt_flow_digit(b), x = a * 10000 + b * 1000 + y.
+.decl spt_flow_bound(d: number, b: number)
+spt_flow_bound(d, b) :- spt_flow_ctx(d, _, _, _, _), n = count : { spt_flow_ctx(d, _, _, _, _) }, m = max x : { spt_flow_w(d, _, x) }, b = 1 + n * m.
+.decl spt_flow_wval(d: number, w: number)
+spt_flow_wval(d, w) :- spt_flow_w(d, _, w).
+.decl spt_flow_add(d: number, l: number, w: number, l2: number)
+// Only documents with a sink to propagate; the small table where the bound allows.
+spt_flow_add(d, l, w, l2) :- spt_flow_tdoc(d), spt_flow_bound(d, b), b < 1000, spt_flow_wval(d, w), spt_flow_num3(l), l2 = l + w, l2 <= b.
+spt_flow_add(d, l, w, l2) :- spt_flow_tdoc(d), spt_flow_bound(d, b), b >= 1000, spt_flow_wval(d, w), spt_flow_num(l), l2 = l + w, l2 <= b.
+.decl spt_flow_tdoc(d: number)
+spt_flow_tdoc(d) :- spt_flow_dk(d, _, _).
+spt_flow_tdoc(d) :- spt_flow_pk(d, _, _).
+.decl spt_flow_tl(d: number, f: node, k: symbol, l: number, o: node)
+spt_flow_tl(d, f, k, l, f) :- spt_flow_dk(d, f, k), spt_flow_reach(d, f), spt_flow_w(d, f, w), l = 1 + w.
+spt_flow_tl(d, f, k, l2, o) :- spt_flow_tl(d, t, k, l, o), spt_flow_cg(d, f, _, t), spt_flow_reach(d, f), !spt_flow_dk(d, f, k), spt_flow_w(d, f, w),
+    spt_flow_add(d, l, w, l2).
+.decl spt_flow_tmin(d: number, f: node, k: symbol, l: number)
+spt_flow_tmin(d, f, k, l) :- spt_flow_tl(d, f, k, _, _), !spt_flow_dk(d, f, k), l = min x : { spt_flow_tl(d, f, k, x, _) }.
+.decl spt_flow_tcand(d: number, f: node, k: symbol, c: node, t: node, l: number)
+spt_flow_tcand(d, f, k, c, t, l1) :- spt_flow_tmin(d, f, k, l), spt_flow_w(d, f, w), l1 = l - w, spt_flow_cg(d, f, c, t), spt_flow_tl(d, t, k, l1, _).
+.decl spt_flow_tstart(d: number, f: node, k: symbol, s: number)
+spt_flow_tstart(d, f, k, s) :- spt_flow_tcand(d, f, k, _, _, _), s = min y : { spt_flow_tcand(d, f, k, c, _, _), node(d, c, _, y, _) }.
+.decl spt_flow_tsite(d: number, f: node, k: symbol, c: node)
+spt_flow_tsite(d, f, k, c) :- spt_flow_tstart(d, f, k, s), spt_flow_tcand(d, f, k, c, _, _), node(d, c, _, s, _).
+.decl spt_flow_torig(d: number, f: node, k: symbol, o: node, s: number)
+spt_flow_torig(d, f, k, o, s) :- spt_flow_tsite(d, f, k, c), spt_flow_tcand(d, f, k, c, t, l1), spt_flow_tl(d, t, k, l1, o), node(d, o, _, s, _).
+.decl spt_flow_ts(d: number, f: node, k: symbol, n: node, o: node)
+spt_flow_ts(d, f, k, n, f) :- spt_flow_ds(d, f, k, n), spt_flow_reach(d, f).
+spt_flow_ts(d, f, k, c, o) :- spt_flow_tsite(d, f, k, c), spt_flow_torig(d, f, k, o, s), s = min y : { spt_flow_torig(d, f, k, _, y) }.
+
+// ---- builder evidence (builder_strs, builder_refs: scan_project_sources only) ------------------------------------
+// S: a call to RuntimeBuilderSpec / runtime_builder_post_op (SN the name); SKW: it has a builder_name= keyword;
+// STWO: it has a second positional argument.
+.decl spt_flow_bcall(c: node, sn: symbol)
+spt_flow_bcall(c, sn) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, sn), spt_flow_n_builder(sn).
+spt_flow_bcall(c, sn) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a),
+    node(_, a, "identifier", _, _), text(a, sn), spt_flow_n_builder(sn).
+.decl spt_flow_bcall_skw(c: node)
+spt_flow_bcall_skw(c) :- spt_flow_bcall(c, _), field(c, "arguments", al), child(al, k, _), node(_, k, "keyword_argument", _, _),
+    field(k, "name", kn), node(_, kn, "identifier", _, _), text(kn, "builder_name").
+.decl spt_flow_bcall_stwo(c: node)
+spt_flow_bcall_stwo(c) :- spt_flow_bcall(c, _), field(c, "arguments", al), spt_flow_pos1(al, _).
+// The token positions, first branch first: CMP (a comparison with `spec.builder_name`), the second positional argument of
+// S (in an argument_list), the value of S's builder_name= keyword.
+.decl spt_flow_bcmp(x: node)
+spt_flow_bcmp(x) :- child(c, x, _), node(_, c, "comparison_operator", _, _), child(c, a, _), node(_, a, "attribute", _, _), field(a, "object", o),
+    node(_, o, "identifier", _, _), text(o, "spec"), field(a, "attribute", b), node(_, b, "identifier", _, _), text(b, "builder_name").
+.decl spt_flow_btwo(x: node, c: node)
+spt_flow_btwo(x, c) :- spt_flow_pos1(al, x), node(_, al, "argument_list", _, _), field(c, "arguments", al), spt_flow_bcall(c, _).
+.decl spt_flow_bkwp(x: node, c: node)
+spt_flow_bkwp(x, c) :- field(k, "value", x), node(_, k, "keyword_argument", _, _), field(k, "name", kn), node(_, kn, "identifier", _, _),
+    text(kn, "builder_name"), child(al, k, _), node(_, al, "argument_list", _, _), field(c, "arguments", al), spt_flow_bcall(c, _).
+.decl spt_flow_bpos(x: node)
+spt_flow_bpos(x) :- spt_flow_bcmp(x).
+spt_flow_bpos(x) :- spt_flow_btwo(x, _).
+spt_flow_bpos(x) :- spt_flow_bkwp(x, _).
+// builder_strs: a string (no interpolation anywhere) in a function at a token position, or a module constant (MT).
+.decl spt_flow_bstr_mt(d: number, x: symbol, v: symbol)
+spt_flow_bstr_mt(d, x, v) :- spt_flow_sps(1), spt_flow_asg_mods(a), spt_flow_asg_lt(a, x), field(a, "right", s), node(d, s, k, _, _), spt_flow_k_str(k),
+    !spt_flow_interp(s), value(s, v), v != "".
+// builder_tokens: (fn, name) at a token node x.
+.decl spt_flow_btok(d: number, f: node, x: node, name: symbol)
+spt_flow_btok(d, f, x, v) :- spt_flow_sps(1), node(d, x, k, _, _), spt_flow_k_str(k), spt_flow_adoc(d), !spt_flow_interp(x), spt_flow_top(x, f),
+    spt_flow_bpos(x), value(x, v), v != "".
+spt_flow_btok(d, f, x, at) :- spt_flow_sps(1), node(d, x, "attribute", _, _), spt_flow_adoc(d), field(x, "object", o), node(_, o, "identifier", _, _),
+    text(o, "RuntimeBuilderName"), field(x, "attribute", a), text(a, at), spt_flow_top(x, f), spt_flow_bpos(x).
+spt_flow_btok(d, f, x, v) :- spt_flow_sps(1), node(d, x, "identifier", _, _), spt_flow_adoc(d), text(x, t), spt_flow_top(x, f), spt_flow_bpos(x),
+    spt_flow_bstr_mt(d, t, v).
+// builder_sites.
+.decl spt_flow_bsite(d: number, f: node, s: node, name: symbol)
+spt_flow_bsite(d, f, s, v) :- spt_flow_btok(d, f, x, v), spt_flow_btwo(x, s), spt_flow_bcall(s, "runtime_builder_post_op").
+spt_flow_bsite(d, f, s, v) :- spt_flow_btok(d, f, x, v), spt_flow_btwo(x, s), spt_flow_bcall(s, "RuntimeBuilderSpec"), !spt_flow_bcall_skw(s).
+spt_flow_bsite(d, f, s, v) :- spt_flow_btok(d, f, x, v), spt_flow_bkwp(x, s), spt_flow_bcall(s, "RuntimeBuilderSpec").
+spt_flow_bsite(d, f, s, v) :- spt_flow_btok(d, f, x, v), spt_flow_bkwp(x, s), spt_flow_bcall(s, "runtime_builder_post_op"), !spt_flow_bcall_stwo(s).
+// semantic_builders, helper_names: names only (the repository partition).
+.decl spt_flow_sembuilder(name: symbol)
+spt_flow_sembuilder(v) :- spt_flow_btok(d, f, x, v), spt_flow_bcmp(x), spt_flow_dk(d, f, "runtime_sequence_projection").
+.decl spt_flow_helper(name: symbol)
+spt_flow_helper(x) :- spt_flow_ctx(d, c, _, _, x), spt_flow_bsite(d, c, _, v), spt_flow_sembuilder(v).
+
+// ---- stage project_seeds, project_sinks -------------------------------------------------------------------------
+.decl spt_flow_pseed(d: number, f: node, n: node, k: symbol, p: number)
+spt_flow_pseed(d, f, s, "builder", 0) :- spt_flow_bsite(d, f, s, v), spt_flow_sembuilder(v).
+spt_flow_pseed(d, f, c, "builder", 1) :- spt_flow_call(d, c, f, _), spt_flow_callee(c, x), spt_flow_helper(x), !spt_flow_cg_site(c).
+spt_flow_pseed(d, f, n, "semantic", 0) :- spt_flow_pmode(1), spt_flow_ds(d, f, "runtime_semantic_projection", n).
+.decl spt_flow_cg_site(c: node)
+spt_flow_cg_site(c) :- spt_flow_cg(_, _, c, _).
+.decl spt_flow_pk(d: number, f: node, k: symbol)
+spt_flow_pk(d, f, k) :- spt_flow_pseed(d, f, _, k, _).
+// As transitive_sinks, without `reachable`, the seed's node carried: least (length(route), priority, start).
+.decl spt_flow_pl(d: number, f: node, k: symbol, l: number, p: number, n: node)
+spt_flow_pl(d, f, k, l, p, n) :- spt_flow_pseed(d, f, n, k, p), spt_flow_w(d, f, w), l = 1 + w.
+spt_flow_pl(d, f, k, l2, p, n) :- spt_flow_pl(d, t, k, l, p, n), spt_flow_cg(d, f, _, t), !spt_flow_pk(d, f, k), spt_flow_w(d, f, w),
+    spt_flow_add(d, l, w, l2).
+.decl spt_flow_plmin(d: number, f: node, k: symbol, l: number)
+spt_flow_plmin(d, f, k, l) :- spt_flow_pl(d, f, k, _, _, _), l = min x : { spt_flow_pl(d, f, k, x, _, _) }.
+.decl spt_flow_plprio(d: number, f: node, k: symbol, l: number, p: number)
+spt_flow_plprio(d, f, k, l, p) :- spt_flow_plmin(d, f, k, l), p = min q : { spt_flow_pl(d, f, k, l, q, _) }.
+.decl spt_flow_ps(d: number, f: node, k: symbol, n: node)
+spt_flow_ps(d, f, k, n) :- spt_flow_plprio(d, f, k, l, p), spt_flow_pl(d, f, k, l, p, n), node(d, n, _, s, _),
+    s = min y : { spt_flow_pl(d, f, k, l, p, m), node(d, m, _, y, _) }.
+
+// ---- the final query --------------------------------------------------------------------------------------------
+// flow rows: transitive_sinks joined to the kind/code table, each code's condition (`o != f`: a propagated row).
+.decl spt_flow_fhit(d: number, f: node, code: symbol, n: node)
+spt_flow_fhit(d, f, "SPT-003", n) :- spt_flow_ts(d, f, "eager_sql", n, o), o != f, spt_flow_planning(f), !spt_flow_preprocess(f).
+spt_flow_fhit(d, f, "SPT-011", n) :- spt_flow_ts(d, f, "eager_sql", n, o), o != f, spt_flow_preprocess(f).
+spt_flow_fhit(d, f, "SPT-019", n) :- spt_flow_ts(d, f, "eager_sql", n, o), o != f, spt_flow_provider_helper(f).
+spt_flow_fhit(d, f, "SPT-020", n) :- spt_flow_ts(d, f, "ctx_access", n, o), o != f, spt_flow_planning(f).
+spt_flow_fhit(d, f, "SPT-020", n) :- spt_flow_ts(d, f, "ctx_access", n, o), o != f, spt_flow_ctx_helper(f).
+spt_flow_fhit(d, f, "SPT-002", n) :- spt_flow_ts(d, f, "large_column", n, o), o != f, spt_flow_planning(f).
+spt_flow_fhit(d, f, "SPT-010", n) :- spt_flow_ts(d, f, "resolved_refs", n, o), o != f, spt_flow_planning(f).
+spt_flow_fhit(d, f, "SPT-005", n) :- spt_flow_ts(d, f, "nested_execute", n, o), o != f, spt_flow_planning(f).
+spt_flow_fhit(d, f, "SPT-012", n) :- spt_flow_ts(d, f, "materialized_pipeline", n, o), o != f, spt_flow_planning(f).
+spt_flow_fhit(d, f, "SPT-022", n) :- spt_flow_ts(d, f, "runtime_authority", n, _), spt_flow_planning(f).
+spt_flow_fhit(d, f, "SPT-024", n) :- spt_flow_ts(d, f, "runtime_value", n, o), spt_flow_planning(f), spt_flow_ctx(d, o, _, _, x),
+    !spt_flow_n_postproc(x), !spt_flow_postop_refs_name(x).
+spt_flow_fhit(d, f, "SPT-021", n) :- spt_flow_ts(d, f, "provider_authority", n, _), spt_flow_planning(f).
+spt_flow_fhit(d, f, "SPT-026", n) :- spt_flow_ts(d, f, "runtime_callback", n, _), spt_flow_planning(f).
+spt_flow_fhit(d, f, "SPT-028", n) :- spt_flow_ts(d, f, "runtime_semantic_projection", n, _), spt_flow_planning(f).
+spt_flow_fhit(d, f, "SPT-028", n) :- spt_flow_ts(d, f, "runtime_sequence_projection", n, f), !spt_flow_planning(f), spt_flow_materializer(f).
+spt_flow_fhit(d, f, "SPT-027", n) :- spt_flow_ts(d, f, "native_python_work", n, f), spt_flow_l2070(d).
+.decl spt_flow_postop_refs_name(x: symbol)
+spt_flow_postop_refs_name(x) :- spt_flow_ctx(_, _, _, _, x), suffix("_post_op_with_refs", x).
+// signed_exceptions (the all + oracleAnalyzer false branch only): `code::Class.name::path`, or `code::name::path`.
+.decl spt_flow_qual(f: node, q: symbol)
+spt_flow_qual(f, q) :- spt_flow_ctx(_, f, _, _, x), spt_flow_ctx_cls(f, cn), q = cat(cat(cn, "."), x).
+spt_flow_qual(f, x) :- spt_flow_ctx(_, f, _, _, x), !spt_flow_ctx_incls(f).
+.decl spt_flow_exempt(d: number, f: node, code: symbol)
+spt_flow_exempt(d, f, code) :- spt_flow_signed_on(1), spt_flow_fhit(d, f, code, _), spt_flow_qual(f, q), doc(d, p, _), spt_flow_signed(code, q, p).
+.decl spt_flow_hit(d: number, code: symbol, n: node)
+spt_flow_hit(d, code, n) :- spt_flow_fhit(d, f, code, n), !spt_flow_exempt(d, f, code).
+// direct-flow SPT-020: a getattr/get call reaching ctx.txn / ctx.sql_connection in a planning or ctx-helper function.
+spt_flow_hit(d, "SPT-020", n) :- spt_flow_sattr(d, f, n, "call", "context", a), (a = "txn" ; a = "sql_connection"), !spt_tests_path(d),
+    spt_flow_planning(f).
+spt_flow_hit(d, "SPT-020", n) :- spt_flow_sattr(d, f, n, "call", "context", a), (a = "txn" ; a = "sql_connection"), !spt_tests_path(d),
+    spt_flow_ctx_helper(f).
+// direct-flow SPT-012.
+spt_flow_hit(d, "SPT-012", n) :- spt_flow_sattr(d, f, n, "call", "context", "materialized_pipeline"), spt_flow_planning(f).
+// direct-flow SPT-023: convert_row_to_model inside a function nested in a context whose callback parameter it declares.
+spt_flow_hit(d, "SPT-023", n) :- spt_flow_call(d, n, _, _), spt_flow_callee(n, "convert_row_to_model"), !spt_tests_path(d), node(d, n, _, ns, ne),
+    spt_flow_fn(d, nf, fs, fe, _), fs <= ns, fe >= ne, spt_flow_param(d, nf, _, x), spt_flow_cbparam(d, of, x, _, _), spt_flow_ctx(d, of, os, oe, _),
+    fs > os, fe <= oe.
+// project-builder SPT-028 (scan_project_sources).
+spt_flow_hit(d, "SPT-028", n) :- spt_flow_sps(1), spt_flow_planning(f), spt_flow_ps(d, f, "builder", n), !spt_flow_pk_sink(d, f, "semantic").
+.decl spt_flow_pk_sink(d: number, f: node, k: symbol)
+spt_flow_pk_sink(d, f, k) :- spt_flow_ps(d, f, k, _).
+
+violation("data-layer-serverplan-state-tripwires", "state-flow-narrow", code, p, l) :- spt_flow_hit(d, code, n), spt_doc(d, p), line(n, l).

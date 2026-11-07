@@ -1,0 +1,459 @@
+// data-layer-legacy-execution-surfaces: every clause the converter cannot say, by hand (decision 0043).
+// Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-legacy-execution-surfaces.json.
+// Clauses: raw-cursor-* (6), inventory-*.py (3), removed-read-leaves, eager-plan, eager-txn, graph-fallback-none,
+// legacy-execution-graphs.
+//
+// Options, from the converter's facts (`option_on`, `option_value`):
+// - entryPoint: every ast clause (and every relational input) starts with `$option entryPoint`: `all` and
+//   `scan_file_content` give `filePath (?s).*` (holds), anything else `\b\B` (never): `les_entry(0)`.
+// - oracleAnalyzer: true makes the file.path patterns `\b\B`, and the module-text `inside` `filePath (?s).*`.
+//
+// Not started from native/src/code_rule_dsl/logic/programs/data_layer/legacy_execution_surfaces.rr: that program is
+// over the older candidates/rules policy and embeds W's matchers (`ast(d, n, {…})`) and t17's builtins; this file
+// says each matcher in base relations.
+//
+// Semantics followed (native/src/code_rule_dsl/matcher/relation.rs):
+// - `has` stopBy neighbor: a direct child; with `field`: that field's child.
+// - `has` with a stop rule: descendants in pre-order; a descendant the stop rule matches is still tested, its
+//   subtree is not entered (`descend_until`). The walk goes through `child` (named children less comments): an
+//   anonymous token or a comment has no named children and matches none of the inner rules (identifiers, calls),
+//   so leaving them out changes nothing.
+// - `nthChild: 2` (matcher/nth_child.rs): the second of the parent's named children, comments included (tree-sitter
+//   names them; `child` leaves them out): `child(a, x, j)` with j plus the comments of `a` before x equal to 1. A
+//   comment is a token of `a` whose text starts with `#` (no other Python token does).
+
+// `match(re, s)` is Soufflé's: the whole string matches. W's `regex` searches, so each W pattern P is written
+// `(?s:.*)(?:P)(?s:.*)` (P's own `^`/`$` still anchor at the string's ends).
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.input node_text
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// entryPoint `all` or `scan_file_content` (one unit row).
+.decl les_entry(u: number)
+les_entry(0) :- option_value("entryPoint", "all").
+les_entry(0) :- option_value("entryPoint", "scan_file_content").
+
+// ---- the receiver walk shared by the receiver tests (raw-cursor-*, eager-*, graph-fallback-none) ----
+// The stop rule: `not any [attribute, call, subscript, parenthesized_expression]` or `inside subscript` (neighbor,
+// field subscript). `les_open(c)`: c is none of these stop nodes, so the walk enters it.
+.decl les_open_kind(kind: symbol)
+les_open_kind("attribute").
+les_open_kind("call").
+les_open_kind("subscript").
+les_open_kind("parenthesized_expression").
+.decl les_index(c: node)
+les_index(c) :- node(_, p, "subscript", _, _), field(p, "subscript", c).
+.decl les_open(c: node)
+les_open(c) :- node(_, c, k, _, _), les_open_kind(k), !les_index(c).
+// A walk's roots: the receivers tested (objects of the calls the clauses read, and cast's second arguments).
+.decl les_root(r: node)
+les_root(o) :- raw_cursor_target(_, o).
+les_root(x) :- les_cast_arg(_, x).
+// les_walk(r, c): c is a descendant of root r the stop-rule `has` visits.
+.decl les_walk(r: node, c: node)
+les_walk(r, c) :- les_root(r), child(r, c, _).
+les_walk(r, c2) :- les_walk(r, c), les_open(c), child(c, c2, _).
+// `call` whose function (neighbor, field function) is the identifier `cast`, and x the second named child of its
+// arguments, comments counted (`has field arguments` → `has neighbor` → `nthChild 2`).
+.decl les_cast_args(c: node, a: node)
+les_cast_args(c, a) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "cast"),
+    field(c, "arguments", a).
+.decl les_cast_comment(a: node, s: number)
+les_cast_comment(a, s) :- les_cast_args(_, a), token(a, _, t, s, _), prefix("#", t).
+.decl les_cast_arg(c: node, x: node)
+les_cast_arg(c, x) :- les_cast_args(c, a), child(a, x, j), j <= 1, node(_, x, _, xs, _),
+    k = count : { les_cast_comment(a, s), s < xs }, j + k = 1.
+
+// ==== raw-cursor-* (LEG-050) ====
+// call → has(field function) attribute → has(field attribute) identifier ^(?:execute|fetchall|fetchone)$,
+// and has(field object) the receiver: any of
+//   the cursor identifier, or one the stop-rule walk reaches;
+//   a cast call whose second argument is (or reaches) the cursor identifier;
+//   such a cast call the stop-rule walk reaches.
+.decl raw_cursor_target(n: node, o: node)
+raw_cursor_target(n, o) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "execute" ; s = "fetchall" ; s = "fetchone"),
+    field(f, "object", o).
+.decl raw_cursor_name(x: node)
+raw_cursor_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s:.*)(?:(?i)cursor|^(?:db|conn|connection|raw_conn|raw_connection)$)(?s:.*)", s).
+.decl raw_cursor_leaf(x: node)
+raw_cursor_leaf(x) :- les_root(x), raw_cursor_name(x).
+raw_cursor_leaf(x) :- les_walk(x, c), raw_cursor_name(c).
+.decl raw_cursor_cast(c: node)
+raw_cursor_cast(c) :- les_cast_arg(c, x), raw_cursor_leaf(x).
+.decl raw_cursor_recv(o: node)
+raw_cursor_recv(o) :- raw_cursor_target(_, o), raw_cursor_leaf(o).
+raw_cursor_recv(o) :- raw_cursor_target(_, o), raw_cursor_cast(o).
+raw_cursor_recv(o) :- raw_cursor_target(_, o), les_walk(o, c), raw_cursor_cast(c).
+// The call, in a valid file of the policy's scope, at its line; each clause adds its filePath.
+.decl raw_cursor_hit(d: number, p: symbol, l: number)
+raw_cursor_hit(d, p, l) :- les_entry(0), raw_cursor_target(n, o), raw_cursor_recv(o), node(d, n, _, _, _), in_scope(d), !syntax_error(d),
+    !out_scope(d), doc(d, p, _), line(n, l).
+
+violation("data-layer-legacy-execution-surfaces", "raw-cursor-impl/mariadb/fts", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
+    match("(?s:.*)(?:^(?:api/)?impl/mariadb/fts(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/mariadb/fts/fts_manager\\.py)$)(?s:.*)", p).
+violation("data-layer-legacy-execution-surfaces", "raw-cursor-impl/postgres/fts", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
+    match("(?s:.*)(?:^(?:api/)?impl/postgres/fts(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/postgres/fts/fts_manager\\.py)$)(?s:.*)", p).
+violation("data-layer-legacy-execution-surfaces", "raw-cursor-impl/sqlite/fts", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
+    match("(?s:.*)(?:^(?:api/)?impl/sqlite/fts(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/sqlite/fts/fts_manager\\.py)$)(?s:.*)", p).
+violation("data-layer-legacy-execution-surfaces", "raw-cursor-l4000_permissions", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
+    match("(?s:.*)(?:^(?:api/)?l4000_permissions(?:/|$))(?s:.*)", p).
+violation("data-layer-legacy-execution-surfaces", "raw-cursor-l5200_vector_index", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
+    match("(?s:.*)(?:^(?:api/)?l5200_vector_index(?:/|$))(?s:.*)", p),
+    !match("(?s:.*)(?:^(?:api/)?(?:l5200_vector_index/index_implementations/pgvector\\.py|l5200_vector_index/vector_capabilities\\.py)$)(?s:.*)", p).
+violation("data-layer-legacy-execution-surfaces", "raw-cursor-l8000_admin/tools", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
+    match("(?s:.*)(?:^(?:api/)?l8000_admin/tools(?:/|$))(?s:.*)", p),
+    !match("(?s:.*)(?:^(?:api/)?(?:l8000_admin/tools/backup_tools\\.py|l8000_admin/tools/docs_search/fts_index\\.py|l8000_admin/tools/logging_tools\\.py)$)(?s:.*)", p).
+
+// ==== file.path regex forbids (LEG-001, LEG-070): oracleAnalyzer true makes each pattern \b\B (never) ====
+// W (workspace/evaluate.rs) runs a file.path regex on every file of the scope, parsed or not (no syntax gate), its
+// `paths` filter first; the witness is the match's span within the path, line 1. `paths.include` `**/*` holds for
+// every path; the excludes are literal paths.
+.decl inventory_file(d: number, p: symbol)
+inventory_file(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !option_on("oracleAnalyzer").
+
+violation("data-layer-legacy-execution-surfaces", "inventory-export_cursor.py", "LEG-001", p, 1) :- inventory_file(_, p),
+    match("(?s:.*)(?:(?:^|/)export_cursor\\.py$)(?s:.*)", p),
+    !(p = "impl/doltdb/export_cursor.py" ; p = "impl/mariadb/export_cursor.py" ; p = "impl/mongodb/export_cursor.py" ;
+      p = "impl/neo4j/export_cursor.py" ; p = "impl/postgres/export_cursor.py" ; p = "impl/sqlite/export_cursor.py" ;
+      p = "l3500_bulk_ops/export_cursor.py").
+violation("data-layer-legacy-execution-surfaces", "inventory-fts_searcher.py", "LEG-001", p, 1) :- inventory_file(_, p),
+    match("(?s:.*)(?:(?:^|/)fts_searcher\\.py$)(?s:.*)", p),
+    !(p = "impl/mariadb/fts/fts_searcher.py" ; p = "impl/mongodb/fts/fts_searcher.py" ; p = "impl/postgres/fts/fts_searcher.py" ;
+      p = "impl/read_through/fts_searcher.py" ; p = "impl/sqlite/fts/fts_searcher.py").
+violation("data-layer-legacy-execution-surfaces", "inventory-legacy_wrappers.py", "LEG-001", p, 1) :- inventory_file(_, p),
+    match("(?s:.*)(?:(?:^|/)legacy_wrappers\\.py$)(?s:.*)", p), p != "l2050_transaction/legacy_wrappers.py".
+// No `paths`: every file.
+violation("data-layer-legacy-execution-surfaces", "removed-read-leaves", "LEG-070", p, 1) :- inventory_file(_, p),
+    match("(?s:.*)(?:^(?:impl/common/l5200_sql_query/_aggregate_query_leaf\\.py|impl/common/l5200_sql_query/_pagination_leaf\\.py|impl/common/l5200_sql_query/_read_query_leaf\\.py)$)(?s:.*)", p).
+
+// ---- `$option oracleAnalyzer`: true, `filePath (?s).*` (every file); false, `inside` (stopBy end) a module whose text W's regex matches ----
+// legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|
+// execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch, over the module's
+// full text (comments and strings included). Every node but the module is inside it, so it is per document.
+.decl les_module_hit(d: number)
+les_module_hit(d) :- doc(d, _, _), option_on("oracleAnalyzer").
+les_module_hit(d) :- node(d, m, "module", _, _), !option_on("oracleAnalyzer"), node_text(m, s),
+    match("(?s:.*)(?:legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch)(?s:.*)", s).
+
+// ---- the legacy decorator (eager-*: not inside such a function; legacy-execution-graphs' legacy_fns) ----
+// function_definition inside (neighbor) decorated_definition that has (neighbor) a decorator that has (neighbor):
+// an identifier of the list, an attribute whose attribute field is one, or a call whose function field is either.
+.decl eager_marker(s: symbol)
+eager_marker("direct_legacy_module_async"). eager_marker("direct_legacy_module_sync"). eager_marker("legacy_async").
+eager_marker("legacy_module_async"). eager_marker("legacy_module_sync"). eager_marker("legacy_sync").
+// The wrapper list (legacy-execution-graphs' wrapper_fns): the same form, four names.
+.decl legacy_execution_graphs_wrapper_marker(s: symbol)
+legacy_execution_graphs_wrapper_marker("legacy_async"). legacy_execution_graphs_wrapper_marker("legacy_module_async").
+legacy_execution_graphs_wrapper_marker("legacy_module_sync"). legacy_execution_graphs_wrapper_marker("legacy_sync").
+// eager_marker_name(x, s): x, a decorator's expression form, names s.
+.decl eager_marker_ref(x: node, s: symbol)
+eager_marker_ref(x, s) :- node(_, x, "identifier", _, _), text(x, s).
+eager_marker_ref(x, s) :- node(_, x, "attribute", _, _), field(x, "attribute", a), node(_, a, "identifier", _, _), text(a, s).
+.decl eager_marker_name(x: node, s: symbol)
+eager_marker_name(x, s) :- eager_marker_ref(x, s).
+eager_marker_name(x, s) :- node(_, x, "call", _, _), field(x, "function", g), eager_marker_ref(g, s).
+.decl eager_decorated(f: node, s: symbol)
+eager_decorated(f, s) :- node(_, f, "function_definition", _, _), child(w, f, _), node(_, w, "decorated_definition", _, _),
+    child(w, dn, _), node(_, dn, "decorator", _, _), child(dn, x, _), eager_marker_name(x, s).
+.decl eager_legacy_fn(f: node)
+eager_legacy_fn(f) :- eager_decorated(f, s), eager_marker(s).
+.decl eager_fdef(kind: symbol)
+eager_fdef("function_definition").
+.decl eager_in_legacy(n: node)
+eager_in_legacy(n) :- eager_target(n, _), inside(n, f, eager_fdef), eager_legacy_fn(f).
+
+// ==== eager-plan (LEG-081), eager-txn (LEG-080) ====
+// call → has(field function) attribute → has(field attribute) the plan-API name, and has(field object) the
+// receiver: eager-plan a plan receiver; eager-txn not a plan receiver and a txn one (the receiver forms as
+// raw-cursor's: the name, the walk, a cast call, a cast call the walk reaches).
+.decl eager_target(n: node, o: node)
+eager_target(n, o) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s),
+    (s = "_execute_impl_async" ; s = "_execute_now" ; s = "delete_by_id" ; s = "delete_by_id_async" ; s = "execute" ;
+     s = "execute_async" ; s = "fetch" ; s = "insert" ; s = "insert_async" ; s = "select" ; s = "select_async" ;
+     s = "select_one" ; s = "select_one_async" ; s = "update" ; s = "update_async"),
+    field(f, "object", o).
+les_root(o) :- eager_target(_, o).
+.decl eager_plan_name(x: node)
+eager_plan_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s:.*)(?:(?i)^(?:plan|read_plan|server_plan|write_plan)$)(?s:.*)", s).
+.decl eager_plan_leaf(x: node)
+eager_plan_leaf(x) :- les_root(x), eager_plan_name(x).
+eager_plan_leaf(x) :- les_walk(x, c), eager_plan_name(c).
+.decl eager_plan_cast(c: node)
+eager_plan_cast(c) :- les_cast_arg(c, x), eager_plan_leaf(x).
+.decl eager_plan_recv(o: node)
+eager_plan_recv(o) :- eager_target(_, o), eager_plan_leaf(o).
+eager_plan_recv(o) :- eager_target(_, o), eager_plan_cast(o).
+eager_plan_recv(o) :- eager_target(_, o), les_walk(o, c), eager_plan_cast(c).
+.decl eager_txn_name(x: node)
+eager_txn_name(x) :- node(_, x, "identifier", _, _), text(x, s),
+    match("(?s:.*)(?:(?i)^(?:lazy_query|lazy_txn|plan_txn|queries|query|read_txn|scope|sql_query|transaction|txn|typed_query|write_txn)$)(?s:.*)", s).
+.decl eager_txn_leaf(x: node)
+eager_txn_leaf(x) :- les_root(x), eager_txn_name(x).
+eager_txn_leaf(x) :- les_walk(x, c), eager_txn_name(c).
+.decl eager_txn_cast(c: node)
+eager_txn_cast(c) :- les_cast_arg(c, x), eager_txn_leaf(x).
+.decl eager_txn_recv(o: node)
+eager_txn_recv(o) :- eager_target(_, o), eager_txn_leaf(o).
+eager_txn_recv(o) :- eager_target(_, o), eager_txn_cast(o).
+eager_txn_recv(o) :- eager_target(_, o), les_walk(o, c), eager_txn_cast(c).
+// filePath ^(?:api/)?(?:impl/|data_layer/|l[0-9]) less (?:^|/)tests/ and the boundary's two modules; not inside a
+// legacy-decorated function; in a module the regex above matches; a valid file of the scope.
+.decl eager_site(n: node, o: node, p: symbol, l: number)
+eager_site(n, o, p, l) :- les_entry(0), eager_target(n, o), !eager_in_legacy(n), node(d, n, _, _, _), les_module_hit(d),
+    in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _),
+    match("(?s:.*)(?:^(?:api/)?(?:impl/|data_layer/|l[0-9]))(?s:.*)", p),
+    !match("(?s:.*)(?:(?:^|/)tests/|^(?:api/)?(?:l2050_transaction/execution_boundary\\.py|l2050_transaction/legacy_wrappers\\.py)$)(?s:.*)", p),
+    line(n, l).
+violation("data-layer-legacy-execution-surfaces", "eager-plan", "LEG-081", p, l) :- eager_site(_, o, p, l), eager_plan_recv(o).
+violation("data-layer-legacy-execution-surfaces", "eager-txn", "LEG-080", p, l) :- eager_site(_, o, p, l), !eager_plan_recv(o),
+    eager_txn_recv(o).
+
+// ==== graph-fallback-none (LEG-060) ====
+// if_statement or elif_clause, filePath l9700_sql_graph_query less sql_graph_query.py, whose condition (neighbor,
+// field condition) is a comparison_operator whose full text matches \bis\s+None$ and has (neighbor) a child, not
+// `none`, that is a mixin receiver (the raw-cursor forms); in a module the regex matches.
+.decl graph_fallback_none_kind(kind: symbol)
+graph_fallback_none_kind("if_statement"). graph_fallback_none_kind("elif_clause").
+.decl graph_fallback_none_operand(t: node, x: node)
+graph_fallback_none_operand(t, x) :- node(_, t, "comparison_operator", _, _), child(t, x, _), !node(_, x, "none", _, _).
+les_root(x) :- graph_fallback_none_operand(_, x).
+.decl graph_fallback_none_name(x: node)
+graph_fallback_none_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s:.*)(?:(?i)^(?:_plan_mixin|mixin|plan_mixin)$)(?s:.*)", s).
+.decl graph_fallback_none_leaf(x: node)
+graph_fallback_none_leaf(x) :- les_root(x), graph_fallback_none_name(x).
+graph_fallback_none_leaf(x) :- les_walk(x, c), graph_fallback_none_name(c).
+.decl graph_fallback_none_cast(c: node)
+graph_fallback_none_cast(c) :- les_cast_arg(c, x), graph_fallback_none_leaf(x).
+.decl graph_fallback_none_recv(x: node)
+graph_fallback_none_recv(x) :- graph_fallback_none_operand(_, x), graph_fallback_none_leaf(x).
+graph_fallback_none_recv(x) :- graph_fallback_none_operand(_, x), graph_fallback_none_cast(x).
+graph_fallback_none_recv(x) :- graph_fallback_none_operand(_, x), les_walk(x, c), graph_fallback_none_cast(c).
+.decl graph_fallback_none_test(t: node)
+graph_fallback_none_test(t) :- graph_fallback_none_operand(t, x), graph_fallback_none_recv(x), node_text(t, s), match("(?s:.*)(?:\\bis\\s+None$)(?s:.*)", s).
+violation("data-layer-legacy-execution-surfaces", "graph-fallback-none", "LEG-060", p, l) :- les_entry(0), node(d, n, k, _, _),
+    graph_fallback_none_kind(k), field(n, "condition", t), graph_fallback_none_test(t), les_module_hit(d),
+    in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _),
+    match("(?s:.*)(?:^(?:api/)?impl/common/l9700_sql_graph_query(?:/|$))(?s:.*)", p),
+    !match("(?s:.*)(?:^(?:api/)?(?:impl/common/l9700_sql_graph_query/sql_graph_query\\.py)$)(?s:.*)", p), line(n, l).
+
+// ==== legacy-execution-graphs (relational; code = the row's issue) ====
+// partitionBy file: every join below is within one document. Each SQL input is a matcher over a valid file of the
+// scope whose module the regex above matches (`legacy_execution_graphs_file`). A row's (__path, __start, __end) is
+// its matched node; ids `start:end` are the node itself. Captures are the capture's full text (`node_text`).
+// The findings: one violation per (path, line, code), the rows' key (issue, identity) left to the set.
+.decl legacy_execution_graphs_file(d: number)
+legacy_execution_graphs_file(d) :- les_entry(0), les_module_hit(d), in_scope(d), !syntax_error(d), !out_scope(d).
+// paths: __path less a leading "api/" (substr over the path string, not over node offsets).
+.decl legacy_execution_graphs_path(d: number, path: symbol)
+legacy_execution_graphs_path(d, q) :- legacy_execution_graphs_file(d), doc(d, p, _), prefix("api/", p), q = substr(p, 4, strlen(p) - 4).
+legacy_execution_graphs_path(d, p) :- legacy_execution_graphs_file(d), doc(d, p, _), !prefix("api/", p).
+// fns, classes: a function_definition / class_definition and its name (field name).
+.decl legacy_execution_graphs_fn(d: number, f: node, name: symbol)
+legacy_execution_graphs_fn(d, f, s) :- node(d, f, "function_definition", _, _), legacy_execution_graphs_file(d), field(f, "name", x), node_text(x, s).
+.decl legacy_execution_graphs_class(c: node, name: symbol)
+legacy_execution_graphs_class(c, s) :- node(d, c, "class_definition", _, _), legacy_execution_graphs_file(d), field(c, "name", x), node_text(x, s).
+// function_symbols' symbol: the enclosing classes' names (c.__start < f.__start AND c.__end >= f.__end: the class
+// ancestors), outermost first, each followed by ".", then the name. A recursion up the class chain, bounded by its
+// depth. legacy_execution_graphs_cls_prefix(c, s): s is c's prefix with c's own name.
+.decl legacy_execution_graphs_cdef(kind: symbol)
+legacy_execution_graphs_cdef("class_definition").
+.decl legacy_execution_graphs_fdef(kind: symbol)
+legacy_execution_graphs_fdef("function_definition").
+.decl legacy_execution_graphs_cls_prefix(c: node, s: symbol)
+legacy_execution_graphs_cls_prefix(c, s) :- legacy_execution_graphs_class(c, nm), !nearest(c, _, legacy_execution_graphs_cdef), s = cat(nm, ".").
+legacy_execution_graphs_cls_prefix(c, s) :- legacy_execution_graphs_class(c, nm), nearest(c, c2, legacy_execution_graphs_cdef),
+    legacy_execution_graphs_cls_prefix(c2, s2), s = cat(s2, cat(nm, ".")).
+// fn_prefix(f, s): s is the symbol's class part ("" with none).
+.decl legacy_execution_graphs_fn_prefix(f: node, s: symbol)
+legacy_execution_graphs_fn_prefix(f, s) :- legacy_execution_graphs_fn(_, f, _), nearest(f, c, legacy_execution_graphs_cdef), legacy_execution_graphs_cls_prefix(c, s).
+legacy_execution_graphs_fn_prefix(f, "") :- legacy_execution_graphs_fn(_, f, _), !nearest(f, _, legacy_execution_graphs_cdef).
+.decl legacy_execution_graphs_symbol(d: number, f: node, name: symbol, symbol: symbol)
+legacy_execution_graphs_symbol(d, f, nm, sym) :- legacy_execution_graphs_fn(d, f, nm), legacy_execution_graphs_fn_prefix(f, pre), sym = cat(pre, nm).
+// legacy_fns, wrapper_fns: the decorator lists.
+.decl legacy_execution_graphs_legacy(f: node)
+legacy_execution_graphs_legacy(f) :- legacy_execution_graphs_fn(_, f, _), eager_legacy_fn(f).
+.decl legacy_execution_graphs_wrapper(f: node)
+legacy_execution_graphs_wrapper(f) :- legacy_execution_graphs_fn(_, f, _), eager_decorated(f, s), legacy_execution_graphs_wrapper_marker(s).
+// active_functions: per (file, symbol) the definition with the greatest start.
+.decl legacy_execution_graphs_sym_start(d: number, sym: symbol, s: number)
+legacy_execution_graphs_sym_start(d, sym, s) :- legacy_execution_graphs_symbol(d, f, _, sym), node(_, f, _, s, _).
+.decl legacy_execution_graphs_sym_last(d: number, sym: symbol, s: number)
+legacy_execution_graphs_sym_last(d, sym, s) :- legacy_execution_graphs_sym_start(d, sym, _), s = max t : { legacy_execution_graphs_sym_start(d, sym, t) }.
+.decl legacy_execution_graphs_active(d: number, f: node, name: symbol, sym: symbol)
+legacy_execution_graphs_active(d, f, nm, sym) :- legacy_execution_graphs_symbol(d, f, nm, sym), node(_, f, _, s, _), legacy_execution_graphs_sym_last(d, sym, s).
+.decl legacy_execution_graphs_active_live(d: number, f: node, name: symbol, sym: symbol)
+legacy_execution_graphs_active_live(d, f, nm, sym) :- legacy_execution_graphs_active(d, f, nm, sym), !legacy_execution_graphs_legacy(f).
+// calls: (call, kind, callee, full_callee); ident_calls, attr_calls, other_calls.
+.decl legacy_execution_graphs_call(d: number, c: node, kind: symbol, callee: symbol, full: symbol)
+legacy_execution_graphs_call(d, c, "identifier", s, s) :- node(d, c, "call", _, _), legacy_execution_graphs_file(d), field(c, "function", f),
+    node(_, f, "identifier", _, _), node_text(f, s).
+legacy_execution_graphs_call(d, c, "attribute", a, full) :- node(d, c, "call", _, _), legacy_execution_graphs_file(d), field(c, "function", f),
+    node(_, f, "attribute", _, _), node_text(f, full), field(f, "attribute", x), node_text(x, a), field(f, "object", o), node(_, o, _, _, _).
+legacy_execution_graphs_call(d, c, "other", full, full) :- node(d, c, "call", _, _), legacy_execution_graphs_file(d), field(c, "function", f),
+    node(_, f, k, _, _), k != "identifier", k != "attribute", node_text(f, full).
+// attr_calls' object_text, read only as IN ('self', 'cls').
+.decl legacy_execution_graphs_self_call(c: node)
+legacy_execution_graphs_self_call(c) :- legacy_execution_graphs_call(_, c, "attribute", _, _), field(c, "function", f), field(f, "object", o),
+    node_text(o, t), (t = "self" ; t = "cls").
+// owned_calls' fn: the function_definition with the greatest start strictly enclosing the call: its nearest one.
+.decl legacy_execution_graphs_owned(c: node, f: node)
+legacy_execution_graphs_owned(c, f) :- legacy_execution_graphs_call(_, c, _, _, _), nearest(c, f, legacy_execution_graphs_fdef).
+// valid_boundary: a wrapper function, or a function calling run_in_legacy_execution_boundary(_async) with a
+// function of the file named `<name less _async>_lazy` (or `<name>_lazy`).
+.decl legacy_execution_graphs_runner(s: symbol)
+legacy_execution_graphs_runner("run_in_legacy_execution_boundary"). legacy_execution_graphs_runner("run_in_legacy_execution_boundary_async").
+.decl legacy_execution_graphs_lazy_name(f: node, lazy: symbol)
+legacy_execution_graphs_lazy_name(f, z) :- legacy_execution_graphs_fn(_, f, nm), suffix("_async", nm), z = cat(substr(nm, 0, strlen(nm) - 6), "_lazy").
+legacy_execution_graphs_lazy_name(f, z) :- legacy_execution_graphs_fn(_, f, nm), !suffix("_async", nm), z = cat(nm, "_lazy").
+.decl legacy_execution_graphs_valid(d: number)
+legacy_execution_graphs_valid(d) :- legacy_execution_graphs_fn(d, f, _), legacy_execution_graphs_wrapper(f).
+legacy_execution_graphs_valid(d) :- legacy_execution_graphs_fn(d, f, _), legacy_execution_graphs_owned(c, f),
+    legacy_execution_graphs_call(_, c, "identifier", q, _), legacy_execution_graphs_runner(q),
+    legacy_execution_graphs_lazy_name(f, z), legacy_execution_graphs_fn(d, _, z).
+// from_imports (one row per IMPORTED): the statement, its module_name's text, the imported name, its alias. The
+// IMPORTED is a direct child that is a dotted_name (itself) or an aliased_import (its name, its alias), not the
+// statement's module_name.
+.decl legacy_execution_graphs_from(d: number, i: node, module: symbol, name: symbol, x: node)
+legacy_execution_graphs_from(d, i, m, nm, x) :- node(d, i, "import_from_statement", _, _), legacy_execution_graphs_file(d),
+    field(i, "module_name", mn), node_text(mn, m), child(i, x, _), x != mn, node(_, x, "dotted_name", _, _), node_text(x, nm).
+legacy_execution_graphs_from(d, i, m, nm, x) :- node(d, i, "import_from_statement", _, _), legacy_execution_graphs_file(d),
+    field(i, "module_name", mn), node_text(mn, m), child(i, x, _), x != mn, node(_, x, "aliased_import", _, _),
+    field(x, "name", y), node_text(y, nm).
+.decl legacy_execution_graphs_alias(x: node, alias: symbol)
+legacy_execution_graphs_alias(x, a) :- legacy_execution_graphs_from(_, _, _, _, x), node(_, x, "aliased_import", _, _), field(x, "alias", y), node_text(y, a).
+// direct_imports: an import_statement's dotted_name or aliased_import name.
+.decl legacy_execution_graphs_direct(d: number, i: node, name: symbol)
+legacy_execution_graphs_direct(d, i, nm) :- node(d, i, "import_statement", _, _), legacy_execution_graphs_file(d), child(i, x, _),
+    node(_, x, "dotted_name", _, _), node_text(x, nm).
+legacy_execution_graphs_direct(d, i, nm) :- node(d, i, "import_statement", _, _), legacy_execution_graphs_file(d), child(i, x, _),
+    node(_, x, "aliased_import", _, _), field(x, "name", y), node_text(y, nm).
+// raw_boundaries' local name: coalesce(alias, name), name being legacy_execution_boundary.
+.decl legacy_execution_graphs_boundary(d: number, i: node, local: symbol)
+legacy_execution_graphs_boundary(d, i, a) :- legacy_execution_graphs_from(d, i, m, "legacy_execution_boundary", x),
+    (m = "l2050_transaction.execution_boundary" ; m = "l2000_connection.execution_boundary"), legacy_execution_graphs_alias(x, a).
+legacy_execution_graphs_boundary(d, i, "legacy_execution_boundary") :- legacy_execution_graphs_from(d, i, m, "legacy_execution_boundary", x),
+    (m = "l2050_transaction.execution_boundary" ; m = "l2000_connection.execution_boundary"), !legacy_execution_graphs_alias(x, _).
+
+// eager_seeds: an active, non-legacy function's own attribute call of resolve / resolve_async.
+.decl legacy_execution_graphs_seed(f: node, c: node)
+legacy_execution_graphs_seed(f, c) :- legacy_execution_graphs_active_live(_, f, _, _), legacy_execution_graphs_owned(c, f),
+    legacy_execution_graphs_call(_, c, "attribute", q, _), (q = "resolve" ; q = "resolve_async").
+.decl legacy_execution_graphs_seed_fn(f: node)
+legacy_execution_graphs_seed_fn(f) :- legacy_execution_graphs_seed(f, _).
+// call_candidates: the callee (less the excluded names), and for self./cls. calls the class part and the callee.
+.decl legacy_execution_graphs_cand(d: number, f: node, c: node, q: symbol)
+legacy_execution_graphs_cand(d, f, c, q) :- legacy_execution_graphs_active_live(d, f, _, _), legacy_execution_graphs_owned(c, f),
+    legacy_execution_graphs_call(_, c, _, q, _),
+    !(q = "resolve" ; q = "resolve_async" ; q = "_legacy_delegate_stub" ; q = "legacy_execution_boundary" ;
+      q = "run_in_legacy_execution_boundary" ; q = "run_in_legacy_execution_boundary_async").
+// substr(symbol, 1, length(symbol) - length(name)) is the class part, non-empty where instr(symbol, '.') > 0.
+legacy_execution_graphs_cand(d, f, c, q) :- legacy_execution_graphs_active_live(d, f, _, _), legacy_execution_graphs_fn_prefix(f, pre), pre != "",
+    legacy_execution_graphs_owned(c, f), legacy_execution_graphs_call(_, c, "attribute", a, _), legacy_execution_graphs_self_call(c),
+    !(a = "resolve" ; a = "resolve_async"), q = cat(pre, a).
+// resolved_calls: the candidate names (name or symbol) exactly one active function of the file, not the caller.
+.decl legacy_execution_graphs_cand_match(f: node, c: node, q: symbol, g: node)
+legacy_execution_graphs_cand_match(f, c, q, g) :- legacy_execution_graphs_cand(d, f, c, q), legacy_execution_graphs_active(d, g, q, _).
+legacy_execution_graphs_cand_match(f, c, q, g) :- legacy_execution_graphs_cand(d, f, c, q), legacy_execution_graphs_active(d, g, _, q).
+.decl legacy_execution_graphs_resolved(f: node, c: node, g: node)
+legacy_execution_graphs_resolved(f, c, g) :- legacy_execution_graphs_cand_match(f, c, q, g),
+    k = count : { legacy_execution_graphs_cand_match(f, c, q, _) }, k = 1, g != f.
+// eager_reach: from the seeds, callee to active non-legacy caller (a recursion over a finite relation).
+.decl legacy_execution_graphs_reach(f: node)
+legacy_execution_graphs_reach(f) :- legacy_execution_graphs_seed_fn(f).
+legacy_execution_graphs_reach(c) :- legacy_execution_graphs_reach(g), legacy_execution_graphs_resolved(c, _, g), legacy_execution_graphs_active_live(_, c, _, _).
+// eager_anchors: per function its first anchor by (start, end descending); seeds first, else resolved calls into
+// the reach of functions that are not seeds. Anchors of one function have distinct spans (no exact ties).
+.decl legacy_execution_graphs_anchor_cand(b: number, f: node, c: node)
+legacy_execution_graphs_anchor_cand(0, f, c) :- legacy_execution_graphs_seed(f, c).
+legacy_execution_graphs_anchor_cand(1, f, c) :- legacy_execution_graphs_resolved(f, c, g), legacy_execution_graphs_reach(g), !legacy_execution_graphs_seed_fn(f).
+.decl legacy_execution_graphs_anchor_start(b: number, f: node, s: number)
+legacy_execution_graphs_anchor_start(b, f, s) :- legacy_execution_graphs_anchor_cand(b, f, _),
+    s = min t : { legacy_execution_graphs_anchor_cand(b, f, x), node(_, x, _, t, _) }.
+.decl legacy_execution_graphs_anchor_end(b: number, f: node, e: number)
+legacy_execution_graphs_anchor_end(b, f, e) :- legacy_execution_graphs_anchor_start(b, f, s),
+    e = max t : { legacy_execution_graphs_anchor_cand(b, f, x), node(_, x, _, s, t) }.
+.decl legacy_execution_graphs_anchor(f: node, c: node)
+legacy_execution_graphs_anchor(f, c) :- legacy_execution_graphs_anchor_start(b, f, s), legacy_execution_graphs_anchor_end(b, f, e),
+    legacy_execution_graphs_anchor_cand(b, f, c), node(_, c, _, s, e).
+
+// The LEG-08x files: (stripped) path ^(?:impl/|data_layer/|l[0-9]), not (?:^|/)tests/, not the boundary's modules.
+.decl legacy_execution_graphs_l08(d: number, q: symbol)
+legacy_execution_graphs_l08(d, q) :- legacy_execution_graphs_path(d, q), match("(?s:.*)(?:^(?:impl/|data_layer/|l[0-9]))(?s:.*)", q), !match("(?s:.*)(?:(?:^|/)tests/)(?s:.*)", q),
+    q != "l2050_transaction/execution_boundary.py", q != "l2050_transaction/legacy_wrappers.py".
+// The LEG-010 allowlist.
+.decl legacy_execution_graphs_l010_allowed(q: symbol)
+legacy_execution_graphs_l010_allowed("impl/common/l7245_versioned_backends/generic_sparse.py").
+legacy_execution_graphs_l010_allowed("impl/common/l9700_sql_graph_query/sql_graph_query.py").
+legacy_execution_graphs_l010_allowed("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py").
+legacy_execution_graphs_l010_allowed("l2050_transaction/tests/test_legacy_wrapper_delegation.py").
+legacy_execution_graphs_l010_allowed("l2050_transaction/transaction.py").
+legacy_execution_graphs_l010_allowed("l2080_lazy_orm/lazy_table.py").
+legacy_execution_graphs_l010_allowed("l2090_response/pagination.py").
+legacy_execution_graphs_l010_allowed("l4170_inbound_bridge/process.py").
+legacy_execution_graphs_l010_allowed("l5200_vector_index/index_implementations/pgvector.py").
+legacy_execution_graphs_l010_allowed("l5200_vector_index/index_implementations/sql_table_hnsw.py").
+legacy_execution_graphs_l010_allowed("l5200_vector_index/similarity.py").
+legacy_execution_graphs_l010_allowed("l7200_versioned_transactions/versioned_transactions.py").
+legacy_execution_graphs_l010_allowed("l8000_admin/tools/_versioning_helpers.py").
+legacy_execution_graphs_l010_allowed("scripts/reapply_legacy_wrappers.py").
+.decl legacy_execution_graphs_wrappers_module(m: symbol)
+legacy_execution_graphs_wrappers_module("api.l2050_transaction.legacy_wrappers"). legacy_execution_graphs_wrappers_module("l2050_transaction.legacy_wrappers").
+
+// LEG-021: a call of _legacy_delegate_stub outside the three files, unless the file has a valid boundary and the
+// call's function is a wrapper calling nothing but the stub (by full_callee).
+.decl legacy_execution_graphs_calls_other(f: node)
+legacy_execution_graphs_calls_other(f) :- legacy_execution_graphs_owned(c, f), legacy_execution_graphs_call(_, c, _, _, full), full != "_legacy_delegate_stub".
+.decl legacy_execution_graphs_stub_ok(c: node)
+legacy_execution_graphs_stub_ok(c) :- legacy_execution_graphs_call(d, c, _, _, _), legacy_execution_graphs_valid(d), legacy_execution_graphs_owned(c, f),
+    legacy_execution_graphs_wrapper(f), !legacy_execution_graphs_calls_other(f).
+violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-021", p, l) :-
+    legacy_execution_graphs_call(d, n, "identifier", "_legacy_delegate_stub", _), legacy_execution_graphs_path(d, q),
+    !(q = "impl/common/l7245_versioned_backends/generic_sparse.py" ; q = "l2050_transaction/transaction.py" ;
+      q = "l7200_versioned_transactions/versioned_transactions.py"),
+    !legacy_execution_graphs_stub_ok(n), doc(d, p, _), line(n, l).
+// LEG-083: an eager anchor of an active non-legacy function, in a LEG-08x file, path:symbol not allowlisted.
+violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-083", p, l) :- legacy_execution_graphs_anchor(f, n),
+    legacy_execution_graphs_active_live(d, f, _, sym), legacy_execution_graphs_l08(d, q), key = cat(q, cat(":", sym)),
+    !(key = "l8000_admin/tools/sql_execution.py:execute_sql_command" ; key = "l8000_admin/tools/sql_execution.py:execute_sql_query" ;
+      key = "l8000_admin/tools/sql_execution.py:explain_query"),
+    doc(d, p, _), line(n, l).
+// LEG-085: an identifier call of legacy_execution_boundary, or of a raw boundary's local name imported before it.
+violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-085", p, l) :-
+    legacy_execution_graphs_call(d, n, "identifier", "legacy_execution_boundary", _), legacy_execution_graphs_l08(d, _), doc(d, p, _), line(n, l).
+violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-085", p, l) :-
+    legacy_execution_graphs_call(d, n, "identifier", q, _), legacy_execution_graphs_l08(d, _), legacy_execution_graphs_boundary(d, i, q),
+    node(_, i, _, si, _), node(_, n, _, sn, _), si < sn, doc(d, p, _), line(n, l).
+// LEG-010, from-imports: of the wrappers module (or `from l2050_transaction import legacy_wrappers`), outside the
+// allowlist and files with a valid boundary; in a tests/ path only where the file imports something of the
+// wrappers module besides validate_legacy_delegates.
+.decl legacy_execution_graphs_wrappers_from(i: node)
+legacy_execution_graphs_wrappers_from(i) :- legacy_execution_graphs_from(_, i, m, _, _), legacy_execution_graphs_wrappers_module(m).
+legacy_execution_graphs_wrappers_from(i) :- legacy_execution_graphs_from(_, i, "l2050_transaction", "legacy_wrappers", _).
+.decl legacy_execution_graphs_wrappers_user(d: number)
+legacy_execution_graphs_wrappers_user(d) :- legacy_execution_graphs_from(d, _, m, nm, _), legacy_execution_graphs_wrappers_module(m), nm != "validate_legacy_delegates".
+.decl legacy_execution_graphs_l010_file(d: number, q: symbol)
+legacy_execution_graphs_l010_file(d, q) :- legacy_execution_graphs_path(d, q), !legacy_execution_graphs_l010_allowed(q), !legacy_execution_graphs_valid(d).
+violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-010", p, l) :- legacy_execution_graphs_wrappers_from(n),
+    node(d, n, _, _, _), legacy_execution_graphs_l010_file(d, q), !match("(?s:.*)(?:(?:^|/)tests/)(?s:.*)", q), doc(d, p, _), line(n, l).
+violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-010", p, l) :- legacy_execution_graphs_wrappers_from(n),
+    node(d, n, _, _, _), legacy_execution_graphs_l010_file(d, q), match("(?s:.*)(?:(?:^|/)tests/)(?s:.*)", q), legacy_execution_graphs_wrappers_user(d),
+    doc(d, p, _), line(n, l).
+// LEG-010, direct imports of the wrappers module.
+violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-010", p, l) :- legacy_execution_graphs_direct(d, n, nm),
+    legacy_execution_graphs_wrappers_module(nm), legacy_execution_graphs_l010_file(d, _), doc(d, p, _), line(n, l).
