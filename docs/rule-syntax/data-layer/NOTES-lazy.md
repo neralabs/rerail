@@ -2,7 +2,7 @@
 
 | check | Python lines | .rr lines | rrlab dl (exact / events) | engine reader |
 |---|---|---|---|---|
-| lazy_sql_surface | 446 | 125 | 34 / 34 | lowers |
+| lazy_sql_surface | 446 | 124 | 36 / 36 | lowers |
 | lazy_adapter_ownership | 529 | 168 | 9 / 9 | lowers |
 | lazy_architecture | 3,840 | 484 + 503 library (`lib/data-layer/lazy-analyzer.rr`) + 318 generated table | 197 / 205 for the reach variant (see below); 176 / 205 as written | refuses `dfs_first` and `dfs_first_memo` |
 
@@ -22,8 +22,8 @@ I scored each entry on its own, to stay under the run cap.
 | entry | exact / events | how |
 |---|---|---|
 | `scan_files` | 108 / 113 | reach variant |
-| `scan_files.ast-component` | 40 / 43 | reach variant |
-| `_scan_analyzed_files` | 6 / 6 | reach variant |
+| `scan_files.ast-component` | 40 / 43 | reach variant; the file as written now scores the same |
+| `_scan_analyzed_files` | 6 / 6 | reach variant; the file as written now scores the same |
 | `_scan_deleted_cold_bootstrap_surfaces` | 43 / 43 | LA-018-only variant |
 
 The last entry reports only LA-018, which does not depend on the analysis. Its events hold real 5k–15k-line files,
@@ -45,8 +45,8 @@ The variant's 8 misses:
 
 ## Deliberate differences
 
-- **lazy_sql_surface: the code is the message.** The direct calls return messages only, so the recorded "code" is the
-  message. `LSS(at, c) code {c}` reports the message as the code. The plugin reports every finding as LSS-001.
+- **lazy_sql_surface reports one code, LSS-001, as the plugin does.** The message tells the patterns apart. The
+  direct calls return messages only, and rrlab dl maps their findings to the one closed code.
 - **lazy_adapter_ownership: the source-trigger gate is applied.** It is written `lao_doc`. The plugin applies this
   gate, but the direct `materialize_source_facts` path does not. No scored event depends on the difference.
 - **lazy_architecture follows the suite plugin:**
