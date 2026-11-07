@@ -16,6 +16,17 @@ def module():
 
 
 class MigrationTests(unittest.TestCase):
+    def test_reporter_file_groups_preserve_every_in_file_value_and_order(self):
+        module()
+        from reporting import reporter_file_groups
+        first = dict(path='a.py', line=2, message='second')
+        second = dict(path='a.py', line=1, message='first')
+        other = dict(path='b.py', line=1, message='other')
+        self.assertEqual(reporter_file_groups([other, first, second, second]),
+                         reporter_file_groups([first, second, second, other]))
+        self.assertNotEqual(reporter_file_groups([first, second]), reporter_file_groups([second, first]))
+        self.assertNotEqual(reporter_file_groups([first, second, second]), reporter_file_groups([first, second]))
+
     def test_source_dto_keeps_snippets_tuple_shape_and_duplicates(self):
         m = module()
         from dto import canonical
