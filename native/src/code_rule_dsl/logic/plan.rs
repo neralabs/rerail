@@ -2190,17 +2190,21 @@ impl Run<'_> {
             let rows = st.query_map([], |row| Ok((row.get::<_, SqlValue>(0)?, row.get::<_, Option<String>>(1)?)))?;
             rows.filter_map(|r| r.map(|(v, t)| t.map(|t| (v, t))).transpose()).collect::<rusqlite::Result<_>>()?
         };
-        let hole = if atoms { "sym_atom(?)" } else { "?" };
-        let holes: Vec<&str> = std::iter::once("?").chain(groups.iter().map(|_| hole)).collect();
-        let mut st = self.db.prepare(&format!("INSERT OR IGNORE INTO {rel} VALUES ({})", holes.join(", ")))?;
-        let mut n = 0;
-        for (v, t) in &texts {
-            for row in crate::code_rule_dsl::logic::native::match_all::rows(&re, groups, t) {
-                let params: Vec<SqlValue> = std::iter::once(v.clone()).chain(row.into_iter().map(|g| SqlValue::Text(g.to_owned()))).collect();
-                n += st.execute(rusqlite::params_from_iter(params))?;
-            }
-        }
-        Ok(n)
+        let captures: Vec<_> = texts.iter().flat_map(|(v, t)| {
+            crate::code_rule_dsl::logic::native::match_all::rows(&re, groups, t).into_iter().map(move |row| (v, row))
+        }).collect();
+        let mut ids = if atoms {
+            super::native::intern_batch(self.db, captures.iter().flat_map(|(_, row)| row.iter().copied()))?.into_iter()
+        } else { Vec::new().into_iter() };
+        let rows = captures.into_iter().map(|(v, row)| {
+            std::iter::once(v.clone()).chain(row.into_iter().map(|g| {
+                if atoms { SqlValue::Integer(ids.next().expect("one atom per capture")) }
+                else { SqlValue::Text(g.to_owned()) }
+            })).collect()
+        }).collect();
+        let before = self.db.total_changes();
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;
+        Ok((self.db.total_changes() - before) as usize)
     }
 
     fn refresh(&mut self, r: &str, at_least_one: bool) -> Result<()> {

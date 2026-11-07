@@ -94,6 +94,15 @@ fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
     Ok(s)
 }
 
+/// Intern a whole producer result without SQLite callbacks or a lock held across SQL.
+pub(in crate::code_rule_dsl) fn intern_batch<'a>(conn: &Connection, texts: impl IntoIterator<Item = &'a str>) -> Result<Vec<i64>> {
+    let shared = symbols(conn)?;
+    let mut cursor = Interner::for_loading(&shared);
+    let ids = texts.into_iter().map(|text| cursor.id(text)).collect();
+    cursor.check()?;
+    Ok(ids)
+}
+
 /// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`a.b`) over `conn`'s symbols: the planner's SQL holds symbols
 /// as atoms (decision 0009), and these are the only places it reads or makes their text. NULL gives NULL. Also
 /// registers `atoms` and the store's commit hook on `conn` (decision 0049).
