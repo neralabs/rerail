@@ -83,8 +83,13 @@ impl ContentStore {
         Ok(out)
     }
     pub fn put_source(&self, source: &[u8], aliases: &[HashKey]) -> StoreResult<SourceId> {
+        self.put_source_hashed(source, HashKey::sha256(source), aliases)
+    }
+
+    /// [`Self::put_source`] for a caller that already holds the source's SHA-256 (`canonical`): the bytes are not
+    /// hashed again.
+    pub fn put_source_hashed(&self, source: &[u8], canonical: HashKey, aliases: &[HashKey]) -> StoreResult<SourceId> {
         self.require_write_capacity()?;
-        let canonical = HashKey::sha256(source);
         let frame = compress(source, self.compression_level)?;
         let raw_length = i64::try_from(source.len())
             .map_err(|_| StoreError::Invalid("source length exceeds i64".to_owned()))?;

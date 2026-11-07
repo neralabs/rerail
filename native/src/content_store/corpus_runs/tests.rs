@@ -126,3 +126,23 @@ fn a_new_store_vacuums_incrementally_and_an_old_one_converts() {
     assert!(store.convert_to_incremental_vacuum().unwrap());
     assert_eq!(mode(&store), 2);
 }
+
+#[test]
+fn the_stat_index_trusts_old_unchanged_stats_of_stored_sources() {
+    let (_path, store) = store("corpus-stats");
+    let a = store.put_source(b"a = 1\n", &[]).unwrap();
+    let b = store.put_source(b"b = 2\n", &[]).unwrap();
+    let at = |mtime_ns| FileStat { size: 6, mtime_ns, inode: 7 };
+    let now = 100 * RACY_NS;
+    // `a` last changed long before the recording; `b` within the racy window.
+    store.record_corpus_stats("/repo", &[("a.py".into(), at(now - 3 * RACY_NS), a), ("b.py".into(), at(now - RACY_NS / 2), b)], now).unwrap();
+    let index = store.corpus_stats("/repo").unwrap();
+    assert_eq!(index.source("a.py", at(now - 3 * RACY_NS)), Some(a));
+    assert_eq!(index.source("a.py", at(now)), None, "a changed stat is read again");
+    assert_eq!(index.source("a.py", FileStat { inode: 8, ..at(now - 3 * RACY_NS) }), None, "so is a replaced file");
+    assert_eq!(index.source("b.py", at(now - RACY_NS / 2)), None, "an entry in the racy window is not trusted");
+    assert!(store.corpus_stats("/other").unwrap().is_empty(), "stats are per root");
+    // A later recording of `b` past the window is trusted, and replaces the first.
+    store.record_corpus_stats("/repo", &[("b.py".into(), at(now - RACY_NS / 2), b)], now + 2 * RACY_NS).unwrap();
+    assert_eq!(store.corpus_stats("/repo").unwrap().source("b.py", at(now - RACY_NS / 2)), Some(b));
+}

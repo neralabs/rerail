@@ -663,7 +663,16 @@ pub(crate) fn run_with_options(
     let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
     // A run over the persistent store records which sources it read, its manifest (decision 0051).
     let recording = tapes.is_some() && t.is_none();
-    let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>)> {
+    // The stats the run records are as of its start: an entry is trusted only for a file last changed before then.
+    let started_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i64);
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
+    let stat_index = if memoised || recording {
+        store.corpus_stats(&canonical_root).map_err(|e| Error::Plan(e.to_string()))?
+    } else {
+        crate::content_store::StatIndex::default()
+    };
+    let stat_index = &stat_index;
+    let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, crate::content_store::SourceId)>)> {
     let worker = scope.spawn(|| {
         let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
         let add = |acc: &mut (f64, f64), from: (f64, f64)| {
@@ -679,20 +688,40 @@ pub(crate) fn run_with_options(
         let mut at = docs.iter().peekable();
         let mut t = thread_usage();
         // A file's memo entry when the run is memoised and the memo has it, else its document, built.
-        let build = |d: &i64, path: &String| -> Result<(Option<crate::content_store::SourceId>, std::result::Result<memo::Entry, syntax::Document>)> {
+        let mut stats_read = Vec::new();
+        let mut build = |d: &i64, path: &String| -> Result<(Option<crate::content_store::SourceId>, std::result::Result<memo::Entry, syntax::Document>)> {
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
+            // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
+            // source, and on a memo hit is neither read nor hashed.
+            let stat = if memoised || recording {
+                let _stat = crate::code_rule_dsl::logic::profile::span(|| "stat".into());
+                std::fs::metadata(root.join(path)).ok().map(|m| crate::content_store::FileStat::of(&m))
+            } else {
+                None
+            };
+            let known = stat.and_then(|now| stat_index.source(path, now));
+            if let (true, Some(id)) = (memoised, known) {
+                let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
+                if let Some(entry) = memo::lookup(store, id, path, *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))? {
+                    return Ok((known, Ok(entry)));
+                }
+            }
             let read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
             let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
             drop(read);
             let mut source_id = None;
             if memoised || recording {
+                // Read, the file is hashed whatever the index said: it may have changed since its stat.
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
                 let id = memo::source(store, &source).map_err(|e| Error::Plan(e.to_string()))?;
                 source_id = Some(id);
+                if let Some(stat) = stat.filter(|_| known != Some(id)) {
+                    stats_read.push((path.clone(), stat, id));
+                }
             }
-            if let (true, Some(id)) = (memoised, source_id) {
+            if let (true, Some(id), false) = (memoised, source_id, known == source_id) {
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
                 if let Some(entry) = memo::lookup(store, id, path, *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))? {
                     return Ok((source_id, Ok(entry)));
@@ -701,7 +730,7 @@ pub(crate) fn run_with_options(
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
             let built = match &tapes {
-                Some(cache) => core::build_cached(&file, cache),
+                Some(cache) => core::build_cached_as(&file, cache, source_id),
                 None => core::build(&file),
             };
             let facts = match built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
@@ -759,7 +788,7 @@ pub(crate) fn run_with_options(
             t = thread_usage();
         }
         drop(send);
-        (parse, batch, read_sources)
+        (parse, batch, read_sources, stats_read)
     });
     for built in chunks_in {
         let (chunk_nodes_built, sources, chunk_docs, hits) = built?;
@@ -952,6 +981,10 @@ pub(crate) fn run_with_options(
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The run's manifest, then collection in the background while the cross-file part runs (decision 0051).
     let collecting = if recording { record_run(store, root, &worker_cpu.2, &memo_program)? } else { None };
+    if recording {
+        let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
+        store.record_corpus_stats(&canonical_root, &worker_cpu.3, started_ns).map_err(|e| Error::Plan(e.to_string()))?;
+    }
     statements.enter("stats");
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.
     for rel in &split.exports {

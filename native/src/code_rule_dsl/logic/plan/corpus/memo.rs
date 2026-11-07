@@ -72,9 +72,10 @@ pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Progr
 
 /// The stored source of `text`, stored if it is not.
 pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
-    match store.source_by_hash(HashKey::sha256(text.as_bytes()))? {
+    let hash = HashKey::sha256(text.as_bytes());
+    match store.source_by_hash(hash)? {
         Some(id) => Ok(id),
-        None => store.put_source(text.as_bytes(), &[]),
+        None => store.put_source_hashed(text.as_bytes(), hash, &[]),
     }
 }
 

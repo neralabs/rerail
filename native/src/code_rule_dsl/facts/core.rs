@@ -78,6 +78,11 @@ pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
 /// the grammar's version and the tape format): read from it where it has one, else parsed and stored.
 /// The corpus runner's parse cache: a file parsed once is not parsed again by a later run.
 pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::ContentStore) -> Result<Built, String> {
+    build_cached_as(file, cache, None)
+}
+
+/// [`build_cached`] for a caller that has already stored the file's source as `known`: it is not hashed or looked up again.
+pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<Built, String> {
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeImage};
     use crate::code_rule_dsl::workspace::grammar_version;
@@ -88,10 +93,16 @@ pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::Conte
     let e = |e: crate::content_store::StoreError| e.to_string();
     let bytes = file.source.as_bytes();
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
-    let source_id = match cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)? {
+    let source_id = match known {
         Some(id) => id,
-        None => cache.put_source(bytes, &[]).map_err(e)?,
+        None => {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+            let hash = HashKey::sha256(bytes);
+            match cache.source_by_hash(hash).map_err(e)? {
+                Some(id) => id,
+                None => cache.put_source_hashed(bytes, hash, &[]).map_err(e)?,
+            }
+        }
     };
     let stored = cache.tape_by_source(source_id, tag, gv, fv).map_err(e)?;
     drop(lookup);
