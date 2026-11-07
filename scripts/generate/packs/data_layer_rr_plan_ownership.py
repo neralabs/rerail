@@ -7,6 +7,7 @@ from data_layer_rr_plan_ownership_graph import supplied_ast
 def plan_scope_ownership(source,target,header):
     original=module(source,'plan_scope_ownership');q=json.dumps
     text=re.sub(r'^\.scope include .*$', '.scope include "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py", "conform/**/*.py", "data_layer_testing/**/*.py"',header('plan_scope_ownership',target),flags=re.M)
+    text=re.sub(r'^\.scope exclude .*$', '.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"',text,flags=re.M)
     text+='#include "python/print.rr"\n'
     for rel,values in [('pso_runner',original.BASE_SCOPE_RUNNERS),('pso_base_method',original.BASE_SCOPE_METHODS),
       ('pso_terminal',original.BASE_TERMINAL_FALLBACKS),('pso_lifecycle',original.LIFECYCLE_NAMES),
@@ -34,9 +35,9 @@ pso_skipped(p) :- option_item("availablePaths", _, p), option_item("skipDirector
 Selected(@place("<inventory>", 1), i, p, rank) :- option("entryPoint", "selection"), pso_selected(i, p, rank).
 
 .decl pso_document(d: number, path: symbol)
-pso_document(d, p) :- pso_native(), doc(d, p, _), option("entryPoint", entry),
+pso_document(d, p) :- pso_native(), doc(d, p, _), doc_role(d, "primary"), option("entryPoint", entry),
  (entry = "lint" ; entry = "_lint_file" ; entry = "_source_facts").
-pso_document(d, p) :- pso_native(), doc(d, p, _), !option("entryPoint", _), !pso_hidden(d),
+pso_document(d, p) :- pso_native(), doc(d, p, _), doc_role(d, "primary"), !option("entryPoint", _), !pso_hidden(d),
  (prefix("impl/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ;
   pso_layer(root), prefix(cat(root, "/"), p) ; pso_default_scan(root), prefix(cat(root, "/"), p)).
 .decl pso_hidden(d: number)
@@ -64,8 +65,9 @@ pso_call(c, fn) :- pso_native(), kind(c, "call"), field(c, "function", fn).
 pso_leaf(e, name) :- pso_name(e, name).
 pso_leaf(e, name) :- pso_attr(e, _, name).
 .decl pso_inside(n: node, a: node)
-pso_inside(n, a) :- pso_native(), ast_parent(n, a).
-pso_inside(n, a) :- pso_native(), ast_parent(n, p), pso_inside(p, a).
+pso_inside(n, f) :- pso_native(), pso_call(n, _), pso_function(f, name), pso_runner(name), within(n, f).
+// Decorator expressions belong to their FunctionDef in ast, outside its physical tape span.
+pso_inside(n, f) :- pso_native(), pso_call(n, _), pso_function(f, name), pso_runner(name), decorator(f, e), (n = e ; within(n, e)).
 .decl pso_owner(n: node, name: symbol)
 pso_owner(n, @nfkc(name)) :- pso_native(), def_frame(n, f), def_name(f, name).
 .decl pso_store(n: node)
@@ -148,6 +150,11 @@ pso_issue(d, strlen(@replace_all(@slice(text, 0, at), "[^\\n]", "")) + 1, code, 
         text+=f'.violation Ownership{i}(at: span, message: symbol, stage: number, event: number, rank: number, witness: number) code "{code}" "{{message}}"\n'
         text+=f'Ownership{i}(@place(path, line), message, stage, event, rank, witness) :- pso_issue(d, line, "{code}", message, stage, event, rank, witness), pso_document(d, path).\n'
     text+=r'''
-pso_issue(d, 1, "PSO000", cat(message, " (", filename, ", line ", to_string(line), ")"), 0, 0, 0, 0) :- pso_document(d, _), pso_enabled(d), syntax_error(d, line, message), file_name(d, filename).
+pso_issue(d, 1, "PSO000", cat("SyntaxError: ", message, " (", filename, ", line ", to_string(line), ")"), 0, 0, 0, 0) :-
+ pso_document(d, _), option("entryPoint", entry), (entry = "lint" ; entry = "_lint_file" ; entry = "_source_facts"),
+ syntax_error(d, line, message), message != "source code string cannot contain null bytes", file_name(d, filename).
+pso_issue(d, 1, "PSO000", "SyntaxError: source code string cannot contain null bytes", 0, 0, 0, 0) :-
+ pso_document(d, _), option("entryPoint", entry), (entry = "lint" ; entry = "_lint_file" ; entry = "_source_facts"),
+ syntax_error(d, _, "source code string cannot contain null bytes").
 '''
     return text+supplied_ast()

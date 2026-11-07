@@ -1398,7 +1398,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-ownership.rr",
-      "sha256": "5de8e9c3aac99db98e6e67695326dc040eb3ce6cb4ef8e6579ee6141efe5fec8",
+      "sha256": "92ed726e5d34987bb997435ba0c0e842517b506ddc09e910023bc1e58e414b9d",
       "origin": "authored",
       "upstreamPath": "scripts/lint_plan_scope_ownership.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1608,7 +1608,7 @@
       "legacySha256": "a51c7f0406a0cc42984dcea94914f0613e48f1c420b91e49a1e6f42a49dfc1ab",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-ownership.rr",
-      "ruleSha256": "5de8e9c3aac99db98e6e67695326dc040eb3ce6cb4ef8e6579ee6141efe5fec8"
+      "ruleSha256": "92ed726e5d34987bb997435ba0c0e842517b506ddc09e910023bc1e58e414b9d"
     },
     {
       "check": "transaction_closures",

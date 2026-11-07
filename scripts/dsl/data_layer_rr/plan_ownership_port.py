@@ -96,5 +96,6 @@ def scan(suite,entry,module,values):
         rows=suite.native('plan_scope_ownership',entry,[dict(path=logical,source=source)])
     if any(r['code'] not in {f'PSO{i:03}' for i in range(14)} for r in rows):raise AssertionError('Invalid ownership diagnostic')
     if entry=='_source_facts':
-        return [dict(code=r['code'],file_path=r['path'],line=r['line'],message=r['message'],severity='error') for r in ordered(rows)]
+        return [dict(code=r['code'],file_path=r['path'],line=r['line'],message=r['message'],
+            **({} if r['code']=='PSO000' else dict(severity='error'))) for r in ordered(rows)]
     return [module.Violation(code=r['code'],file_path=r['path'],line_number=r['line'],message=r['message'],severity='error') for r in ordered(rows)]
