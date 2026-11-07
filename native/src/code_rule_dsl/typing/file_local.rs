@@ -218,6 +218,12 @@ mod tests;
 /// recursion within a document is file-local. Evaluated per chunk of documents, a file-local relation's rows are the
 /// union of the chunks'.
 pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
+    split_located(prog).0
+}
+
+/// `split`'s relations, and the same-document columns of each file-local or base relation: the location columns,
+/// whose values in one row are all of one document.
+fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>) {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
@@ -348,7 +354,10 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
             local.remove(&rel);
         }
         if local.len() == before {
-            return local;
+            let mut same: BTreeMap<String, Vec<usize>> =
+                prog.inputs.iter().filter(|i| !derived.contains(i.as_str())).map(|i| (i.clone(), base_locations(i))).collect();
+            same.extend(local.iter().map(|rel| (rel.clone(), locations[rel].clone())));
+            return (local, same);
         }
     }
 }
@@ -356,18 +365,20 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
 /// A program split at its file-local relations (`split`): `local` derives them, run per chunk of documents over the
 /// chunk's base relations; `cross` derives the rest, run once over what the chunks wrote: `exports` (the file-local
 /// relations a cross-file rule reads) and `base` (the base relations a cross-file rule reads, and `node` and `doc`,
-/// which decode findings). In `cross`, both are inputs.
+/// which decode findings). In `cross`, both are inputs. `same_doc` names, for each file-local and base relation, the
+/// columns whose values in one row lie in one document (`cross_rounds::bound`: a join through them crosses no file).
 pub(crate) struct Programs {
     pub(crate) local: crate::code_rule_dsl::logic::front::Program,
     pub(crate) cross: crate::code_rule_dsl::logic::front::Program,
     pub(crate) exports: Vec<String>,
     pub(crate) base: Vec<String>,
+    pub(crate) same_doc: std::collections::BTreeMap<String, Vec<usize>>,
 }
 
 pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
     use crate::code_rule_dsl::logic::front::Literal;
     use std::collections::BTreeSet;
-    let local = split(prog);
+    let (local, same_doc) = split_located(prog);
     let is_local = |rel: &str| local.contains(rel);
     let read = |rules: &mut dyn Iterator<Item = &crate::code_rule_dsl::logic::front::Rule>| -> BTreeSet<String> {
         rules
@@ -409,5 +420,5 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     c.gates.retain(|(rel, _)| !is_local(rel));
     c.outputs.retain(|o| !is_local(o));
     c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
-    Programs { local: l, cross: c, exports, base }
+    Programs { local: l, cross: c, exports, base, same_doc }
 }

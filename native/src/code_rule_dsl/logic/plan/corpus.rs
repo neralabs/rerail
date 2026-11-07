@@ -609,7 +609,7 @@ pub(crate) fn run_with_options(
     let wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
-        let bounded = cross_rounds::bound(&cross.program)?;
+        let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
         let got = if bounded.hops.is_empty() {
             rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
             super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?
