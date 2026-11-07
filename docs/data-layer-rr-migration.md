@@ -11,14 +11,17 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its baseline is Final rerail shape
-`ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5`. That branch includes the earlier migration and regex fixes.
-The merge commit `00997cf1c` takes its engine, frontend, libraries, build files, and locks exactly.
+`ee59790f00ba0688e42da4313bcaa042fa18ba69`. That branch includes the earlier migration and regex fixes,
+the shared guest/value runtime, and the current world-demand and environment-fact model.
+Merge its committed engine, frontend, libraries, build files, and locks into this root.
 The only local native repair normalizes Boolean contexts created after demand planning (`25b580262`).
 Uncommitted sibling work is not part of this baseline.
 
 The nested `.rerail/rr-migration-20261106/engine` checkout is retired. Do not develop or build there.
 Existing receipts retain their historical engine hashes. They do not certify the current engine.
 The replay harness rejects libraries loaded from another checkout, even when their bytes match.
+New acceptance runs use a frozen binary built from this root, with a receipt that records its source commit.
+Do not use the retired engine to bypass a failure in the current runtime.
 
 Migration rules and fixtures live under `gate/data-layer/`, as Final shape defines them.
 The gate preserves all 100 historical policy contracts and the recorded-observation parity harness.

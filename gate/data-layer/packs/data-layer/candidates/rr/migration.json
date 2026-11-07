@@ -3,7 +3,7 @@
   "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "syntaxSource": {
     "branch": "jeremybarnes/final-rerail-shape",
-    "commit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+    "commit": "ee59790f00ba0688e42da4313bcaa042fa18ba69",
     "uncommitted": []
   },
   "legacyBaseline": "ce3669ddba89d09acec1094e006446a16a7b296d",
@@ -2261,11 +2261,16 @@
       "branch": "jeremybarnes/final-rerail-shape",
       "commit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5",
       "uncommitted": []
+    },
+    {
+      "branch": "jeremybarnes/final-rerail-shape",
+      "commit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "uncommitted": []
     }
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+    "upstreamCommit": "ee59790f00ba0688e42da4313bcaa042fa18ba69",
     "status": "Root Final shape engine with a generic repair for Boolean contexts created by demand planning",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262"

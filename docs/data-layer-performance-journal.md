@@ -8112,3 +8112,44 @@ The final engine is the root headless CLI with hash `7b9a2694bad1eeff…`. Build
 The broader rule-reader suite has **51 passes, one failure, two upstream ignored report/writer tests**. The failure is the calls.rdl guest-demand roundtrip, with extra request/context declarations. It also fails on the frozen pre-repair binary. The sibling's uncommitted changes track this as O101; they were not imported or used to hide the failure. The full library inventory test was not repeated after its previous two command-limit timeouts. Nine simplifier and six file-local tests pass; one upstream benchmark remains ignored.
 
 Evidence: [original assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-native-direct-contracts.json.gz), [supplemental cases and assertion provenance](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-native-supplemental-contracts.json.gz), and [modern-engine integration and Boolean TDD](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-ca76-merge.json.gz). Associated global and persistent-workspace contracts remain outstanding. The inventory remains 67 drafts and 33 absent translations; no full migration acceptance is claimed.
+### Final shape alignment: one active engine (2026-11-07)
+
+The data-layer migration now builds and tests the engine in this repository root.
+Final shape commits `dde9f3dc4` and `ee59790f0` are merged; the latter includes the world-demand and environment-fact model.
+Sibling uncommitted files were not copied. The retired nested engine was not built or used.
+
+The native code, frontend, dependencies, and rule libraries were compared with `ee59790f0`.
+Only the existing Boolean-context repair and its regression test differ in the engine (`25b580262`).
+No separate runtime or rule-specific native implementation was added.
+The migration manifest records the merged baseline and current library hashes.
+
+Both acceptance binaries were built from this root and frozen after successful build completion.
+The CLI build took 46.73 seconds; the unit-test build took 129 seconds under the existing build-time exception.
+The CLI SHA-256 starts with `6987f9cd4c78d649`; the unit binary starts with `80e95e77b87db835`.
+
+| Check | Result |
+| --- | --- |
+| Migration tooling | 46 passed |
+| Gate format | Two passed |
+| Current draft reader | All 67 passed |
+| Native reader/execution tests, bounded subset | 55 passed; two upstream file-writing tests ignored |
+| Newly merged library/stub loading regression | One passed |
+| Original backend-type suite | All 148 cases passed across four disjoint shards; 122 complete API comparisons and 126 native calls |
+| Original error-handling suite | All five cases and complete API comparisons passed |
+| Original API-import suite | All four cases and complete API comparisons passed |
+| Configured backend-type reporters | All 78 passed, including 56 positives |
+
+The backend-type shards cover exactly the original source case identities. They include 51 finding-positive file returns.
+Four shared native configuration calls account for the difference between 122 API observations and 126 calls.
+Two helper observations have no legacy findings-list normalization; their complete source-return values still match exactly.
+The existing passive DTO, CLI, and shared-configuration case classifications remain explicit in each report.
+
+The combined native suite hit its 115-second limit with one test outstanding: `rule_syntax_files_pass_check_rr`.
+That test validates the entire library corpus. Its completion is not claimed.
+The remaining suite was then run with that single test filtered out and finished successfully in 14.93 seconds.
+The targeted 67-rule reader check is separate and completed successfully.
+
+[The alignment receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-ee597-merge.json.gz) retains build provenance, source recordings, complete native reports, reader results, and logs.
+This work aligns the runtime; it does not certify all migration contracts.
+The inventory remains 67 drafts and 33 absent translations, with full acceptance false.
+`serverplan_grammar_surface` remains the next missing translation. Its source survey is not a completed port.
