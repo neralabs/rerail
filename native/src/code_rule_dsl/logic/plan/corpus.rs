@@ -1417,11 +1417,23 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 
 #[allow(clippy::too_many_arguments)]
 fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
+    // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
+    // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
+    let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
+    // Each round rebinds only the `__prev` inputs (and the pending round adds a fact): the other inputs stay loaded.
+    let changing: BTreeSet<String> = hops.iter().map(|rel| format!("{rel}{}", cross_rounds::PREV)).chain([cross_rounds::UNCONVERGED.to_owned()]).collect();
+    crate::code_rule_dsl::logic::native::keep_inputs(db, Some(changing));
+    let out = rounds_loop(db, modules, &mut round, hops, wanted, stats, modes, report, k, pending_round);
+    crate::code_rule_dsl::logic::native::keep_inputs(db, None);
+    crate::code_rule_dsl::logic::native::forget_inputs(db);
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds, k: usize, pending_round: bool) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
-    // The previous round's rows of each hop relation (none before round 1), bound as `<rel>__prev` from memory.
     let mut prev_rows: BTreeMap<String, Vec<Vec<i64>>> = hops.iter().map(|rel| (rel.clone(), Vec::new())).collect();
-    // Round 0's previous rows: none, measured as such.
     let mut prev_totals = Totals::default();
     for rel in hops {
         let (t, width) = (types(rel), types(rel).len());
@@ -1429,9 +1441,7 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
         prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), 0, &empty, &t.iter().map(String::as_str).collect::<Vec<_>>());
     }
     let mut last = None;
-    // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
-    // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
-    let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
+    let mut measured_lens: BTreeMap<String, usize> = BTreeMap::new();
     for r in 0..=k + 1 {
         let _round = crate::code_rule_dsl::logic::profile::span(|| format!("round {r}"));
         let bind = crate::code_rule_dsl::logic::profile::span(|| "bind previous rows".into());
@@ -1446,11 +1456,11 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
         prev_totals.apply(&mut st);
         // A hop relation the program outputs is written to its table, to be decoded; the others are held.
         let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().collect();
-        let got = super::run_atoms_native_over(&round, db, "main", st, held, modes)?;
+        let got = super::run_atoms_native_over(round, db, "main", st, held, modes)?;
         // This round's rows of the hop relations: from the engine, or their table.
         let measure = crate::code_rule_dsl::logic::profile::span(|| "hop rows: copy and measure".into());
         let mut rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
-        prev_totals = Totals::default();
+        let mut sources: Vec<(&String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::with_capacity(hops.len());
         for rel in hops {
             let width = types(rel).len();
             let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
@@ -1458,17 +1468,33 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
             } else {
                 Arc::new(Rows::read(db, rel)?)
             };
-            let t = types(rel);
-            let t: Vec<&str> = t.iter().map(String::as_str).collect();
-            prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), source.len(), source.as_ref(), &t);
-            // The next round prices the relation itself by these rows too, not by its seeds (`plan::prior_stats`).
-            prev_totals.alias(&format!("{rel}{}", cross_rounds::PREV), rel);
             // Sorted and distinct once: the digest and the next round's `__prev` read them so.
             let mut held: Vec<Vec<i64>> = (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect();
             held.sort_unstable();
             held.dedup();
             rows.insert(rel.clone(), held);
+            sources.push((rel, source));
         }
+        // The next round's statistics of `<rel>__prev`: a relation is measured again only when its rows moved by more
+        // than a tenth since it was last measured (a later round adds a few percent; each measurement sorts columns).
+        {
+            let _m = crate::code_rule_dsl::logic::profile::span(|| "measure".into());
+            for (rel, source) in &sources {
+                if measured_lens.get(*rel).is_some_and(|&m| source.len().abs_diff(m) * 10 <= m) {
+                    continue;
+                }
+                let prev = format!("{rel}{}", cross_rounds::PREV);
+                prev_totals.forget(&prev);
+                prev_totals.forget(rel);
+                let t = types(rel);
+                let t: Vec<&str> = t.iter().map(String::as_str).collect();
+                prev_totals.add_rows(&prev, source.len(), source.as_ref(), &t);
+                // The next round prices the relation itself by these rows too, not by its seeds (`plan::prior_stats`).
+                prev_totals.alias(&prev, rel);
+                measured_lens.insert((*rel).clone(), source.len());
+            }
+        }
+        drop(sources);
         drop(measure);
         let digest = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
         let digest = { let _d = digest; cross_rounds::digest_sorted(&rows) };
@@ -1613,6 +1639,11 @@ struct Totals {
     vals: BTreeMap<(String, String), HashMap<i64, [i64; 3]>>,
 }
 impl Totals {
+    /// Drops `rel`'s measurements (to measure it again).
+    fn forget(&mut self, rel: &str) {
+        self.rels.remove(rel);
+        self.vals.retain(|(r, _), _| r != rel);
+    }
     /// `from`'s measurements also under the name `to` (the same rows, measured once).
     fn alias(&mut self, from: &str, to: &str) {
         if let Some(r) = self.rels.get(from).cloned() {
