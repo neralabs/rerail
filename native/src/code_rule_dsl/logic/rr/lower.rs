@@ -1176,8 +1176,14 @@ impl Lowerer {
             }
             let (s, mut p) = (self.term(s)?, self.term(p)?);
             // `match` is whole-string, as in Soufflé; the engine's `rx` searches.
-            if op == "rx" && let Term::Str(re) = &p {
-                p = Term::Str(format!("^(?:{re})$"));
+            if op == "rx" {
+                p = match p {
+                    Term::Str(re) => Term::Str(format!("^(?:{re})$")),
+                    pattern => Term::Call("concat".to_owned(), vec![
+                        Term::Call("concat".to_owned(), vec![Term::Str("^(?:".to_owned()), pattern]),
+                        Term::Str(")$".to_owned()),
+                    ]),
+                };
             }
             return Ok(Literal::Cmp { l: Term::Call(op.to_owned(), vec![s, p]), op: "=", r: Term::Int(if neg { 0 } else { 1 }) });
         }

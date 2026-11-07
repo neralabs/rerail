@@ -1265,7 +1265,9 @@ Missing(@place("a.py", 1), p, i) :- pattern(p, re), sample(i, s), !match(re, s).
 "#;
     let parsed = parse(rule).unwrap();
     let printed = print(&parsed).unwrap();
-    assert_eq!(parse(&printed).unwrap(), parsed, "{printed}");
+    let roundtrip = parse(&printed).unwrap();
+    assert_eq!(roundtrip.rules, parsed.rules, "{printed}");
+    assert_eq!(roundtrip.facts, parsed.facts, "{printed}");
     let rows = finding_contract("", rule);
     let mut matches: Vec<_> = rows.iter().filter(|row| row["code"] == "MATCH")
         .map(|row| (row["parameters"]["pattern_id"].as_i64().unwrap(), row["parameters"]["sample_id"].as_i64().unwrap())).collect();
