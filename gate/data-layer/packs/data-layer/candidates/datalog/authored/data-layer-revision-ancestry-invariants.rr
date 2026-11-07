@@ -12,12 +12,9 @@
 // Not followed: a replay event's `path_skip_override` (the replay drops the clauses' `paths` from the policy
 // document); the authored file has no fact saying so, so the `paths` below always apply.
 
-.decl doc(d: number, path: symbol, module: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_on(name: symbol)
-.decl source(d: number, sp: span)
-.decl line(n: loc, l: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 

@@ -16,18 +16,9 @@
 // names, global/nonlocal names, del targets, `type X = …` aliases' names, and match-statement captures (W's
 // `case_pattern` walk, `scope::python`: a lone name, an `as` name, a splat's name, a class pattern's arguments and
 // keyword values, a mapping's values and `**rest`; `_` binds nothing).
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl inside(n: node, a: node, set: relation)
-.decl nearest(n: node, a: node, set: relation)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -172,7 +163,7 @@ direct_execution_direct(f) :- direct_execution_top(f, _), field(f, "body", b), d
 direct_execution_imperative(f) :- direct_execution_symbol(f), direct_execution_direct(f).
 
 violation("data-layer-imperative-private-functions", "direct-execution", "direct_execution", p, l) :-
-    direct_execution_imperative(f), node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+    direct_execution_imperative(f), node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).
 
 // ---- eager signature ----
 // Private: not a dunder, and the name or the nearest class's name starts with `_`.
@@ -250,7 +241,7 @@ eager_signature_eager(f) :- eager_signature_private(f), !eager_signature_lazy(f)
 
 violation("data-layer-imperative-private-functions", "eager-signature", "eager_signature", p, l) :-
     direct_execution_symbol(f), !direct_execution_direct(f), eager_signature_eager(f),
-    node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+    node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).
 
 // ---- caller ----
 // `calls: {graph: references, at: definition, through: any, siblingLinks, constructorFields}` over the inner rule
@@ -266,7 +257,6 @@ violation("data-layer-imperative-private-functions", "eager-signature", "eager_s
 //     whose declared type types the field.
 // Every edge counts (EngRefs builds the graph with this policy's config; via names the link kind). An open
 // definition (`reference_open`) makes W's term Unknown only where no seed is reached: no finding either way.
-.decl reference_edge(src: node, dst: node, via: symbol)
 .decl caller_seed(f: node)
 caller_seed(f) :- direct_execution_imperative(f).
 caller_seed(f) :- direct_execution_symbol(f), eager_signature_eager(f).
@@ -277,4 +267,4 @@ caller_reaches(g) :- node(_, g, "function_definition", _, _), reference_edge(g, 
 violation("data-layer-imperative-private-functions", "caller", "calls_imperative", p, l) :-
     direct_execution_symbol(f), !direct_execution_direct(f), !eager_signature_eager(f),
     reference_edge(f, g, _), caller_reaches(g),
-    node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+    node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).

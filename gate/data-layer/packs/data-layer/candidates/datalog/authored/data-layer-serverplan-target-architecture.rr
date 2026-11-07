@@ -8,18 +8,9 @@
 // concatenated_string. Comments are not in `child`, so `nthChild` `ofRule: {not: comment}` is a position among
 // `child`'s children.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
 .decl option_on(name: symbol)
 .decl option_value(name: symbol, v: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -31,7 +22,7 @@ spta_entry_point(1) :- option_value("entryPoint", v), (v = "all" ; v = "scan_sou
 spta_required_shape(1) :- option_on("requiredShape").
 
 .decl spta_doc(d: number, p: symbol)
-spta_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+spta_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 
 // A named child's position among its parent's named children, from 1.
 .decl spta_before(p: node, c: node, b: node)

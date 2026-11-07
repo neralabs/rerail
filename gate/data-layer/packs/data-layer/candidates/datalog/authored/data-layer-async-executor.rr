@@ -8,13 +8,6 @@
 // The line is tape_line(d, l, sp) at the node's line(n, l): the tape's lines, split at \r\n, \r and \n as W's
 // layout splits Python (Ruff's terminators), the line's text without its terminator. Exact.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl tape_line(d: number, l: number, sp: span)
-.decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)

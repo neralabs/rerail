@@ -3,7 +3,7 @@
 // Its SQL runs over CPython `ast` rows (`pythonAst`); the script it ports is nera-data-layer
 // scripts/lint_schema_bootstrap_contracts.py. Here the same questions are asked of tree-sitter's tree read the
 // way `ast` reads it (parentheses transparent, a def's decorators its own). The gate is every module of the
-// policy's scope (no text test) that is valid twice: W's `syntax: valid` (tree-sitter's verdict, `syntax_error(d)`)
+// policy's scope (no text test) that is valid twice: W's `syntax: valid` (tree-sitter's verdict, `tape_syntax_error(d)`)
 // and CPython's `ast.parse`, which the `pythonAst` stages run (a file it rejects fails them;
 // `cpython_syntax_error`). Options: the defaults; the query has no entryPoint cases. The code is the row's `issue`
 // column. Every name compared (ast_name: Name id, arg, Attribute attr, def name) is the identifier's `ast` name,
@@ -21,27 +21,14 @@
 // Gaps (none in the scoped files today): a str Constant W parses where the engine has no `string_annotation` row
 // (Ruff reads every annotation root and a nested string at a body as a type definition) has no names here; a
 // body that is an adjacent-string run inside a string annotation (`"'A' 'B'"`) has no names here.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl str(n: node, v: symbol)
-.decl line(n: node, l: number)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
-.decl string_annotation(s: node)
-.decl parsed(s: node, grammar: symbol, root: node)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 .decl bootstrap_doc(d: number)
-bootstrap_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _).
+bootstrap_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _).
 .decl bootstrap_fdef(kind: symbol)
 bootstrap_fdef("function_definition").
 .decl bootstrap_type(kind: symbol)

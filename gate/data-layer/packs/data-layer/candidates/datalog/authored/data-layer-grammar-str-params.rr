@@ -9,21 +9,11 @@
 // name identifier is `__init__`, and `str-call` / `str-concat` a call whose function identifier is `str`, and
 // either text is in the module's text. sourceGate=false (`(?s).*`) gives the same.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
-.decl option_item(name: symbol, i: number, v: symbol)
-.decl node_text(n: node, s: symbol)
-.input node_text
 
 .decl str_params_class_kind(kind: symbol)
 str_params_class_kind("class_definition").
@@ -123,7 +113,7 @@ str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "body
 
 // A str-param whose nearest def (stopBy function_definition) is a sync `__init__` whose nearest class is a
 // grammar class.
-violation("data-layer-grammar-str-params", "parameter", "STR_PARAM", p, l) :- str_params_param(n, _), nearest(n, f, str_params_fn_kind), str_params_def(f, "__init__"), nearest(f, c, str_params_class_kind), str_params_grammar_class(c), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-grammar-str-params", "parameter", "STR_PARAM", p, l) :- str_params_param(n, _), nearest(n, f, str_params_fn_kind), str_params_def(f, "__init__"), nearest(f, c, str_params_class_kind), str_params_grammar_class(c), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- str-call ------------------------------------------------------------------------------------------------
 
@@ -143,10 +133,10 @@ str_call_slot(c, slot) :- node(_, c, "class_definition", _, _), field(c, "body",
 str_call_at(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "str"), field(c, "arguments", a), child(a, at, _), node(_, at, "attribute", _, _), field(at, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(at, "attribute", s), node(_, s, "identifier", _, _), text(s, slot), inside(c, r, str_params_fn_kind), str_params_def(r, "render"), nearest(r, k, str_params_class_kind), str_params_grammar_class(k), !str_call_has_init(k).
 str_call_at(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "str"), field(c, "arguments", a), child(a, at, _), node(_, at, "attribute", _, _), field(at, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(at, "attribute", s), node(_, s, "identifier", _, _), text(s, slot), inside(c, r, str_params_fn_kind), str_params_def(r, "render"), nearest(r, k, str_params_class_kind), str_params_grammar_class(k), str_call_slot(k, slot).
 
-violation("data-layer-grammar-str-params", "str-call", "STR_CALL_IN_RENDER", p, l) :- str_call_at(c), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
+violation("data-layer-grammar-str-params", "str-call", "STR_CALL_IN_RENDER", p, l) :- str_call_at(c), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
 
 // ---- str-concat ----------------------------------------------------------------------------------------------
 
 // `a + b` with either side such a `str(self.<slot>)` call (the same rule as str-call's).
-violation("data-layer-grammar-str-params", "str-concat", "STR_CONCAT_IN_RENDER", p, l) :- node(d, b, "binary_operator", _, _), op(b, "+"), field(b, "left", x), str_call_at(x), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(b, l).
-violation("data-layer-grammar-str-params", "str-concat", "STR_CONCAT_IN_RENDER", p, l) :- node(d, b, "binary_operator", _, _), op(b, "+"), field(b, "right", x), str_call_at(x), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(b, l).
+violation("data-layer-grammar-str-params", "str-concat", "STR_CONCAT_IN_RENDER", p, l) :- node(d, b, "binary_operator", _, _), op(b, "+"), field(b, "left", x), str_call_at(x), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(b, l).
+violation("data-layer-grammar-str-params", "str-concat", "STR_CONCAT_IN_RENDER", p, l) :- node(d, b, "binary_operator", _, _), op(b, "+"), field(b, "right", x), str_call_at(x), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(b, l).

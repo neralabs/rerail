@@ -4,12 +4,8 @@
 // that holds the literal, at that line. src_line splits the same way, so each clause is "the lines containing it".
 // `_publication_contract_cache` also matches inside `_cte_publication_contract_cache`, as the regex does.
 // A regex clause has no syntax gate: files that do not parse are scanned too.
-.decl doc(d: number, path: symbol, module: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl src_line(d: number, l: number, sp: node)
-.decl text(n: node, s: symbol)
-.input src_line
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 

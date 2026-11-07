@@ -12,15 +12,7 @@
 //   source-syntax     scan_source only (the converter converts it at the default, "all", as never).
 //   reported-parser-error  "all" only.
 .decl option_value(name: symbol, v: symbol)
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl node_text(n: node, s: symbol)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
@@ -39,7 +31,7 @@ schema_planning_trigger("enqueue_post_"). schema_planning_trigger("materialize_s
 schema_planning_trigger("planning_callback").
 .decl schema_planning_doc(d: number, p: symbol)
 schema_planning_doc(d, p) :- option_value("entryPoint", v), schema_planning_entry(v), node(d, m, "module", _, _),
-    in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), node_text(m, s),
+    in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), node_text(m, s),
     schema_planning_trigger(x), contains(x, s).
 // An AnnAssign whose target is the Name or Attribute `planning_callback`.
 violation("data-layer-schema-architecture", "schema-planning", "forbid-schema-planning-callback-field", p, l) :-
@@ -85,10 +77,10 @@ lifecycle_dir("l2000_connection/"). lifecycle_dir("l3200_metadata/"). lifecycle_
 lifecycle_query("all"). lifecycle_query("scan_source"). lifecycle_query("_extract_facts").
 .decl lifecycle_gate(d: number, p: symbol)
 lifecycle_gate(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d),
-    !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), lifecycle_dir(x), prefix(x, p),
+    !tape_syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), lifecycle_dir(x), prefix(x, p),
     lifecycle_text_doc(d).
 lifecycle_gate(d, p) :- option_value("entryPoint", v), v != "all", node(d, _, "module", _, _), in_scope(d),
-    !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _).
+    !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _).
 .decl lifecycle_doc(d: number, p: symbol)
 lifecycle_doc(d, p) :- lifecycle_gate(d, p), option_value("entryPoint", v), lifecycle_query(v).
 
@@ -257,7 +249,7 @@ violation("data-layer-schema-architecture", "schema-lifecycle", "SAP004", p, l) 
 // module's line. The converter's form, gated on the option.
 violation("data-layer-schema-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :-
     option_value("entryPoint", "scan_source"), node(d, n, "module", _, _), in_scope(d), !out_scope(d),
-    syntax_error(d), doc(d, p, _), line(n, l).
+    tape_syntax_error(d), doc(d, p, _), line(n, l).
 
 // ---- reported-parser-error ------------------------------------------------------------------------------------
 // Under entryPoint "all" (every other value matches no path): an invalid Python module (the input's
@@ -266,6 +258,6 @@ violation("data-layer-schema-architecture", "source-syntax", "NATIVE-SYNTAX", p,
 // error, which the key omits).
 .decl parser_error_doc(d: number, p: symbol)
 parser_error_doc(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d),
-    syntax_error(d), cpython_syntax_error(d, _, _), doc(d, p, _), lifecycle_dir(x), prefix(x, p).
+    tape_syntax_error(d), cpython_syntax_error(d, _, _), doc(d, p, _), lifecycle_dir(x), prefix(x, p).
 violation("data-layer-schema-architecture", "reported-parser-error", "SAP000", p, 1) :-
     parser_error_doc(d, p), lifecycle_text_doc(d).

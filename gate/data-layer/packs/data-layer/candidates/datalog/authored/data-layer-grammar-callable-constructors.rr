@@ -22,18 +22,10 @@
 // The `^def\s` regex on a function_definition is `!op(f, "async")`, as the converter writes it.
 // Options: none of the policy's (`oracleAnalyzer`, `sourceGate`) is read by this clause.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, op, line, syntax_error
 .output violation
 
 .decl constructor_scope_kinds(kind: symbol)
@@ -53,9 +45,9 @@ constructor_defines(b, x) :- child(b, g, _), node(_, g, "decorated_definition", 
 
 // Seeds: top-level classes with a `render` method.
 .decl constructor_seed(x: symbol)
-constructor_seed(x) :- node(d, c, "class_definition", _, _), in_scope(d), !out_scope(d), !syntax_error(d), child(m, c, _), node(_, m, "module", _, _),
+constructor_seed(x) :- node(d, c, "class_definition", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), child(m, c, _), node(_, m, "module", _, _),
     field(c, "name", i), text(i, x), field(c, "body", b), constructor_defines(b, "render").
-constructor_seed(x) :- node(d, c, "class_definition", _, _), in_scope(d), !out_scope(d), !syntax_error(d), child(dd, c, _),
+constructor_seed(x) :- node(d, c, "class_definition", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), child(dd, c, _),
     node(_, dd, "decorated_definition", _, _), child(m, dd, _), node(_, m, "module", _, _), field(c, "name", i), text(i, x),
     field(c, "body", b), constructor_defines(b, "render").
 
@@ -130,7 +122,7 @@ constructor_candidate(n, x) :- constructor_arg(n, x), node(_, n, "lambda", _, _)
 constructor_candidate(n, x) :- constructor_ident(n, x), text(n, y), constructor_climb(n, s), constructor_resolves(s, y).
 
 violation("data-layer-grammar-callable-constructors", "constructor-arg", "CALLABLE_CONSTRUCTOR_ARG", p, l) :-
-    constructor_candidate(n, x), constructor_seed(x), node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).
+    constructor_candidate(n, x), constructor_seed(x), node(d, n, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(n, l).
 
 // ---- untyped-called-field and any-called-field ----
 // Authored over the converter's: its form tests "no type" as `name(type, s), glob("*?*", s)` (its "a regex on a
@@ -168,7 +160,7 @@ untyped_render_calls(c, x) :- untyped_render(c, m), node(_, k, "call", _, _), in
     node(_, a, "identifier", _, _), text(a, x).
 // An `__init__` storing parameter-ish name p in a field its class's render calls: (document, __init__, p).
 .decl untyped_stores(d: number, f: node, p: symbol)
-untyped_stores(d, f, p) :- constructor_def(f, "__init__"), node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d),
+untyped_stores(d, f, p) :- constructor_def(f, "__init__"), node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
     nearest(f, c, untyped_class_kinds), untyped_render(c, _), node(_, s, "assignment", _, _), inside(s, f, constructor_fdef),
     field(s, "left", l), node(_, l, "attribute", _, _), field(l, "object", o), node(_, o, "identifier", _, _), text(o, "self"),
     field(l, "attribute", a), node(_, a, "identifier", _, _), text(a, x), field(s, "right", r), node(_, r, "identifier", _, _), text(r, p),

@@ -21,23 +21,23 @@
 //! converted program (`overlay`):
 //! - the file is `gate/data-layer/packs/data-layer/candidates/datalog/authored/<rule-id>.rr`, the rule id as in the
 //!   policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
-//! - it declares every relation it reads or defines but core.rr's, whose declarations are every program's prelude
-//!   (`rr::lower`; its own declaration replaces core.rr's, as `syntax_error(d: number)` does). The base relations the
-//!   corpus runner binds, with the converter's signatures (`BASE`): `doc(d: number, path: symbol, module: symbol)`,
-//!   `node(d: number, n: node, kind: symbol, start: number, end: number)`, `child(p: node, c: node, i: number)`
-//!   (named children), `field(p: node, f: symbol, c: node)`, `text(n: node, s: symbol)`, `name(n: node, s: symbol)`,
-//!   `str(n: node, s: symbol)`, `strprefix(n: node, s: symbol)`, `intval(n: node, v: number)`,
-//!   `op(n: node, s: symbol)`, `line(n: node, l: number)`, `syntax_error(d: number)`, and core.rr's the README lists
-//!   (the source text, `docof`, `op_at`, `prev_token`, `token`, `visit_index`, `path_part`, `file_name`, `pkg`, W's
-//!   values and f-string trees: `fstring_piece`, `fstring_template`, whose marker is a constant; CPython's verdict,
-//!   `cpython_syntax_error(d: number, l: number, msg: symbol)`, core.rr's `syntax_error(d, l, msg)`; Ruff's string
-//!   annotations and their trees, `string_annotation(s: node)` and `parsed(s: node, grammar: symbol, root: node)`,
-//!   each tree a document of its own; W's pythonAst `literal_json(n: node, v: symbol)`, `dump_sha256(n: node, h:
-//!   symbol)`, `body_sha256(f: node, h: symbol)` and `signature_sha256(f: node, h: symbol)`; core.rr's `@unparse(n)`
-//!   and `@ast_dump(n)` as `cpython_unparse(n: node, s: symbol)` and `cpython_ast_dump(n: node, s: symbol)`); those
-//!   it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rr`): their `.output`s are
-//!   theirs. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's (the policy's,
-//!   or the replay's per event): read, never derived. So is the report gate, `report_when_gt(k: number)`: one row
+//! - it declares every relation it reads or defines but core.rr's, which are the engine's (decision 0047:
+//!   `rr::read_file` refuses a file that declares or derives one): core.rr's declarations are its prelude
+//!   (`rr::lower::core`), in the column types of the converter's (`BASE`): `doc(d, path, module)`,
+//!   `node(d, n, kind, start, end)`, `child(p, c, i)` (named children), `field(p, f, c)`, `text(n, s)`,
+//!   `name(n, s)`, `str(n, v)`, `strprefix(n, p)`, `intval(n, v)`, `op(n, s)`, `line(n, l)`, and those the README
+//!   lists (the source text, `docof`, `op_at`, `prev_token`, `token`, `visit_index`, `path_part`, `file_name`, `pkg`,
+//!   W's values and f-string trees: `fstring_piece`, `fstring_template`, whose marker is a constant; Ruff's string
+//!   annotations and their trees, `string_annotation(s)` and `parsed(s, grammar, root)`, each tree a document of its
+//!   own; W's pythonAst `literal_json(n, v)`, `dump_sha256(n, h)`, `body_sha256(f, h)` and `signature_sha256(f, h)`).
+//!   Not core.rr's: core.rr's `@unparse(n)` and `@ast_dump(n)` as `cpython_unparse(n: node, s: symbol)` and
+//!   `cpython_ast_dump(n: node, s: symbol)`, and the two syntax verdicts: CPython's, core.rr's `syntax_error(d, l,
+//!   msg)`, as `cpython_syntax_error(d: number, l: number, msg: symbol)`, and the tape's (tree-sitter's ERROR and
+//!   MISSING nodes, the converter's `syntax_error(d: number)`) as `tape_syntax_error(d: number)`, given (below).
+//!   The base relations it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rr`):
+//!   their `.output`s are theirs. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's
+//!   (the policy's, or the replay's per event): read, never derived. So is the tape's verdict, `tape_syntax_error`
+//!   (decision 0047). So is the report gate, `report_when_gt(k: number)`: one row
 //!   `k` where the policy (as the run configures it) has `report_when: {count: {gt: k}}`, the only form the compiler
 //!   accepts (once per policy, on a define clause): the rule reports nothing unless its findings, all files and
 //!   clauses together, number more than `k`; no row where it has none. The tree: `inside(n, a, set)` and
@@ -61,7 +61,8 @@
 //!   constant and the clause one of the policy's;
 //! - its helper relations and kind sets start with a prefix of their clause's. A name the converter makes is an
 //!   error (`m`, `u`, `t`, `k` or `blocked` and digits; `never`, `in_scope`, `out_scope`, `report_when_gt`,
-//!   `option_on`, `option_item`, `option_value`, `option_json`; `strtest_*`, `matchall_*`, `matchgroup_*`, `magic_*`,
+//!   `option_on`, `option_item`, `option_value`, `option_json`, `tape_syntax_error`; `strtest_*`, `matchall_*`,
+//!   `matchgroup_*`, `magic_*`,
 //!   `done_*`, `inside_*`, `nearest_*`), and so are a relation both derive and one name declared with other columns;
 //! - a clause it derives is authored, whatever the converter made of it: its rules replace the converter's. A
 //!   clause the run leaves out (the replay's `keep`) is dropped from both. The merge, less what `violation` does not
@@ -902,13 +903,13 @@ pub(in crate::code_rule_dsl) enum Origin {
 /// The columns of `violation(rule, clause, code, path, line)`.
 const VIOLATION: [&str; 5] = ["sym", "sym", "sym", "sym", "int"];
 
-/// What the converter gives an authored file to read: the scope, the report gate and the options.
+/// What the converter gives an authored file to read: the scope, the report gate, the options and the tape's verdict.
 pub(in crate::code_rule_dsl) use super::plan::corpus::GIVEN;
 
 /// The column types of what the converter gives (`GIVEN`), where `rel` is one.
 fn given_types(rel: &str) -> Option<Vec<String>> {
     let types: &[&str] = match rel {
-        "in_scope" | "out_scope" | "report_when_gt" => &["int"],
+        "in_scope" | "out_scope" | "report_when_gt" | "tape_syntax_error" => &["int"],
         "option_on" => &["sym"],
         "option_item" => &["sym", "int", "sym"],
         "option_value" => &["sym", "sym"],
@@ -1079,7 +1080,8 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
     for (rel, rows) in facts {
         converted.facts.entry(rel).or_default().extend(rows);
     }
-    push_new(&mut converted.inputs, inputs.into_iter().chain(reads_base));
+    // core.rr's `.input` of a relation the converter gives (`option_item`) is the converter's facts, not an input.
+    push_new(&mut converted.inputs, inputs.into_iter().filter(|i| !GIVEN.contains(&i.as_str())).chain(reads_base));
     push_new(&mut converted.outputs, outputs.into_iter().chain(["violation".to_owned()]));
     push_new(&mut converted.demand, demand);
     converted.rules.extend(rules.into_iter().filter(|r| violation_of(r).is_none_or(|(_, c)| keep(c))));

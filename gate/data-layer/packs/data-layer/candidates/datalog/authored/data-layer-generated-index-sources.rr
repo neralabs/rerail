@@ -28,18 +28,9 @@
 // `source=` keyword is not the Name `source`; a FunctionDef _generated_index with no source parameter; one whose
 // source parameter is not annotated IndexSource; one whose kwonly `source` defaults to MODEL_DECLARED or
 // IndexSource.MODEL_DECLARED. Lines: a Call's and a FunctionDef's lineno are where tree-sitter's node starts.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl visit_index(n: node, i: number)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl node_text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -48,7 +39,7 @@ generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 
 // ---- the gated documents ----
 .decl generated_doc(d: number)
-generated_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, m, "module", _, _), node_text(m, s),
+generated_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, m, "module", _, _), node_text(m, s),
     (contains("Index(", s) ; contains("IndexSource", s) ; contains("_generated_index", s)).
 
 // mirrors python/ast.rr unparen

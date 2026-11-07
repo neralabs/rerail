@@ -14,21 +14,14 @@
 // except clause's text holds `except`, and each suppress clause needs a `suppress` name in the with statement, so
 // the gate holds whenever the rest does, under either value: left out. `oracleAnalyzer` is read by no clause.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
 .decl swe_doc(d: number, p: symbol)
-swe_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+swe_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 
 // ---- protocol: KeyError, StopAsyncIteration, StopIteration, queue.Empty, parenthesised or a one-element tuple ------
 .decl swe_second(p: node)

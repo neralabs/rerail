@@ -197,6 +197,9 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     e.decls.insert("option_item".into(), "name: sym, i: int, v: sym".into());
     e.decls.insert("option_value".into(), "name: sym, v: sym".into());
     e.decls.insert("option_json".into(), "name: sym, pointer: sym, v: sym".into());
+    // The tape's verdict (tree-sitter's ERROR and MISSING nodes), for the authored file (`GIVEN`): the converter's
+    // `syntax_error(d)`, under a name of its own, since core.rr's `syntax_error` is the engine's (decision 0047).
+    e.rule("tape_syntax_error($d)", "d: int", vec!["syntax_error($d)".into()]);
     let as_text = |v: &Json| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
     let mut option_facts = BTreeSet::new();
     for (_, name, value) in option_values(&document) {
@@ -1245,11 +1248,6 @@ const TARGET: &str = "serverplan_target_architecture";
 const TARGET_ID: &str = "data-layer-serverplan-target-architecture";
 const EXECUTOR: (&str, &str) = ("l2070_batching/executor.py", "def run(step: ServerPlanStep, other: int):\n    if step_tags(step):\n        pass\n    if \"x\" in step_tags(step):\n        pass\n");
 const TARGET_AUTHORED: &str = r#"
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
 .decl in_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
@@ -1330,9 +1328,6 @@ fn the_report_gate_is_given() {
     const ID: &str = "data-layer-sql-grammar-escape-hatches";
     let authored = format!(
         r#"
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl line(n: node, l: number)
 .decl in_scope(d: number)
 .decl report_when_gt(k: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -1385,14 +1380,8 @@ fn the_options_are_given() {
     assert_eq!(plain.when.get("category-1").map(Vec::as_slice), Some(&[r#"{"option":{"oracleAnalyzer":true}}"#.to_owned()][..]));
     let authored = format!(
         r#"
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
 .decl in_scope(d: number)
 .decl option_on(name: symbol)
-.decl option_item(name: symbol, i: number, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl category_1_def(n: node, s: symbol)
 category_1_def(n, s) :- node(_, n, "function_definition", _, _), field(n, "name", x), text(x, s).
@@ -1602,7 +1591,7 @@ fn library_relations_through_an_overlay_report() {
     for (i, (rel, cols)) in closure.decls.iter().filter(|(rel, _)| !rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) && !closure.inputs.contains(rel)).enumerate() {
         let args = vec!["_"; cols.len()].join(", ");
         let authored = format!(
-            "{includes}.decl doc(d: number, path: symbol, module: symbol)\n.decl in_scope(d: number)\n\
+            "{includes}.decl in_scope(d: number)\n\
              .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)\n\
              violation(\"{TARGET_ID}\", \"executor-parameters\", \"{rel}\", p, 1) :- {rel}({args}), in_scope(d), doc(d, p, _).\n"
         );
@@ -1632,8 +1621,6 @@ fn an_overlay_includes_the_python_library() {
         r#"
 #include "python/ast.rr"
 #include "python/calls.rr"
-.decl doc(d: number, path: symbol, module: symbol)
-.decl line(n: node, l: number)
 .decl in_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl library_at(n: node, p: symbol, l: number)
@@ -1698,13 +1685,6 @@ fn authored_match_built_ins_print_and_run() {
     let re = r"step_tags\\((?P<arg>\\w+)\\)";
     let authored = format!(
         r#"
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl source(d: number, sp: span)
-.decl tape_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl col(n: loc, c: number)
 .decl in_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 violation("{TARGET_ID}", "executor-parameters", "SPTA006", p, l) :- in_scope(d), doc(d, p, _), source(d, sp),

@@ -10,14 +10,7 @@
 // an identifier of the module's text that starts with `render`, so the module's text always matches `render`, and
 // `(?s).*` matches every text.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -44,4 +37,4 @@ fstring_hit(n) :- node(_, n, "format_specifier", _, _).
 fstring_render(n) :- fstring_hit(n), inside(n, f, fstring_defs), field(f, "name", m), text(m, s), (s = "render" ; prefix("render_", s)).
 
 violation("data-layer-render-fstrings", "fstring", "render_fstring", p, l) :-
-    fstring_render(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).
+    fstring_render(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(n, l).

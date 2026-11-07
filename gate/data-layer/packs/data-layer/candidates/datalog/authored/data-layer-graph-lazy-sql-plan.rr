@@ -3,7 +3,7 @@
 // Options at their defaults (entryPoint "all", parameters "{}"; neither is read by these clauses).
 //
 // Each clause is one UNION ALL of contract checks over one file of the scope; the code is the row's `issue`
-// column (GLSP-0NN), the line its `line`. Gate: python, syntax valid (`!syntax_error(d)`, W's own verdict: the
+// column (GLSP-0NN), the line its `line`. Gate: python, syntax valid (`!tape_syntax_error(d)`, W's own verdict: the
 // tape's ERROR/MISSING nodes), and CPython's parse for the pythonAst stage (`!cpython_syntax_error(d, _, _)`);
 // partitionBy file.
 // The stage relations, as CPython's `ast` columns read them (metadata.structure_index):
@@ -25,17 +25,10 @@
 
 #include "python/ast.rr"
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -51,10 +44,10 @@ graph_plan_contracts_deco("decorator").
 
 // The file: in scope, parsed, its path.
 .decl graph_plan_contracts_file(d: number, p: symbol)
-graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d),
+graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !tape_syntax_error(d),
     !cpython_syntax_error(d, _, _), !out_scope(d), doc(d, p, _).
 // The stages' rows are CPython's `ast` of the file (pythonAst), so a file ast.parse rejects has none, its module
-// row included, and no check fires there: `!cpython_syntax_error(d, _, _)`, beside W's own gate (`!syntax_error(d)`).
+// row included, and no check fires there: `!cpython_syntax_error(d, _, _)`, beside W's own gate (`!tape_syntax_error(d)`).
 
 // A node with a def or class above it (fn or cls not NULL).
 .decl graph_plan_contracts_nested(n: node)

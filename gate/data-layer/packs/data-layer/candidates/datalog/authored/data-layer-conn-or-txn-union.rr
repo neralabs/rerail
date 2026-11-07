@@ -14,19 +14,10 @@
 // and every name of the transaction set `Transaction`, and the matched type lies within the parameter list. So they
 // are left out, exactly.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, str, strprefix, line, syntax_error
 .output violation
 
 .decl union_conn_names(s: symbol)
@@ -97,7 +88,7 @@ union_function(f, ps) :- node(_, f, "function_definition", _, _), field(f, "para
 
 violation("data-layer-conn-or-txn-union", "union", "UNION", p, l) :-
     union_function(f, ps), union_typed(ps, _, t), union_conn(t), union_txn(t),
-    node(d, f, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+    node(d, f, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
 
 // `separate`: one typed parameter of a connection type, one of a transaction type, none of both.
 .decl separate_both(ps: node)
@@ -105,4 +96,4 @@ separate_both(ps) :- union_typed(ps, _, t), union_conn(t), union_txn(t).
 
 violation("data-layer-conn-or-txn-union", "separate", "SEPARATE_PARAMS", p, l) :-
     union_function(f, ps), union_typed(ps, _, t1), union_conn(t1), union_typed(ps, _, t2), union_txn(t2), !separate_both(ps),
-    node(d, f, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+    node(d, f, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).

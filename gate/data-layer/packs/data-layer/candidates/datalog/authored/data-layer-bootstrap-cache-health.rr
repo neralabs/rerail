@@ -15,27 +15,18 @@
 //   indexed by the 0-based line of the call's start offset, the offsets split at \r\n?|\n; previous_line '' on the
 //   first line): src_line(d, l, sp) and src_line(d, l - 1, sp) at line(c, l), the tape's line (\r\n, \r, \n) as
 //   that index plus one, src_line splitlines()'s. Exact, also where the two splits disagree.
-// - The gate (syntax valid, the module's text holds one of the callee names) is !syntax_error(d), W's own
+// - The gate (syntax valid, the module's text holds one of the callee names) is !tape_syntax_error(d), W's own
 //   (tree-sitter) verdict; its text test is implied: every reported call names one of the gate's alternatives
 //   (create_table(s) holds create_table). The pythonAst stage then runs CPython's `ast.parse` on each gated file:
 //   a file it rejects makes the worker raise (W's run errors), so such a file (cpython_syntax_error, CPython
 //   3.13's verdict) is read here as giving nothing. Remaining gap: W's error itself is not reproduced.
 // Options: entryPoint (default "all") is read only by reported-parser-error; parameters is unread.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl src_line(d: number, l: number, sp: span)
-.decl node_text(n: node, s: symbol)
 .decl option_value(name: symbol, v: symbol)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl nearest(n: node, a: node, set: relation)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -130,7 +121,7 @@ bootstrap_cache_helper("bootstrap_test_table_triggers_for_tests"). bootstrap_cac
 bootstrap_cache_helper("bootstrap_test_tables_for_tests"). bootstrap_cache_helper("bootstrap_test_tables_for_tests_async").
 bootstrap_cache_helper("bootstrap_test_versioning_domain_for_tests"). bootstrap_cache_helper("bootstrap_test_versioning_domain_for_tests_async").
 .decl bootstrap_cache_doc(d: number, p: symbol)
-bootstrap_cache_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _).
+bootstrap_cache_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _).
 
 // BCH001: a bootstrap helper inside a test or fixture.
 violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH001", p, l) :- bootstrap_cache_call(c, _, s),
@@ -148,7 +139,7 @@ violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH003", p, l
 
 // ---- reported-parser-error ----
 // The `invalid` input: a module with a syntax error (W's `syntax: invalid`, tree-sitter's ERROR nodes:
-// syntax_error(d)) whose text matches the callee-name regex, and whose path passes the entryPoint filter (`all`,
+// tape_syntax_error(d)) whose text matches the callee-name regex, and whose path passes the entryPoint filter (`all`,
 // the default: `\b\B`, no path; any other value: `(?s).*`, every path). The SQL then keeps the files whose CPython
 // parse fails (`p.syntax_error != 'null'`, `ast.parse` in the pythonAst worker: cpython_syntax_error(d, _, _),
 // CPython 3.13's verdict) and reports BCH000 at line 1. (The message's line and msg are CPython's; messages are
@@ -158,4 +149,4 @@ violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH003", p, l
 reported_parser_error_entry(d) :- option_value("entryPoint", v), v != "all", node(d, m, "module", _, _), node_text(m, s),
     match("(?s:.*)(?:bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables)(?s:.*)", s).
 violation("data-layer-bootstrap-cache-health", "reported-parser-error", "BCH000", p, 1) :- reported_parser_error_entry(d),
-    doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), cpython_syntax_error(d, _, _).
+    doc(d, p, _), in_scope(d), !out_scope(d), tape_syntax_error(d), cpython_syntax_error(d, _, _).

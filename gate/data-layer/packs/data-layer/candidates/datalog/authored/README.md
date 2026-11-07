@@ -6,32 +6,42 @@ by hand, in `.rr` (decision 0043), one file per rule: `<rule-id>.rr`, the id as 
 rebuild. The converter merges it over its own program for that rule (`convert::overlay`); the module doc of
 `convert.rs` is the contract, summarized here.
 
-- Declare every relation the file reads or defines (core.rr's need not be: its declarations are the prelude, below,
-  "Base relations beyond the converter's"; an `.input` of a relation nothing declares is the error
-  `UndeclaredInput`). The base relations use the converter's signatures:
+- Declare every relation the file reads or defines but core.rr's. core.rr's relations are the engine's (decision
+  0047): `rr::read_file` refuses a file that declares or derives one. Their declarations are the file's prelude
+  (below, "Base relations beyond the converter's"), in the converter's column types, so read them undeclared; an
+  `.input` of a relation nothing declares is the error `UndeclaredInput`. The converter's base relations, as core.rr
+  declares them (not to be declared here):
 
   ```
-  .decl doc(d: number, path: symbol, module: symbol)
-  .decl node(d: number, n: node, kind: symbol, start: number, end: number)
-  .decl child(p: node, c: node, i: number)        // named children, by position
-  .decl field(p: node, f: symbol, c: node)
-  .decl text(n: node, s: symbol)
-  .decl name(n: node, s: symbol)
-  .decl str(n: node, s: symbol)                   // a string literal's content
-  .decl strprefix(n: node, s: symbol)             // its prefix letters, lowercased
+  doc(d: number, path: symbol, module: symbol)
+  node(d: number, n: node, kind: symbol, start: number, end: number)
+  child(p: node, c: node, i: number)        // named children, by position
+  field(p: node, f: symbol, c: node)
+  text(n: loc, s: symbol)
+  name(n: node, s: symbol)
+  str(n: node, v: symbol)                   // a string literal's content
+  strprefix(n: node, p: symbol)             // its prefix letters, lowercased
+  op(n: node, s: symbol)
+  line(n: loc, l: number)                   // 1-based
+  ```
+
+  and those the file declares, as written:
+
+  ```
   .decl intval(n: node, v: number)
-  .decl op(n: node, s: symbol)
-  .decl line(n: node, l: number)                  // 1-based
-  .decl syntax_error(d: number)
+  .decl tape_syntax_error(d: number)              // the tape's verdict (tree-sitter's ERROR, MISSING), given
   .decl in_scope(d: number)                       // the policy's scope, given by the converter
   .decl out_scope(d: number)
   .decl report_when_gt(k: number)                 // the report gate, given by the converter
   .decl option_on(name: symbol)                   // the options, given by the converter
-  .decl option_item(name: symbol, i: number, v: symbol)
   .decl option_value(name: symbol, v: symbol)
   .decl option_json(name: symbol, pointer: symbol, v: symbol)
   .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
   ```
+
+  `option_item(name, i, v)` is core.rr's: read it undeclared. `tape_syntax_error(d)` is the converter's
+  `syntax_error(d: number)` under a name of its own: core.rr's `syntax_error(d, l, msg)` is CPython's verdict
+  (`cpython_syntax_error`, below).
 
   The base relations the file reads are inputs whether or not it says `.input`. `in_scope` and `out_scope` are
   read, never derived (the replay changes them per event). The tree is read through `inside(n, a, set)` and
@@ -69,9 +79,9 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
   the clause one of the policy's.
 - Name helper relations and kind sets after their clause (`lazy_loop_…`). Names the converter makes are errors:
   `m`, `u`, `t`, `k` or `blocked` followed by digits; `never`, `in_scope`, `out_scope`, `report_when_gt`,
-  `option_on`, `option_item`, `option_value`, `option_json` (other than as read); `strtest_*`, `matchall_*`,
-  `matchgroup_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`, and `match_all` and `match_group` are built-ins.
-  So are a relation both programs derive and one name declared with other column types.
+  `option_on`, `option_item`, `option_value`, `option_json`, `tape_syntax_error` (other than as read);
+  `strtest_*`, `matchall_*`, `matchgroup_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`, and `match_all` and
+  `match_group` are built-ins. So are a relation both programs derive and one name declared with other column types.
 - A clause the file derives counts as authored, whatever the converter made of it: its rules replace the
   converter's. A clause the replay leaves out for an event is dropped from both.
 
@@ -81,9 +91,10 @@ The converted programs beside this directory (`../<rule-id>.rr`) are the merge, 
 ## Base relations beyond the converter's
 
 The corpus runner binds these too (core.rr's, `facts::vtab::syntax::Extra`), each only for a program that reads it;
-declare them as written. `span` and `loc` lower to `node`, so `text(n: loc, s: symbol)` and `text(n: node, s:
-symbol)` are the same declaration. A span is a piece of a document's text, with an id of its own (never a node of
-`node`). A base relation a program reads is an input whether or not it says `.input`, in the runner too.
+they are core.rr's, so a file reads them undeclared (decision 0047), but for `cpython_syntax_error`, which it
+declares as written. `span` and `loc` lower to `node`. A span is a piece of a document's text, with an id of its own
+(never a node of `node`). A base relation a program reads is an input whether or not it says `.input`, in the
+runner too.
 
 ```
 .decl source(d: number, sp: span)                 // the whole file, raw (CRLF kept)
@@ -201,16 +212,17 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
     `SELECT = {...} FROM t`, `(f'SELECT {x}' ' FROM t')`'s concatenated_string `SELECT {...} FROM t`. The marker is a
     constant: the runner parses each host once per marker the program's `fstring_template` atoms hold.
 - `cpython_syntax_error(d, l, msg)` is core.rr's `syntax_error(d, l, msg)` under the name the runner binds it by
-  (the converter declares `syntax_error(d: number)`, the tape's verdict, so a file here cannot read core.rr's under
-  that name): `d` a Python document `ast.parse` (CPython 3.13) rejects, `l` its `SyntaxError`'s `lineno` (1 for a
+  (the converter declares `syntax_error(d: number)`, the tape's verdict, which a file here reads as
+  `tape_syntax_error(d)`; it may not declare core.rr's names, decision 0047): `d` a Python document `ast.parse`
+  (CPython 3.13) rejects, `l` its `SyntaxError`'s `lineno` (1 for a
   null byte, where CPython gives none) and `msg` its `msg`, computed natively (`cpython::syntax`, Ruff's parser; no
-  Python runs). It is stricter than `syntax_error(d)`: an empty block (`if x:` then a comment or nothing), an
+  Python runs). It is stricter than `tape_syntax_error(d)`: an empty block (`if x:` then a comment or nothing), an
   invalid target (`f() = 1`, `del f()`), a stray indent, `except A, B:` (3.14 syntax) and a t-string are rejected
   there and parse in tree-sitter; `return` outside a function, a repeated keyword argument or parameter and
   `nonlocal` at module level parse in both (only `compile` rejects them). W's `syntax: valid` gate over the
   `pythonAst` stage (a file `ast.parse` rejects fails the stage) is `!cpython_syntax_error(d, _, _)`; a policy's
-  `parsed` stage `syntax_error` (`reported-parser-error`) is `cpython_syntax_error(d, _, _)`. A program outside this
-  overlay that declares no `syntax_error` reads core.rr's three columns by that name (`rr::lower::core`).
+  `parsed` stage `syntax_error` (`reported-parser-error`) is `cpython_syntax_error(d, _, _)`. A file that reads
+  core.rr's `syntax_error(d, l, msg)` by that name reads the same rows (`rr::lower::core`).
 - `string_annotation(s)` and `parsed(s, "annotation", root)` (`facts::vtab::syntax::annotation`): `s` (a `string` or
   `concatenated_string`) is a string Ruff 0.16.9's semantic model reads as a type definition (the engine's scope
   table: `x: "Foo"`, `-> "Foo"`, `List["Foo"]` in one, `cast("Foo", x)`, `TypeVar("T", bound="Foo")`; not a
@@ -268,9 +280,9 @@ The tree and the path, bound the same way (`facts::vtab::syntax::tree`; `docof` 
 
 core.rr is every program's prelude (`rr::lower::core`): a relation the file reads and does not declare, which core.rr
 declares, has core.rr's declaration and is an input, so the python library's relations need no declarations of the
-core relations they read. A declaration of the file's own replaces core.rr's: `syntax_error(d: number)` (the tape has
-an error node, the converter's, what the corpus binds) stands where core.rr's `syntax_error(d, l, msg)` (CPython's
-verdict) would; read undeclared with one column it is an error naming this. `#include "core.rr"` adds nothing. These
+core relations they read. A file may not declare or derive one (decision 0047, `rr::read_file`): the tape's verdict,
+which the converter's programs declare as `syntax_error(d: number)`, is `tape_syntax_error(d)` here, and
+`syntax_error` read with one column is an error naming this. `#include "core.rr"` adds nothing. These
 core relations are tree arithmetic and lower to the base relations wherever the file does not derive them:
 
 ```

@@ -45,25 +45,15 @@
 // numbering (`tape_line`: \r\n, \r, \n), which is W's capture line. Exact. (The upstream linter counts \n only: the
 // two differ after a lone \r.)
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl node_text(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl text(n: loc, s: symbol)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl tape_line(d: number, l: number, sp: span)
-.decl value(n: node, v: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 // ---- the syntax table ----
 .decl lazy_doc(d: number, p: symbol)
-lazy_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+lazy_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 .decl lazy_excluded(k: symbol)
 lazy_excluded("comment"). lazy_excluded("string_start"). lazy_excluded("string_content"). lazy_excluded("string_end").
 lazy_excluded("escape_sequence"). lazy_excluded("line_continuation").

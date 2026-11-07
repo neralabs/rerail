@@ -13,22 +13,8 @@
 //
 // The source gate (`inside module` with `render|'|"|Template\(|SqlFragment\.static\(` on the module's text, or
 // `(?s).*` with sourceGate off) is `literal_gate`, read from the run's options. oracleAnalyzer is in no clause.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl option_on(name: symbol)
-.decl line(n: node, l: number)
-.decl end_line(n: node, l: number)
-.decl tape_line(d: number, l: number, sp: span)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -129,7 +115,7 @@ literal_special_arg(n) :- child(al, n, _), node(_, al, "argument_list", _, _), c
     field(c, "function", f), literal_special_fn(f), literal_first_pos(al, n).
 violation("data-layer-render-raw-strings", "literal", "string_literal", p, l) :-
     literal_long(n), literal_in_render(n), !literal_docstring(n), !literal_in_raise(n), !literal_allowed(n), !literal_special_arg(n),
-    node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(n, l).
 
 // ---- fstring-literal ----------------------------------------------------------------------------------------
 // The hosts parsed (`parse: pythonFString`): an f-string not in a concatenation, a concatenation with an f part,
@@ -213,7 +199,7 @@ fstring_literal_not_first(n, k, o) :- fstring_literal_item(n, k, o, _), fstring_
 .decl fstring_literal_at(n: node, l: number)
 fstring_literal_at(n, l) :- fstring_literal_long(n, k), fstring_literal_item(n, k, o, l), !fstring_literal_not_first(n, k, o).
 violation("data-layer-render-raw-strings", "fstring-literal", "string_literal", p, l) :-
-    fstring_literal_at(n, l), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _).
+    fstring_literal_at(n, l), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _).
 
 // ---- template, static ---------------------------------------------------------------------------------------
 // A Template(…) / SqlFragment.static(…) call in a render function whose first positional argument is a str
@@ -221,6 +207,6 @@ violation("data-layer-render-raw-strings", "fstring-literal", "string_literal", 
 .decl template_call(c: node, f: node)
 template_call(c, f) :- node(_, c, "call", _, _), field(c, "function", f), field(c, "arguments", al), literal_first_pos(al, a), literal_str(a), literal_in_render(c).
 violation("data-layer-render-raw-strings", "template", "template_call", p, l) :-
-    template_call(c, f), literal_template_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
+    template_call(c, f), literal_template_fn(f), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
 violation("data-layer-render-raw-strings", "static", "static_call", p, l) :-
-    template_call(c, f), literal_static_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
+    template_call(c, f), literal_static_fn(f), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).

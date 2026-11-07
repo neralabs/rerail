@@ -23,25 +23,10 @@
 // - among several bases at the least depth holding a public method, the one first by route is found greedily
 //   (exact for routes, which are the bases' start offsets in order).
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl col(n: loc, c: number)
-.decl source(d: number, sp: span)
-.decl tape_line(d: number, l: number, sp: span)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl inside(n: node, a: node, set: relation)
-.decl nearest(n: node, a: node, set: relation)
 .decl option_on(name: symbol)
-.decl reference_edge(src: node, dst: node, via: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -54,7 +39,7 @@ unreachable_imports_k("import_statement"). unreachable_imports_k("import_from_st
 
 // The documents the inputs read: in scope, parsed (`syntax: valid`); the module the SQL names from the path.
 .decl unreachable_doc(d: number, p: symbol, m: symbol)
-unreachable_doc(d, p, m) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d),
+unreachable_doc(d, p, m) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
     m = @rx_replace(@rx_replace(p, "/__init__\\.py$|\\.py$", ""), "/", ".").
 
 // ---- inputs ----

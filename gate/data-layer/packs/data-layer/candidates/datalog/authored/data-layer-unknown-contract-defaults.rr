@@ -2,21 +2,10 @@
 // Policy: gate/data-layer/packs/data-layer/candidates/rules/data-layer-unknown-contract-defaults.json (no options).
 // `has` without stopBy is W's default, neighbor: a field child (`field`) or a named child (`child`).
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.decl node_text(n: node, s: symbol)
-.input node_text, value, value_type_of
 
 // ---- or-empty (UNKNOWN_DEFAULTED): `<x>.auxiliary_query or <empty>` ----
 // boolean_operator whose operator token is `or` (op: the operator field's token), whose left is an attribute
@@ -44,7 +33,7 @@ or_empty_right(r) :- node(_, r, "string", _, _), value(r, ""), value_type_of(r, 
 or_empty_right(r) :- node(_, r, "call", _, _), field(r, "function", f), node(_, f, "identifier", _, _), text(f, s),
     or_empty_ctor(s), field(r, "arguments", g), node_text(g, t), match("\\((?:\\s|#[^\\n]*(?:\\n|$))*\\)", t).
 violation("data-layer-unknown-contract-defaults", "or-empty", "UNKNOWN_DEFAULTED", p, l) :- or_empty_left(n),
-    field(n, "right", r), or_empty_right(r), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d),
+    field(n, "right", r), or_empty_right(r), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d),
     doc(d, p, _), line(n, l).
 
 // ---- bool (UNKNOWN_AS_FALSY): `bool(<x>.auxiliary_query)` with exactly one argument ----
@@ -62,4 +51,4 @@ bool_args(g) :- node(_, x, "call", _, _), field(x, "arguments", g), child(g, a, 
     k = count : { bool_counted(g, _) }, k = 1.
 violation("data-layer-unknown-contract-defaults", "bool", "UNKNOWN_AS_FALSY", p, l) :- node(_, n, "call", _, _),
     field(n, "function", f), node(_, f, "identifier", _, _), text(f, "bool"), field(n, "arguments", g), bool_args(g),
-    node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

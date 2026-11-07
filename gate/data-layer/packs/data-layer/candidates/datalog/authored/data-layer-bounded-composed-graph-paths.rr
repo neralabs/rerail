@@ -18,11 +18,7 @@
 //   the same for the method block of text-contract-47 with `    @`, `    def `, `    async def `.
 // Positions are tied to lines only: every regex here that crosses a line break does it in a `\s` run.
 
-.decl doc(d: number, path: symbol, module: symbol)
 .decl in_scope(d: number)
-.decl source(d: number, sp: span)
-.decl tape_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 

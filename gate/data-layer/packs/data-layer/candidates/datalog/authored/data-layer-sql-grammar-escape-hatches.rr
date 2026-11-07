@@ -4,27 +4,12 @@
 // OPERATOR_PARAMS, SCHEMA_METADATA_CLASSES, CALLSITE_PROTECTED_CLASSES, grammar_class_names, safe_param_types), the
 // report gate from report_when_gt. oracleAnalyzer is declared but no clause reads it.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl end_line(n: loc, l: number)
-.decl node_text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl prev_token(n: node, s: symbol)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.decl tape_line(d: number, l: number, sp: span)
 // Given by the converter (read only): the resolved options.
 .decl option_on(name: symbol)
-.decl option_item(name: symbol, i: number, v: symbol)
 // Given by the converter (read only): the report gate.
 .decl report_when_gt(k: number)
 .output violation
@@ -46,7 +31,7 @@ esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlLegacy"
 esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("_SqlPrebuilt", s).
 esc_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
 .decl esc_doc(d: number)
-esc_doc(d) :- in_scope(d), !out_scope(d), !syntax_error(d), esc_gate(d).
+esc_doc(d) :- in_scope(d), !out_scope(d), !tape_syntax_error(d), esc_gate(d).
 
 // The nine escape-hatch names (the forbidden-class and unsafe-parameter regex `^(?:SqlAdminQuery|…)$`).
 .decl esc_forbidden(s: symbol)

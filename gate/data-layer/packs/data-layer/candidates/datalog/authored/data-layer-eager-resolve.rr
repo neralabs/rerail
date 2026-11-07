@@ -25,22 +25,10 @@
 // - display_values (pythonAst unparse) gives the finding's text only; it has a row for every display root of a
 //   file that parses, so it is not read.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl node_text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl text(n: loc, s: symbol)
-.decl source(d: number, sp: span)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
-.decl option_item(name: symbol, i: number, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -728,4 +716,4 @@ eager_finding(d, l, i) :- eager_preprocess(d, l, i), !eager_entry_case(1).
 eager_finding(d, l, i) :- eager_preprocess(d, l, i), option_value("entryPoint", "_scan_preprocess_ast").
 eager_finding(d, l, i) :- eager_direct(d, l, i), !eager_entry_case(1).
 violation("data-layer-eager-resolve", "eager-resolution", i, p, l) :- eager_finding(d, l, i),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _).

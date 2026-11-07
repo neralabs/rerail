@@ -14,16 +14,7 @@
 // `match(re, s)` is Soufflé's, a match of the whole of s: W's (and SQLite rx_matches') unanchored search R is
 // written with `(?s:.*)` where R leaves an end open.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl syntax_error(d: number)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
+.decl tape_syntax_error(d: number)
 .decl option_value(name: symbol, v: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
@@ -67,7 +58,7 @@ step_type(n) :- node(_, n, "binary_operator", _, _), node_text(n, t), contains("
 violation("data-layer-serverplan-dispatch-architecture", "step-isinstance", "SPD002", p, l) :-
     node(d, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "isinstance"),
     field(n, "arguments", g), child(g, c, 1), step_type(c),
-    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 
 // ---- step-type-compare (SPD002) ----
 // A comparison with a child `type(…)` and a child step type.
@@ -75,7 +66,7 @@ violation("data-layer-serverplan-dispatch-architecture", "step-type-compare", "S
     node(d, n, "comparison_operator", _, _),
     child(n, c, _), node(_, c, "call", _, _), field(c, "function", f), backend_identity_callee(f, "type"),
     child(n, x, _), step_type(x),
-    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 
 .decl backend_identity_cmp(kind: symbol)
 backend_identity_cmp("comparison_operator").
@@ -106,7 +97,7 @@ violation("data-layer-serverplan-dispatch-architecture", "backend-identity", "SP
     node(d, n, "comparison_operator", _, _),
     backend_identity_source(x), inside(x, n, backend_identity_cmp),
     backend_identity_literal(y), inside(y, n, backend_identity_cmp),
-    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 
 // ---- step-name-compare (SPD003) ----
 // A comparison with a child `type(x).__name__` or `x.__class__.__name__`, and below it a string whose value names a
@@ -126,7 +117,7 @@ violation("data-layer-serverplan-dispatch-architecture", "step-name-compare", "S
     node(d, n, "comparison_operator", _, _),
     child(n, x, _), step_name_compare_name(x),
     step_name_compare_literal(y), inside(y, n, backend_identity_cmp),
-    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 
 // ---- the dialect reference: `dialect`, `x.dialect`, `getattr(x, "dialect"…)` ----
 // getattr's string the arguments' second named non-comment child (nthChild 2 ofRule not comment: `child`'s index
@@ -143,7 +134,7 @@ dialect_truth_ref(n) :-
 violation("data-layer-serverplan-dispatch-architecture", "dialect-compare", "SPD004", p, l) :-
     node(d, n, "comparison_operator", _, _),
     child(n, x, _), dialect_truth_ref(x), child(n, z, _), node(_, z, "none", _, _),
-    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 
 // ---- the util `dialect-truth`, and dialect-truth (SPD004) ----
 // A dialect reference; `not` with one as a child; `bool(ref)` with exactly one named non-comment argument; a boolean
@@ -166,7 +157,7 @@ dialect_truth_at(n) :- child(q, n, _), node(_, q, "assert_statement", _, _).
 dialect_truth_at(n) :- child(q, n, _), node(_, q, "if_clause", _, _).
 violation("data-layer-serverplan-dispatch-architecture", "dialect-truth", "SPD004", p, l) :-
     dialect_truth(n), dialect_truth_at(n), node(d, n, _, _, _),
-    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 
 // ======== executor-provenance (relational, partitionBy file) ========
 // The stages, by name, over base_server_plan.py. Its syntax inputs are every named node of the module but comments
@@ -180,7 +171,7 @@ violation("data-layer-serverplan-dispatch-architecture", "dialect-truth", "SPD00
 
 .decl executor_doc(d: number)
 executor_doc(d) :-
-    doc(d, "impl/common/l2070_server_plan/base_server_plan.py", _), !syntax_error(d),
+    doc(d, "impl/common/l2070_server_plan/base_server_plan.py", _), !tape_syntax_error(d),
     node(d, r, "module", _, _), node_text(r, t), match("(?s:.*)class BaseServerPlan\b(?s:.*)", t).
 
 // nodes: the rows, their parents, row edges and ordinals.
@@ -531,4 +522,4 @@ executor_finding(n, "SPD005") :-
     executor_arg(a, n, _), executor_owner(a).
 
 violation("data-layer-serverplan-dispatch-architecture", "executor-provenance", code, p, l) :-
-    executor_finding(n, code), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+    executor_finding(n, code), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

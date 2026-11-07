@@ -10,17 +10,7 @@
 //   (the operators) and comments included: token rows, by their text (a `not in` with a comment or more than one
 //   space inside is no `not in` to W, nor here).
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -58,7 +48,7 @@ contract_attribute_second(a, s) :- contract_attribute_args(_, a), child(a, s, i)
 violation("data-layer-declared-fact-interrogation", "contract-attribute", "CONTRACT_ATTR_PROBE", p, l) :-
   contract_attribute_args(n, a), contract_attribute_second(a, s), value_type_of(s, "str"), value(s, v),
   contract_attribute_name(v), node(d, n, _, _, _),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- override-identity: `type(x).m is Base.m` (either way round), x not self ----
 .decl override_identity_op(s: symbol)
@@ -88,4 +78,4 @@ violation("data-layer-declared-fact-interrogation", "override-identity", "OVERRI
   child(n, a, 0), node(_, a, "attribute", _, _), child(n, b, j), j > 0, node(_, b, "attribute", _, _),
   field(a, "attribute", x), field(b, "attribute", y), text(x, s), text(y, s),
   (override_identity_type_attr(a) ; override_identity_type_attr(b)),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

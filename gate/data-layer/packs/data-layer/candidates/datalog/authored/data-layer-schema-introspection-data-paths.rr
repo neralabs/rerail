@@ -6,20 +6,7 @@
 // scope and the query has no data-path filter; under every other value (the default "all" included) the gate is
 // a valid module whose text matches the trigger regex and the query keeps data paths only. `parameters` is read
 // by no clause.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl node_text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
-.decl end_line(n: node, l: number)
-.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
@@ -41,9 +28,9 @@ introspection_trigger("table_exists").
 introspection_text_doc(d) :- node(d, m, "module", _, _), node_text(m, s), introspection_trigger(x), contains(x, s).
 .decl introspection_gate(d: number, p: symbol)
 introspection_gate(d, p) :- option_value("entryPoint", "_collect_violations"), node(d, _, "module", _, _),
-    in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _).
+    in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _).
 introspection_gate(d, p) :- option_value("entryPoint", v), v != "_collect_violations", node(d, _, "module", _, _),
-    in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), introspection_text_doc(d).
+    in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), introspection_text_doc(d).
 
 // The data paths: under one of the data-path prefixes and with no allowed marker in "/" + path.
 .decl introspection_prefix(s: symbol)

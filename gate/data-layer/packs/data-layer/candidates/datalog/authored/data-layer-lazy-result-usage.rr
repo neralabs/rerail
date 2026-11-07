@@ -19,15 +19,7 @@
 // - the path matches none of `tests/`, `test_`, `__pycache__`, `l2055_lazy_result/`, `l2070_batching/`; the file
 //   parses.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.input node_text
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -128,7 +120,7 @@ lazy_result_skip(p) :- doc(_, p, _),
 
 .decl lazy_result_hit(d: number, f: node, m: symbol)
 lazy_result_hit(d, f, m) :- lazy_result_def(f, m), !lazy_result_lazy_return(f), !lazy_result_stub(f), !lazy_result_exempt_decorator(f),
-    !lazy_result_uses_lazy(f, m), node(d, f, _, _, _), doc(d, p, _), !lazy_result_skip(p), !syntax_error(d).
+    !lazy_result_uses_lazy(f, m), node(d, f, _, _, _), doc(d, p, _), !lazy_result_skip(p), !tape_syntax_error(d).
 
 violation("data-layer-lazy-result-usage", "execute", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "execute"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
 violation("data-layer-lazy-result-usage", "first", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "first"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).

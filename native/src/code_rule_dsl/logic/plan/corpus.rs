@@ -371,9 +371,10 @@ fn cpython_functors(prog: &mut front::Program) -> Result<()> {
     Ok(())
 }
 
-/// What the converter gives an authored file to read (`logic::convert`, test-only): the scope, the report gate and
-/// the options. Here so the runner, which is not test-only, can tell them from unbound core relations.
-pub(in crate::code_rule_dsl) const GIVEN: [&str; 7] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json"];
+/// What the converter gives an authored file to read (`logic::convert`, test-only): the scope, the report gate, the
+/// options, and the tape's syntax verdict (`tape_syntax_error(d)`: core.rr's `syntax_error` is the engine's, decision
+/// 0047). Here so the runner, which is not test-only, can tell them from unbound core relations.
+pub(in crate::code_rule_dsl) const GIVEN: [&str; 8] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json", "tape_syntax_error"];
 
 /// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
 /// (`value`, `str_part`, …): the planner would otherwise fail on its missing statistics (`no statistics for

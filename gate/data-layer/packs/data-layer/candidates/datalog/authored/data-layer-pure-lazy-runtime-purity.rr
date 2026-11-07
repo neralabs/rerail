@@ -37,21 +37,10 @@
 //   [tie]         where one base expression resolves to several catalog classes (several classes share a
 //                 qualified name) every one is searched; W's row_number keeps one of the tied routes.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl value(n: node, v: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.decl node_text(n: node, s: symbol)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
-.decl option_item(name: symbol, i: number, v: symbol)
-.decl inside(n: node, a: node, set: relation)
-.decl nearest(n: node, a: node, set: relation)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 // ---- kind and name sets -------------------------------------------------------------------------------------------
@@ -131,7 +120,7 @@ prs_shallow("PLP-001"). prs_shallow("PLP-002"). prs_shallow("PLP-003"). prs_shal
 
 // `syntax_gate`/`syntax: valid`: scanned files that parse.
 .decl prs_doc(d: number, p: symbol, m: symbol)
-prs_doc(d, p, m) :- doc(d, p, m), in_scope(d), !out_scope(d), !syntax_error(d).
+prs_doc(d, p, m) :- doc(d, p, m), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 
 .decl prs_n(d: number, n: node, k: symbol, s: number, e: number)
 prs_n(d, n, k, s, e) :- prs_doc(d, _, _), node(d, n, k, s, e), !prs_skipk(k).

@@ -19,14 +19,7 @@
 // more, the first `annotation`. `async def` is `op(f, "async")`.
 // forwardref-type: the identifier ForwardRef, an attribute whose attribute is ForwardRef, or a tuple with a
 // forwardref-type anywhere below it (has stopBy end), which is a tuple with a ForwardRef identifier below it.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -90,8 +83,8 @@ fwdref_guarded(a, c) :- fwdref_pair(a, c), fwdref_own(a, s), fwdref_guard(g), fw
 fwdref_hit(c) :- fwdref_pair(a, c), !fwdref_guarded(a, c).
 
 violation("data-layer-forwardref", "fwdref001", "FWDREF001", p, l) :- fwdref_target(c, "fwdref001"), fwdref_hit(c),
-    node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(c, l).
+    node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(c, l).
 violation("data-layer-forwardref", "fwdref002", "FWDREF002", p, l) :- fwdref_target(c, "fwdref002"), fwdref_hit(c),
-    node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(c, l).
+    node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(c, l).
 violation("data-layer-forwardref", "fwdref003", "FWDREF003", p, l) :- fwdref_target(c, "fwdref003"), fwdref_hit(c),
-    node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(c, l).
+    node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(c, l).

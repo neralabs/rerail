@@ -4,9 +4,10 @@
 //!   declarations; it keeps those it reads, derives or outputs (`unused_core`). A file may not declare or derive a
 //!   core.rr relation (decision 0047, `rr::read_file`). A relation read and not declared, which core.rr declares,
 //!   has core.rr's declaration and is an input (`declare_core`: a program's text parsed alone, `rr::parse`). Such a
-//!   text's own declaration replaces core.rr's: an authored overlay's `syntax_error(d: number)` (the tape has an
-//!   error node: the converter's, what the corpus binds) stands where core.rr's `syntax_error(d, l, msg)` (CPython's
-//!   verdict, line and message) would.
+//!   text's own declaration replaces core.rr's: a converted program's `syntax_error(d: number)` (the tape has an
+//!   error node, what the corpus binds) stands where core.rr's `syntax_error(d, l, msg)` (CPython's verdict, line and
+//!   message) would. An authored overlay, a file, reads the tape's verdict as the converter gives it,
+//!   `tape_syntax_error(d)` (`logic::convert`).
 //! - **Tree arithmetic.** The core relations that are questions about the tape, where the program does not derive
 //!   them, lower to the relations the engine has (`rewrite`):
 //!
@@ -121,7 +122,7 @@ impl Lowerer {
         let arity = DECLS[rel].len();
         if args.len() != arity {
             let why = if rel == "syntax_error" {
-                ": the corpus binds syntax_error(d: number), the tape's verdict (declare it); core.rr's syntax_error(d, l, msg) is CPython's"
+                ": core.rr's syntax_error(d, l, msg) is CPython's; the tape's verdict is syntax_error(d: number) in a converted program, tape_syntax_error(d) in an authored overlay"
             } else {
                 ""
             };

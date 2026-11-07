@@ -13,19 +13,10 @@
 // end, and the lines between them count `breaks`, which `min: 0` always accepts; no `blank` is asked. That is a byte
 // comparison, exactly, so no layout relation is needed. The regexes read each node's full text (`node_text`).
 // The lines are `tape_line`'s, numbered as `line(n)` and W's layout number them (`\r\n`, `\r`, `\n`).
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl tape_line(d: number, l: number, sp: span)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, node_text, line, tape_line, syntax_error
 .output violation
 
 // The two patterns.
@@ -69,5 +60,5 @@ raise_allowed(r) :-
     contains("lint: allow-builtin-permission-error", t).
 
 violation("data-layer-permission-error", "raise", "builtin_permission_error", p, l) :-
-    raise_builtin(d, r, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    raise_builtin(d, r, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
     !raise_imported(r), !raise_allowed(r), doc(d, p, _), line(r, l).

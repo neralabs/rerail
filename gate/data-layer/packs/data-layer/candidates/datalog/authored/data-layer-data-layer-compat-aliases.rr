@@ -2,16 +2,9 @@
 // Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-data-layer-compat-aliases.json.
 // Options: `sourceGate` is read from option_on (true: the module's text matches ` as |=`; false: `(?s).*`, every
 // module); `oracleAnalyzer` is read by no clause.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl node_text(n: node, s: symbol)
 .decl option_on(name: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
@@ -48,7 +41,7 @@ violation("data-layer-data-layer-compat-aliases", "import-alias", "DLA001", p, l
     field(x, "alias", a), node(_, a, "identifier", _, _), !import_alias_private(a),
     field(x, "name", _), !import_alias_same(x),
     import_alias_gate(d),
-    in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(x, l).
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(x, l).
 
 // ---- assignment-alias (DLA002) -----------------------------------------------------------------------------------
 // A module-level assignment whose left is an identifier not starting with `_` (TARGET) and whose right is a
@@ -71,4 +64,4 @@ violation("data-layer-data-layer-compat-aliases", "assignment-alias", "DLA002", 
     node(d, n, "assignment", _, _), !assignment_alias_nested(n),
     field(n, "left", t), node(_, t, "identifier", _, _), text(t, target), !assignment_alias_private(t),
     field(n, "right", r), assignment_alias_source(r, source), target != source,
-    in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

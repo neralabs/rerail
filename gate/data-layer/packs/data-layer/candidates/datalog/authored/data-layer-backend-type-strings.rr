@@ -11,12 +11,6 @@
 // is exact for any text (no byte offsets are used).
 // `["']` is the policy's `[\"\']` (the same class). The clauses have no options.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)

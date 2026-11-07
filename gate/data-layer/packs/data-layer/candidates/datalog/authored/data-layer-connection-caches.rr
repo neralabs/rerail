@@ -7,16 +7,6 @@
 // `BranchId|RevisionId|branch_tip|cache|tip_revision`; false: `^`, every module); `oracleAnalyzer` is read by no
 // clause.
 // No clause asks for `syntax: valid`: files that do not parse are matched too, as W matches them.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl node_text(n: node, s: symbol)
-.decl tape_line(d: number, l: number, sp: node)
-.decl col(n: loc, c: number)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl option_on(name: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)

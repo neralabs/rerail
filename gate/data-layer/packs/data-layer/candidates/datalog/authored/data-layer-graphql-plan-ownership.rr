@@ -3,7 +3,7 @@
 // Options: entryPoint from option_value (the policy's `scan_source` case, else its `default`); parameters is not
 // read by either clause.
 //
-// graphql-authority. Gate: python, syntax valid (W's AST `syntax: valid`, W's own verdict: the tape's syntax_error(d),
+// graphql-authority. Gate: python, syntax valid (W's AST `syntax: valid`, W's own verdict: the tape's tape_syntax_error(d),
 // an ERROR or MISSING node), and (entryPoint not "scan_source") the module node's text matches
 // `LazyResult|PlanScope|ServerPlan|Transaction` (W's `regex` on the module node: node_text). The pythonAst stage fails
 // a file CPython's ast.parse rejects (cpython_syntax_error(d, _, _)), so those give no rows either. The stage
@@ -37,21 +37,8 @@
 // (cpython_syntax_error(d, l, msg), CPython 3.13's verdict; l and msg are only the message's, which the
 // (path, line, code) key does not carry). The message differs by branch; the key does not.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
-.decl source(d: number, sp: span)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl option_value(name: symbol, v: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
@@ -60,7 +47,7 @@
 
 // ---- graphql-authority -----------------------------------------------------------------------------------------
 .decl graphql_authority_file(d: number, p: symbol)
-graphql_authority_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _),
+graphql_authority_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _),
     !out_scope(d), graphql_authority_gate(d), doc(d, p, _).
 .decl graphql_authority_gate(d: number)
 graphql_authority_gate(d) :- option_value("entryPoint", "scan_source"), node(d, _, "module", _, _).

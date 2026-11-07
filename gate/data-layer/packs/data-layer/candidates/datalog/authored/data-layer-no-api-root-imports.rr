@@ -1,17 +1,8 @@
 // data-layer-no-api-root-imports, authored clauses `imports` and `examples`. Both are `syntax: valid`.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl node_text(n: node, s: symbol)
-.decl source(d: number, sp: span)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, end_line, node_text, source, value, value_type_of, syntax_error
 .output violation
 
 // ---- imports ----------------------------------------------------------------------------------------------------
@@ -22,7 +13,7 @@
 imports_module(d) :- node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:from api|import api)(?s:.*)", s).
 
 violation("data-layer-no-api-root-imports", "imports", "NARI001", p, l) :-
-    node(d, n, "import_from_statement", _, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    node(d, n, "import_from_statement", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
     node_text(n, s), match("from\\s+\\.*api\\s+import\\b(?s:.*)", s),
     imports_module(d), doc(d, p, _), line(n, l).
 
@@ -44,7 +35,7 @@ violation("data-layer-no-api-root-imports", "imports", "NARI001", p, l) :-
 //   leftmost-first matches start on the same lines.
 .decl examples_string(d: number, n: node, first: number, last: number)
 examples_string(d, n, first, last) :-
-    node(d, n, "string", _, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    node(d, n, "string", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
     value(n, v), value_type_of(n, "str"),
     match("(?s:.*)(?:(?m)^[ \t]*(?:from api import [^\n]+|import api\\s*(?:\n|$)))(?s:.*)", v),
     line(n, first), end_line(n, last).

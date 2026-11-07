@@ -6,27 +6,17 @@
 // regex `import\ |from\ `, false on `(?s).*` (every module). `oracleAnalyzer` reads nothing in these clauses.
 // Shared helpers are `lv_`; each clause's own are named after it.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)          // a node's exact source text, what W's regex and captures read
-.decl line(n: node, l: number)
-.decl source(d: number, sp: span)
-.decl path_part(d: number, s: symbol)
 .decl option_on(name: symbol)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input node_text
 .output violation
 
 // ---- shared ---------------------------------------------------------------------------------------------------
 // `syntax: valid` and the policy scope.
 .decl lv_doc(d: number, p: symbol)
-lv_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+lv_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 
 // The source gate: `any` of [the node is a module whose text matches, the node is inside one]. Every node the
 // clauses test is below the root module, so this is the root's text matching the `sourceGate` case's regex

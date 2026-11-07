@@ -13,8 +13,6 @@
 // lines before it have an even number in all. Then `^\s*#` lines are left out and the clause's regex searched, the
 // first match a finding at the line (`first: true`: one per line). Exact.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl src_line(d: number, l: number, sp: span)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)

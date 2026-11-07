@@ -18,18 +18,10 @@
 //   whose nearest plan with-statement is a write-plan and the same node as $PLAN.
 // `syntax: valid`; the finding is at the if statement's line. Exact.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_on(name: symbol)
-.decl inside(n: node, a: node, set: relation)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -125,5 +117,5 @@ branch_audit_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), nod
     match("(?s:.*)(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)(?s:.*)", s).
 
 violation("data-layer-plan-scope-side-effects", "branch-audit", "PSE-AUDIT-010", p, l) :- option_on("oracleAnalyzer"),
-    branch_audit_if(i), node(d, i, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), branch_audit_gate(d),
+    branch_audit_if(i), node(d, i, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), branch_audit_gate(d),
     doc(d, p, _), line(i, l).

@@ -51,17 +51,9 @@
 // always its first operand (child index 0), so it is child() index > 0. Exact.
 // Identifier texts are read through node_text (W's `regex` subject).
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl node_text(n: node, s: symbol)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
-.input node_text, token
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 // ---- $ANNOTATION ----------------------------------------------------------------------------------------------
@@ -219,4 +211,4 @@ inspection_fallback(n) :- inspection_seed(n, m), !inspection_neq(n, m).
 
 violation("data-layer-unresolved-forward-refs", "inspection", "unresolved_forward_ref", p, l) :-
     inspection_context(n), !inspection_fallback(n),
-    node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(n, l).

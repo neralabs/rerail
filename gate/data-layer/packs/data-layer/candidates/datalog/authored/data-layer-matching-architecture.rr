@@ -14,10 +14,6 @@
 .decl matching_project_scan_sources(x: number)
 matching_project_scan_sources(0) :- option_value("entryPoint", "scan_sources").
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl source(d: number, sp: span)
-.input source
-.decl text(n: loc, s: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -72,21 +68,8 @@ violation("data-layer-matching-architecture", "matching-project-ownership", "MA0
 // module otherwise. `applicationPaths` also makes a file an application. SQL string functions: lower/upper are ASCII
 // (character classes, `(?i-u:…)`), ltrim trims spaces.
 
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl name(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
-.decl node_text(n: node, s: symbol)
-.input node_text
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
-.decl end_line(n: node, l: number)
 
 // ---- the files read: parsing, in scope, in the gate and among the canonical roots ----
 // The gate (`requireNonemptyInput`) and the roots differ in what their regexes read: the gate's `regex` on the
@@ -101,7 +84,7 @@ matching_file_every_module(0) :- option_value("entryPoint", "_scan_tree").
 .decl matching_file_application_path(p: symbol)
 matching_file_application_path(p) :- option_json("parameters", k, p), match("/applicationPaths(/[^/]*)?", k).
 .decl matching_file_candidate(d: number)
-matching_file_candidate(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _),
+matching_file_candidate(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _),
     node(d, _, "module", _, _).
 .decl matching_file_contract_text(s: symbol)
 matching_file_contract_text(s) :- (matching_file_module_text(_, s) ; matching_file_source_text(_, s)),

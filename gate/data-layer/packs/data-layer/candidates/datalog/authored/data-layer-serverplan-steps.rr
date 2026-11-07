@@ -9,17 +9,7 @@
 // point runs only its own detector), strictModulesOnly true (`relaxed` matches no file; no stage reads it),
 // oracleAnalyzer false (read by nothing). Each detector (W's entry point) is gated by `sps_on(entry)`.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.decl name(n: node, s: symbol)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 
@@ -47,7 +37,6 @@ sps_on(e) :- sps_entry(e), option_value("entryPoint", e).
 // ---- a node's source text ------------------------------------------------------------------------------------------
 // sps_text(n, s): n's full source text (comments and strings included), what W's regexes and `capture.X` text
 // columns see: the engine's `node_text`.
-.decl node_text(n: node, s: symbol)
 .decl sps_text(n: node, s: symbol)
 sps_text(n, s) :- node_text(n, s).
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -83,7 +72,7 @@ side_effect_value(n) :- node(_, n, k, _, _), side_effect_kind(k), value(n, "side
 violation("data-layer-serverplan-steps", "side-effect-tags", "STEP-022", p, l) :-
     node(d, n, "function_definition", _, _), field(n, "name", x), node(_, x, "identifier", _, _), text(x, "step_tags"),
     sps_step_method(n), field(n, "body", b), inside(s, b, side_effect_block), side_effect_value(s),
-    in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_side_effect_tag_allowlist").
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_side_effect_tag_allowlist").
 
 // ---- runtime-builder-string-name (STEP-031), anchored at VALUE -----------------------------------------------------
 // nthChild position 2 of `not kind comment` counts the named children that are not comments: `child`'s index 1 (`child`
@@ -107,7 +96,7 @@ runtime_builder_value(v) :- runtime_builder_callee(c, "runtime_builder_post_op")
     runtime_builder_keyword(c, v).
 runtime_builder_value(v) :- runtime_builder_callee(c, "RuntimeBuilderSpec"), runtime_builder_keyword(c, v).
 violation("data-layer-serverplan-steps", "runtime-builder-string-name", "STEP-031", p, l) :- runtime_builder_value(v),
-    node(d, v, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v, l),
+    node(d, v, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(v, l),
     sps_on("check_runtime_builder_names_are_enum_members").
 
 // ---- runtime-reference-summaries (STEP-033, STEP-034, STEP-035) -----------------------------------------------------
@@ -127,7 +116,7 @@ rrs_src_kind("dictionary"). rrs_src_kind("expression_list"). rrs_src_kind("paren
 rrs_container_kind("tuple"). rrs_container_kind("list"). rrs_container_kind("set"). rrs_container_kind("expression_list").
 rrs_container_kind("parenthesized_expression").
 .decl rrs_valid(d: number)
-rrs_valid(d) :- doc(d, _, _), !syntax_error(d).
+rrs_valid(d) :- doc(d, _, _), !tape_syntax_error(d).
 
 // ---- inputs (evidence) ----
 // functions: every function_definition with a name.
@@ -280,7 +269,7 @@ rrs_refless_return(s, d) :- rrs_functions(a, s), node(d, a, _, _, _), rrs_return
 rrs_finding(f, "STEP-034") :- rrs_functions(f, s), node(d, f, _, _, _), rrs_refless_return(s, d),
     sps_on("check_runtime_refs_post_op_requires_runtime_refs_guardrail").
 violation("data-layer-serverplan-steps", "runtime-reference-summaries", code, p, l) :- rrs_finding(n, code),
-    node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- step-contracts-5 (STEP-041), entry check_compiled_result_builders_do_not_fail_closed -------------------------
 // A compiled result builder (a function holding a ResultMaterializationSpec, CompiledPostOp.materialize, or a
@@ -525,7 +514,7 @@ sc5_closed_post_op_value(d, v) :- sc5_keyword(d, c, "closed_post_op", v), sc5_co
 sc5_row(d, n) :- sc5_closed_post_op_value(d, n), sc5_seed(n).
 sc5_row(d, n) :- sc5_closed_post_op_value(d, n), sc5_callee(n, e), sc5_static_exception_function(d, e).
 violation("data-layer-serverplan-steps", "step-contracts-5", "STEP-041", p, l) :- sc5_row(d, n), node(d, n, _, _, _),
-    in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
     sps_on("check_compiled_result_builders_do_not_fail_closed").
 
 
@@ -792,7 +781,7 @@ sc2_bad_span(k, n, s, e) :- sc2_bad_callback_nodes(k, n), node(_, n, _, s, e).
 sc2_bad_shadowed(k, n) :- sc2_bad_span(k, n, s, _), sc2_bad_span(k, _, s2, _), s2 < s.
 sc2_bad_shadowed(k, n) :- sc2_bad_span(k, n, s, e), sc2_bad_span(k, _, s, e2), e2 > e.
 violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-026", p, l) :- sc2_bad_callback_nodes(k, n),
-    !sc2_bad_shadowed(k, n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
+    !sc2_bad_shadowed(k, n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
     sps_on("check_compile_callbacks_no_runtime_authority").
 
 // STEP-019 (check_postop_no_resolved_data_manipulation): inside a compile-local callback, an assignment to an
@@ -807,7 +796,7 @@ sc2_step019(n) :- sc2_postop_nodes(m, n), sc2_calls(_, n, ci), sc2_calls_callee(
 sc2_step019(n) :- sc2_postop_nodes(m, n), sc2_calls(_, n, ce), node(_, ce, "attribute", _, _), sc2_calls_callee(n, "__setattr__"),
     sc2_arguments(n, a, 0), node(_, a, "identifier", _, _), text(a, x), sc2_compile_aliases(m, x).
 violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-019", p, l) :- sc2_step019(n), node(d, n, _, _, _),
-    in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
     sps_on("check_postop_no_resolved_data_manipulation").
 
 // ==== step-contracts-1 (31 stages; STEP-016 018 023 024 025 033 034 036 040 045 046 047 048 049 050) ==============
@@ -1286,7 +1275,7 @@ sc1_row("STEP-045", n) :- sps_on("check_step_role_contract_guardrails"), sc1_tab
     !sc1_has_read_problem(c).
 
 violation("data-layer-serverplan-steps", "step-contracts-1", code, p, l) :- sc1_row(code, n), node(d, n, _, _, _), in_scope(d),
-    !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+    !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- step-contracts-3 (STEP-039) ----------------------------------------------------------------------------------
 // check_row_materializer_raw_row_shaping_guardrail: a `row_materializer=` value, and
@@ -1457,10 +1446,10 @@ sc3_payload(x) :- sc3_payload(n), sc3_arg(n, x).
 sc3_payload(x) :- sc3_payload(n), sc3_sel(n), node(_, n, "pair", _, _), field(n, "value", x).
 
 violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :- sc3_kw(_, "row_materializer", n), sc3_bad(n),
-    node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
+    node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
     sps_on("check_row_materializer_raw_row_shaping_guardrail").
 violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :- sc3_payload(n), sc3_sel(n), sc3_bad(n),
-    node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
+    node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
     sps_on("check_literal_payload_materializer_dispatch_guardrail").
 
 // ---- step-contracts-4 (STEP-029) ----------------------------------------------------------------------------------
@@ -1710,7 +1699,7 @@ sc4_hit(n) :- sc4_literal_kwargs(n), sc4_direct_callable(n).
 sc4_hit(n) :- sc4_literal_kwargs(n), sc4_mutable(n).
 
 violation("data-layer-serverplan-steps", "step-contracts-4", "STEP-029", p, l) :- sc4_hit(n), node(d, n, _, _, _), in_scope(d),
-    !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
+    !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l),
     sps_on("check_closed_post_op_runtime_builder_no_callable_escape_hatches").
 
 // ---- step-contracts-6 (STEP-028) ----------------------------------------------------------------------------------
@@ -1902,7 +1891,7 @@ sc6_user_callable(t) :- sc6_user_callable(s), sc6_callable_edge(s, t).
 // assignment `CLOSED_POST_OP_STRICT` (target text) = a selected `true` RIGHT, with no TYPE, whose parent is selected and
 // whose grandparent is a selected module.
 .decl sc6_opt_in(d: number)
-sc6_opt_in(d) :- !option_on("strictModulesOnly"), node(d, _, "module", _, _), !syntax_error(d).
+sc6_opt_in(d) :- !option_on("strictModulesOnly"), node(d, _, "module", _, _), !tape_syntax_error(d).
 sc6_opt_in(d) :- sc6_sel(a), node(d, a, "assignment", _, _), field(a, "left", l), sc6_sel(l), sps_text(l, "CLOSED_POST_OP_STRICT"),
     field(a, "right", r), sc6_sel(r), node(_, r, "true", _, _), !field(a, "type", _), child(p, a, _), sc6_sel(p),
     child(m, p, _), sc6_sel(m), node(_, m, "module", _, _).
@@ -1928,4 +1917,4 @@ sc6_hit(n) :- sc6_postop(_, n), !node(_, n, "call", _, _), sc6_user_callable(n).
 sc6_hit(n) :- sc6_callback_fn(f), inside(n, f, sc6_k_fn), sc6_call(n, _), sc6_user_callable(n).
 
 violation("data-layer-serverplan-steps", "step-contracts-6", "STEP-028", p, l) :- sc6_hit(n), node(d, n, _, _, _), in_scope(d),
-    !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_legacy_postop_user_callable_escape_hatches").
+    !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_legacy_postop_user_callable_escape_hatches").

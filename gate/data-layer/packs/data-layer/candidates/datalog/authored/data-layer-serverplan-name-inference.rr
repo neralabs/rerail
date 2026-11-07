@@ -9,17 +9,8 @@
 // identifier's text is `text`. `match(re, s)` is Soufflé's, a match of the whole of s: W's unanchored search R is
 // written `(?s:.*)(?:R)(?s:.*)`.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl tape_line(d: number, l: number, sp: span)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl op_at(n: node, i: number, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -63,7 +54,6 @@ violation("data-layer-serverplan-name-inference", "reference-parse", "SPNI002", 
 // nthChild counts named siblings, comments included; `child`'s index leaves comments out, so the string is
 // `child(g, s, 0)` with no comment token of g (`token`: comments included, a comment's text starts with `#`, which
 // no other token of an argument list's does) before it.
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl reference_synthesis_comment_before(g: node, st: number)
 reference_synthesis_comment_before(g, st) :-
     field(_, "arguments", g), child(g, s, 0), node(_, s, _, st, _), token(g, _, t, s0, _), s0 < st, match("#(?s:.*)", t).

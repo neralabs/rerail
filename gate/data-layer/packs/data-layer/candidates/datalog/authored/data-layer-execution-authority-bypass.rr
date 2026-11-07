@@ -27,18 +27,9 @@
 // nthChild position k (ofRule not comment) is `child` index k-1 (`child` numbers named non-comment children).
 // The string sites read W's `value` (escapes decoded, a concatenated_string's pieces joined), whose `regex` reads
 // strings only: value(s, v) with value_type_of(s, "str").
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl node_text(n: node, s: symbol)
 .decl authority_string_kind(kind: symbol)
 authority_string_kind("string"). authority_string_kind("concatenated_string").
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -53,7 +44,7 @@ authority_import_kinds("import_statement"). authority_import_kinds("import_from_
 
 // ---- the documents: parsed, in scope ----
 .decl authority_doc(d: number)
-authority_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d).
+authority_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 .decl authority_gate(d: number)
 authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("_legacy_boundary_var", s).
 authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("_explicit_authority_var", s).

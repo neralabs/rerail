@@ -20,23 +20,12 @@
 // Options: `entryPoint` (default "all") from `option_value`: `conditional_architecture_findings` runs the SQL's case
 // query (no local findings, and every structural detector; the default query keeps six). `parameters` is not read.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl visit_index(n: node, i: number)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, name, node_text, line, visit_index, value, value_type_of, cpython_syntax_error
+.input cpython_syntax_error
 .output violation
 
 // ---- the documents ----------------------------------------------------------------------------------------------

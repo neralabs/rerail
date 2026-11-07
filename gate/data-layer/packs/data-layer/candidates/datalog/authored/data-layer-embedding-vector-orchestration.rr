@@ -25,16 +25,9 @@
 //   EVO102: the innermost function (by preorder id) whose ast subtree holds the call and whose name ends `_lazy`;
 //     the issue needs only that one exists (the key is the call). A def's ast subtree holds its decorators.
 // ast line numbers: a Call's and a FunctionDef's lineno are where tree-sitter's call / function_definition starts.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl node_text(n: node, s: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
@@ -54,7 +47,7 @@ embedding_gate_word(".query"). embedding_gate_word(".read"). embedding_gate_word
 embedding_gate_word("_add_server_step"). embedding_gate_word("_lazy"). embedding_gate_word("_next_ref").
 embedding_gate_word("query_lazy"). embedding_gate_word("versioned_").
 .decl embedding_doc(d: number)
-embedding_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, m, "module", _, _), node_text(m, s),
+embedding_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, m, "module", _, _), node_text(m, s),
     embedding_gate_word(w), contains(w, s).
 
 // ---- calls ----

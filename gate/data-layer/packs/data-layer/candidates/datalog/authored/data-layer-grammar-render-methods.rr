@@ -20,14 +20,7 @@
 // joined items is membership of the class name, and the empty list, `^(?:)$`, matches no identifier).
 // oracleAnalyzer is read by no clause.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -35,12 +28,7 @@
 
 // Engine relations (authored/README.md): a node's full source text, the line of its end offset, W's `value.type`;
 // the converter's option facts.
-.decl node_text(n: node, s: symbol)
-.decl end_line(n: loc, l: number)
-.decl value_type_of(n: node, t: symbol)                 // the type of n's own semantic value (W's `value.type`)
-.input node_text, end_line, value_type_of
 .decl option_on(name: symbol)
-.decl option_item(name: symbol, i: number, v: symbol)
 
 // Kind sets for the tree built-ins.
 .decl rm_class_kind(kind: symbol)
@@ -131,7 +119,7 @@ fstring_cand(d, n) :- rm_fshape(n), rm_in_render(n), !fstring_in_gexc(n), !fstri
 .decl fstring_hidden(n: node)
 fstring_hidden(n) :- fstring_cand(d, n), node(d, n, _, s, _), line(n, l), fstring_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
 
-violation("data-layer-grammar-render-methods", "fstring", "F_STRING", p, l) :- fstring_cand(d, n), !fstring_hidden(n), rm_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-grammar-render-methods", "fstring", "F_STRING", p, l) :- fstring_cand(d, n), !fstring_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- join ----------------------------------------------------------------------------------------------------
 
@@ -150,7 +138,7 @@ join_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", a), node(_, a,
 .decl join_hidden(n: node)
 join_hidden(n) :- join_cand(d, n), node(d, n, _, s, _), line(n, l), join_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
 
-violation("data-layer-grammar-render-methods", "join", "STRING_JOIN", p, l) :- join_cand(d, n), !join_hidden(n), rm_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-grammar-render-methods", "join", "STRING_JOIN", p, l) :- join_cand(d, n), !join_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- format --------------------------------------------------------------------------------------------------
 
@@ -159,7 +147,7 @@ format_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", a), node(_, 
 .decl format_hidden(n: node)
 format_hidden(n) :- format_cand(d, n), node(d, n, _, s, _), line(n, l), format_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
 
-violation("data-layer-grammar-render-methods", "format", "STRING_FORMAT", p, l) :- format_cand(d, n), !format_hidden(n), rm_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-grammar-render-methods", "format", "STRING_FORMAT", p, l) :- format_cand(d, n), !format_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- template ------------------------------------------------------------------------------------------------
 
@@ -168,7 +156,7 @@ template_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", f), node(_
 .decl template_hidden(n: node)
 template_hidden(n) :- template_cand(d, n), node(d, n, _, s, _), line(n, l), template_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
 
-violation("data-layer-grammar-render-methods", "template", "T_STRING", p, l) :- template_cand(d, n), !template_hidden(n), rm_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-grammar-render-methods", "template", "T_STRING", p, l) :- template_cand(d, n), !template_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- concat --------------------------------------------------------------------------------------------------
 
@@ -182,7 +170,7 @@ concat_cand(d, b) :- node(d, b, "binary_operator", _, _), op(b, "+"), field(b, "
 .decl concat_hidden(n: node)
 concat_hidden(n) :- concat_cand(d, n), node(d, n, _, s, _), line(n, l), concat_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
 
-violation("data-layer-grammar-render-methods", "concat", "STRING_CONCAT", p, l) :- concat_cand(d, n), !concat_hidden(n), rm_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-grammar-render-methods", "concat", "STRING_CONCAT", p, l) :- concat_cand(d, n), !concat_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- runtime-static ------------------------------------------------------------------------------------------
 
@@ -203,4 +191,4 @@ runtime_static_skip(a) :- node(_, a, "dictionary_splat", _, _).
 .decl runtime_static_hidden(n: node)
 runtime_static_hidden(n) :- runtime_static_cand(d, n), node(d, n, _, s, _), line(n, l), runtime_static_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
 
-violation("data-layer-grammar-render-methods", "runtime-static", "STATIC_RUNTIME_VALUE", p, l) :- runtime_static_cand(d, n), !runtime_static_hidden(n), rm_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-grammar-render-methods", "runtime-static", "STATIC_RUNTIME_VALUE", p, l) :- runtime_static_cand(d, n), !runtime_static_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

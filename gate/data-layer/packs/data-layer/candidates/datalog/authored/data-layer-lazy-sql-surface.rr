@@ -33,16 +33,7 @@
 // legacy_sync, and its path has no `tests` or `conform` component. Several rows on one line with one message are one
 // finding (key issue, identity; findings are a set).
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.input node_text
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -53,7 +44,7 @@
 lazy_sql_file(d) :- node(d, m, "module", _, _), node_text(m, s),
     (contains("LazyResult", s) ; contains("SyncSqlConnection", s) ; contains("compile", s) ; contains("execute", s) ;
      contains("explicit_execution_authority", s) ; contains("grammar_lazy", s) ; contains("legacy_async", s) ; contains("legacy_sync", s)),
-    doc(d, p, _), !match("(.*/)?(tests|conform)(/.*)?", p), !syntax_error(d), in_scope(d), !out_scope(d).
+    doc(d, p, _), !match("(.*/)?(tests|conform)(/.*)?", p), !tape_syntax_error(d), in_scope(d), !out_scope(d).
 
 // ---- attributes, calls ----
 .decl lazy_sql_attr(a: node, attr: symbol, object: node)

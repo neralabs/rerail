@@ -33,25 +33,14 @@
 //   `s.id < c.id` is visit_index's (`earlier`), an Assign's the outermost assignment of a chain (`a = b = v` is one
 //   Assign; tree-sitter's inner `b = v` has no CPython node of its own);
 // - `x.id BETWEEN m.id AND m.last` (m's subtree) is a descendant of the function_definition, or of its decorators.
-// The gate (`syntax: valid`, requireNonemptyInput) is !syntax_error(d). The finding's code is the `issue` column.
+// The gate (`syntax: valid`, requireNonemptyInput) is !tape_syntax_error(d). The finding's code is the `issue` column.
 // Not reproduced: a method with both legacy_sync and legacy_async decorators makes W's query fail (the
 // `json_extract` cardinality error) for entries all/lint/analyze_source; here such a method gives no legacy rows.
 // CONN601 (read-through getattr delegation) is in no default-case row (its file is outside the analysis paths and
 // it is not CONN103), so it is written only for the analyze_source entry.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
 .decl option_value(name: symbol, v: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -62,7 +51,7 @@ connection_entry(e) :- option_value("entryPoint", e).
 
 // ---- documents and kind sets -------------------------------------------------------------------------------
 .decl connection_doc(d: number, p: symbol)
-connection_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+connection_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 .decl connection_fdef(kind: symbol)
 connection_fdef("function_definition").
 .decl connection_decorator_kind(kind: symbol)

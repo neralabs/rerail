@@ -23,22 +23,11 @@
 // first argument or a parenthesized_expression's child, which a format_specifier never is, so leaving it out is
 // exact.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_on(name: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.decl node_text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl fstring_template(n: node, marker: symbol, v: symbol)
 
 // ---- the string a candidate is tested on ----
 // A `string` whose node text matches `(?i)^[rub]*f`: its prefix letters (lowercased in strprefix) are r, u, b, f,
@@ -136,7 +125,7 @@ rsp_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
 rsp_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE)(?s:.*)", s).
 
 .decl rsp_found(c: node, m: symbol, k: number, p: symbol, l: number)
-rsp_found(c, m, k, p, l) :- rsp_hit(c, m, k), node(d, c, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), rsp_gate(d), doc(d, p, _), line(c, l).
+rsp_found(c, m, k, p, l) :- rsp_hit(c, m, k), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), rsp_gate(d), doc(d, p, _), line(c, l).
 
 violation("data-layer-regex-sql-parsing", "category-0", "ERROR_MSG_PARSE", p, l) :- rsp_found(_, _, 0, p, l).
 violation("data-layer-regex-sql-parsing", "category-1", "SQL_COMMENT_STRIP", p, l) :- rsp_found(_, _, 1, p, l).

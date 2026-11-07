@@ -12,16 +12,7 @@
 // A string annotation (`string` or `concatenated_string`) is read through W's `value` as the policy's
 // `value: {regex: ^(?:…)$}` reads it: a str value (`value_type_of(n, "str")`), the whole value one of the names.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -124,6 +115,6 @@ sas_last(d, f, t) :- sas_def(d, f, t, _, _), !sas_superseded(f).
 sas_sync_key(d, k) :- sas_last(d, f, b), sas_first_param(f, q), field(q, "type", t), sas_ann_txn(t), k = cat(b, "_async").
 
 violation("data-layer-sync-async-signatures", "transaction-connection", "sync_async_signature_mismatch", p, l) :-
-    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), sas_last(d, f, k), sas_sync_key(d, k),
+    doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), sas_last(d, f, k), sas_sync_key(d, k),
     field(f, "name", nm), node_text(nm, s), match(".*_async", s),
     sas_first_param(f, q), field(q, "type", t), sas_ann_conn(t), line(f, l).

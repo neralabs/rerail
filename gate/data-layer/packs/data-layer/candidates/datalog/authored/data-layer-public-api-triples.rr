@@ -37,16 +37,7 @@
 // (`__all__` names are exact: W's TEXT is the string's decoded value, `value(n, v)`; an unknown value reads as ""
 // there, a name no export has, so it is left out.)
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.input node_text
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.decl value(n: node, v: symbol)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -113,7 +104,7 @@ ef_pc_lt(a, b) :- ef_pc_s(a, b, ta, tb), ef_chr(substr(ta, 0, 1), x), ef_chr(sub
 
 // ---- documents ----
 .decl ef_doc(d: number)
-ef_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d).
+ef_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 // The file filter of raw_all / raw_all_names and export_names' path test: `^data_layer/[^/]+\.py$`.
 .decl ef_dl(d: number)
 ef_dl(d) :- ef_doc(d), doc(d, p, _), match("data_layer/[^/]+\\.py", p).

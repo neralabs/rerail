@@ -42,23 +42,11 @@
 // json_each gives a row of NULLs (`quote(NULL)` is `NULL`); a non-string cache type, owner scope or mode is quoted
 // here as a string, where SQLite's quote() leaves a number bare.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl line(n: node, l: number)
-.decl col(n: loc, c: number)
-.decl node_text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
 .decl option_json(name: symbol, pointer: symbol, v: symbol)
-.decl literal_json(n: node, v: symbol)
-.decl dump_sha256(n: node, h: symbol)
-.decl body_sha256(f: node, h: symbol)
-.decl signature_sha256(f: node, h: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -66,7 +54,7 @@
 
 // A Python module in scope that tree-sitter parses, with its text (what the gate regexes search).
 .decl cpl_doc(d: number, t: symbol)
-cpl_doc(d, t) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, m, "module", _, _), node_text(m, t).
+cpl_doc(d, t) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, m, "module", _, _), node_text(m, t).
 
 // The gates: syntax_gate (and raw_strings' `inside` module regex) of each policy clause.
 .decl cached_gate_re(re: symbol)
@@ -791,7 +779,7 @@ violation("data-layer-cached-pure-lazy-allowlist", "memoized-policy", s, "l2055_
 .decl runtime_on(x: number)
 runtime_on(0) :- option_value("entryPoint", "all").
 .decl runtime_gate(d: number, p: symbol)
-runtime_gate(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, _, "module", _, _),
+runtime_gate(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, _, "module", _, _),
     match("(?:(?s:.*)/)?(?:l2055_lazy_result/(?:purity|cached_pure_lazy_policy)|l2070_batching/optimizer_run_cache)\\.py", p).
 
 // protected_names.

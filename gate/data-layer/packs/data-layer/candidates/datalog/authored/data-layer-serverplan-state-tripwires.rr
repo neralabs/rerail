@@ -5,25 +5,13 @@
 // Not started from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_state_tripwires*.rr: those port the
 // older candidates/rules/ policy (SQL over the syntax table, `ast(…)` atoms), not the rules-ast one.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
 .decl intval(n: node, v: number)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 // A node's full source text, exact bytes (W's `regex` and captures read it): comments and strings included.
-.decl node_text(n: node, s: symbol)
-.input node_text
 
 // ---- shared by every clause ----
 // The policy's `state-project-source` admit, `any [matches it, inside it (stopBy end)]`: the document's module, whose
@@ -44,7 +32,7 @@ spt_admitted(d) :- doc(d, _, _), option_on("oracleAnalyzer").
 spt_entry_point("all"). spt_entry_point("scan_source"). spt_entry_point("scan_tree"). spt_entry_point("scan_project_sources").
 // A document the policy runs on: in scope, valid syntax (`syntax: valid`), admitted, at one of the entry points.
 .decl spt_doc(d: number, p: symbol)
-spt_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), spt_admitted(d), option_value("entryPoint", e), spt_entry_point(e).
+spt_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), spt_admitted(d), option_value("entryPoint", e), spt_entry_point(e).
 // `filePath: {regex: "/tests/"}`.
 .decl spt_tests_path(d: number)
 spt_tests_path(d) :- doc(d, p, _), contains("/tests/", p).
@@ -53,9 +41,7 @@ spt_tests_path(d) :- doc(d, p, _), contains("/tests/", p).
 // f-string or a name), read by queue-udf-symbols, serverplan-ddl, private-lazy-ref, state-signatures,
 // state-flow-narrow and state-projection-recovery: each tests it only on a string/concatenated_string node, whose
 // value, where it has one, is a str (so W's `value: {regex}`, which reads strings only, needs no value_type_of).
-.decl value(n: node, v: symbol)
 // p's children in order, anonymous tokens and comments included (a Python comment is in no `child` row).
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
 
 // ---- the 28 ast clauses ----
 // Every one is `all [<its rule>, <state-project-source admit>]` (`spt_doc`), under `when: entryPoint in [all,
@@ -1159,7 +1145,7 @@ spt_flow_a3(d) :- spt_project(d).
 // A document every evidence input reads (`syntax: valid`, admitted, a known entryPoint). Also flow_gate's row: the
 // clause's requireNonemptyInput holds in a partition exactly where it has one (every row here is in such a document).
 .decl spt_flow_adoc(d: number)
-spt_flow_adoc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), spt_flow_ep_ok(1), spt_flow_a1(d), spt_flow_a2(d), spt_flow_a3(d).
+spt_flow_adoc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), spt_flow_ep_ok(1), spt_flow_a1(d), spt_flow_a2(d), spt_flow_a3(d).
 // flow_gate's PM capture, so project_mode: only under scan_project_sources, over the whole repository partition.
 .decl spt_flow_pmode(x: number)
 spt_flow_pmode(1) :- spt_flow_sps(1), spt_flow_adoc(_).

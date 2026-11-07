@@ -18,14 +18,7 @@
 // contain `Callable` (callback-helper) or `versioned_` (inline-reentrant), so the gate holds whenever the rest
 // does, under either value: it is left out. `oracleAnalyzer` is read by no clause.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -45,7 +38,7 @@ tcw_lambda("lambda").
 
 // The documents both clauses read: in scope, valid syntax, not the two exempt paths (`file.path.notRegex`).
 .decl tcw_doc(d: number, p: symbol)
-tcw_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d),
+tcw_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
     !match("(?:.*/)?(?:l2000_connection/connection\\.py|l9900_auto_api/_versioning_helpers\\.py)", p).
 
 .decl tcw_reads(name: symbol)

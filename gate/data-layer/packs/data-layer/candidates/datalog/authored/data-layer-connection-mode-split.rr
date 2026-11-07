@@ -15,7 +15,7 @@
 // - Import/ImportFrom alias rows: Import gives the last dotted segment of each imported name, ImportFrom the name;
 //   both also give a non-empty asname. Every row sits at the import statement's line.
 // The finding's code is the `issue` column, 'connection_mode_split'; the key is (path, line, code).
-// The gate (`syntax: valid`, module text matching Async|Connection|…|Sync|…) is !syntax_error(d) (tree-sitter's
+// The gate (`syntax: valid`, module text matching Async|Connection|…|Sync|…) is !tape_syntax_error(d) (tree-sitter's
 // verdict, W's own) and the module's text (node_text, what W's regex reads, comments and strings included)
 // containing one of the regex's words: every alternative is a literal holding Async, Connection, SessionHandle,
 // Sync or VersionHandle, so the regex searches for those five. The `pythonAst` stage then runs CPython's `ast.parse`
@@ -36,16 +36,7 @@
 //   class and alias name (mode_split_id). String annotations are `ast` Constants, not parsed: their names are
 //   not symbols, as here (no `parsed` tree is read).
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
@@ -89,7 +80,7 @@ mode_split_id(n, s) :- node(_, n, "identifier", _, _), text(n, t), s = @nfkc(t).
 mode_split_word("Async"). mode_split_word("Connection"). mode_split_word("SessionHandle"). mode_split_word("Sync").
 mode_split_word("VersionHandle").
 .decl mode_split_gate(d: number)
-mode_split_gate(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _),
+mode_split_gate(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _),
     node_text(m, s), mode_split_word(w), contains(w, s).
 
 // ---- the `symbols` stage: (document, node, symbol), at the node's line ----

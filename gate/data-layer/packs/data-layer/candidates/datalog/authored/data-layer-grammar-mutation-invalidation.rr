@@ -17,18 +17,10 @@
 // The decorator test is W's `regex: memoize_in_read_only_scope$` over the decorator node's full text (`@`, its
 // expression, any comment before the line's end): `node_text` ends with it (Rust regex `$` is the text's end).
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, node_text, line, syntax_error
 .output violation
 
 .decl mutation_fdef(kind: symbol)
@@ -64,9 +56,9 @@ mutation_class(c) :- node(_, c, "class_definition", _, _), field(c, "body", b), 
 
 // A method of such a class, in a parseable in-scope file: (document, class, method node, its name).
 .decl mutation_method(d: number, c: node, f: node, x: symbol)
-mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), field(c, "body", b),
+mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), field(c, "body", b),
     node(_, b, "block", _, _), child(b, f, _), node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
-mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), field(c, "body", b),
+mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), field(c, "body", b),
     node(_, b, "block", _, _), child(b, dd, _), node(_, dd, "decorated_definition", _, _), child(dd, f, _), node(_, f, "function_definition", _, _),
     field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
 

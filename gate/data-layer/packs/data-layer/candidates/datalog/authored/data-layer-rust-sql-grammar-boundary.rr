@@ -12,14 +12,6 @@
 // line long, so the first match is on the literal's first line (before its first `\r` or `\n`: the tape's
 // terminators), or a middle line (a whole source line inside the literal, `tape_line`, numbered as `line`
 // numbers nodes), or else its last line. `match` runs W's text layer (decision 0042), `\b` Unicode as W's.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl tape_line(d: number, l: number, sp: span)
 .decl in_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation

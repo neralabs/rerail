@@ -4,16 +4,11 @@
 // `function` field is the identifier `<helper>`, or an attribute whose `attribute` field is it), grouped by
 // (path, start line), `count lte 0`. So every group is over its maximum, and W reports one violation per
 // (path, line) at the group's first call: exactly a forbid over the same matcher, deduplicated by line, which
-// `violation`'s (path, line) columns already are. `syntax: valid` is `!syntax_error(d)`.
+// `violation`'s (path, line) columns already are. `syntax: valid` is `!tape_syntax_error(d)`.
 // Options: `entryPoint` from `option_value`: its `all`, `scan_file` and `scan_source` cases match every path, any
 // other value matches none. `oracleAnalyzer` is read by no clause.
 // Not modelled: a `rerail-ignore` on a group's first call silences the group (W's budget), as for any clause.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
@@ -31,7 +26,7 @@ bypass_entry("all"). bypass_entry("scan_file"). bypass_entry("scan_source").
 
 .decl bypass_hit(helper: symbol, p: symbol, l: number)
 bypass_hit(h, p, l) :- option_value("entryPoint", v), bypass_entry(v), bypass_call(c, h), node(d, c, _, _, _),
-    in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(c, l).
+    in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(c, l).
 
 violation("data-layer-serverplan-bypass", "bypass-_execute_raw_sql", "_execute_raw_sql", p, l) :-
     bypass_hit("_execute_raw_sql", p, l).

@@ -8,15 +8,6 @@
 // - `layout.line` is the regex on the node's first line in W's layout numbering (`tape_line`: \r\n, \r, \n).
 // - `\b` in `match` is the engine's (ASCII word boundary); W's regex crate's is Unicode.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl tape_line(d: number, l: number, sp: span)
-.decl op(n: node, s: symbol)
-.decl line(n: loc, l: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)

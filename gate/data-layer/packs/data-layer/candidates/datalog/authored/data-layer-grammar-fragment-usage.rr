@@ -39,23 +39,10 @@
 // The import's `name` regexes (`(?:^|\.)SqlFragment$`, `^(?:Sql|_Sql)`) read the name node's full text (`node_text`).
 // Options: none of the policy's (`oracleAnalyzer`, `sourceGate`) is read by these clauses.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
-.decl strprefix(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, node_text, value, value_type_of, token, strprefix, op, line, syntax_error
 .output violation
 
 // ---- shared: kind sets (the axes' sets are used nowhere else) ----
@@ -156,12 +143,12 @@ constructor_self_param(q) :- child(q, i, _), node(_, i, "identifier", _, _), tex
 violation("data-layer-grammar-fragment-usage", "constructor-fragment", "sqlfragment_usage", p, l) :-
     node(d, f, "function_definition", _, _), constructor_sync_def(f), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__"),
     nearest(f, c, constructor_class_kinds), constructor_grammar_class(c), field(f, "parameters", ps), child(ps, q, _), constructor_param_shape(q),
-    !constructor_self_param(q), field(q, "type", t), constructor_fragment_type(t), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+    !constructor_self_param(q), field(q, "type", t), constructor_fragment_type(t), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).
 
 // ---- attribute-fragment ----
 violation("data-layer-grammar-fragment-usage", "attribute-fragment", "sqlfragment_usage", p, l) :-
     node(d, a, "assignment", _, _), field(a, "type", t), constructor_fragment_type(t), !inside(a, _, constructor_fdef_kinds),
-    nearest(a, c, constructor_class_kinds), constructor_grammar_class(c), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(a, l).
+    nearest(a, c, constructor_class_kinds), constructor_grammar_class(c), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(a, l).
 
 // ---- captured-return: build-string ----
 // The util's first alternative: a plain literal not inside a concatenation whose value is a `str`.
@@ -331,13 +318,13 @@ captured_method(c, m, x) :- captured_owner(c, _), captured_member(c, m, x), x !=
 
 // The call rows' edges: (class, caller, target) for `self.<target>(…)`/`cls.<target>(…)` anywhere in a method.
 .decl captured_edge(c: node, caller: symbol, target: symbol)
-captured_edge(c, x, t) :- node(d, k, "call", _, _), in_scope(d), !out_scope(d), !syntax_error(d), field(k, "function", g), node(_, g, "attribute", _, _),
+captured_edge(c, x, t) :- node(d, k, "call", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), field(k, "function", g), node(_, g, "attribute", _, _),
     field(g, "object", o), node(_, o, "identifier", _, _), text(o, s), (s = "cls" ; s = "self"), field(g, "attribute", a), text(a, t),
     inside(k, m, constructor_fdef_kinds), captured_method(c, m, x).
 
 // The return rows' candidates: a return whose nearest class is an owner, with its class name.
 .decl captured_return(d: number, r: node, c: node, cn: symbol)
-captured_return(d, r, c, cn) :- node(d, r, "return_statement", _, _), in_scope(d), !out_scope(d), !syntax_error(d), nearest(r, c, constructor_class_kinds), captured_owner(c, cn).
+captured_return(d, r, c, cn) :- node(d, r, "return_statement", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), nearest(r, c, constructor_class_kinds), captured_owner(c, cn).
 captured_rf_need(x, cn) :- captured_return(_, r, _, cn), child(r, x, _).
 // What it returns: a returned field, or `self.FIELD` of an unsafe field of its nearest class.
 .decl captured_returns_field(r: node)

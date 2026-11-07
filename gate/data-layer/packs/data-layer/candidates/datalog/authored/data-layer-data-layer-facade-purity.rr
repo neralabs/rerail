@@ -13,16 +13,7 @@
 //   A top-level decorated definition's decorators are its children at the module, so each is a FAC002
 //   statement, as the policy says.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl node_text(n: node, s: symbol)
-.decl value_type_of(n: node, t: symbol)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
-.decl line(n: node, l: number)
-.decl end_line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_on(name: symbol)
@@ -97,13 +88,13 @@ facade_definition(n) :- node(_, n, "function_definition", _, _).
 facade_definition(n) :- node(_, n, "class_definition", _, _).
 violation("data-layer-data-layer-facade-purity", "definition", "FAC001", p, l) :-
   facade_definition(n), facade_top(n), node(d, n, _, _, _), facade_gate(d),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- impl-from (FAC003): `from impl.… import …` at the top level ----
 violation("data-layer-data-layer-facade-purity", "impl-from", "FAC003", p, l) :-
   node(d, n, "import_from_statement", _, _), field(n, "module_name", m), node_text(m, s), prefix("impl.", s),
   facade_top(n), facade_gate(d),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- impl-import (FAC003): `import impl.…` (or `import impl.… as x`) at the top level ----
 .decl facade_impl_import(n: node)
@@ -112,7 +103,7 @@ facade_impl_import(n) :- child(n, c, _), node(_, c, "aliased_import", _, _), fie
   prefix("impl.", s).
 violation("data-layer-data-layer-facade-purity", "impl-import", "FAC003", p, l) :-
   node(d, n, "import_statement", _, _), facade_top(n), facade_impl_import(n), facade_gate(d),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- assignment (FAC004): a top-level statement assigning other than simple aliases and literals ----
 .decl facade_bad_assignment(n: node)
@@ -121,7 +112,7 @@ facade_bad_assignment(n) :- child(n, c, _), facade_nsa(c).
 violation("data-layer-data-layer-facade-purity", "assignment", "FAC004", p, l) :-
   node(d, n, "expression_statement", _, _), child(m, n, _), node(_, m, "module", _, _), facade_bad_assignment(n),
   facade_gate(d),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- expression (FAC002): a top-level expression statement other than an assignment or a `str` literal ----
 .decl facade_expression_ok(n: node)
@@ -132,7 +123,7 @@ facade_expression_ok(n) :- child(n, c, _), node(_, c, "concatenated_string", _, 
 violation("data-layer-data-layer-facade-purity", "expression", "FAC002", p, l) :-
   node(d, n, "expression_statement", _, _), child(m, n, _), node(_, m, "module", _, _), !facade_expression_ok(n),
   facade_gate(d),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- statement (FAC002): any other top-level statement (comments are no nodes, as the policy excludes them) ----
 .decl facade_statement_allowed(n: node)
@@ -145,7 +136,7 @@ facade_statement_allowed(n) :- node(_, n, "class_definition", _, _).
 facade_statement_allowed(n) :- node(_, n, "decorated_definition", _, _).
 violation("data-layer-data-layer-facade-purity", "statement", "FAC002", p, l) :-
   facade_top(n), !facade_statement_allowed(n), node(d, n, _, _, _), facade_gate(d),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 // An anonymous token at the top level (`;`): a token row of the module (or of a top-level decorated definition,
 // which has none in the grammar) that is no named child and no comment, at the end line of the named child
 // before it.
@@ -161,4 +152,4 @@ facade_anon_line(p, st, l) :- facade_anon(p, st), e = max x : { facade_named_at(
   child(p, c, _), node(_, c, _, _, e), end_line(c, l).
 violation("data-layer-data-layer-facade-purity", "statement", "FAC002", p, l) :-
   facade_anon_line(t, _, l), node(d, t, _, _, _), facade_gate(d),
-  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _).

@@ -39,20 +39,7 @@
 // unbound), its ast_name makes no walrus target a Name, and its unparen/assign helpers would come with the whole
 // library. The small helpers below mirror it, each saying which and where they differ.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl value(n: node, v: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
-.decl syntax_error(d: number)
-.decl source(d: number, sp: span)
-.decl src_line_lf(d: number, l: number, sp: span)
-.decl node_text(n: node, s: symbol)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -212,7 +199,7 @@ ofc_in_def(n, f) :- inside(n, dd, "decorated_definition"), field(dd, "definition
 // ---- optimizer-file-checks ---------------------------------------------------------------------------------------
 // optimizer_files: every parsed module of the scope; basename and core from its path.
 .decl ofc_file(d: number, p: symbol)
-ofc_file(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+ofc_file(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 .decl ofc_base(d: number, b: symbol)
 ofc_base(d, "scope.py") :- ofc_file(d, p), (p = "scope.py" ; suffix("/scope.py", p)).
 ofc_base(d, "adapter.py") :- ofc_file(d, p), (p = "adapter.py" ; suffix("/adapter.py", p)).
@@ -413,7 +400,7 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-043", p,
 // ---- optimizer-invariant-registry ------------------------------------------------------------------------------
 // Repository-wide (no partitionBy): verifier.py's registry against the Markdown doc's codes.
 .decl oir_verifier(d: number)
-oir_verifier(d) :- doc(d, "impl/common/l2065_plan_core/verifier.py", _), in_scope(d), !out_scope(d), !syntax_error(d).
+oir_verifier(d) :- doc(d, "impl/common/l2065_plan_core/verifier.py", _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 .decl oir_doc(d: number)
 oir_doc(d) :- doc(d, "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", _), in_scope(d), !out_scope(d).
 

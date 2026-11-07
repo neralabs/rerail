@@ -15,18 +15,10 @@
 // (`token`) before r that is not a comment. In a Python tape a child whose text starts with `#` is a comment (no
 // statement or anonymous token does); a `;` between them is a token that is not, so `logger.error(x); raise` and
 // `logger.error(x);` NEWLINE `raise` are rejected, as W rejects them.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl node_text(n: node, s: symbol)
 .decl option_on(name: symbol)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -73,4 +65,4 @@ violation("data-layer-error-handling", "log-reraise", "EH001", p, l) :-
     inside(r, _, log_reraise_block),
     nearest(r, x, log_reraise_stop), node(_, x, "except_clause", _, _),
     doc(d, p, _), (prefix("api", p) ; prefix("impl", p) ; prefix("services", p)), log_reraise_gate(d),
-    in_scope(d), !out_scope(d), !syntax_error(d).
+    in_scope(d), !out_scope(d), !tape_syntax_error(d).

@@ -19,26 +19,12 @@
 // - A docstring (excluded from HNSW007): a Constant that is the whole first statement of a module, class or def body.
 // A plain string's and a plain concatenation's value is `value`'s (escapes decoded, parts joined), exactly; parentheses
 // are seen through (CPython drops them) for a docstring and a Name receiver.
-// Two verdicts: the gate's AST query (`syntax: valid`) is W's own, tree-sitter's (`syntax_error(d)`); the `pythonAst`
+// Two verdicts: the gate's AST query (`syntax: valid`) is W's own, tree-sitter's (`tape_syntax_error(d)`); the `pythonAst`
 // stage runs CPython's `ast.parse`, which refuses a file it rejects: CPython 3.13's (`cpython_syntax_error`).
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl value(n: node, v: symbol)
-.decl strprefix(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl end_line(n: node, l: number)
-.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl inside(n: node, a: node, set: relation)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl option_value(name: symbol, v: symbol)
 .output violation
@@ -60,9 +46,9 @@ hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sqlite_
 // outer WHERE). Valid: tree-sitter's verdict (the gate) and CPython's (the `pythonAst` stage).
 .decl hnsw_architecture_gate(d: number)
 hnsw_architecture_gate(d) :- hnsw_entry(e), e != "find_hnsw_architecture_findings", node(d, m, "module", _, _),
-    node_text(m, s), !syntax_error(d), !cpython_syntax_error(d, _, _),
+    node_text(m, s), !tape_syntax_error(d), !cpython_syntax_error(d, _, _),
     (contains("HNSW", s) ; contains("Hnsw", s) ; contains("JSON", s) ; contains("Json", s) ; contains("hnsw", s) ; contains("json", s)).
-hnsw_architecture_gate(d) :- hnsw_entry("find_hnsw_architecture_findings"), node(d, _, "module", _, _), !syntax_error(d),
+hnsw_architecture_gate(d) :- hnsw_entry("find_hnsw_architecture_findings"), node(d, _, "module", _, _), !tape_syntax_error(d),
     !cpython_syntax_error(d, _, _), doc(d, p, _), !hnsw_forbidden_path(p).
 
 // ---- Names ----

@@ -8,15 +8,6 @@
 // leaves comments out, so a position is the child's index plus the argument list's comments (and continuations
 // `child` does not hold) before it, read from `token`. The line is `tape_line`'s, the lines `line(n)` numbers
 // (\n, \r\n, \r), as W's layout reads them.
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl doc(d: number, path: symbol, module: symbol)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl node_text(n: node, s: symbol)
-.decl text(n: loc, s: symbol)
-.decl tape_line(d: number, l: number, sp: span)
-.decl line(n: loc, l: number)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)

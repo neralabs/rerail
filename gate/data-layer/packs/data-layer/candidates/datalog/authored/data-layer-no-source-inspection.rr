@@ -4,17 +4,9 @@
 // (`^inspect$`), and a direct child (stopBy neighbor) that is either a dotted_name with text `^getsource$` not
 // in the statement's `module_name` field, or an aliased_import whose full text (`node_text`, comments included, as
 // W's regex reads it) matches `\bgetsource\b`.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl node_text(n: node, s: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, line, node_text
 .output violation
 
 // An import from `inspect`, in scope.

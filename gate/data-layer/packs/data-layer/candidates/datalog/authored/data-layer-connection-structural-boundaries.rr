@@ -27,17 +27,10 @@
 // - Call: `call`, its func the `function` field, parentheses dropped, the receiver the Attribute func's `object`;
 // - Assign/AnnAssign/AugAssign targets: an `assignment` (chained `a = b = c` is one assignment per `=` here, each
 //   left a target) or `augmented_assignment` left, and the elements of tuple/list targets, recursively.
-// The gate (`syntax: valid`) is !syntax_error(d); `gate`/`invalid_files` (CSB030's choice of file) are the scope's
+// The gate (`syntax: valid`) is !tape_syntax_error(d); `gate`/`invalid_files` (CSB030's choice of file) are the scope's
 // Python modules, valid or not. The finding's code is the `issue` column.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl line_count(d: number, k: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
@@ -49,7 +42,7 @@
 .decl cs_doc(d: number, p: symbol)
 cs_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d).
 .decl cs_valid(d: number, p: symbol)
-cs_valid(d, p) :- cs_doc(d, p), node(d, _, "module", _, _), !syntax_error(d).
+cs_valid(d, p) :- cs_doc(d, p), node(d, _, "module", _, _), !tape_syntax_error(d).
 .decl cs_backend(p: symbol)
 cs_backend("impl/mariadb/connection.py"). cs_backend("impl/mongodb/connection.py"). cs_backend("impl/neo4j/connection.py").
 cs_backend("impl/postgres/connection.py"). cs_backend("impl/sqlite/connection.py").

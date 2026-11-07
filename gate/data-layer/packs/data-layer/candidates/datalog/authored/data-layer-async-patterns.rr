@@ -17,20 +17,9 @@
 //   \n), as W's `layout` and `line(n)` count them.
 // - `syntax: valid`: the document has no syntax error; `file.path` `^impl/` etc.: a path prefix.
 
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: loc, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.decl tape_line(d: number, l: number, sp: span)
-.decl value(n: node, v: symbol)
-.decl value_type_of(n: node, t: symbol)
+.decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl nearest(n: node, a: node, set: relation)
 .decl option_on(name: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
@@ -84,7 +73,7 @@ async_patterns_method("session-receiver", "write").
 
 // A checked document: in scope, parsed without error.
 .decl async_patterns_doc(d: number, p: symbol)
-async_patterns_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+async_patterns_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 // The production plugin's documents (oracleAnalyzer false).
 .decl async_patterns_plugin(d: number, p: symbol)
 async_patterns_plugin(d, p) :- async_patterns_doc(d, p), !option_on("oracleAnalyzer").

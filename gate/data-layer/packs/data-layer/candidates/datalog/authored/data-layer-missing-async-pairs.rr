@@ -20,20 +20,11 @@
 // Options as the run resolves them: sourceGate (default true) gates every clause on the module's full text
 // matching `def\ |async\ def\ ` (searched), which is `contains("def ", s)` (the second alternative contains the
 // first); false gives `(?s).*`, which every module matches. oracleAnalyzer is declared but no clause reads it.
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl node_text(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl option_on(name: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, node_text, op, line, syntax_error
 .output violation
 
 .decl pair_fdef(kind: symbol)
@@ -104,9 +95,9 @@ pair_io_name("session_id"). pair_io_name("transaction"). pair_io_name("txn").
 // ---- documents: in scope, parsed, and through the module gate ----
 .decl pair_doc(d: number)
 pair_doc(d) :-
-    in_scope(d), !out_scope(d), !syntax_error(d), option_on("sourceGate"),
+    in_scope(d), !out_scope(d), !tape_syntax_error(d), option_on("sourceGate"),
     node(d, m, "module", _, _), node_text(m, s), contains("def ", s).
-pair_doc(d) :- in_scope(d), !out_scope(d), !syntax_error(d), !option_on("sourceGate"), node(d, _, "module", _, _).
+pair_doc(d) :- in_scope(d), !out_scope(d), !tape_syntax_error(d), !option_on("sourceGate"), node(d, _, "module", _, _).
 
 // ---- eligible defs: pair_def(d, f, class name, name, start, end, async) ----
 .decl pair_name_ok(x: symbol)
