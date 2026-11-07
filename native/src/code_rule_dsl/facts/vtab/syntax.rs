@@ -54,11 +54,14 @@ pub(crate) enum Shape {
 pub(crate) struct Projection {
     pub(crate) shape: Shape,
     pub(crate) reads: Option<BTreeSet<String>>,
+    /// The regexes the program runs over `source` or `src_line` spans (`front::Program::rx_spans`): their matches'
+    /// groups are spans, rows of `rx_span`.
+    pub(crate) rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, String)>,
 }
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -72,7 +75,7 @@ impl Projection {
             std::fs::read_to_string(path).ok().and_then(|src| crate::code_rule_dsl::logic::rr::parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
         });
         let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
-        Projection { shape, reads: Some(reads) }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect() }
     }
 }
 
@@ -251,6 +254,8 @@ struct Extra {
     lines: core_rr::Lines,
     spans: Vec<[u32; 2]>,
     tokens: u32,
+    /// Where `rx_span`'s spans start in `spans` (after the lines); `spans.len()` when there are none.
+    matched: u32,
 }
 
 impl Projected {
@@ -318,7 +323,8 @@ impl Projected {
             let tokens = spans.len() as u32;
             spans.push([0, f.source.len() as u32]);
             spans.extend((1..=lines.count()).map(|l| lines.span(l)));
-            p.extra = Some(Box::new(Extra { lines, spans, tokens }));
+            let matched = spans.len() as u32;
+            p.extra = Some(Box::new(Extra { lines, spans, tokens, matched }));
         }
         p
     }
@@ -460,6 +466,16 @@ impl Batch {
         let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
         // Only a program that reads it: every node's hash is a symbol.
         let wants_digests = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
+        // `rx_span`'s regexes, compiled once for the batch.
+        let rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)> = if core {
+            projection
+                .rx_spans
+                .iter()
+                .map(|(within, re)| regex::Regex::new(re).map(|r| (*within, re.as_str(), r)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}"))))
+                .collect::<StoreResult<_>>()?
+        } else {
+            Vec::new()
+        };
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
             let tag = (d.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
@@ -467,7 +483,10 @@ impl Batch {
                 dialects.insert(tag, Dialect::new(tag)?);
             }
             let dialect = &dialects[&tag];
-            let p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape);
+            let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape);
+            if !rx_spans.is_empty() {
+                c.matches(&mut p, &rx_spans, &mut string);
+            }
             let key = i64::from(d.key);
             // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.

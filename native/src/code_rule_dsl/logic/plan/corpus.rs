@@ -190,17 +190,29 @@ fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
         .filter(|(k, _)| k == "input")
         .filter_map(|(_, t)| t.split_once('(').map(|(r, p)| (r.trim().to_owned(), p.to_owned())))
         .collect();
+    // `core.rr`'s `input_error(path, kind, detail)`: a file a `.input` names that is missing gives no rows and one
+    // `missing` row (an artifact's path is `artifact:NAME`). A file that exists stops the run (O76), so `missing` is
+    // the one kind made.
+    let mut missing: BTreeSet<String> = BTreeSet::new();
     for (rel, params) in params {
-        let file = params.split("filename=").nth(1).and_then(|f| f.split('"').nth(1));
-        if let Some(f) = file
+        let quoted = |key: &str| params.split(key).nth(1).and_then(|f| f.split('"').nth(1)).map(str::to_owned);
+        let file = quoted("filename=");
+        if let Some(f) = &file
             && root.join(f).exists()
         {
             return Err(Error::Plan(format!("{rel}: reading {f} is not written yet (O76)")));
         }
-        if file.is_none() && !params.contains("artifact=") {
-            continue;
-        }
+        match (&file, quoted("artifact=")) {
+            (Some(f), _) => missing.insert(f.clone()),
+            (None, Some(a)) => missing.insert(format!("artifact:{a}")),
+            (None, None) => continue,
+        };
         prog.inputs.retain(|i| *i != rel);
+    }
+    if prog.inputs.iter().any(|i| i == "input_error") {
+        prog.inputs.retain(|i| i != "input_error");
+        let rows = prog.facts.entry("input_error".to_owned()).or_default();
+        rows.extend(missing.into_iter().map(|p| vec![front::Value::Str(p), front::Value::Str("missing".to_owned()), front::Value::Str(String::new())]));
     }
     // `core.rr` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
     for (rel, what) in NOT_MADE {

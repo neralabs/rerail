@@ -31,7 +31,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::syntax::{Code, Head, Item, Lit, Statement, Suppress, Term as STerm};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Native, Program, Rule, Term, Value};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
 use crate::code_rule_dsl::logic::strings::SET;
 
 /// The text tests: their `.rr` names and the engine's.
@@ -185,6 +185,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.three_valued();
     l.findings();
     l.projections();
+    l.span_patterns()?;
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
     // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
@@ -217,9 +218,16 @@ fn facts(heads: &[Head]) -> Option<Vec<(String, Vec<Value>)>> {
 }
 
 impl Lowerer {
+    /// A new name, none the program declares: a printed program (`rr::print`) declares the helpers it was lowered
+    /// with, and lowering it again makes more.
     fn fresh(&mut self, stem: &str) -> String {
-        self.next += 1;
-        format!("rr_{stem}{}", self.next)
+        loop {
+            self.next += 1;
+            let name = format!("rr_{stem}{}", self.next);
+            if !self.prog.decls.contains_key(&name) {
+                return name;
+            }
+        }
     }
 
     fn decl(&mut self, name: String, cols: Vec<(String, String)>, tail: &[String]) -> Result<(), Error> {
@@ -579,9 +587,22 @@ impl Lowerer {
             }
             Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "within" | "within_stop") => self.within(rel, args, *neg)?,
             Lit::Atom { rel, args, neg } if rel == "earlier" => self.earlier(args, *neg)?,
-            Lit::Atom { rel, args, neg: false } if rel == "match" && matches!(args.as_slice(), [STerm::Str(re), _] if !groups(re).is_empty()) => self.captures(args)?,
-            // `match_all` (`core.rr`: every match, each a span) needs the text layer's matches (O80); it is not a relation.
-            Lit::Atom { rel, .. } if rel == "match_all" => return not_yet("match_all (O80)"),
+            Lit::Atom { rel, args, neg: false }
+                if rel == "match_all" || rel == "match" && matches!(args.as_slice(), [STerm::Str(re), _] if !groups(re).is_empty()) =>
+            {
+                self.text_matches(rel, args)?
+            }
+            // A text test on a node or span tests its text (`core.rr`).
+            Lit::Atom { rel, args, neg }
+                if test_of(rel).is_some() && matches!(args.as_slice(), [_, STerm::Var(v)] if self.span_container(v).is_some() || self.node_typed(v)) =>
+            {
+                self.text_test(rel, args, *neg)?
+            }
+            // `!match_all("re", s)`: no match anywhere in s, a search (captures bind nothing outside the `!`).
+            Lit::Atom { rel, args, neg: true } if rel == "match_all" => {
+                let [STerm::Str(re), s] = args.as_slice() else { return Err(Error::Syntax("match_all takes a regex and a text".to_owned())) };
+                vec![vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![self.term(s)?, Term::Str(re.clone())]), op: "=", r: Term::Int(0) }]]
+            }
             Lit::Atom { rel, args, neg } => {
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
                 // variables (`front::finish`'s computed-term check).
@@ -836,6 +857,162 @@ impl Lowerer {
         Ok(vec![vec![docof(&m), docof(&n), Literal::Cmp { l: m.clone(), op: "<", r: n.clone() }]])
     }
 
+    /// `match_all("re", s)`, and `match` with named groups (`core.rr`).
+    ///
+    /// - Over a `source` or `src_line` span (a sibling binds s so), the captures are spans: the batch runs the regex
+    ///   over each such span and makes `rx_span(p, c, j, g, m)`, group g of match j of pattern p in span c, as span m
+    ///   (`facts::vtab::syntax::core_rr`). `match` is the pattern anchored at both ends, so at most one match.
+    /// - Over a symbol, `match`'s groups are `@rx_group` (`captures`); `match_all`'s rows are made natively from the
+    ///   texts the rule asks about, a context relation of its other literals (`front::Native::MatchAll`). Without
+    ///   groups, `match_all` is a search.
+    fn text_matches(&mut self, rel: &str, args: &[STerm]) -> Result<Vec<Vec<Literal>>, Error> {
+        let [STerm::Str(re), s] = args else { return Err(Error::Syntax(format!("{rel} takes a regex string and a text"))) };
+        let gs = groups(re);
+        let all = rel == "match_all";
+        // A span `match_all` reads through a derived relation (`t(d, sp) :- source(d, sp), …`) is a node-typed
+        // column here; `span_patterns` finds which spans it holds.
+        if let STerm::Var(v) = s
+            && (self.span_container(v).is_some() || all && self.node_typed(v))
+        {
+            let pattern = if all { re.clone() } else { format!("^(?:{re})$") };
+            self.rx_span_input();
+            let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".to_owned(), args, neg: false, gated: false });
+            let (p, c) = (Term::Str(pattern), Term::Var(v.clone()));
+            if gs.is_empty() {
+                return Ok(vec![vec![atom(vec![p, c, Term::Wild, Term::Str(String::new()), Term::Wild])]]);
+            }
+            let j = Term::Var(self.fresh("j"));
+            return Ok(vec![gs.iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone()), Term::Var(g.clone())])).collect()]);
+        }
+        if !all {
+            return self.captures(args);
+        }
+        if gs.is_empty() {
+            return Ok(vec![vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![self.term(s)?, Term::Str(re.clone())]), op: "=", r: Term::Int(1) }]]);
+        }
+        let STerm::Var(v) = s else { return not_yet(format!("match_all over a computed text, {s:?} (bind it to a variable first)")) };
+        // The texts asked about: the rule's other literals, those that read no capture (they are bound by the matches).
+        let saved = self.siblings.clone();
+        let reads_capture = |l: &Lit| body_vars(std::slice::from_ref(l)).iter().any(|x| gs.contains(x));
+        self.siblings.retain(|l| !reads_capture(l) && !matches!(l, Lit::Atom { rel, .. } if rel == "match_all"));
+        let ctx = self.context(std::slice::from_ref(v));
+        self.siblings = saved;
+        let ctx = ctx?;
+        let name = self.fresh("mall");
+        let cols = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
+        self.prog.decls.insert(name.clone(), cols);
+        // Its one rule orders it after the context; the evaluator makes its rows.
+        let x = |n: &str| Term::Var(n.to_owned());
+        let mut body = vec![Literal::Atom(Atom { rel: ctx.rel.clone(), args: vec![x("s")], neg: false, gated: false })];
+        body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
+        let head_args = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
+        self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false }, body });
+        self.prog.natives.insert(name.clone(), Native::MatchAll { input: ctx.rel, pattern: re.clone(), groups: gs.clone() });
+        let args = std::iter::once(Term::Var(v.clone())).chain(gs.iter().map(|g| Term::Var(g.clone()))).collect();
+        Ok(vec![vec![Literal::Atom(Atom { rel: name, args, neg: false, gated: false })]])
+    }
+
+    /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
+    /// the same body by `source` or `src_line`. Read off the rules, so a printed program (`rr::print`) has them too.
+    /// A derived relation's column holds `source` spans, or `src_line` spans, when every rule binds it so: directly,
+    /// or through another such column (a fixpoint).
+    fn span_patterns(&mut self) -> Result<(), Error> {
+        let mut columns: BTreeMap<(String, usize), SpanIn> = BTreeMap::new();
+        let binder = |body: &[Literal], x: &str, columns: &BTreeMap<(String, usize), SpanIn>| {
+            body.iter().filter_map(Literal::atom).filter(|b| !b.neg).find_map(|b| match (b.rel.as_str(), b.args.as_slice()) {
+                ("source", [_, Term::Var(y)]) if y == x => Some(SpanIn::Source),
+                ("src_line", [_, _, Term::Var(y)]) if y == x => Some(SpanIn::Line),
+                _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).copied()).flatten()),
+            })
+        };
+        loop {
+            let mut found = BTreeMap::new();
+            let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
+            for rel in heads {
+                let rules: Vec<&Rule> = self.prog.rules.iter().filter(|r| &r.head.rel == rel).collect();
+                for i in 0..rules[0].head.args.len() {
+                    let each: Option<Vec<SpanIn>> = rules.iter().map(|r| match r.head.args.get(i) {
+                        Some(Term::Var(x)) => binder(&r.body, x, &columns),
+                        _ => None,
+                    }).collect();
+                    if let Some(each) = each
+                        && each.windows(2).all(|w| w[0] == w[1])
+                        && !columns.contains_key(&(rel.clone(), i))
+                    {
+                        found.insert((rel.clone(), i), each[0]);
+                    }
+                }
+            }
+            if found.is_empty() {
+                break;
+            }
+            columns.extend(found);
+        }
+        for rule in &self.prog.rules {
+            for a in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "rx_span") {
+                let (Some(Term::Str(p)), Some(Term::Var(c))) = (a.args.first(), a.args.get(1)) else {
+                    return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
+                };
+                let Some(within) = binder(&rule.body, c, &columns) else {
+                    return not_yet(format!("{}: match_all over ${c}, a node or span not of `source` or `src_line` (O80: a node's matches as spans)", rule.head.rel));
+                };
+                self.prog.rx_spans.insert((within, p.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// A text test (`match`, `glob`, `contains`, …) on node or span `v`: a test of its text. `match` over a `source`
+    /// or `src_line` span is `rx_span`'s whole match of the anchored pattern, a scan of the file's bytes, so a line
+    /// past `text`'s inline bound is tested too; any other is `text(v, t)` and the test on t, so a node with no
+    /// `text` row (a long one, not token-like) passes neither the test nor its negation.
+    fn text_test(&mut self, rel: &str, args: &[STerm], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+        let [p, STerm::Var(v)] = args else { unreachable!("a test of a variable") };
+        if test_of(rel) == Some("rx")
+            && let STerm::Str(re) = p
+            && self.span_container(v).is_some()
+        {
+            self.rx_span_input();
+            let args = vec![Term::Str(format!("^(?:{re})$")), Term::Var(v.clone()), Term::Wild, Term::Str(String::new()), Term::Wild];
+            return Ok(vec![vec![Literal::Atom(Atom { rel: "rx_span".to_owned(), args, neg, gated: false })]]);
+        }
+        let t = self.fresh("text");
+        let text = Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false });
+        let test = self.atom(rel, &[p.clone(), STerm::Var(t)], neg)?;
+        Ok(vec![vec![text, test]])
+    }
+
+    /// `rx_span` as an input of the program (`core_rr::CoreRows::matches` makes it).
+    fn rx_span_input(&mut self) {
+        if !self.prog.inputs.iter().any(|i| i == "rx_span") {
+            self.prog.inputs.push("rx_span".to_owned());
+            let cols = [("p", "sym"), ("c", "node"), ("j", "int"), ("g", "sym"), ("m", "node")];
+            self.prog.decls.insert("rx_span".to_owned(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        }
+    }
+
+    /// Whether a sibling binds `v` to a `source` or `src_line` span, the spans `rx_span` runs over.
+    fn span_container(&self, v: &str) -> Option<SpanIn> {
+        self.siblings.iter().find_map(|l| match l {
+            Lit::Atom { rel, args, neg: false } => match (rel.as_str(), args.as_slice()) {
+                ("source", [_, STerm::Var(x)]) if x == v => Some(SpanIn::Source),
+                ("src_line", [_, _, STerm::Var(x)]) if x == v => Some(SpanIn::Line),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    /// Whether a sibling atom reads `v` at a column declared a node (a node or span).
+    fn node_typed(&self, v: &str) -> bool {
+        self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, args, neg: false } => self.prog.decls.get(rel).is_some_and(|cols| {
+                args.iter().zip(cols).any(|(a, (_, t))| matches!(a, STerm::Var(x) if x == v) && t == "node")
+            }),
+            _ => false,
+        })
+    }
+
     /// `match("(?<x>…)", s)`: s matches, and each named group binds the variable of its name to its text:
     /// `x = @rx_group(s, "^(?:…)$", "x")`, which has no value when s does not match (`strings::group`).
     fn captures(&mut self, args: &[STerm]) -> Result<Vec<Vec<Literal>>, Error> {
@@ -1050,14 +1227,34 @@ impl Lowerer {
     /// A relation of `vars`' values in the rule: the literals beside the one being lowered (`siblings`; their
     /// atoms and comparisons), projected on `vars`. It binds, inside a helper rule, variables its body only tests.
     fn context(&mut self, vars: &[String]) -> Result<Atom, Error> {
-        let context: Vec<Lit> = std::mem::take(&mut self.siblings)
-            .into_iter()
-            .filter(|l| match l {
-                Lit::Atom { neg, .. } => !neg,
-                Lit::Cmp { l, r, .. } => !matches!(l, STerm::Agg { .. }) && !matches!(r, STerm::Agg { .. }),
-                _ => false,
-            })
-            .collect();
+        let siblings = std::mem::take(&mut self.siblings);
+        let context = |aggregates: bool| -> Vec<Lit> {
+            siblings
+                .iter()
+                .filter(|l| match l {
+                    Lit::Atom { neg, .. } => !neg,
+                    Lit::Cmp { l, r, .. } => aggregates || !matches!(l, STerm::Agg { .. }) && !matches!(r, STerm::Agg { .. }),
+                    _ => false,
+                })
+                .cloned()
+                .collect()
+        };
+        // Aggregates stay out unless a variable needs one: `m = cat(…, body, …)` over `body = join … : { … }`.
+        let (first, bound) = Self::bound_context(context(false));
+        let context = if vars.iter().all(|v| bound.contains(v)) { first } else { Self::bound_context(context(true)).0 };
+        let ctx = self.fresh("ctx");
+        let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
+        let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
+        self.prog.decls.insert(ctx.clone(), types);
+        let head = Atom { rel: ctx, args: vars.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
+        for b in alts {
+            self.prog.rules.push(Rule { head: head.clone(), body: b });
+        }
+        Ok(head)
+    }
+
+    /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.
+    fn bound_context(context: Vec<Lit>) -> (Vec<Lit>, BTreeSet<String>) {
         // A comparison stays only if the context binds what it reads (`k > 1` needs the count that binds k, which
         // is left out): the context may hold more rows than the rule, and the rule joins it with its own literals.
         let binds = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier");
@@ -1078,15 +1275,7 @@ impl Lowerer {
             bound.extend(body_vars(std::slice::from_ref(&c)));
             context.push(c);
         }
-        let ctx = self.fresh("ctx");
-        let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
-        let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
-        self.prog.decls.insert(ctx.clone(), types);
-        let head = Atom { rel: ctx, args: vars.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
-        for b in alts {
-            self.prog.rules.push(Rule { head: head.clone(), body: b });
-        }
-        Ok(head)
+        (context, bound)
     }
 
     /// Whether a positive atom beside the literal being lowered (not a text test or `earlier`) binds `v`. `within`

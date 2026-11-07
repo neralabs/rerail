@@ -10,7 +10,8 @@
 //! - `package(dir, name)`, `package_field(dir, key, v)`: each `package.json`'s name and string-valued members, keys
 //!   as paths from the root (`engines/node`); `package_for(path, dir)`: a document's nearest `package.json`.
 //!
-//! `tsconfig*`, `git_*`, `signed_list` and `input_error` are not read yet (open item O80).
+//! `tsconfig*`, `git_*` and `signed_list` are not read yet (open item O80). `input_error`'s `missing` rows are made
+//! where the `.input` files are (`logic::plan::corpus::external_inputs`).
 
 use super::vtab::Relation;
 use crate::content_store::{ContentStore, StoreResult};

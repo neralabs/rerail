@@ -574,7 +574,9 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
         .filter(|r| local.contains(r.as_str()) && split.locations.get(*r).is_none_or(Vec::is_empty))
         .cloned()
         .collect();
-    let doc_column = |rel: &str| matches!(rel, "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error");
+    let doc_column = |rel: &str| matches!(rel, "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" | "source" | "src_line" | "line_count");
+    // `core.rr`'s `docof(x, d)`, an input over nodes and spans alike, locates a span too; `node` only a node.
+    let docof = prog.inputs.iter().any(|r| r == "docof");
     let decls = prog.decls.clone();
     let node_typed = |rel: &str, c: usize| decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "node");
     let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "number".to_owned());
@@ -608,7 +610,11 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
                         break;
                     };
                     let d = "__located_d".to_owned();
-                    body.push(Literal::Atom(Atom { rel: "node".into(), args: vec![Term::Var(d.clone()), Term::Var(node), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false }));
+                    body.push(Literal::Atom(if docof {
+                        Atom { rel: "docof".into(), args: vec![Term::Var(node), Term::Var(d.clone())], neg: false, gated: false }
+                    } else {
+                        Atom { rel: "node".into(), args: vec![Term::Var(d.clone()), Term::Var(node), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false }
+                    }));
                     d
                 }
             };

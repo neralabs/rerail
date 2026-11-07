@@ -332,6 +332,16 @@ pub(in crate::code_rule_dsl) struct Program {
     /// Relations the evaluator makes from their inputs' rows rather than from rules (`dfs_first`), by name. Each
     /// has one rule over its inputs, which orders it after them; its rows are the native operator's.
     pub(in crate::code_rule_dsl) natives: BTreeMap<String, Native>,
+    /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
+    /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
+    pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
+}
+
+/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), or each line (`src_line`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(in crate::code_rule_dsl) enum SpanIn {
+    Source,
+    Line,
 }
 
 /// A relation made natively from relations of the program (`Program::natives`).
@@ -340,6 +350,9 @@ pub(in crate::code_rule_dsl) enum Native {
     /// `dfs_first(r, hit, first, edge, target)`; with `roots`, `dfs_first_memo` (roots in the order of their
     /// second column, one memo shared).
     DfsFirst { edge: String, target: String, roots: Option<String> },
+    /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
+    /// `input`'s one column whose `groups` all take part, each group's text (`logic::native::match_all`).
+    MatchAll { input: String, pattern: String, groups: Vec<String> },
 }
 
 impl Native {
@@ -347,6 +360,7 @@ impl Native {
     pub(in crate::code_rule_dsl) fn reads(&self) -> Vec<&str> {
         match self {
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
+            Native::MatchAll { input, .. } => vec![input.as_str()],
         }
     }
 }

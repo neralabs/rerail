@@ -1400,7 +1400,8 @@ since reading it is not written. **Closure:** these relations are built natively
 ## O77. Lowering shortcuts in `.rr`
 
 - A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
-  text test; captures on a node or a span are symbols, not spans; `match_all` is not made (O80).
+  text test. Over a `source` or `src_line` span, captures are spans (`rx_span`, decision 0054); on a node they
+  are still symbols (O80).
 - `unset(x)` is the id -1. Its text is "" (`text(x, t)` of it lowers to `t = ""`), and `!unset(x)` is
   `x != -1` (decision 0046). Inside an aggregate, `nearest` or `ast` it is still refused.
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
@@ -1455,12 +1456,15 @@ tokens have no field.
 
 - `parsed` and `string_annotation` (O76) are still read as empty. A string parsed as code needs its tree grafted
   into the batch's node space, on demand (rrlab answers requests in rounds); not built.
-- `match_all`, and `match` with captures on a node or span, need the lowering to call the text layer on the
-  bytes (0042 §3). (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
+- `match_all`, and `match` captures as spans, are made over `source` and `src_line` spans (`rx_span`, one scan
+  per file and pattern) and over symbols (a native relation): decision 0054. Over a node's own text, `match_all`
+  is refused by name and `match` captures are symbols; a scan per node is what 0041/0042 forbid.
+  (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
 - `syntax_error` for Python is tree-sitter's ERROR/MISSING, not a CPython-grammar verdict.
 - `static_value` is `value`: file-local constants are not followed.
-- `tsconfig*`, `package_export`, `git_*`, `signed_list`, `input_error` and `list_len` are not read.
+- `tsconfig*`, `package_export`, `git_*`, `signed_list` and `list_len` are not read. `input_error` has its
+  `missing` rows (a `.input` file that is absent, decision 0054); the other kinds wait on reading files (O76).
 - `earlier` and `visit_index` are preorder, not CPython's ast order (as O77).
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
 

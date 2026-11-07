@@ -15,7 +15,7 @@ batches 7-8 and probes | declared_fact_interrogation | 42 0 0 0
 batches 7-8 and probes | dynamic_module_loading | 12 0 0 0
 batches 7-8 and probes | eager_resolve | 77 0 0 0
 batches 7-8 and probes | error_handling | 10 0 0 0
-batches 7-8 and probes | executor_publication_repairs | 5 2 1 0
+batches 7-8 and probes | executor_publication_repairs | 5 2 2 0
 batches 7-8 and probes | forwardref | 10 0 0 0
 batches 7-8 and probes | grammar_allowlist_burndown | 8 0 0 0
 batches 7-8 and probes | grammar_callable_constructors | 24 0 0 0
@@ -47,7 +47,7 @@ batches 7-8 and probes | readthrough_authority_architecture | 12 0 0 0
 batches 7-8 and probes | regex_sql_parsing | 42 0 0 0
 batches 7-8 and probes | render_fstrings | 32 0 0 0
 batches 7-8 and probes | render_raw_strings | 48 0 0 0
-batches 7-8 and probes | revision_ancestry_invariants | 6 0 0 0
+batches 7-8 and probes | revision_ancestry_invariants | 6 2 2 0
 batches 7-8 and probes | rust_sql_grammar_boundary | 14 0 0 0
 batches 7-8 and probes | serverplan_dispatch_architecture | 10 0 0 0
 batches 7-8 and probes | serverplan_quality | 8 0 0 0
