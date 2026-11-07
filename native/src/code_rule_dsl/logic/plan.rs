@@ -3705,7 +3705,16 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     drop(tables);
     let mut outcome = Outcome::default();
-    for scc in &sccs {
+    // Each native relation is dropped after the last stratum that reads it (an output, a relation kept for the caller
+    // and a gate's relations stay to the end).
+    let last = last_reads(prog, &sccs, &run.views);
+    let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps))).cloned().collect();
+    for (at, scc) in sccs.iter().enumerate() {
+        let done: Vec<String> = run.native_rels.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
+        if !done.is_empty() {
+            super::native::component::release(db, &done);
+            done.iter().for_each(|r| { run.native_rels.remove(r); });
+        }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
         let _stratum = super::profile::span(|| format!("stratum {}", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
@@ -3828,6 +3837,24 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     outcome.outputs = outputs;
     outcome.nodes = nodes;
     Ok(outcome)
+}
+
+/// Per relation, the last stratum (an index into `sccs`) whose rules read it. A view is read where its readers run,
+/// so what a view reads lives as long as the view's last reader.
+fn last_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>) -> HashMap<String, usize> {
+    let mut last: HashMap<String, usize> = HashMap::new();
+    for (j, scc) in sccs.iter().enumerate().rev() {
+        let at = if scc.iter().all(|r| views.contains(r)) { scc.iter().filter_map(|r| last.get(r)).copied().max().unwrap_or(j).max(j) } else { j };
+        for r in prog.rules.iter().filter(|r| scc.contains(&r.head.rel)) {
+            for l in &r.body {
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
+                    let e = last.entry(a.rel.clone()).or_insert(at);
+                    *e = (*e).max(at);
+                }
+            }
+        }
+    }
+    last
 }
 
 /// The program's outputs as text rows, sorted (symbols as text, kinds and fields by name), and per

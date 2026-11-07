@@ -945,6 +945,16 @@ impl Csr {
             .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
     }
 }
+/// Drops native relations `tables` of `conn`'s run: no later stratum reads them (`plan::last_reads`), so their rows
+/// and the indexes the waves kept are freed now, not when the run ends.
+pub fn release(conn: &Connection, tables: &[String]) {
+    let at = scope(conn);
+    let mut derived = DERIVED.lock().unwrap();
+    for t in tables {
+        derived.remove(&(at, t.clone()));
+    }
+}
+
 /// The relations of components run with `nowrite`, by table, until they are materialized.
 static DERIVED: LazyLock<Mutex<HashMap<(usize, String), Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;
@@ -1627,15 +1637,18 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let (rows, cands) = candidates(src, store, &cx.key, keys);
+                // An atom that binds nothing (`ann_root(_)`, a key all bound) is a test: every row it matches leads to
+                // the same bindings, so the rest of the body runs once if one does (a semi-join), not once per row.
+                let exists = *neg || binds.is_empty();
                 let found = cands.any(|id| {
                     let row = rows.row(id);
                     if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
-                    if *neg { return true; }
+                    if exists { return true; }
                     for &(c, s) in binds { slots[s] = row.at(c); }
                     go(cx, i + 1, slots);
                     false
                 });
-                if *neg && !found { go(cx, i + 1, slots); }
+                if exists && found != *neg { go(cx, i + 1, slots); }
             }
             Step::Count { src, keys, tests, out, bind } => {
                 cx.key.clear();
