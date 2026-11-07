@@ -321,8 +321,25 @@ ReadTransactionLazyMixin's.
 Of the 874 unknowns, 305 are calls Jedi resolves to definitions outside the 84 files (it read the whole
 repository): no rule decides them on this corpus. 443 are workspace definitions in the corpus, 126 external.
 
-Not yet: a function's own type variable bound from an argument's generic (`sorted(xs: Iterable[T]) -> list[T]`),
-structural protocols as parameter types (`iter(x: SupportsIter[T])`), overloads chosen by argument.
+Then, also in `calls.rr`:
+
+- **ParamSpec wrappers.** A decorator declared `(func: Callable[P, A]) -> Callable[P, B]` (`contextmanager`) makes
+  a call of the decorated function hold a B. B's type variables are bound by matching A against the function's
+  declared return, through the return's class's bases. So `with opened() as v` gives v what `opened` yields.
+  A class with no `Generic[...]` base takes its parameters from its first base that has a type variable as an
+  argument (`_GeneratorContextManager`'s first base is given `Generator[...]`).
+- **A function's own type variable.** It is bound from the argument's generic value or its class's bases
+  (`sorted(iterable: Iterable[_T]) -> list[_T]`, `min`). For a protocol parameter, it is bound from what the
+  argument's method returns, the method the protocol declares to return the variable
+  (`next(i: SupportsNext[_T]) -> _T` is `i.__next__()`).
+- **Overloads by arity.** An overload types a call only if the call's positional arguments fit it. The fit takes
+  in required and keyword-only parameters, `*args`, and the `self` an attribute call binds. Every overload is
+  still a call target.
+- **`modules.rr`.** A VERSIONS line with a comment after an open range (`_typeshed: 3.0-  # ...`) had kept its
+  module from loading: `_typeshed`, the home of `SupportsNext`, `SupportsIter` and `SupportsRichComparison`.
+
+`next(iter(xs))` on a `list[V]` needs 8 rounds on typeshed. Decision 0059, the per-document cutoff, is what
+raising k waits on.
 
 ## 7. Open questions
 

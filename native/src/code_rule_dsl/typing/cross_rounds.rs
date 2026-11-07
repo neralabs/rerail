@@ -102,6 +102,99 @@ pub(crate) struct Bounded {
     pub(crate) split: Vec<usize>,
     /// Rules with a recursive atom that cannot be tied to the head, by head relation.
     pub(crate) unbounded: BTreeSet<String>,
+    /// The dependency relations (decision 0059), when `cutoff()` asks for them: what each document's across rules
+    /// may read of each hop relation's previous rows.
+    pub(crate) deps: Vec<Dep>,
+    /// Hop relations read by an across rule whose reader cannot be named (its head node is bound only by the hop
+    /// atom): a change to one makes every document dirty.
+    pub(crate) global: BTreeSet<String>,
+}
+
+/// The prefix of a dependency relation (decision 0059): `rr_dep__<rel>__<cols>(reader, key...)` holds the keys of
+/// `rel`'s previous rows (its columns `cols`) that the across rules deriving rows about node `reader` may probe.
+pub(crate) const DEP: &str = "rr_dep__";
+
+/// A dependency relation: `name` holds `(doc, key...)` rows, a key being `rel`'s columns `cols`. Or, when `head` is
+/// set, no relation: the reader's head node is `rel`'s column `head` itself (`qv(..., v) :- bv(m, x, k, v)`), so a
+/// changed row of `rel` makes that column's document dirty.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Dep {
+    pub(crate) rel: String,
+    pub(crate) cols: Vec<usize>,
+    pub(crate) name: String,
+    pub(crate) head: Option<usize>,
+}
+
+/// The per-document cutoff's setting (decision 0059, step 1): `RERAIL_CROSS_CUTOFF=measure` derives the dependency
+/// relations and reports each round's dirty documents, and changes nothing else.
+pub(crate) fn cutoff() -> Option<String> {
+    std::env::var("RERAIL_CROSS_CUTOFF").ok().filter(|v| !v.is_empty())
+}
+
+/// The dependency rule of the across atom `body[i]` read by a rule whose head node is `h` (decision 0059): the body
+/// without the atom, cut to the literals joined to `h` through other literals' variables, and the filters those bind.
+/// Its head is `(h, key...)`, the reader's node (its document, or a finer unit, is the runner's), the key the atom's columns that the rest binds (constants included). `None`
+/// when `h` is bound only through the atom: no reader can be named.
+fn dep_rule(body: &[Literal], i: usize, h: &str) -> Option<(Vec<usize>, Vec<Term>, Vec<Literal>)> {
+    let Literal::Atom(hop) = &body[i] else { return None };
+    let mut reach: BTreeSet<String> = BTreeSet::from([h.to_owned()]);
+    let mut bound: BTreeSet<String> = BTreeSet::new();
+    let mut kept = vec![false; body.len()];
+    loop {
+        let mut grew = false;
+        for (j, l) in body.iter().enumerate() {
+            if j == i || kept[j] {
+                continue;
+            }
+            let take = match l {
+                Literal::Atom(a) if !a.neg => {
+                    let vs = a.vars();
+                    if vs.is_disjoint(&reach) { None } else { Some(vs) }
+                }
+                Literal::Nearest { n, a, .. } if bound.contains(n) => Some(BTreeSet::from([n.clone(), a.clone()])),
+                Literal::Cmp { l: Term::Var(x), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(x) } if !bound.contains(x) => {
+                    let mut vs = BTreeSet::new();
+                    r.vars(&mut vs);
+                    if vs.is_subset(&bound) && !vs.is_empty() { vs.insert(x.clone()); Some(vs) } else { None }
+                }
+                _ => None,
+            };
+            if let Some(vs) = take {
+                kept[j] = true;
+                reach.extend(vs.iter().cloned());
+                bound.extend(vs);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    if !bound.contains(h) {
+        return None;
+    }
+    // Filters whose variables are all bound: they only narrow what the rule may probe.
+    for (j, l) in body.iter().enumerate() {
+        if j != i && !kept[j] && !matches!(l, Literal::Agg { .. } | Literal::Ast { .. }) && l.vars().is_subset(&bound) {
+            kept[j] = true;
+        }
+    }
+    let (mut cols, mut key) = (Vec::new(), Vec::new());
+    for (c, t) in hop.args.iter().enumerate() {
+        match t {
+            Term::Var(v) if bound.contains(v) => {
+                cols.push(c);
+                key.push(t.clone());
+            }
+            Term::Int(_) | Term::Str(_) => {
+                cols.push(c);
+                key.push(t.clone());
+            }
+            _ => {}
+        }
+    }
+    let out: Vec<Literal> = body.iter().enumerate().filter(|(j, _)| kept[*j]).map(|(_, l)| l.clone()).collect();
+    Some((cols, key, out))
 }
 
 fn first_node_var(prog: &Program, a: &Atom) -> Option<String> {
@@ -152,6 +245,7 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
     let mut out = prog.clone();
     out.rules.clear();
     let (mut hops, mut split, mut unbounded) = (BTreeSet::new(), Vec::new(), BTreeSet::new());
+    let (measure, mut deps, mut global, mut dep_rules) = (cutoff().is_some(), Vec::<Dep>::new(), BTreeSet::new(), Vec::new());
     for (ri, rule) in prog.rules.iter().enumerate() {
         let Some(&hc) = comp.get(rule.head.rel.as_str()) else {
             out.rules.push(rule.clone());
@@ -191,6 +285,38 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
                 }
                 body.push(Literal::Cmp { l: doc(v), op: if across { "!=" } else { "=" }, r: doc(h) });
             }
+            if measure {
+                for (bit, (i, h, _)) in found.iter().enumerate() {
+                    if choice & (1 << bit) == 0 {
+                        continue;
+                    }
+                    let rel = rule.body[*i].atom().expect("an atom").rel.clone();
+                    match dep_rule(&body, *i, h) {
+                        Some((cols, key, dep_body)) => {
+                            let name = format!("{DEP}{rel}__{}", cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"));
+                            if !deps.iter().any(|d| d.name == name) {
+                                let mut decl = vec![("reader".to_owned(), "node".to_owned())];
+                                decl.extend(cols.iter().map(|&c| prog.decls[&rel][c].clone()));
+                                out.decls.insert(name.clone(), decl);
+                                deps.push(Dep { rel: rel.clone(), cols, name: name.clone(), head: None });
+                            }
+                            let mut args = vec![Term::Var(h.clone())];
+                            args.extend(key);
+                            dep_rules.push(Rule { head: Atom { rel: name, args, neg: false, gated: false }, body: dep_body });
+                        }
+                        None => match rule.body[*i].atom().expect("an atom").args.iter().position(|t| matches!(t, Term::Var(v) if v == h)) {
+                            Some(c) => {
+                                if !deps.iter().any(|d| d.rel == rel && d.head == Some(c)) {
+                                    deps.push(Dep { rel: rel.clone(), cols: Vec::new(), name: String::new(), head: Some(c) });
+                                }
+                            }
+                            None => {
+                                global.insert(rel);
+                            }
+                        },
+                    }
+                }
+            }
             out.rules.push(Rule { head: rule.head.clone(), body });
         }
     }
@@ -202,7 +328,8 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
         }
         out.inputs.push(prev);
     }
-    Ok(Bounded { program: out, hops, split, unbounded })
+    out.rules.extend(dep_rules);
+    Ok(Bounded { program: out, hops, split, unbounded, deps, global })
 }
 
 /// The suffix of a cone relation's final rows, read by the rest of the part (`cone_split`).
@@ -291,7 +418,8 @@ pub(crate) fn pre_split(cone: &Program) -> Option<PreSplit> {
         return None;
     }
     let changes_name = |r: &str| r.ends_with(PREV) || r == UNCONVERGED;
-    let mut changing: BTreeSet<&str> = BTreeSet::new();
+    // A dependency relation (decision 0059) is read by the loop each round, so it runs in the rounds.
+    let mut changing: BTreeSet<&str> = cone.rules.iter().map(|r| r.head.rel.as_str()).filter(|r| r.starts_with(DEP)).collect();
     loop {
         let before = changing.len();
         for r in &cone.rules {
@@ -340,6 +468,39 @@ pub(crate) fn pre_split(cone: &Program) -> Option<PreSplit> {
         rounds.inputs.push(format!("{rel}{PRE}"));
     }
     Some(PreSplit { pre, rounds, reads })
+}
+
+/// The negated atoms of `rounds` over a relation that changes with the rounds (reads a `__prev` row or `unconverged`,
+/// directly or through others), by relation: when none, the rounds are monotone (decision 0059, Measured).
+pub(crate) fn negated_changing(rounds: &Program) -> BTreeSet<String> {
+    let changes_name = |r: &str| r.ends_with(PREV) || r == UNCONVERGED;
+    let mut changing: BTreeSet<&str> = BTreeSet::new();
+    loop {
+        let before = changing.len();
+        for r in &rounds.rules {
+            if !changing.contains(r.head.rel.as_str()) && r.body.iter().filter_map(Literal::atom).any(|a| changes_name(&a.rel) || changing.contains(a.rel.as_str())) {
+                changing.insert(r.head.rel.as_str());
+            }
+        }
+        if changing.len() == before {
+            break;
+        }
+    }
+    let mut out = BTreeSet::new();
+    for r in &rounds.rules {
+        for l in &r.body {
+            match l {
+                Literal::Atom(a) if a.neg && (changes_name(&a.rel) || changing.contains(a.rel.as_str())) => {
+                    out.insert(a.rel.clone());
+                }
+                Literal::Agg { atom, .. } if changes_name(&atom.rel) || changing.contains(atom.rel.as_str()) => {
+                    out.insert(format!("{} (aggregate)", atom.rel));
+                }
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 /// The digest of one round's rows of the hop relations: the early cutoff compares consecutive rounds'.

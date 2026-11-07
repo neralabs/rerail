@@ -1383,6 +1383,11 @@ pub(crate) fn run_with_options(
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
+        if cross_rounds::cutoff().is_some() {
+            crate::code_rule_dsl::logic::profile::decision("per-document cutoff (decision 0059)", || {
+                format!("{} dependency relations; read by an unnamed reader: {}", bounded.deps.len(), bounded.global.iter().cloned().collect::<Vec<_>>().join(", "))
+            });
+        }
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Bounded rounds only for a program that declares them (decision 0056: a typing program); a rule's
         // cross-file part is one fixpoint, which no chain length cuts.
@@ -1401,7 +1406,7 @@ pub(crate) fn run_with_options(
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
-        } else if let Some(cone) = cross_rounds::cone_split(&bounded.program, &bounded.hops) {
+        } else if let Some(cone) = cross_rounds::cone_split(&bounded.program, &bounded.hops.iter().cloned().chain(bounded.deps.iter().filter(|d| d.head.is_none()).map(|d| d.name.clone())).collect()) {
             // The rounds run the hops' cone; what reads it and no hop reads runs once, after the last round.
             // Held: what the rest reads, unless an output (written to its table, read from there).
             let mut held = wanted.clone();
@@ -1448,8 +1453,14 @@ pub(crate) fn run_with_options(
                 }
                 None => cone.cone,
             };
+            if cross_rounds::cutoff().is_some() {
+                crate::code_rule_dsl::logic::profile::decision("per-document cutoff (decision 0059)", || {
+                    let neg = cross_rounds::negated_changing(&round_prog);
+                    format!("the rounds negate {} relations that change with them: {}", neg.len(), neg.into_iter().collect::<Vec<_>>().join(", "))
+                });
+            }
             let cone_rules = if library_stage { round_prog.clone() } else { front::Program::default() };
-            let got = run_rounds(&db, &modules, part(round_prog), &bounded.hops, &held, &round_stats, modes, k.expect("declared"), &mut rounds)?;
+            let got = run_rounds(&db, &modules, part(round_prog), &bounded.hops, &held, &round_stats, modes, k.expect("declared"), &mut rounds, (&bounded.deps, &bounded.global))?;
             collect(&db, &got, &cone_rules)?;
             if wanted.contains("returns") && got.kept.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
@@ -1490,7 +1501,7 @@ pub(crate) fn run_with_options(
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
         } else {
             let all_rules = if library_stage { bounded.program.clone() } else { front::Program::default() };
-            let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
+            let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds, (&bounded.deps, &bounded.global))?;
             collect(&db, &got, &all_rules)?;
             if wanted.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
@@ -1668,21 +1679,66 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
+fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds, cutoff: Cutoff) -> Result<Outcome> {
     // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
     // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
     let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
     // Each round rebinds only the `__prev` inputs (and the pending round adds a fact): the other inputs stay loaded.
     let changing: BTreeSet<String> = hops.iter().map(|rel| format!("{rel}{}", cross_rounds::PREV)).chain([cross_rounds::UNCONVERGED.to_owned()]).collect();
     crate::code_rule_dsl::logic::native::keep_inputs(db, Some(changing));
-    let out = rounds_loop(db, modules, &mut round, hops, wanted, stats, modes, report, k, pending_round);
+    let out = rounds_loop(db, modules, &mut round, hops, wanted, stats, modes, report, k, pending_round, cutoff);
     crate::code_rule_dsl::logic::native::keep_inputs(db, None);
     crate::code_rule_dsl::logic::native::forget_inputs(db);
     out
 }
 
 #[allow(clippy::too_many_arguments)]
-fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds, k: usize, pending_round: bool) -> Result<Outcome> {
+/// The dependency relations of the rounds and the hop relations whose readers cannot be named (decision 0059).
+type Cutoff<'a> = (&'a [cross_rounds::Dep], &'a BTreeSet<String>);
+
+/// The units dirty in the next round (decision 0059): those of the readers with a dependency row on a key of a row
+/// that changed between `before` and `now`; every unit when a relation read by an unnamed reader changed (`None`).
+/// `unit` maps a node to its unit: its document (`n >> 32`), or the node itself.
+fn dirty_documents(now: &BTreeMap<String, Vec<Vec<i64>>>, before: &BTreeMap<String, Vec<Vec<i64>>>, deps: &BTreeMap<String, Vec<Vec<i64>>>, cutoff: Cutoff, unit: &dyn Fn(i64) -> i64) -> Option<BTreeSet<i64>> {
+    let changed = |rel: &str| -> Vec<&Vec<i64>> {
+        let (a, b) = (&now[rel], &before[rel]);
+        let (mut i, mut j, mut out) = (0, 0, Vec::new());
+        while i < a.len() || j < b.len() {
+            match (a.get(i), b.get(j)) {
+                (Some(x), Some(y)) if x == y => { i += 1; j += 1; }
+                (Some(x), Some(y)) if x < y => { out.push(x); i += 1; }
+                (Some(_), Some(y)) => { out.push(y); j += 1; }
+                (Some(x), None) => { out.push(x); i += 1; }
+                (None, Some(y)) => { out.push(y); j += 1; }
+                (None, None) => break,
+            }
+        }
+        out
+    };
+    if cutoff.1.iter().any(|rel| now.contains_key(rel) && !changed(rel).is_empty()) {
+        return None;
+    }
+    let mut dirty = BTreeSet::new();
+    for dep in cutoff.0 {
+        if let Some(c) = dep.head {
+            dirty.extend(changed(&dep.rel).into_iter().map(|r| unit(r[c])));
+            continue;
+        }
+        let keys: BTreeSet<Vec<i64>> = changed(&dep.rel).into_iter().map(|r| dep.cols.iter().map(|&c| r[c]).collect()).collect();
+        if keys.is_empty() {
+            continue;
+        }
+        for row in deps.get(&dep.name).into_iter().flatten() {
+            if keys.contains(&row[1..]) {
+                dirty.insert(unit(row[0]));
+            }
+        }
+    }
+    Some(dirty)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds, k: usize, pending_round: bool, cutoff: Cutoff) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
     let mut prev_rows: BTreeMap<String, Vec<Vec<i64>>> = hops.iter().map(|rel| (rel.clone(), Vec::new())).collect();
@@ -1707,7 +1763,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
         let mut st = stats.clone();
         prev_totals.apply(&mut st);
         // A hop relation the program outputs is written to its table, to be decoded; the others are held.
-        let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().collect();
+        let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().chain(cutoff.0.iter().filter(|d| d.head.is_none()).map(|d| d.name.clone())).collect();
         let got = super::run_atoms_native_over(round, db, "main", st, held, modes)?;
         // This round's rows of the hop relations: from the engine, or their table.
         let measure = crate::code_rule_dsl::logic::profile::span(|| "hop rows: copy and measure".into());
@@ -1748,6 +1804,14 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
         }
         drop(sources);
         drop(measure);
+        // The dependency rows (decision 0059, step 1: measured, not yet used to cut a round).
+        let mut dep_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+        for dep in cutoff.0.iter().filter(|d| d.head.is_none()) {
+            if !dep_rows.contains_key(&dep.name) {
+                let width = dep.cols.len() + 1;
+                dep_rows.insert(dep.name.clone(), held_rows(db, &got, &dep.name, width)?);
+            }
+        }
         let digest = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
         let digest = { let _d = digest; cross_rounds::digest_sorted(&rows) };
         report.run = r + 1;
@@ -1773,7 +1837,31 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
                 }
             }
             let docs: BTreeSet<i64> = rows.values().flatten().map(|r| r[0] >> 32).collect();
-            format!("{}; documents changed {} of {}", rows.iter().map(|(rel, v)| format!("{rel} {}", v.len())).collect::<Vec<_>>().join(", "), changed.len(), docs.len())
+            let dirty = if cutoff.0.is_empty() && cutoff.1.is_empty() {
+                String::new()
+            } else {
+                // Units (decision 0059, Measured): a document, and a node (the row's first node column).
+                let by_doc = |n: i64| n >> 32;
+                let share = |unit: &dyn Fn(i64) -> i64, label: &str| match dirty_documents(&rows, &prev_rows, &dep_rows, cutoff, unit) {
+                    Some(d) => {
+                        // The dirty units' share of the hop rows: what a cut round would derive again.
+                        let (mut part, mut all) = (0usize, 0usize);
+                        for v in rows.values() {
+                            all += v.len();
+                            part += v.iter().filter(|r| d.contains(&unit(r[0]))).count();
+                        }
+                        format!("; dirty {label} next round {} holding {part} of {all} hop rows", d.len())
+                    }
+                    None => "; dirty next round: all (a relation read by an unnamed reader changed)".to_owned(),
+                };
+                let mut out = share(&by_doc, "documents");
+                out.push_str(&share(&|n| n, "nodes"));
+                // Rows a round took back: none, and the rounds are monotone (each could continue the last).
+                let removed: usize = rows.iter().map(|(rel, v)| prev_rows[rel].iter().filter(|r| v.binary_search(r).is_err()).count()).sum();
+                out.push_str(&format!("; {removed} rows removed since the round before"));
+                format!("{out} ({} dependency rows)", dep_rows.values().map(Vec::len).sum::<usize>())
+            };
+            format!("{}; documents changed {} of {}{dirty}", rows.iter().map(|(rel, v)| format!("{rel} {}", v.len())).collect::<Vec<_>>().join(", "), changed.len(), docs.len())
         });
         if last == Some(digest) || r == k + 1 || (r == k && !pending_round) {
             report.converged = last == Some(digest);
