@@ -7714,3 +7714,69 @@ Named `.policy` headers are settings in the parser; the metadata export now deco
 
 The reporter receipts keep full migration acceptance false. Production frontend and persistent-workspace acceptance remain outstanding.
 No repository performance comparison or whole-repository cold execution was performed. No Linear tickets were created.
+
+
+## 2026-11-07: Native capture integration and exact alias migration
+
+Rule execution remains native. Python runs only in the offline oracle and test transport.
+The user explicitly rejected Python execution inside rules. Existing signed hashes remain unchanged.
+
+The integration imported bound-document lookups (`266c56c64`), ordered DFS (`f412b667a`), and repeated captures (`8cbc858b6`).
+The merge retained the complete repository readers, LF-only lines, Python visit ranks, and aggregate equality checks.
+It excluded the upstream Merkle digest. That digest cannot reproduce the existing CPython `ast.dump` hashes.
+
+The imported capture executor submitted one SQL insert per match.
+A regression reproduced 1,021 SQLite executions for 1,000 symbol captures.
+Bulk insertion and direct batch interning now pass the same test below 100 executions.
+This is a statement-count regression, not a repository CPU benchmark.
+The test initially failed to compile because its statistics constructor was wrong; the corrected test reproduced the execution count.
+
+The frozen capture engine is `e0d307fcba9991457b962c2ec52998749beec482`.
+Its executable hash starts with `0d78f8cbe4b287bc`. Its CLI build took 32.97 seconds.
+Twenty-nine focused reader tests passed.
+A broader reader invocation reached the external `check_rr` test and exceeded 115 seconds.
+That invocation did not pass. Focused execution checks exclude that broad command and fixture-writing tests.
+
+ForwardRef reporter cases exposed incorrect production roots and output ordering.
+The native policy now selects `api`, `impl`, and `public` for configured reporting.
+The reporter adapter preserves source order and sorts native output by each interface's declared key.
+At the capture checkpoint, all 19 reporter cases, 47 supplementary API cases, and five original cases passed.
+
+The new facade alias draft passed all 17 original tests. Supplemental cases then exposed four defects:
+parenthesized targets, non-Python file selection, missing grammar validation, and literal source-trigger gates.
+Each failure is retained separately. Ordinary and duplicate aliases retain distinct witness identities.
+The helper adapters transfer typed caller DTO fields to native predicates. They do not run source detector methods.
+
+Python grammar validation uses pinned Ruff Rust crates with Python 3.13 as the target version.
+The tape caches one demanded verdict across projections. Raw-text consumers do not request it.
+A regression confirms that invalid syntax still leaves raw source available.
+Thirty focused reader tests, eleven tape-view tests, the cache test, and the bulk-capture test pass.
+The first dependency build took 99 seconds; the following unit build took 19.90 seconds.
+The CLI build took 35.87 seconds. These compile times are separate from execution measurements.
+The engine commit is `1d43e471380442dcf95052f2ec0b539d47142b59`.
+Its executable hash is `f4b9ad82af5213b35dd6d4303263549708dc21c08686ece017f52ac6cd4e3398`.
+
+The test guard also missed nested callbacks and decorated detector bodies.
+Two failing tests established the gaps. Recursive code registration and unwrapping fix them.
+The migration tooling now passes 36 tests and 21 subtests.
+
+The rule inventory is 60 drafts and 40 absent translations. Full migration acceptance remains false.
+The automatic converter refused every remaining policy; none was installed as a partial conversion.
+The changed-engine checkpoint now passes all 215 original cases for ForwardRef, type safety, and facade aliases.
+It makes 224 native calls and compares 63 complete API values.
+The 35 cases without native calls are individually retained.
+All three original-positive mutation controls reject disabled detection.
+All 116 supplemental API cases and 61 configured reporter cases pass on the same frozen executable.
+Each reporter also rejects its own disabled rule.
+These are snapshot contracts. Associated suites, production integration, and persistent-workspace acceptance remain outstanding.
+The cache test is included in the eleven tape-view tests.
+
+An offline AST probe corrected an earlier assumption about synthetic tuples.
+Python 3.13.18 supplies a Load context and omits empty list fields in ast.dump by default.
+Native subtree serialization must use captured interpreter behavior; it is still unimplemented.
+The source-trigger regression also shows why AST-only selection can change behavior:
+`import foo\tas\tbar` produces no source finding until another token satisfies the literal source gate.
+No repository performance claim or whole-repository cold run was made. No Linear tickets were created.
+
+The two format tests, TypeScript typecheck, boundary check, and Windows-path check pass.
+The structure check remains at 24 passing checks and one failure, with the same three pre-existing directory-size violations.

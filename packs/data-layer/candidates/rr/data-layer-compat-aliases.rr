@@ -8,6 +8,8 @@
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_data_layer_compat_aliases.py
 #include "python/ast.rr"
 
+.decl alias_trigger(d: number)
+alias_trigger(d) :- source(d, sp), text(sp, t), (contains(" as ", t) ; contains("=", t)).
 // Function and class scopes suppress aliases, including their decorators and signatures.
 .decl alias_scope(n: node)
 alias_scope(n) :- kind(f, "function_definition"), (within(n, f) ; decorator(f, n) ; decorator(f, d), within(n, d)).
@@ -41,11 +43,11 @@ alias_assignment(t, s, @nfkc(name), original) :- asgstmt(s, _), assign_target(s,
 
 .violation ImportAlias(at: span, witness: node) code "DLA001" "Public import alias detected in data_layer facade module"
 ImportAlias(@place(p, l), a) :- alias_import(a, s, name, original), !prefix("_", name), name != original,
-    !alias_scope(s), docof(s, d), alias_selected(d), doc(d, p, _), line(s, l), !syntax_error(d, _, _).
+    !alias_scope(s), docof(s, d), alias_selected(d), alias_trigger(d), doc(d, p, _), line(s, l), !syntax_error(d, _, _).
 
 .violation AssignmentAlias(at: span, witness: node) code "DLA002" "Public assignment alias detected in data_layer facade module"
 AssignmentAlias(@place(p, l), a) :- alias_assignment(a, s, name, original), !prefix("_", name), name != original,
-    !alias_scope(s), docof(s, d), alias_selected(d), doc(d, p, _), line(s, l), !syntax_error(d, _, _).
+    !alias_scope(s), docof(s, d), alias_selected(d), alias_trigger(d), doc(d, p, _), line(s, l), !syntax_error(d, _, _).
 
 // Helper inputs are typed DTO fields from the caller, not Python execution.
 .violation PublicName(at: span) code "ALIAS_PUBLIC" "public name"

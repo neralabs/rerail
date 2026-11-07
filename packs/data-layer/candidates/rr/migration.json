@@ -1049,7 +1049,7 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/data-layer-compat-aliases.rr",
-      "sha256": "8612faffbd0f80a9062d350161fddd7c1fbe92cf14c15ac57258f7a5bc24b688",
+      "sha256": "396e41bfe9b936559aa1bb4f6579564a2531e982daeddd5ee5277ca21a644581",
       "origin": "authored",
       "upstreamPath": "scripts/lint_data_layer_compat_aliases.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1448,7 +1448,7 @@
       "legacySha256": "821e77b0f992fe9397f7820a5e8391c4be607c0a0cd9326233793295f5d24eb4",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/data-layer-compat-aliases.rr",
-      "ruleSha256": "8612faffbd0f80a9062d350161fddd7c1fbe92cf14c15ac57258f7a5bc24b688"
+      "ruleSha256": "396e41bfe9b936559aa1bb4f6579564a2531e982daeddd5ee5277ca21a644581"
     },
     {
       "check": "layer_violations",
@@ -1974,12 +1974,12 @@
   ],
   "engineSource": {
     "branch": "jeremy/data-layer-rr-engine-20261106",
-    "commit": "aa7ce065a5e9a9bee148a7905dde6be95628304b",
+    "commit": "1d43e471380442dcf95052f2ec0b539d47142b59",
     "finalShapeCommit": "5332989f8",
     "qualityBaseCommit": "8f399baeae405bdad5fee4d65e123c25076f5ccf",
     "status": "Integration candidate; primary production addon unchanged",
     "syntaxCommit": "fa50cd94c",
-    "latestFinalShapeSurveyCommit": "4358d6e55dfbcbdbf1f56551fcb89e5aea456eb8",
+    "latestFinalShapeSurveyCommit": "9d3a2328cc256e58e45dee1d36c47a09708b9f38",
     "latestQualitySurveyCommit": "cb569f94866707aaf2269fc35ea97fa5c14b7dc3"
   }
 }

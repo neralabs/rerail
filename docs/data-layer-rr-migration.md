@@ -72,8 +72,10 @@ The original five-column finding index remains available for existing consumers.
 
 ## Proven gaps and migration order
 
-The reader rejects the lazy analyzer's `dfs_first_memo` and the allowlist's `ordered` recursion.
-Several signature functors and repository readers also lack execution support.
+The engine now executes ordered DFS, memoized DFS, and repeated regex captures.
+Typed repository readers and Ed25519 verification are implemented.
+Kernel tests cover these capabilities; the dependent rule suites still need acceptance.
+Remaining gaps include canonical subtree serialization, native printing, and string-annotation parsing.
 These are engine requirements, not permission to approximate a linter.
 
 `cached_pure_lazy_allowlist` stores hashes of CPython `ast.dump` text.
@@ -315,3 +317,42 @@ The earlier thirteen-module receipt remains a historical checkpoint at its recor
 
 These contracts cover snapshot API and reporter values. They do not certify the production frontend, incremental workspaces, or every associated suite.
 The migration inventory remains 59 drafts and 41 absent translations, with no full acceptance claim.
+
+
+## Native syntax and alias checkpoint
+
+Engine `1d43e471380442dcf95052f2ec0b539d47142b59` passes the reader for all 60 drafts.
+Its frozen executable SHA-256 is `f4b9ad82af5213b35dd6d4303263549708dc21c08686ece017f52ac6cd4e3398`.
+The production addon remains unchanged.
+
+The new facade alias rule preserves duplicate witnesses, parenthesized targets, source-trigger gates, and file scope.
+ForwardRef uses its original configured roots and reporter order.
+Native grammar validation targets Python 3.13, caches each demanded verdict, and preserves raw text on syntax failures.
+The native capture producer interns and inserts complete result batches.
+The source-execution guard now also checks nested callbacks and decorated detector bodies.
+
+Current evidence covers ForwardRef, type safety, and facade aliases:
+
+| Contract | Evidence |
+| --- | --- |
+| Original direct suites | 215 cases, 224 native calls, 63 complete API returns |
+| Source-derived API contracts | 116 additional cases; counted separately from original pytest cases |
+| Configured snapshot reporters | 61 cases, with every StructuredViolation field compared |
+| Positive controls | Each disabled rule fails its original positive case and reporter contract |
+
+The direct suites retain 35 cases without native calls. These are identified individually, not claimed as native detector coverage.
+The receipts keep full migration acceptance false. Associated suites, production integration, and persistent workspaces remain outstanding.
+The other direct-suite receipts remain historical; they do not certify the latest engine.
+
+The committed evidence is:
+
+- [Original direct suites](../fixtures/host/data-layer-port/rr-three-native-syntax-direct-contracts.json.gz).
+- [Supplementary API contracts](../fixtures/host/data-layer-port/rr-three-native-syntax-api-contracts.json.gz).
+- [Snapshot reporter contracts](../fixtures/host/data-layer-port/rr-three-native-syntax-reporting-contracts.json.gz).
+- [Native and guard TDD ladder](../fixtures/host/data-layer-port/rr-native-syntax-and-capture-ladder.json.gz).
+
+The automatic converter refused all 40 absent policies. No partial conversion was installed.
+Use manual relational ports and original assertions to close them.
+Exact subtree dumps must follow the pinned interpreter's field defaults and omission rules.
+Offline probes show that Python 3.13.18 omits empty lists and creates a default Load context for a synthetic Tuple.
+Do not infer those details from the surface syntax or substitute a Merkle digest.

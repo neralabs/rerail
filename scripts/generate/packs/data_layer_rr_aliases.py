@@ -8,6 +8,8 @@ def data_layer_compat_aliases(source, target, header):
     text = header('data_layer_compat_aliases', target)
     text = text.replace('.scope include "data_layer/**/*.py"', '.scope include "data_layer/**/*.py", "testing.py"')
     text += '''
+.decl alias_trigger(d: number)
+alias_trigger(d) :- source(d, sp), text(sp, t), (contains(" as ", t) ; contains("=", t)).
 // Function and class scopes suppress aliases, including their decorators and signatures.
 .decl alias_scope(n: node)
 alias_scope(n) :- kind(f, "function_definition"), (within(n, f) ; decorator(f, n) ; decorator(f, d), within(n, d)).
@@ -44,7 +46,7 @@ alias_assignment(t, s, @nfkc(name), original) :- asgstmt(s, _), assign_target(s,
         text += f'''
 .violation {clause}(at: span, witness: node) code "{code}" {json.dumps(messages[code])}
 {clause}(@place(p, l), a) :- {rel}(a, s, name, original), !prefix("_", name), name != original,
-    !alias_scope(s), docof(s, d), alias_selected(d), doc(d, p, _), line(s, l), !syntax_error(d, _, _).
+    !alias_scope(s), docof(s, d), alias_selected(d), alias_trigger(d), doc(d, p, _), line(s, l), !syntax_error(d, _, _).
 '''
     text += '''
 // Helper inputs are typed DTO fields from the caller, not Python execution.
