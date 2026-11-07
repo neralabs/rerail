@@ -139,3 +139,22 @@ the program itself:
 - the `within` masks: about 45 instructions per block, all ones on every block but the last;
 - an address `add` per output store and per load;
 - the movemask weights, rebuilt each block.
+
+### CPU time
+
+Over the 774 files (615,787 blocks), best of 3 or 5, paired runs, load 24 to 33:
+
+| stage | ours | simdjson |
+|---|---:|---:|
+| tier 1 / stage 1 | 14.0 to 15.6 ns per block | 12.7 ns per block |
+| tier 2 / stage 2 | 7,300 to 7,600 ns per block | about 12.3 ns per block |
+| both | | 25.0 ns per block |
+
+- **Tier 1** is Cranelift's code, within 1.2x of stage 1. Before two tiers it was 114 to
+  140 ns per block. Stage 1 also validates UTF-8, which tier 1 does not yet.
+- **Tier 2** is the CPU writer, built in debug. It is 600x simdjson's stage 2:
+  - it tests every row at every token;
+  - it tests skipped bytes one at a time;
+  - it allocates small vectors per token.
+
+  It is correct, and checked against tree-sitter, but it is not yet stage 2's shape.

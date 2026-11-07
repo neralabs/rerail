@@ -465,8 +465,23 @@ fn json_batch_cost_per_block() {
     println!("files to the fallback: {fallback}");
     let s = compiled.batch_cpu_seconds(&slices, 3);
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
+    // Tier 2 (decision 0049): the writer over each file's outputs, once per token.
+    let block = &program.block_programs()[0];
+    let now = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `t` is a valid timespec to write.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let (mut best, mut nodes) = (f64::MAX, 0);
+    for _ in 0..3 {
+        let start = now();
+        nodes = runs.iter().zip(&bytes).filter_map(|(r, b)| tape_writer::write(block, &r.outputs, b).ok()).map(|(n, _)| n.len()).sum::<usize>();
+        best = best.min(now() - start);
+    }
+    println!("tier 2, the writer: {:.3} ns per block, {nodes} nodes (CPU time, best of 3)", best / blocks as f64 * 1e9);
     #[cfg(target_os = "macos")]
-    {
+    if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, REPEATED_LAUNCHES, run_split};
         let before = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed);
         for executor in [Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes), Executor::Interpreter] {
