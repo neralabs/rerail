@@ -758,6 +758,49 @@ err(d) :- syntax_error(d, _, _).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A run's outputs do not depend on how its files are chunked: one chunk, or chunks of a few files whose mix (small
+/// files or large ones) changes from chunk to chunk, each mix measured for itself, give the same rows, cross-file
+/// ones too.
+#[test]
+fn outputs_do_not_depend_on_the_chunk_size() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("chunks");
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..6 {
+        std::fs::write(dir.join(format!("m{i}.py")), format!("def f{i}(x):\n    return g{}(x) + len(x)\n\ndef g{i}(y):\n    return f{i}(y)\n", (i + 1) % 6)).unwrap();
+    }
+    for j in 0..2 {
+        let body: String = (1..30).map(|k| format!("def b{j}_{k}():\n    return b{j}_{}()\n\n", k - 1)).collect();
+        std::fs::write(dir.join(format!("big{j}.py")), format!("def b{j}_0():\n    return 0\n\n{body}")).unwrap();
+    }
+    let rule = dir.join("c.rr");
+    std::fs::write(&rule, r#"
+.decl defined(x: symbol)
+defined(x) :- kind(n, "function_definition"), field(n, "name", m), text(m, x).
+.decl called(x: symbol, p: symbol)
+called(x, p) :- kind(c, "call"), field(c, "function", f), text(f, x), defined(x), docof(c, d), doc(d, p, _).
+.violation UNKNOWN(at: node, x: symbol) "call of {x}"
+UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(x).
+.output called
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let run = |chunk_nodes: usize| {
+        let out = dir.join(format!("out{chunk_nodes}"));
+        crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
+        ["called", "violation"].map(|rel| {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        })
+    };
+    let whole = run(1 << 18);
+    assert_eq!(whole[0].len(), 12 + 2 * 29, "every call of a defined function: {:?}", whole[0]);
+    assert_eq!(whole[1].len(), 6, "len, once per Python file: {:?}", whole[1]);
+    for chunk_nodes in [60, 400] {
+        assert_eq!(run(chunk_nodes), whole, "chunks of {chunk_nodes} nodes");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `dfs_first` and `dfs_first_memo` through rules: the first target by edge order from each root, the ord of the
 /// root's edge that starts the path, and the memo variant over its roots in order.
 #[test]
