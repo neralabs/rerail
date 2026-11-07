@@ -761,6 +761,30 @@ fn a_class_decorator_declared_type_t_to_type_t_keeps_the_class() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+#[test]
+fn a_paramspec_wrapper_call_holds_the_declared_class_bound_by_the_wrapped_return() {
+    // `cm(func: Callable[P, It[T]]) -> Callable[P, Cm[T]]` (contextlib's `contextmanager`): `opened()` runs
+    // `opened` and holds a Cm of V (`Gen[V]` is an It of V). Cm's parameter is read from its first base with a type
+    // variable as an argument (`Enter[T]`, not `Base[It[T]]`), so `with opened() as v` binds v to a V and `v.run()`
+    // targets V.run.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("wrapcm");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Callable, Generic, ParamSpec, Protocol, TypeVar\nT = TypeVar(\"T\")\nP = ParamSpec(\"P\")\nclass It(Generic[T]): ...\nclass Gen(It[T]): ...\nclass Enter(Protocol[T]):\n    def __enter__(self) -> T: ...\nclass Base(Generic[T]): ...\nclass Cm(Base[It[T]], Enter[T]): ...\ndef cm(func: Callable[P, It[T]]) -> Callable[P, Cm[T]]: ...\nclass V:\n    def run(self) -> int: ...\n@cm\ndef opened() -> Gen[V]: ...\ndef f() -> None:\n    with opened() as v:\n        v.run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
+    assert_eq!(open.lines().count(), 0, "{open}");
+    let types = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
+    assert_eq!(types.lines().filter(|l| l.ends_with("\tm.V")).count(), 2, "{types}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a

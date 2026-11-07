@@ -431,11 +431,14 @@ pform_name("Generic"). pform_name("Protocol").
 .decl explicit_params(c: node)
 explicit_params($c) :- basex($c, $e), pform($e).
 .decl gbase_at(c: node, e: node, j: int)
-gbase_at($c, $e, $j) :- field($c, "superclasses", $al), child($al, $e, $j), kind($e, "subscript"), !pform($e).
+gbase_at($c, $e, $j) :- field($c, "superclasses", $al), child($al, $e, $j), kind($e, "subscript"), !pform($e), sarg($e, _, $a),
+    kind($a, "identifier"), text($a, $y), nearest($c, $m, scope), tvarq($m, $y).
 .decl gbase_later(c: node, j: int)
 gbase_later($c, $j) :- gbase_at($c, _, $j), gbase_at($c, _, $i), $i < $j.
 .decl cparam(c: node, i: int, y: sym)
 cparam($c, $i, $y) :- basex($c, $e), pform($e), sarg($e, $i, $a), kind($a, "identifier"), text($a, $y).
+// Else the type variables of its first base with one as an argument (`_GeneratorContextManager`'s first base takes
+// `Generator[_T_co, ...]`, not a type variable).
 cparam($c, $i, $y) :- gbase_at($c, $e, $j), !gbase_later($c, $j), !explicit_params($c), sarg($e, $i, $a), kind($a, "identifier"), text($a, $y),
     nearest($c, $m, scope), tvarq($m, $y).
 // tmap(k, i, a, y): ancestor a's parameter y is k's parameter i; tfix(k, a, y, x): it is the annotation x, fixed by
@@ -503,6 +506,19 @@ garg($c, $j, $x) :- gcall($c, _, $f), rgen($f, $r), sarg($r, $j, $z), tvar_of($f
 garg($c, $j, $z) :- gfn($c, $f), rgen($f, $r), sarg($r, $j, $z), !tvar_of($f, $z).
 pv($c, "gen", $c) :- gfn($c, $f), rgen($f, _), ghcls($c, _).
 pv($c, "inst", $k) :- gfn($c, $f), rgen($f, _), ghcls($c, $k).
+// A wrapper's call (`wrap`) holds the B its decorator g declares, exactly; B's type variables are bound by matching A
+// against f's declared return (`Generator[None, None, None]` against `Iterator[_T_co]`, through Generator's bases).
+.decl wcall(c: node, f: node, g: node)
+wcall($c, $f, $g) :- callee($c, $e), pv($e, "wfn", $f), decfn($f, $g).
+ghcls($c, $k) :- wcall($c, _, $g), wrap($g, _, $b), gann_head($b, $h), pv($h, "cls", $k).
+pv($c, "inst", $k) :- wcall($c, _, $g), wrap($g, _, $b), gann_head($b, $h), pv($h, "cls", $k).
+pv($c, "gen", $c) :- wcall($c, _, _), ghcls($c, _).
+garg($c, $j, $x) :- wcall($c, $f, $g), wrap($g, _, $b), sarg($b, $j, $z), kind($z, "identifier"), text($z, $y), wbind($f, $g, $y, $x).
+// wbind(f, g, y, x): A's argument i is g's type variable y, and f's declared return rf, whose class kf has A's class
+// ka among its ancestors, gives ka's parameter i the annotation x.
+.decl wbind(f: node, g: node, y: sym, x: node)
+wbind($f, $g, $y, $x) :- decfn($f, $g), wrap($g, $a, _), gann_head($a, $ha), pv($ha, "cls", $ka), sarg($a, $i, $z), kind($z, "identifier"), text($z, $y),
+    cparam($ka, $i, $w), rann($f, $t), ann($t, $rf), gann_head($rf, $hf), pv($hf, "cls", $kf), tmap($kf, $i2, $ka, $w), sarg($rf, $i2, $x).
 // gpar(c, a, y, x): at call c, the receiver binds its class a's parameter y to the annotation x: through its generic
 // value's arguments, or its class's bases (`class D(M[str, int])`).
 .decl gpar(c: node, a: node, y: sym, x: node)
@@ -647,6 +663,17 @@ defk($f, "cls") :- kind($f, "class_definition").
 bv($s, $x, $k, $f) :- live_def($s, $x, $f), decfn($f, $g), retparam($g, 0, _), defk($f, $k).
 bv($s, $x, $k, $v) :- live_def($s, $x, $f), decval($f, $k, $v).
 bv($s, $x, $k, $f) :- live_def($s, $x, $f), decfn($f, $g), ident_dec($g), defk($f, $k).
+// A decorator declared `(f: Callable[P, A]) -> Callable[P, B]` (`contextlib.contextmanager`) gives back a wrapper of
+// f's parameters: its value is `wfn` f, whose call runs f and holds a B (`wcall`).
+.decl wrap(g: node, a: node, b: node)
+wrap($g, $a, $b) :- param($g, $x, 0), pann($g, $x, $t), ann($t, $ca), callable_ann($ca, $p, $a), rann($g, $r), ann($r, $cb), callable_ann($cb, $p, $b).
+.decl callable_ann(e: node, p: sym, r: node)
+callable_ann($e, $p, $r) :- gann_head($e, $h), gname($h, "Callable"), sarg($e, 0, $pe), kind($pe, "identifier"), text($pe, $p), sarg($e, 1, $r).
+// gann_head(e, h): the generic annotation e is headed by h (`Iterator` in `Iterator[_T]`), read as written.
+.decl gann_head(e: node, h: node)
+gann_head($e, $h) :- kind($e, "generic_type"), child($e, $h, 0).
+gann_head($e, $h) :- kind($e, "subscript"), field($e, "value", $h).
+bv($s, $x, "wfn", $f) :- live_def($s, $x, $f), decfn($f, $g), wrap($g, _, _), !ident_dec($g).
 bv($s, $x, $k, $v) :- live_asg($s, $x, $r), pv($r, $k, $v).
 bv($s, $x, $k, $v) :- ibind($s, $x, $q), qv($q, $k, $v).
 // `self` (the first parameter of a method that is not static) and `cls` (of a class method) are late bound.
@@ -785,8 +812,8 @@ bopen($s, $x) :- ifrom($s, $x, $m, _), isqmod($m), ibind($s, $x, $q), !qknown($q
 bopen($s, $x) :- live_def($s, $x, $f), opaque_dec($f, _), !dec1($f, _).
 bopen($s, $x) :- live_def($s, $x, $f), dec1($f, $e), !pv($e, "fn", _).
 bopen($s, $x) :- live_def($s, $x, $f), dec1($f, $e), vopen($e).
-bopen($s, $x) :- live_def($s, $x, $f), decfn($f, $g), !ident_dec($g), retval($g, $r), !retparam($g, 0, $r), vopen($r).
-bopen($s, $x) :- live_def($s, $x, $f), decfn($f, $g), !ident_dec($g), !retval($g, _).
+bopen($s, $x) :- live_def($s, $x, $f), decfn($f, $g), !ident_dec($g), !wrap($g, _, _), retval($g, $r), !retparam($g, 0, $r), vopen($r).
+bopen($s, $x) :- live_def($s, $x, $f), decfn($f, $g), !ident_dec($g), !wrap($g, _, _), !retval($g, _).
 // A property's value is what its getter returns.
 bopen($s, $x) :- live_def($s, $x, $f), dexpr($f, $e), builtin_ref($e, "property").
 .decl selfparam(f: node, i: int)
@@ -808,6 +835,7 @@ vopen($n) :- vpos($n), attr_of($n, $o, _), kind($o, $k), !tracked($k).
 vopen($n) :- vpos($n), alook($n, $c, $a), attr_open($c, $a).
 vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "super", $c), base_open($c).
 vopen($n) :- vpos($n), attr_of($n, $o, _), pv($o, "fn", _).
+vopen($n) :- vpos($n), attr_of($n, $o, _), pv($o, "wfn", _).
 vopen($n) :- vpos($n), ext_attr($n), !callee(_, $n).
 vopen($n) :- vpos($n), pass($n, $c), !kind($n, "boolean_operator"), vopen($c).
 vopen($n) :- vpos($n), kind($n, "boolean_operator"), child($n, $c, _), vopen($c).
@@ -836,6 +864,7 @@ vopen($c) :- vpos($c), ifn($c, $f), !rclosed($f), method($f, _), retparam($f, _,
 // ---- call targets ---------------------------------------------------------------------------------------------
 .decl call_target(c: node, f: node)
 call_target($c, $f) :- callee($c, $e), pv($e, "fn", $f), !mro_dropped($e, $f).
+call_target($c, $f) :- wcall($c, $f, _).
 // Method resolution order. `found` is the union over every base, depth first, so in a diamond (`class D(B, C)`,
 // both from `A`) `D.who` finds `A.who` through `B` and `C.who` through `C`. C3 gives `C.who`. A definition found
 // on a class that another candidate class subclasses is never the one called, so it is dropped here, at the
