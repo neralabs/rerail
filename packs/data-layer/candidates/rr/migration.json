@@ -185,7 +185,7 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/hnsw-architecture.rr",
-      "sha256": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100",
+      "sha256": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e",
       "importedSha256": "7f6aa1428a8c1ffb9b1f1e806213b05bf3ab9d2286e167e76a4ffbd07f2c5147",
       "repairs": [
         {
@@ -197,6 +197,11 @@
           "before": "dce2b2c20e289ab7a903944c34455d9e47412a7bbbc072aa9adc2eff3108416c",
           "after": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100",
           "reason": "Souffle match tests the complete string; wrap the exact CPython search expression without changing its character set"
+        },
+        {
+          "before": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100",
+          "after": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e",
+          "reason": "Match Python identifier normalization, normalized import components, and parenthesized SqlFragment receivers"
         }
       ]
     },
@@ -1903,7 +1908,7 @@
       "legacySha256": "c7545b1fb8197b746548e00b4318a65710dd54c39bee35790a1ebd8a7e80ebd6",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/hnsw-architecture.rr",
-      "ruleSha256": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100"
+      "ruleSha256": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e"
     },
     {
       "check": "embedding_vector_orchestration",

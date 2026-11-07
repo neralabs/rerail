@@ -87,25 +87,40 @@ hn_doc_str(s) :- docstring(_, s).
 // ---- 3. imports --------------------------------------------------------------------------------------------------
 // hn_import_module(i, m): the module the linter reads off an import: `from m import …` as written (dots dropped),
 // or each name of `import a, b` (the linter joins them with "," and searches the join; none starts with ".").
+.decl hn_component(n: node, i: number, x: symbol)
+hn_component(n, i, @nfkc(t)) :- kind(n, "dotted_name"), child(n, c, i), kind(c, "identifier"), text(c, t).
+.decl hn_dotted(n: node, x: symbol)
+hn_dotted(n, x) :- kind(n, "dotted_name"), x = join v by i sep "." : { hn_component(n, i, v) }.
+.decl hn_from(i: node)
+hn_from(i) :- kind(i, "import_from_statement").
+hn_from(i) :- kind(i, "future_import_statement").
 .decl hn_import_module(i: node, m: symbol)
-hn_import_module(i, m) :- from_module_raw(i, m).
+hn_import_module(i, m) :- hn_from(i), field(i, "module_name", n), hn_dotted(n, m).
+hn_import_module(i, m) :- hn_from(i), field(i, "module_name", r), kind(r, "relative_import"), child(r, n, _), hn_dotted(n, m).
+hn_import_module(i, "") :- hn_from(i), field(i, "module_name", r), kind(r, "relative_import"),
+    count : { child(r, n, _), kind(n, "dotted_name") } = 0.
+hn_import_module(i, "__future__") :- kind(i, "future_import_statement").
 hn_import_module(i, m) :- kind(i, "import_statement"),
     m = join x by position sep "," : { child(i, n, position), hn_alias_name(n, x) }.
-// hn_alias_name(n, x): an imported name as written, before any `as`.
 .decl hn_alias_name(n: node, x: symbol)
-hn_alias_name(n, x) :- kind(n, "dotted_name"), text(n, x).
-hn_alias_name(n, x) :- kind(n, "aliased_import"), field(n, "name", d), text(d, x).
-// hn_import_piece(i, s): the module, or one imported name. HNSW007 tests each (they are joined by " ").
+hn_alias_name(n, x) :- hn_dotted(n, x).
+hn_alias_name(n, x) :- kind(n, "aliased_import"), field(n, "name", d), hn_dotted(d, x).
 .decl hn_import_piece(i: node, s: symbol)
 hn_import_piece(i, m) :- hn_import_module(i, m).
-hn_import_piece(i, x) :- kind(i, "import_from_statement"), field(i, "name", n), hn_alias_name(n, x).
+hn_import_piece(i, x) :- hn_from(i), field(i, "name", n), hn_alias_name(n, x).
+.decl hn_name(n: node, x: symbol)
+hn_name(n, @nfkc(raw)) :- ast_name(n, raw).
+.decl hn_attribute(n: node, x: symbol)
+hn_attribute(n, @nfkc(raw)) :- kind(n, "attribute"), field(n, "attribute", a), text(a, raw).
+.decl hn_definition(n: node, x: symbol)
+hn_definition(n, @nfkc(raw)) :- def_name(n, raw).
 
 // ---- 4. findings -------------------------------------------------------------------------------------------------
 .violation HNSW001(at: node, name: symbol) "forbidden pseudo-HNSW symbol: {name}"
-HNSW001(n, x) :- ast_name(n, x), hn_forbidden(x), hn_in(n, _).
-HNSW001(a, x) :- kind(a, "attribute"), field(a, "attribute", t), text(t, x), hn_forbidden(x), hn_in(a, _).
+HNSW001(n, x) :- hn_name(n, x), hn_forbidden(x), hn_in(n, _).
+HNSW001(a, x) :- hn_attribute(a, x), hn_forbidden(x), hn_in(a, _).
 .violation HNSW001_definition(at: node, name: symbol) code "HNSW001" "forbidden pseudo-HNSW definition: {name}"
-HNSW001_definition(f, x) :- def_name(f, x), hn_forbidden(x), hn_in(f, _).
+HNSW001_definition(f, x) :- hn_definition(f, x), hn_forbidden(x), hn_in(f, _).
 
 .violation HNSW002(at: node, text: symbol) "forbidden pseudo-HNSW state: {text}"
 HNSW002(n, t) :- hn_str(n, v), hn_state(t), contains(t, v), hn_in(n, _).
@@ -114,11 +129,11 @@ HNSW002(n, t) :- hn_str(n, v), hn_state(t), contains(t, v), hn_in(n, _).
 HNSW003(i, m) :- hn_import_module(i, m), hn_backend(t), contains(t, m), docof(i, d), hn_algorithm(d).
 
 .violation HNSW004(at: node) "algorithm defines a custom render method"
-HNSW004(f) :- def_name(f, "render"), kind(f, "function_definition"), !op(f, "async"), docof(f, d), hn_algorithm(d).
+HNSW004(f) :- hn_definition(f, "render"), kind(f, "function_definition"), !op(f, "async"), docof(f, d), hn_algorithm(d).
 
 .violation HNSW005(at: node) "algorithm constructs SQL fragments instead of query-builder nodes"
-HNSW005(c) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute"), field(f, "object", o),
-    kind(o, "identifier"), text(o, "SqlFragment"), docof(c, d), hn_algorithm(d).
+HNSW005(c) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), kind(f, "attribute"), field(f, "object", o0),
+    unparen(o0, o), hn_name(o, "SqlFragment"), docof(c, d), hn_algorithm(d).
 
 .violation HNSW006(at: span) "forbidden HNSW module exists"
 HNSW006(@place(p, 1)) :- hn_deleted(_, p).
@@ -127,8 +142,8 @@ HNSW006(@place(p, 1)) :- hn_deleted(_, p).
 // constant that is not a docstring.
 .decl hn_token(n: node, s: symbol)
 hn_token(i, s) :- hn_import_piece(i, s).
-hn_token(n, x) :- ast_name(n, x).
-hn_token(a, x) :- kind(a, "attribute"), field(a, "attribute", t), text(t, x).
+hn_token(n, x) :- hn_name(n, x).
+hn_token(a, x) :- hn_attribute(a, x).
 hn_token(n, v) :- hn_str(n, v), !hn_doc_str(n).
 // A JSON token: SQL/JSON names (sqljson…), or json / jsonb, alone or with a `_suffix`, as a whole word, any case.
 .violation HNSW007(at: node) "HNSW must use indexed SQL rows, not JSON operations"
