@@ -22,7 +22,8 @@ It also links that libc (newer than the copy Rust bundles) and libc++.
       target/wasm32-wasip1/debug/rerail-engine.wasm logic /w/rule.rr /w/src /w/out
 
 The outputs land in `out` as for a native run (`<relation>.csv`, `store.sqlite`). `exceptions` is for libc++'s
-unwinding; `unknown-imports-trap` stubs the Node addon's `napi_*` imports, which a CLI run never calls.
+unwinding; `unknown-imports-trap` stubs the few `napi_*` imports still linked (napi types' drops), which a
+CLI run never calls.
 `RERAIL_TAPE_CACHE` names the tape store, since WASI has no temporary directory. A rule as written in the
 library (`#include "python/…"`) runs too: mount `docs/rule-syntax/lib` and name it in `RERAIL_RR_LIB`
 (`--dir docs/rule-syntax/lib::/lib --env RERAIL_RR_LIB=/lib`); `logic` flattens its includes (`tools::flatten`).
@@ -40,5 +41,7 @@ library (`#include "python/…"`) runs too: mount `docs/rule-syntax/lib` and nam
   annotation ranges use bit 30 with 16-bit offsets (`scope::ANNOTATION_RANGE`). Enough for an explorer's
   files, not for a corpus.
 - **No file locks.** The content store's lease is always free (`atoms::try_lock`): one process.
+- **No Node addon.** napi-derive is `noop` on wasm: `#[napi]` items are plain Rust and register nothing, so the
+  linker keeps only what `main` reaches (44.5 MB → 29.4 MB release; code 23.4 → 10.6 MB).
 - **Left out:** `facts::ygraph`, an exploration tool that forks and reads macOS counters.
 - tree-sitter's `Language` is `Send` and `Sync` here too (`native/vendor/tree-sitter-0.27.1/PATCHES.md`).

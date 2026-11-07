@@ -88,6 +88,8 @@ impl CodeRuleDslWorkspace {
 
     /// Attaches the content store file at `store_path` to the Git repository containing `root`.
     /// The host chooses the file (each build owns its own); the binding never derives one.
+    /// Not in the browser build, where `#[napi(object)]` derives nothing (napi-derive `noop`).
+    #[cfg(not(target_family = "wasm"))]
     #[napi]
     pub fn enable_storage_async(
         &self,
@@ -722,6 +724,7 @@ pub struct WorkspaceStorageTask {
     store_path: PathBuf,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Task for WorkspaceStorageTask {
     type Output = StorageAttachment;
     type JsValue = StorageAttachment;

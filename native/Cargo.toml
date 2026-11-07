@@ -77,6 +77,9 @@ cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 # fails to build a module and the transducer interprets, as it does before a background JIT compile lands.
 [target.'cfg(target_family = "wasm")'.dependencies]
 cranelift-jit-wasm = { path = "wasm/cranelift-jit" }
+# No Node addon in a page: `#[napi]` items compile as plain Rust, with no registrations that keep the whole
+# addon API linked.
+napi-derive = { version = "3.0", features = ["noop"] }
 libc = "0.2.189"
 
 [target.'cfg(unix)'.dependencies]
