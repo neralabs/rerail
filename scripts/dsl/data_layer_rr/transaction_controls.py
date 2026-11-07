@@ -63,6 +63,7 @@ def main():
     green=run('parser-control-green','fresh.py',arguments);red=run('parser-control-red','fresh.py',arguments,directory)
     assert green['exitCode']==0 and red['exitCode']==1 and red['report']['results'][0]['value']==dict(result=[])
     assert not red['report']['semanticFallbacks'] and all(c['status']=='passed' for c in red['report']['calls'])
+    parser_result=dict(green=green,red=red,disabledPolicy=disabled)
     constant_controls=[]
     for table,value,test in [('method','write','test_transaction_methods_include_core_variants'),
         ('mutator','append','test_mutating_methods_include_common_container_mutators')]:
@@ -79,7 +80,7 @@ def main():
         assert all(r['parameters']['value']!=value for c in red['report']['nativeCalls'] if c['entry']=='constants'
             for r in c['diagnostics'] if r['parameters']['table']==('transaction' if table=='method' else 'mutating'))
         constant_controls.append(dict(table=table,removed=value,green=green,red=red,disabledPolicy=text))
-    result=dict(engineSha256=sha(args.engine.read_bytes()),controls=controls,parser=dict(green=green,red=red,disabledPolicy=disabled),constantControls=constant_controls,
+    result=dict(engineSha256=sha(args.engine.read_bytes()),controls=controls,parser=parser_result,constantControls=constant_controls,
         fullMigrationAcceptance=False,script=Path(__file__).read_text())
     write_json(args.out,result);print('Parser control and 2 native constant controls reject mutations')
 

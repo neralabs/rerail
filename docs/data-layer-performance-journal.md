@@ -8565,3 +8565,42 @@ Evidence: [all original assertions and positive controls](../gate/data-layer/fix
 and [supplemental corpus, failed steps, reader checks, and slice compatibility](../gate/data-layer/fixtures/host/data-layer-port/rr-transaction-closures-native-supplemental-contracts.json.gz).
 No Linear ticket was created. The next missing translation is `transaction_callback_wrappers`.
 Final shape advances to `824c07935` during acceptance. The next step merges that committed head and checks the updated engine.
+
+## 2026-11-07 — Replay after Final shape's tape lowering and relation lifetimes
+
+Merge `eec59e31c` adopts Final shape `824c07935`, including decision 0062 and the ServerPlan lifetime changes.
+The root engine now lowers rule programs from their tapes.
+Its planner hands exports to their last reader, shares guest copies by relation, and drops native relations after export.
+The merge retains those upstream resolutions. No retired engine file is restored and no sibling work in progress is copied.
+
+The new frozen CLI has SHA-256 `4acaab90727fc0c8d883653dabcb6dfeb4592a40d495259ef0b7cbb914a38b94`.
+Its source is `eec59e31c`, with upstream `824c07935`. The separate unit binary records that same source commit.
+The CLI build takes 39.91 seconds. The unit build takes 1 minute 29 seconds.
+
+The complete focused replay passes again:
+
+- All 131 unchanged original cases, 126 complete API observations, and 162 native calls.
+- All 199 supplemental API cases, including 113 detector positives.
+- All 73 configured reporter cases, including 44 positives.
+- Four original and four configured detector controls, plus the parser and two native constant controls.
+- All 18 source/native slice comparisons, including ten positive findings.
+- All 85 candidate readers, including the 74 target drafts.
+- All 74 focused native reader/runtime tests and both canonical-printer tests.
+
+The two upstream file-writing utilities remain ignored. The whole-library checker and full engine suite do not run.
+All corpus indices appear exactly once. No original detector method runs in native acceptance.
+The 21 original host protocol/storage cases retain their assertions and remain separate from detector coverage.
+
+Receipt validation catches a packaging defect: the controller overwrites its parser result while it records constant controls.
+The parser checks themselves pass. The faulty bundle stored a constant report under the parser key.
+The controller now retains the parser result separately. The validators require the fresh-API report format and its exact failed-positive result.
+Auxiliary controls run again against both frozen engines. Both sets pass, and both historical bundles are regenerated.
+The new receipt retains the incorrectly labeled bundles as regression evidence.
+
+The post-merge run uses 40 bounded tasks with two workers. The slowest task takes 62 seconds.
+No full repository cold run occurs and no CPU or memory improvement is claimed.
+The migration remains 74 drafts and 26 absent translations, with production and persistent workspace acceptance open.
+No Linear ticket is created.
+
+Evidence: [post-merge source values, native observations, controls, and validators](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-824-transaction-closure-alignment.json.gz).
+Final shape advances to `251fed5c0` during this replay. That committed backend update is the next integration checkpoint before further ports.

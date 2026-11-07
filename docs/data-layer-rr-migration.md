@@ -11,9 +11,12 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its baseline is Final rerail shape
-`43c8c521d`. That branch includes the migration and regex fixes, the current planner,
+`824c07935`. That branch includes the migration and regex fixes, the current planner,
 indexed SQL maintenance, native relation reclamation, corpus publication leases, and the current Python module world.
 It also keeps parsed rules and prepared programs for the process, as decision 0060 specifies.
+Merge `eec59e31c` adopts tape-based rule lowering and the upstream relation-lifetime resolutions.
+The transaction receipts through `43c8c521d` remain a historical checkpoint.
+The [post-merge receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-824-transaction-closure-alignment.json.gz) records the complete focused replay on `824c07935`.
 Merge `2bf167c90` takes those changes without restoring an older planner or executor.
 Merge its committed engine, frontend, libraries, build files, and locks into this root.
 Local native repairs normalize Boolean contexts after demand planning (`25b580262`),
@@ -69,7 +72,8 @@ All 21 remaining cases run their host protocol, storage, DTO, or argparse assert
 The supplemental corpus passes 199 API cases, including 113 detector positives, and 73 reporter cases, including 44 positives.
 Each detector family has independent original and configured mutation controls. Parser output and both constant tables have separate controls.
 The [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-transaction-closures-native-direct-contracts.json.gz)
-and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-transaction-closures-native-supplemental-contracts.json.gz) bind the results to the root engine through `43c8c521d`.
+and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-transaction-closures-native-supplemental-contracts.json.gz) bind the first checkpoint to `43c8c521d`.
+The post-merge replay also passes all 131 original, 199 API, and 73 reporter cases on the root engine through `824c07935`.
 Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 73rd draft, `plan_scope_ownership`, passes all 15 original tests and preserves 14 complete API returns through 28 native calls.
 One original test checks Python collector inheritance only. Seventeen source/native callback roundtrips back the transferable behavior of that interface.

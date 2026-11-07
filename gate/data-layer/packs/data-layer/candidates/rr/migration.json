@@ -2405,7 +2405,7 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "43c8c521d4e6fe40dfa425700da2f8a11697fe47",
+    "upstreamCommit": "824c0793537599d862709d7882ccde35626349d9",
     "status": "Root Final shape engine with generic Boolean-context, Python diagnostic/traversal, canonical expression text, and run-root metadata extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
