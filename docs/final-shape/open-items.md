@@ -2015,3 +2015,23 @@ cost a row per held object, written in the transaction that stores the object.
 (`a_source_collected_before_its_tape_is_stored_again_with_it`, `parallel_writers_and_a_collector_share_one_store`,
 `a_held_plan_stays_live_until_its_run_releases_it`, `a_held_source_survives_collection_until_released`). The other
 is removed, and those tests still pass. If the lock stays, collection under constant use is shown to make progress.
+
+## O105. A `.rr` file is a corpus document only in a run whose program names `rr`
+
+Decision 0061 §6 says a `.rr` file in a corpus run is a document like any other, so a run over a repository checks
+its rules with its other files. A corpus run reads one language, though (`corpus_language`): Python or Rust, by
+`Typing::rust` or by which has more files. The build adds `rr` to that choice. A program with `.language rr` reads
+the repository's `.rr` files (`packs/rr/rr-input-outside-repository.rr`), and every other run reads none.
+
+**Closure:** a corpus run reads every registered language its policies name, each document under its own dialect.
+A run with a Python policy and an `rr` policy reports both from one store, and
+`a_rule_about_rules_runs_over_rule_files` holds with a Python file's finding beside the `.rr` ones.
+
+## O106. A relation named like a SQL keyword breaks the SQL backend
+
+A program with `.decl values(…)` fails its run with `near "values": syntax error` on `DROP VIEW IF EXISTS
+temp.values`. The relation's name is put into SQL unquoted. Found while writing `rule_files_have_text_facts`, which
+names its relation `vals` instead.
+
+**Closure:** every relation name the SQL backend writes is quoted, and a program with relations named `values`,
+`select` and `order` runs.
