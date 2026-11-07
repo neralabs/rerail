@@ -1,15 +1,19 @@
-// data-layer-schema-introspection-data-paths: the relational clause schema-introspection, by hand.
+// data-layer-schema-introspection-data-paths: the relational clauses schema-introspection and
+// schema-approval-configuration, by hand.
 //
 // Its SQL runs over CPython `ast` rows (`pythonAst`); the script it ports is nera-data-layer
 // scripts/lint_schema_introspection_data_paths.py.
 // Options: `entryPoint` from `option_value`. Under `_collect_violations` the gate is every valid module of the
-// scope and the query has no data-path filter; under every other value (the default "all" included) the gate is
-// a valid module whose text matches the trigger regex and the query keeps data paths only. `parameters` is read
-// by no clause.
+// scope and the query has no data-path filter and no approval test; under every other value (the default "all"
+// included) the gate is a valid module whose text matches the trigger regex and the query keeps data paths only,
+// and only while the approvals are valid, less the rows they list. schema-approval-configuration reports under
+// every value but `_collect_violations` (whose case is `… WHERE 0`). `parameters` (default "{}") is read through
+// option_json for `schemaApprovals.entries` and `schemaApprovals.signatureVerified` (section at the end).
 .decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 // The gate: the module's text (W's `regex` on the module: comments and strings included) matches the trigger
@@ -129,13 +133,13 @@ introspection_primitive("impl/common/l5150_fts_polyfill/manager.py", "execute_sy
 introspection_primitive_call(c) :- introspection_callee(c, x), node(d, c, _, _, _), doc(d, p, _),
     introspection_frame(c, f), field(f, "name", nm), text(nm, y), introspection_primitive(p, y, x).
 
+// The query's rows, (path, line, call_name): call_name is the callee, or the marker for a string row.
+.decl introspection_hit(p: symbol, l: number, x: symbol)
 // A schema-plan flush in a versioned backend, whatever def holds it.
-violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
-    introspection_callee(c, x), introspection_flush(x), node(d, c, _, _, _), introspection_doc(d, p),
+introspection_hit(p, l, x) :- introspection_callee(c, x), introspection_flush(x), node(d, c, _, _, _), introspection_doc(d, p),
     prefix("impl/common/l7245_versioned_backends/", p), line(c, l).
 // An introspection call outside every schema-authority def, other than a primitive definition's.
-violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
-    introspection_callee(c, x), introspection_forbidden(x), !introspection_authority(c),
+introspection_hit(p, l, x) :- introspection_callee(c, x), introspection_forbidden(x), !introspection_authority(c),
     !introspection_primitive_call(c), node(d, c, _, _, _), introspection_doc(d, p), line(c, l).
 
 // String markers: an ast Constant whose value is a str holding a marker (SQLite's `lower`, ASCII only: the
@@ -233,9 +237,63 @@ introspection_fconst(e, v, l) :- introspection_fhost(e), node(_, e, _, _, k), fs
 // Residual, blocked on CPython's own string parts (str_part, not bound): a literal W's parse cannot decode, or
 // over MAX_STRING_BYTES, has no fstring_piece rows and is not read, where CPython still has its Constants.
 
+introspection_hit(p, l, m) :- introspection_const(n, v), introspection_sql_marker(m, re), match(re, v),
+    !introspection_authority(n), node(d, n, _, _, _), introspection_doc(d, p), line(n, l).
+introspection_hit(p, l, m) :- introspection_fconst(n, v, l), introspection_sql_marker(m, re), match(re, v),
+    !introspection_authority(n), node(d, n, _, _, _), introspection_doc(d, p).
+
+// The `_collect_violations` case: every row. The default case's outer WHERE: `(SELECT approved FROM
+// schema_approval_state)=1 AND NOT EXISTS(… entries WHERE entry=path||':'||line||':'||call_name)`, per row (a
+// listed row leaves the key to another row at its line).
 violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
-    introspection_const(n, v), introspection_sql_marker(_, re), match(re, v), !introspection_authority(n),
-    node(d, n, _, _, _), introspection_doc(d, p), line(n, l).
+    option_value("entryPoint", "_collect_violations"), introspection_hit(p, l, _).
 violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
-    introspection_fconst(n, v, l), introspection_sql_marker(_, re), match(re, v), !introspection_authority(n),
-    node(d, n, _, _, _), introspection_doc(d, p).
+    option_value("entryPoint", v), v != "_collect_violations", schema_approval_approved(1), introspection_hit(p, l, x),
+    k = cat(cat(cat(p, ":"), to_string(l)), cat(":", x)), !schema_approval_entry(k).
+
+// ---- the approvals (stages schema_approval_*, both clauses) ----
+// schema_approval_entries is json_each(parameters, '$.schemaApprovals.entries'): a row per element of an array,
+// per member of an object, one for any other value there (JSON null included), none where it is absent. Read from
+// option_json: a row is there where a leaf is at or below "/schemaApprovals/entries" (schema_approval_listed), and
+// a row's value is the leaf right at it or one token below (schema_approval_entry): a string as itself, exactly,
+// and any other scalar as JSON text, which neither the error tests nor `entry=path:line:call_name` (a string that
+// starts with a data-path prefix) can tell from SQLite's value.
+// GAP (option_json): an element that is an empty array or object has no leaf, so `[[]]` lists nothing here where
+// W has a row (and then needs signatureVerified); an element that is a non-empty array or object is SQLite's JSON
+// text in W, whose text before its first ':' may hold "/tests/" (an error there), and has no value here.
+// GAP (parse): duplicate object keys are every member to json_each and the first to json_extract, the last to
+// serde_json (option_json); a `parameters` serde_json rejects but SQLite reads (JSON5, a lone surrogate escape)
+// has no leaves here; one neither reads fails W's stage (an error, not a finding, inexpressible here) and lists
+// nothing here.
+.decl schema_approval_listed(x: number)
+schema_approval_listed(1) :- option_json("parameters", "/schemaApprovals/entries", _).
+schema_approval_listed(1) :- option_json("parameters", ptr, _), prefix("/schemaApprovals/entries/", ptr).
+.decl schema_approval_entry(e: symbol)
+schema_approval_entry(e) :- option_json("parameters", "/schemaApprovals/entries", e).
+schema_approval_entry(e) :- option_json("parameters", ptr, e), match("/schemaApprovals/entries/[^/]*", ptr).
+// schema_approval_errors: the entry's text before its first ':' (rx_extract '\A([^:]*)') starts with "impl/", or
+// starts with "scripts/" or holds "/tests/". Neither prefix holds ':', so it is the entry's own prefix.
+.decl schema_approval_error(x: number)
+schema_approval_error(1) :- schema_approval_entry(e), prefix("impl/", e).
+schema_approval_error(1) :- schema_approval_entry(e), prefix("scripts/", e).
+schema_approval_error(1) :- schema_approval_entry(e), match("[^:]*/tests/(?s:.*)", e).
+// coalesce(json_extract(parameters, '$.schemaApprovals.signatureVerified'), 0) = 1: JSON true, or a number equal
+// to 1, which serde_json renders "1" or "1.0". A JSON string is TEXT to SQLite, never = 1.
+// GAP (option_json): a JSON string "true", "1" or "1.0" is the same leaf text as the boolean or number, so it reads
+// as verified here where W reads it as not.
+.decl schema_approval_one(v: symbol)
+schema_approval_one("true"). schema_approval_one("1"). schema_approval_one("1.0").
+.decl schema_approval_verified(x: number)
+schema_approval_verified(1) :- option_json("parameters", "/schemaApprovals/signatureVerified", v), schema_approval_one(v).
+// schema_approval_state.approved: no error, and no entry or a verified signature.
+.decl schema_approval_approved(x: number)
+schema_approval_approved(1) :- option_value("parameters", _), !schema_approval_error(1), !schema_approval_listed(1).
+schema_approval_approved(1) :- schema_approval_verified(1), !schema_approval_error(1).
+
+// schema-approval-configuration (the default case; `_collect_violations`'s is `… WHERE 0`): a row per error, and the
+// signature row where approved is 0 with no error, all at the clause's location, line 1: one key, so the finding is
+// there where an entry is an error, or there are entries and no verified signature.
+violation("data-layer-schema-introspection-data-paths", "schema-approval-configuration", "SIDP000", "scripts/lint_schema_introspection_data_paths.py", 1) :-
+    option_value("entryPoint", v), v != "_collect_violations", schema_approval_error(1).
+violation("data-layer-schema-introspection-data-paths", "schema-approval-configuration", "SIDP000", "scripts/lint_schema_introspection_data_paths.py", 1) :-
+    option_value("entryPoint", v), v != "_collect_violations", schema_approval_listed(1), !schema_approval_verified(1).
