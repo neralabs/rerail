@@ -1,5 +1,5 @@
 // One `rerail-engine` command over an in-memory filesystem: the browser build (native/wasm/README.md) under WASI
-// preview 1, as `@bjorn3/browser_wasi_shim` provides it. `shim` is that module, passed in so the page (from the CDN)
+// preview 1, as `@bjorn3/browser_wasi_shim` provides it. `shim` is that module, passed in so the page (served beside the page)
 // and a test (from a local copy) run the same code.
 //
 // A mount is a plain object: a name maps to a string (a text file), a Uint8Array (a file) or another object (a

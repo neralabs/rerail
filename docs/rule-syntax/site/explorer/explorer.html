@@ -446,16 +446,17 @@ srcEd.onEdit = (t) => { sources[activeSrc] = t; store.set("sources", sources); s
 // ---------------------------------------------------------------- engine
 // The engine runs in a background worker; where the browser refuses one, or it says nothing within a few seconds,
 // on the page's own thread (each run then blocks the page for its duration). Every loading stage is shown.
-const SHIM = "https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.4.2/dist/index.js";
 const ENGINE_BYTES = 9489146; // explorer.py writes the build's size here, for a download that does not say its length
 const abs = (path) => new URL(path, location.href).href;
+// The WASI shim (@bjorn3/browser_wasi_shim 0.4.2) is served with the page: see explorer/shim/README.md.
+const SHIM = abs("explorer/shim/index.js");
 const LOAD = { type: "load", shim: SHIM, engine: abs("explorer/engine.js"), wasm: abs("explorer/rerail-engine.wasm"), bytes: ENGINE_BYTES };
 let backend = null, where = "";
 let ready = false, running = false, pending = false, seq = 0, timer = 0;
 const mb = (n) => (n / 1e6).toFixed(1);
 const STAGES = {
   worker: () => "Starting the background worker…",
-  shim: () => "Loading the WASI layer (from jsDelivr)…",
+  shim: () => "Loading the WASI layer…",
   download: (r, t) => `Downloading the engine: ${mb(r)} of ${mb(t)} MB`,
   compile: (r) => `Compiling the engine (${mb(r)} MB of WebAssembly)…`,
 };

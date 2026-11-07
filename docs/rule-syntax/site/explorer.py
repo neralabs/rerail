@@ -77,6 +77,8 @@ def main():
     for name in ("worker.js", "engine.js"):
         shutil.copyfile(os.path.join(HERE, "explorer", name), os.path.join(out, "explorer", name))
     shutil.copyfile(WASM, os.path.join(out, "explorer", "rerail-engine.wasm"))
+    # The WASI shim, vendored (explorer/shim/README.md): a CDN module import fails in some browsers' frames.
+    shutil.copytree(os.path.join(HERE, "explorer", "shim"), os.path.join(out, "explorer", "shim"), dirs_exist_ok=True)
     size = os.path.getsize(os.path.join(out, "explorer", "python.json"))
     print(f"{len(rules)} rules, {len(lib)} library files, python.json {size / 1e6:.1f} MB, "
           f"engine {os.path.getsize(WASM) / 1e6:.1f} MB")
