@@ -59,6 +59,8 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) existentials: Vec<String>,
     /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0048).
     pub(in crate::code_rule_dsl) within: usize,
+    /// Recursive components that climb or descend the tree one `child` edge at a time, made `within` (the axis).
+    pub(in crate::code_rule_dsl) climbs: Vec<String>,
     /// Merged classes named in the shared namespace (one relation of several programs).
     pub(in crate::code_rule_dsl) shared: usize,
     /// Relations equal to another up to constants, in that many groups, and a few groups.
@@ -83,6 +85,7 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         prog.inputs.push(SPAN_WITHIN.to_owned());
     }
     report.existentials = project_existentials(prog);
+    report.climbs = climbs_as_axes(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
         for rule in &mut prog.rules {
@@ -94,6 +97,11 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         let (i, k, c, m, n) = (report.implied, report.kind_tests, report.constants, report.merged.len(), report.inlined.len());
         let (w, y, u, x, s) = (report.singletons, report.keyed, report.unread.len(), report.existentials.len(), report.within);
         let h = report.shared;
+        if !report.climbs.is_empty() {
+            super::profile::decision("recursion along the tree made an axis", || {
+                format!("{} recursive components that step one `child` edge at a time read `within` instead: {}", report.climbs.len(), report.climbs.iter().take(8).cloned().collect::<Vec<_>>().join(", "))
+            });
+        }
         if report.similar > 0 {
             super::profile::decision("relations equal up to their constants (not merged)", || {
                 format!("{} relations in {} groups, e.g. {}", report.similar, report.similar_groups, report.similar_examples.join("; "))
@@ -107,6 +115,7 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
 }
 
 const SPAN_WITHIN: &str = crate::code_rule_dsl::facts::vtab::syntax::SPAN_WITHIN;
+const WITHIN: &str = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
 
 /// Replaces each pair `node(d, a, _, sa, ea), node(d, b, _, sb, eb), sb <= sa, ea <= eb` (one document variable
 /// `d`, either side of each comparison) by `span_within(a, b)`: the comparisons, not the atoms, which may bind or test
@@ -869,6 +878,147 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     }).collect()
 }
 
+/// A recursive component of unary node relations whose rules are bases (no member read), copies (`R(x) :- S(x)`)
+/// and steps along one `child` edge, all one way (`R(x) :- S(y), child(x, y, _)`: up; `child(y, x, _)`: down),
+/// is a closure along the tree: each member holds its bases' nodes that a path of copies reaches with no step, and
+/// their strict ancestors (descendants) that paths of every length from one step reach. That is `within` (decision
+/// 0048: read off the tree per node looked up), with no fixpoint: one wave a level of nesting otherwise.
+/// Rewritten so; the components rewritten, by their members.
+fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
+    let Ok((sccs, _)) = super::front::strata(prog) else { return Vec::new() };
+    let mut done = Vec::new();
+    for scc in sccs {
+        let members: BTreeSet<String> = scc.into_iter().collect();
+        let unary_node = |r: &str| prog.decls.get(r).is_some_and(|c| c.len() == 1 && c[0].1 == "node");
+        if !members.iter().all(|r| unary_node(r) && !kept(prog, r)) {
+            continue;
+        }
+        let rules: Vec<&Rule> = prog.rules.iter().filter(|r| members.contains(&r.head.rel)).collect();
+        // (from, to, step) edges and (relation, base rule) pairs.
+        let mut edges: Vec<(String, String, bool)> = Vec::new();
+        let mut bases: Vec<(String, Rule)> = Vec::new();
+        let mut up = None;
+        let mut ok = true;
+        for rule in &rules {
+            let [Term::Var(x)] = rule.head.args.as_slice() else {
+                ok = false;
+                break;
+            };
+            let reads_member = rule.body.iter().any(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => members.contains(&a.rel),
+                _ => false,
+            });
+            if !reads_member {
+                bases.push((rule.head.rel.clone(), (*rule).clone()));
+                continue;
+            }
+            let atoms: Vec<&Atom> = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).collect();
+            if atoms.len() != rule.body.len() || atoms.iter().any(|a| a.neg) {
+                ok = false;
+                break;
+            }
+            match atoms.as_slice() {
+                [s] if members.contains(&s.rel) && s.args == [Term::Var(x.clone())] => edges.push((s.rel.clone(), rule.head.rel.clone(), false)),
+                [a, b] => {
+                    let (s, c) = if members.contains(&a.rel) { (a, b) } else { (b, a) };
+                    let (Some(Term::Var(y)), true) = (s.args.first(), members.contains(&s.rel) && s.args.len() == 1 && c.rel == "child" && c.args.len() == 3) else {
+                        ok = false;
+                        break;
+                    };
+                    let third_free = match &c.args[2] {
+                        Term::Wild => true,
+                        Term::Var(v) => v != x && v != y,
+                        _ => false,
+                    };
+                    let dir = match (&c.args[0], &c.args[1]) {
+                        (Term::Var(p), Term::Var(q)) if p == x && q == y && x != y => true,
+                        (Term::Var(p), Term::Var(q)) if p == y && q == x && x != y => false,
+                        _ => {
+                            ok = false;
+                            break;
+                        }
+                    };
+                    if !third_free || up.is_some_and(|u| u != dir) {
+                        ok = false;
+                        break;
+                    }
+                    up = Some(dir);
+                    edges.push((s.rel.clone(), rule.head.rel.clone(), true));
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        let Some(up) = up else { continue };
+        if !ok {
+            continue;
+        }
+        // Depths of steps by which each base relation reaches each member, capped at n (n stands for n or more).
+        let n = 2 * members.len() + 2;
+        let mut new_rules: Vec<Rule> = Vec::new();
+        let mut valid = true;
+        let base_rels: BTreeSet<&String> = bases.iter().map(|(r, _)| r).collect();
+        let mut reach: BTreeMap<(&String, &String), BTreeSet<usize>> = BTreeMap::new();
+        for q in &base_rels {
+            let mut seen: BTreeSet<(String, usize)> = BTreeSet::new();
+            let mut todo = vec![((*q).clone(), 0usize)];
+            while let Some((r, d)) = todo.pop() {
+                if !seen.insert((r.clone(), d)) {
+                    continue;
+                }
+                for (from, to, step) in &edges {
+                    if *from == r {
+                        todo.push((to.clone(), (d + usize::from(*step)).min(n)));
+                    }
+                }
+            }
+            for m in &members {
+                let depths: BTreeSet<usize> = seen.iter().filter(|(r, _)| r == m).map(|(_, d)| *d).collect();
+                reach.insert((*q, m), depths);
+            }
+        }
+        for m in &members {
+            for q in &base_rels {
+                let depths = &reach[&(*q, m)];
+                let stepped: BTreeSet<usize> = depths.iter().copied().filter(|d| *d > 0).collect();
+                // Every depth from one step on, or none: else the closure is not the axis.
+                if !(stepped.is_empty() || stepped == (1..=n).collect::<BTreeSet<_>>()) {
+                    valid = false;
+                }
+                for (_, b) in bases.iter().filter(|(r, _)| r == *q) {
+                    let [t] = b.head.args.as_slice() else { valid = false; continue };
+                    let Term::Var(t) = t else { valid = false; continue };
+                    if depths.contains(&0) {
+                        new_rules.push(Rule { head: Atom { rel: m.clone(), ..b.head.clone() }, body: b.body.clone() });
+                    }
+                    if !stepped.is_empty() {
+                        let x = format!("{t}_axis");
+                        let (inner, outer) = if up { (Term::Var(t.clone()), Term::Var(x.clone())) } else { (Term::Var(x.clone()), Term::Var(t.clone())) };
+                        let mut body = b.body.clone();
+                        body.push(Literal::Atom(Atom { rel: WITHIN.to_owned(), args: vec![inner, outer], neg: false, gated: false }));
+                        new_rules.push(Rule { head: Atom { rel: m.clone(), args: vec![Term::Var(x)], neg: false, gated: false }, body });
+                    }
+                }
+            }
+        }
+        if !valid {
+            continue;
+        }
+        prog.rules.retain(|r| !members.contains(&r.head.rel));
+        prog.rules.extend(new_rules);
+        if !prog.decls.contains_key(WITHIN) {
+            prog.decls.insert(WITHIN.to_owned(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+        }
+        if !prog.inputs.iter().any(|i| i == WITHIN) {
+            prog.inputs.push(WITHIN.to_owned());
+        }
+        done.push(members.into_iter().collect::<Vec<_>>().join("/"));
+    }
+    done
+}
+
 /// Merges identical relations again (`merge`), for passes after `simplify` that make relations per rule (the
 /// file-local joins pushed into the chunks): the relations merged, and how many classes went to the shared namespace.
 pub(in crate::code_rule_dsl) fn merge_identical(prog: &mut Program) -> (usize, usize) {
@@ -1062,6 +1212,58 @@ mod tests {
         assert!(prog.decls.contains_key("p0_mine") && prog.decls.contains_key("p1_mine"));
         // p0_mine and p1_mine differ only in their constant.
         assert_eq!((report.similar, report.similar_groups), (2, 1));
+    }
+
+    /// The converter's `has` with no stop: a node holding a match among its descendants, climbed one `child` edge a
+    /// wave. Made `within`: the matches, and the nodes they lie within.
+    #[test]
+    fn a_climb_through_child_is_the_within_axis() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .input node
+            .decl child(p: node, c: node, i: number)
+            .input child
+            .decl m23(n: node)
+            .decl m25(n: node)
+            .decl u19(n: node)
+            .decl out(n: node)
+            .output out
+            m23(n) :- node(_, n, "identifier", _, _).
+            m25(n) :- m23(n).
+            m25(n) :- child(n, v24, _), u19(v24).
+            u19(n) :- m25(n).
+            out(n) :- m25(n), node(_, n, "call", _, _).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert_eq!(report.climbs, vec!["m25/u19".to_owned()]);
+        let m25: Vec<String> = prog.rules.iter().filter(|r| r.head.rel == "m25" || r.head.rel == "u19").map(|r| r.to_string()).collect();
+        assert!(m25.iter().all(|r| !r.contains("child(")), "{m25:?}");
+        assert!(m25.iter().any(|r| r.contains("within($n, $n_axis)")), "{m25:?}");
+        assert!(prog.inputs.iter().any(|i| i == "within"));
+    }
+
+    /// A step with a test of the node it reaches is no plain closure: left as it is.
+    #[test]
+    fn a_climb_that_tests_each_step_stays_recursive() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .input node
+            .decl child(p: node, c: node, i: number)
+            .input child
+            .decl r(n: node)
+            .decl out(n: node)
+            .output out
+            r(n) :- node(_, n, "identifier", _, _).
+            r(n) :- child(n, c, _), r(c), node(_, n, "attribute", _, _).
+            out(n) :- r(n).
+            "#,
+        )
+        .unwrap();
+        assert!(simplify(&mut prog).climbs.is_empty());
     }
 
     #[test]
