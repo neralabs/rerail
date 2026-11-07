@@ -607,6 +607,24 @@ fn normalized(mut p: front::Program) -> front::Program {
     p
 }
 
+/// A lowered `.rr` program without the requests its lowering derives (`rr_embed_req` for `parsed`, decision 0055;
+/// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read: an `.rdl` program
+/// asks for nothing, and the requests change no relation the program derives.
+fn without_requests(mut p: front::Program) -> front::Program {
+    let mut gone: BTreeSet<String> = ["rr_embed_req"].into_iter().map(str::to_owned).chain(super::WORLD.iter().map(|(_, d)| (*d).to_owned())).collect();
+    loop {
+        p.rules.retain(|r| !gone.contains(&r.head.rel));
+        let read: BTreeSet<&str> = p.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
+        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.clone()).filter(|h| h.starts_with("rr_ctx") && !read.contains(h.as_str()) && !gone.contains(h)).collect();
+        if more.is_empty() {
+            break;
+        }
+        gone.extend(more);
+    }
+    p.decls.retain(|k, _| !gone.contains(k));
+    p
+}
+
 fn error_name(e: &Error) -> String {
     format!("{e:?}").split(['(', ' ', '{']).next().unwrap_or_default().to_owned()
 }
@@ -635,10 +653,10 @@ fn rdl_programs_translate_to_the_same_program() {
         }
         match (front::parse(&text).map(normalized), parse(&rr)) {
             (Ok(a), Ok(b)) => {
-                failures.extend(difference(&a, &b).map(|d| format!("{name}: {d}")));
+                failures.extend(difference(&a, &without_requests(b.clone())).map(|d| format!("{name}: {d}")));
                 // Printed, the program reads back as itself.
                 match print(&b).and_then(|text| parse(&text)) {
-                    Ok(c) => failures.extend(difference(&b, &c).map(|d| format!("{name}, printed: {d}"))),
+                    Ok(c) => failures.extend(difference(&without_requests(b), &without_requests(c)).map(|d| format!("{name}, printed: {d}"))),
                     Err(e) => failures.push(format!("{name}, printed: {e}")),
                 }
             }
