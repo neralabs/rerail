@@ -47,6 +47,12 @@ A process that runs the same program again and again starts a session (`corpus::
 A reused compile states the decisions it made when it ran (`profile::decisions_since` and
 `add_decisions`). The explorer's Profile view is therefore the same on every run.
 
+A run that should show every step runs outside the session: `logic --full` (`session::full`) combines,
+compiles and evaluates every file as a process without a session would, in a store of its own, and
+leaves the session as it was. The explorer's **Full run** button, beside the output tabs, does this,
+so Join plans, SQL and Profile show the whole run; the runs an edit starts stay incremental, and the
+explain views say which kind of run they show.
+
 ### 2. What compiling is
 
 `Compiled::of` is the part of `run_with_options` that depends on the program alone:

@@ -51,12 +51,40 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
 /// Ends this process's session: later runs are a fresh process's.
 #[cfg(test)]
 pub(in crate::code_rule_dsl) fn stop() {
-    *current() = None;
+    *SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 }
 
-/// The session, held for a run (`None`: none started).
-pub(super) fn current() -> MutexGuard<'static, Option<Session>> {
-    SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+static FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Runs `run` as a full run: as a process without a session would, compiling the program and evaluating every file,
+/// so its profile shows every step (`logic --full`). The session is left as it was.
+pub(in crate::code_rule_dsl) fn full<T>(run: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            FULL.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    FULL.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _reset = Reset;
+    run()
+}
+
+/// The session, held for a run (`None`: none started, or a full run).
+pub(super) fn current() -> Held {
+    Held(SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner), FULL.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The session held for a run, unless the run is a full one.
+pub(super) struct Held(MutexGuard<'static, Option<Session>>, bool);
+
+impl Held {
+    pub(super) fn as_ref(&self) -> Option<&Session> {
+        self.0.as_ref().filter(|_| !self.1)
+    }
+    pub(super) fn as_mut(&mut self) -> Option<&mut Session> {
+        self.0.as_mut().filter(|_| !self.1)
+    }
 }
 
 impl Session {

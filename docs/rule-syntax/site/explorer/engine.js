@@ -157,7 +157,7 @@ export function nest(flat) {
 // A rule run as the explorer shows it: the rule (with its part files) beside its includes in /lib, the sources under
 // /w/src, outputs under /w/out and the run's profile under /w/prof; then the program it ran, flattened (kept while
 // the rule's files are the same: the library does not change under a page).
-export function explore(engine, { id, rr, parts, sources, lib: libFiles }) {
+export function explore(engine, { id, rr, parts, sources, lib: libFiles, full = false }) {
   if (engine.lib !== libFiles) {
     engine.mount("/lib", nest(libFiles));
     engine.lib = libFiles;
@@ -167,7 +167,8 @@ export function explore(engine, { id, rr, parts, sources, lib: libFiles }) {
   // from the rule's folder), so the parts are also mounted there.
   const packs = { python: { ...parts } };
   engine.mount("/w", { rule, packs, src: sources, out: {}, prof: {} });
-  const run = engine.command(["logic", `/w/rule/${id}.rr`, "/w/src", "/w/out"]);
+  // A full run (`--full`) compiles and evaluates afresh, outside the session, so its profile shows every step.
+  const run = engine.command(["logic", `/w/rule/${id}.rr`, "/w/src", "/w/out", ...(full ? ["--full"] : [])]);
   const key = JSON.stringify([id, rr, parts]);
   if (engine.flat?.key !== key && !engine.dead) {
     const flat = engine.command(["flatten", `/w/rule/${id}.rr`]);
@@ -182,7 +183,8 @@ export function explore(engine, { id, rr, parts, sources, lib: libFiles }) {
   const prof = {};
   for (const [name, bytes] of Object.entries(w.prof || {})) prof[name] = text(bytes);
   return {
-    code: run.code, ms: run.ms, report: run.stdout.join("\n"), error: run.stderr.join("\n"),
+    code: run.code, ms: run.ms, report: run.stdout.join("\n"), error: run.stderr.join("\n"), full,
+    memo: (run.stdout.join("\n").match(/\d+ of \d+ files? from the per-file memo/) || [""])[0],
     relations: out, profile: prof,
     program: engine.flat?.program ?? "", programError: engine.flat?.error ?? "",
   };

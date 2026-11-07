@@ -84,7 +84,8 @@ command build's objects: the two link different start files, so they share nothi
 - With `RERAIL_SESSION=<dir>` in the instance's environment, `logic` runs in a corpus session (decision 0056,
   `corpus::session`): the store in `<dir>`, the last program as combined and compiled, and each file's
   file-local rows are kept, so a run after an edit parses and evaluates the files that changed, then runs the
-  cross-file part.
+  cross-file part. `logic … --full` runs outside the session (compiled and evaluated afresh, the session left as it
+  was), so its profile shows every step: the explorer's Full run button.
 - A trap (a Rust panic aborts) leaves the instance unusable: the host instantiates another.
 
 ## What differs from a native build

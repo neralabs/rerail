@@ -68,12 +68,12 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
 //
 //   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //   rerail-engine asm <file.rir>
-//   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
+//   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>] [--full]
 //   rerail-engine gc <store.sqlite> [--history-mb <n>]
 //   rerail-engine flatten <program.rr>
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine flatten <program.rr>";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>] [--full]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine flatten <program.rr>";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -105,11 +105,13 @@ pub fn cli(args: &[String]) -> Result<String, String> {
 
 /// `logic`: a program over a corpus, its outputs as T's (list step 23).
 fn logic_command(args: &[String]) -> Result<String, String> {
-    let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), "program".to_owned(), false, 1_usize << 18);
+    let (mut positional, mut modes, mut metal, mut chunk, mut full) = (Vec::new(), "program".to_owned(), false, 1_usize << 18, false);
     let mut args = args.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--metal" => metal = true,
+            // A full run in a session: compiled and evaluated afresh, as without one (decision 0056).
+            "--full" => full = true,
             "--modes" => modes = args.next().ok_or("--modes requires a value")?.clone(),
             "--chunk" => chunk = args.next().ok_or("--chunk requires a value")?.parse().map_err(|_| "--chunk takes a node count")?,
             other => positional.push(other.to_owned()),
@@ -140,7 +142,8 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
     }
-    crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
+    let run = || crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk);
+    if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
 }
 
 /// `gc`: collects a store until nothing is left to collect (decision 0053): converts a store made before 0053 to
