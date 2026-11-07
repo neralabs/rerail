@@ -1,9 +1,13 @@
 """Lossless source API values, with only the caller's temporary root normalized."""
 from dataclasses import fields, is_dataclass
+from enum import Enum
 from pathlib import Path
 
 
 def canonical(value, root=None):
+    if isinstance(value, Enum):
+        return dict(kind='enum', type=type(value).__module__ + '.' + type(value).__qualname__,
+                    name=value.name, value=canonical(value.value, root))
     if isinstance(value, str) and root is not None:
         prefix = root.as_posix().rstrip('/') + '/'
         if value.startswith(prefix):
