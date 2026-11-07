@@ -10,7 +10,10 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn main() {
-    napi_build::setup();
+    // The browser build (wasm32-wasip1) is no Node addon: napi-build would want emnapi.
+    if !std::env::var("TARGET").unwrap_or_default().starts_with("wasm32") {
+        napi_build::setup();
+    }
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let lock_text = std::fs::read_to_string(
         manifest

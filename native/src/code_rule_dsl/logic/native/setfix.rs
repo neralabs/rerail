@@ -810,7 +810,14 @@ fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
     id
 }
 
+/// This thread's CPU seconds (wasm32: `prof::single_thread_cpu`).
+#[cfg(target_family = "wasm")]
+fn thread_cpu() -> f64 {
+    crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64()
+}
+
 /// This thread's CPU seconds.
+#[cfg(not(target_family = "wasm"))]
 fn thread_cpu() -> f64 {
     let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };

@@ -11,7 +11,7 @@ mod compression;
 mod connection;
 mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy};
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 pub(crate) use connection::sqlite_on_jemalloc;
 mod derivation;
 mod facts_memo;

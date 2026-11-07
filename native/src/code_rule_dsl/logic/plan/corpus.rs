@@ -134,7 +134,12 @@ pub(crate) fn thread_usage() -> (f64, f64) {
         let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
         (t(info.user_time), t(info.system_time))
     }
-    #[cfg(not(target_os = "macos"))]
+    // The browser build's one thread (`prof::single_thread_cpu`), all of it user time.
+    #[cfg(target_family = "wasm")]
+    {
+        (crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64(), 0.0)
+    }
+    #[cfg(not(any(target_os = "macos", target_family = "wasm")))]
     {
         let mut u: libc::rusage = unsafe { std::mem::zeroed() };
         unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut u) };
@@ -144,12 +149,20 @@ pub(crate) fn thread_usage() -> (f64, f64) {
 }
 
 pub(crate) fn usage() -> (f64, f64, f64) {
-    let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-    let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
-    // macOS reports ru_maxrss in bytes, Linux in kilobytes.
-    let rss = if cfg!(target_os = "macos") { u.ru_maxrss as f64 / 1e6 } else { u.ru_maxrss as f64 / 1e3 };
-    (s(u.ru_utime), s(u.ru_stime), rss)
+    // wasm32: the one thread's time as user CPU, and no resident-set counter.
+    #[cfg(target_family = "wasm")]
+    {
+        (crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64(), 0.0, 0.0)
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        // macOS reports ru_maxrss in bytes, Linux in kilobytes.
+        let rss = if cfg!(target_os = "macos") { u.ru_maxrss as f64 / 1e6 } else { u.ru_maxrss as f64 / 1e3 };
+        (s(u.ru_utime), s(u.ru_stime), rss)
+    }
 }
 
 /// What a corpus run did: its phases' CPU (user, system) and the peak RSS after each, and the outcome.
@@ -788,8 +801,7 @@ pub(crate) fn run_with_options(
         crate::code_rule_dsl::prof::release();
         // `RERAIL_PROF_CHUNKS=1`: the memory held as each chunk arrives (footprint, live heap, cross-file rows).
         if std::env::var_os("RERAIL_PROF_CHUNKS").is_some() {
-            let _ = tikv_jemalloc_ctl::epoch::advance();
-            let live = tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20;
+            let live = crate::code_rule_dsl::prof::live_heap_mb();
             eprintln!(
                 "chunk {chunks}: footprint {} MB (max {}), heap live {live} MB, outputs {} lines",
                 crate::code_rule_dsl::prof::footprint_mb(),

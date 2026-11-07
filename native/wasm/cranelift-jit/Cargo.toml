@@ -1,0 +1,16 @@
+[package]
+name = "cranelift-jit-wasm"
+version = "0.125.4"
+edition = "2021"
+publish = false
+description = "cranelift-jit's API for wasm32, where no JIT can run: building one fails and the engine interprets"
+license = "Apache-2.0 WITH LLVM-exception"
+
+[features]
+selinux-fix = []
+
+[dependencies]
+anyhow = "1"
+cranelift-codegen = "=0.125.4"
+cranelift-control = "=0.125.4"
+cranelift-module = "=0.125.4"

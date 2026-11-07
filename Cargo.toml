@@ -5,6 +5,8 @@ resolver = "2"
 
 [patch.crates-io]
 block = { path = "native/vendor/block-0.1.6" }
+# Language is Send and Sync on wasm too (native/vendor/tree-sitter-0.27.1/PATCHES.md).
+tree-sitter = { path = "native/vendor/tree-sitter-0.27.1" }
 
 # Dependencies (SQLite's C, tree-sitter, regex, cranelift, ast-grep) are optimized in dev and test
 # builds: they compile once and stay cached, while this crate keeps its fast unoptimized rebuilds.

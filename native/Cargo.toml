@@ -27,8 +27,6 @@ ast-grep-language = { version = "=0.50.0", default-features = false, features = 
 # The transducer's CPU JIT (code_rule_dsl/transducer/packed).
 cranelift-codegen = "=0.125.4"
 cranelift-frontend = "=0.125.4"
-# Executable code needs dedicated mappings, separate from mimalloc heap pages (G).
-cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
@@ -71,13 +69,23 @@ tree-sitter = "=0.27.1"
 unicode-normalization = "=0.1.26"
 zstd = "=0.14.3"
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Executable code needs dedicated mappings, separate from mimalloc heap pages (G).
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
+
+# The browser build (wasm32-wasip1, `wasm/README.md`): a page has no executable memory, so the JIT's stand-in
+# fails to build a module and the transducer interprets, as it does before a background JIT compile lands.
+[target.'cfg(target_family = "wasm")'.dependencies]
+cranelift-jit-wasm = { path = "wasm/cranelift-jit" }
+libc = "0.2.189"
+
 [target.'cfg(unix)'.dependencies]
 # G's global allocator, ported as a dependency only: W keeps jemalloc (`lib.rs`) until O16.
 mimalloc = { version = "=0.1.52", default-features = false }
 libc = "0.2.189"
 
-# jemalloc does not build for MSVC targets; Windows keeps the system allocator (`lib.rs`).
-[target.'cfg(not(windows))'.dependencies]
+# jemalloc does not build for MSVC targets or wasm; both keep the system allocator (`lib.rs`).
+[target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 # The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
 tikv-jemallocator = { version = "=0.6.1", features = ["disable_initial_exec_tls"] }
 tikv-jemalloc-ctl = { version = "=0.6.1", features = ["stats"] }
