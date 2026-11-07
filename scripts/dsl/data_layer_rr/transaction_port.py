@@ -33,7 +33,7 @@ def scan(suite,module,entry,values):
         try:source=path.read_text(encoding='utf-8');error=''
         except Exception as e:source='';error=str(e)
         rows=suite.native('transaction_closures','lint_file',[dict(path=path.name,source=source)],dict(readError=error))
-        return violations(module,rows,{path.name:path if error else path.resolve()})
+        return violations(module,rows,{path.name:path if error or path.is_absolute() else path.resolve()})
     candidates=[];kinds=[];traversal=[]
     for item in values['paths']:
         path=Path(item)
@@ -46,7 +46,7 @@ def scan(suite,module,entry,values):
     options=dict(inventoryPath=[str(p) for p in candidates],inventoryKind=kinds,inventoryTraversal=traversal,
         excludeTests=str(values.get('exclude_tests',False)).lower())
     selected=suite.native('transaction_closures','selection',[],options)
-    paths=sorted({candidates[r['parameters']['index']].resolve() for r in selected})
+    paths=sorted({candidates[r['parameters']['index']].absolute() for r in selected})
     root=Path(os.path.commonpath([p.parent for p in paths])) if paths else Path.cwd()
     files=[];original={};errors=[]
     for path in paths:

@@ -85,7 +85,10 @@ class Contract:
                     if self.baseline:
                         expected=[r for r in self.baseline['calls'] if r['test']==event['test']]
                         index=self.observed.get(event['test'],0);self.observed[event['test']]=index+1
-                        compare(expected[index],event)
+                        try:compare(expected[index],event)
+                        except AssertionError:
+                            self.calls.append(event)
+                            raise
                     self.calls.append(event);return result
                 return run
             self.originals.append((owner,name,original));setattr(owner,name,wrap(original,signature,entry))

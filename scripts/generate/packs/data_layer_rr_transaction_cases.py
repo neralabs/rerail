@@ -70,6 +70,9 @@ def main():
     # The caller's tree and raw source deliberately disagree.
     add('supplied-tree-positive',variants['repeat-calls'],'source',raw='# .write(\npass\n',report=False)
     add('supplied-tree-trigger-absent',variants['repeat-calls'],'source',raw='pass\n',report=False)
+    for mode in ['inline','named','both']:
+        add('supplied-function-callback-'+mode,variants['repeat-calls'],mode,report=False)
+        api[-1]['arguments']['edits']=[dict(target=['body',0,'body',2,'value','keywords',0,'value'],source=['body',0,'body',1])]
     for tag,raw in [('clean','pass\n'),('trigger','# .write(\npass\n')]:
         api.append(dict(id='source-missing-tree-'+tag,check='transaction_closures',entry='probe',files=[],
             arguments=dict(mode='source',tree=None,file_path=dict(path='impl/example.py'),source=raw)))

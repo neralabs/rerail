@@ -3258,6 +3258,117 @@
       }
     },
     {
+      "id": "supplied-function-callback-inline",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "inline",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+        "edits": [
+          {
+            "target": [
+              "body",
+              0,
+              "body",
+              2,
+              "value",
+              "keywords",
+              0,
+              "value"
+            ],
+            "source": [
+              "body",
+              0,
+              "body",
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-function-callback-named",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "named",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+        "edits": [
+          {
+            "target": [
+              "body",
+              0,
+              "body",
+              2,
+              "value",
+              "keywords",
+              0,
+              "value"
+            ],
+            "source": [
+              "body",
+              0,
+              "body",
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-function-callback-both",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "both",
+        "tree": {
+          "pythonAst": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "def caller(conn):\n    items = []\n    def worker(t):\n        nonlocal items\n        items.append(t)\n        items[0] = t\n    conn.write(fn=worker)\n    conn.read(fn=worker)\n",
+        "edits": [
+          {
+            "target": [
+              "body",
+              0,
+              "body",
+              2,
+              "value",
+              "keywords",
+              0,
+              "value"
+            ],
+            "source": [
+              "body",
+              0,
+              "body",
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "source-missing-tree-clean",
       "check": "transaction_closures",
       "entry": "probe",

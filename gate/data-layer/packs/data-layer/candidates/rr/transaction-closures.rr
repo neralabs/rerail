@@ -136,7 +136,6 @@ tx_selected(d) :- tx_doc(d, p), !option("entryPoint", _), tx_triggered(d), !synt
 tx_hidden(d) :- path_part(d, p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
 .decl tx_test(d: number)
 tx_test(d) :- path_part(d, p), (p = "tests" ; p = "test").
-tx_test(d) :- file_name(d, n), prefix("test_", n).
 .decl tx_callback(c: node, f: node, method: symbol)
 tx_callback(c, fn, method) :- tx_call(c, callee), tx_attr(callee, _, method), tx_method(method), tx_kw(c, fn, i), i = min j : { tx_kw(c, _, j) }.
 tx_callback(c, fn, method) :- tx_call(c, callee), tx_attr(callee, _, method), tx_method(method), !tx_kw(c, _, _), tx_pos(c, fn, 1).
@@ -158,14 +157,16 @@ tx_last_inner(f, name, inner) :- tx_function(f, _), tx_body(f, inner), tx_functi
 .decl tx_job(call: node, root: node, prefix: symbol)
 tx_job(c, body, cat("In lambda passed to ", method, "(): ")) :- tx_callback(c, fn, method), tx_lambda(fn, body),
  tx_n(c, d, _, _, _), tx_selected(d), !option("checkInline", "false"), !option("entryPoint", "detector").
+tx_job(c, fn, cat("In function passed to ", method, "(): ")) :- tx_callback(c, fn, method), tx_function(fn, _),
+ tx_n(c, d, _, _, _), tx_selected(d), !option("checkInline", "false"), !option("entryPoint", "detector").
 tx_job(c, inner, cat("In '", name, "()' passed to ", method, "(): ")) :- tx_callback(c, fn, method), tx_name(fn, name),
  tx_owner(c, f), tx_last_inner(f, name, inner), tx_n(inner, _, dl, _, _), tx_n(c, d, cl, _, _), dl < cl,
  tx_selected(d), !option("checkNamed", "false"), !option("entryPoint", "detector").
 tx_job(0, 0, "") :- tx_graph(), option("entryPoint", "detector").
 .decl tx_outer(call: node, name: symbol)
 tx_outer(0, name) :- option("entryPoint", "detector"), option_item("outerVars", _, name).
-tx_outer(c, name) :- tx_job(c, _, _), tx_callback(c, fn, _), tx_lambda(fn, _), tx_n(c, d, _, _, _), tx_n(m, d, _, _, _), tx_module_bind(m, name).
-tx_outer(c, name) :- tx_job(c, _, _), tx_callback(c, fn, _), tx_lambda(fn, _), tx_contains(c, f), tx_func_bind(f, name).
+tx_outer(c, name) :- tx_job(c, _, _), tx_callback(c, fn, _), (tx_lambda(fn, _) ; tx_function(fn, _)), tx_n(c, d, _, _, _), tx_n(m, d, _, _, _), tx_module_bind(m, name).
+tx_outer(c, name) :- tx_job(c, _, _), tx_callback(c, fn, _), (tx_lambda(fn, _) ; tx_function(fn, _)), tx_contains(c, f), tx_func_bind(f, name).
 tx_outer(c, name) :- tx_job(c, _, _), tx_callback(c, fn, _), tx_name(fn, _), tx_owner(c, f), tx_direct_outer(f, name).
 // Detector function visits skip decorators, annotations and defaults; lambdas stop entirely.
 .decl tx_step(p: node, c: node)

@@ -5,6 +5,14 @@ from transaction_port import graph,violations
 
 def probe(module,values,suite=None):
     mode=values['mode'];tree=values['tree'];path=Path(values.get('file_path','input.py'))
+    def at(path):
+        node=tree
+        for key in path:node=node[key] if isinstance(key,int) else getattr(node,key)
+        return node
+    for edit in values.get('edits',[]):
+        parent=at(edit['target'][:-1]);key=edit['target'][-1];value=at(edit['source'])
+        if isinstance(key,int):parent[key]=value
+        else:setattr(parent,key,value)
     if mode=='detector':
         if suite is None:
             detector=module.NonLocalStateDetector(set(values.get('outer',[])))
