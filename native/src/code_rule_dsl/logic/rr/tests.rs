@@ -29,7 +29,8 @@ fn files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
 fn rr_files() -> Vec<PathBuf> {
     let mut out = Vec::new();
     files(&rule_syntax(), "rr", &mut out);
-    out.retain(|p| !p.starts_with(rule_syntax().join("site")));
+    // `typing/programs` holds copies of the engine's typing programs (T's dialect, its own inputs): not rules.
+    out.retain(|p| !p.starts_with(rule_syntax().join("site")) && !p.starts_with(rule_syntax().join("typing")));
     out
 }
 

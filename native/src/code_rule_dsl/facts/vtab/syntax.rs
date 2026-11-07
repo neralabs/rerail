@@ -819,7 +819,7 @@ impl Source for Viewed {
         })
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        self.value_at(row, column)
+        self.row_value(row, column)
     }
 }
 impl Viewed {
@@ -866,7 +866,7 @@ impl Viewed {
         }
         Some(rows)
     }
-    fn value_at(&self, row: usize, column: usize) -> i64 {
+    fn row_value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
         self.value_at(p, i, column)
     }

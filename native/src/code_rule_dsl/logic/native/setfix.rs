@@ -1628,6 +1628,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                     for (k, a) in kinds.iter().zip(args) {
                         match k { Kind::Text => text.push(cx.syms.name(val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
                     }
+                    let text: Vec<&str> = text.iter().map(String::as_str).collect();
                     eval(name, &text, &numbers)
                 };
                 let v = match value {

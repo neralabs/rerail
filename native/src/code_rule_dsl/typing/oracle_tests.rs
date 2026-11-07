@@ -441,7 +441,7 @@ fn python_type_relations_agree_with_the_runtime() {
     assert_eq!(departures, listed, "receivers whose classes calls.rr does not give exactly");
 }
 
-/// A rule reads the Python program's answers through `lib/python/calls.rr` (decision 0047, point 2): the engine runs
+/// A rule reads the Python program's answers through `lib/python/calls.rr` and `lib/python/types.rr` (decision 0047, point 2): the engine runs
 /// `typing/programs/calls.rr` for it (`corpus::bridge`), and the rule's call edges and proven types, joined back to its
 /// own nodes on `core.rr`'s facts, are exactly the program's on T's.
 #[test]
@@ -464,7 +464,7 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
     let rule_dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rule");
     std::fs::create_dir_all(&rule_dir).unwrap();
     let rule = rule_dir.join("rule.rr");
-    std::fs::write(&rule, format!("#include \"python/calls.rr\"\n{keyed}")).unwrap();
+    std::fs::write(&rule, format!("#include \"python/calls.rr\"\n#include \"python/types.rr\"\n{keyed}")).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let through = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &through, "program", Binding::Cpu, 1 << 18).unwrap();
