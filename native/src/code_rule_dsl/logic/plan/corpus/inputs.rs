@@ -270,4 +270,16 @@ mod tests {
         assert_eq!(program.facts["a"], vec![vec![Value::Int(7)]]);
         assert_eq!(program.facts["b"], vec![vec![Value::Str("kept".into())]]);
     }
+
+    /// Both noqa-sec-ratchet and test-budget name their different baseline signature input `base_sig`.
+    #[test]
+    fn combined_policies_keep_distinct_named_file_inputs_private() {
+        let first = ".decl base_sig(s: symbol)\n.input base_sig(IO=json, filename=\"noqa.json\", path=\"/signature\")\n.decl result(s: symbol)\nresult(s) :- base_sig(s).\n.output result\n";
+        let second = first.replace("noqa.json", "budget.json");
+        let mut program = super::super::combine(&[first, &second], "").unwrap();
+        populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}"))).unwrap();
+        assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![vec![Value::Str("noqa.json".into())]]));
+        assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![vec![Value::Str("budget.json".into())]]));
+        assert!(!program.facts.contains_key("base_sig"));
+    }
 }
