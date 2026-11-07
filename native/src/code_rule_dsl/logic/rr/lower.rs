@@ -1293,9 +1293,22 @@ impl Lowerer {
                 .cloned()
                 .collect()
         };
+        // Inputs alone when they bind the variables: a context of derived relations ties the helper to them, and
+        // to their recursion (`type_app(t, h, i, a) :- ann_input(t), …, field(m, "subscript", a), i = count : {
+        // field(m, "subscript", a0), a0 < a }` with ann_input recursive through type_app would aggregate in its
+        // own component). The context may hold more rows than the rule; the rule joins it with its own literals.
+        let inputs: BTreeSet<String> = self.prog.inputs.iter().cloned().collect();
+        let base: Vec<Lit> = context(false).into_iter().filter(|l| !matches!(l, Lit::Atom { rel, .. } if !inputs.contains(rel))).collect();
+        let (base, base_bound) = Self::bound_context(base);
         // Aggregates stay out unless a variable needs one: `m = cat(…, body, …)` over `body = join … : { … }`.
         let (first, bound) = Self::bound_context(context(false));
-        let context = if vars.iter().all(|v| bound.contains(v)) { first } else { Self::bound_context(context(true)).0 };
+        let context = if vars.iter().all(|v| base_bound.contains(v)) {
+            base
+        } else if vars.iter().all(|v| bound.contains(v)) {
+            first
+        } else {
+            Self::bound_context(context(true)).0
+        };
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
