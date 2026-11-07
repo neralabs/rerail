@@ -15,6 +15,9 @@
 //!   `after_odd_run`. These read only bytes at or before their own, so the bits a `~` sets past
 //!   the end of the input never reach a byte inside it.
 //!
+//! - `variant`: of a run of variants the first is compiled, and its `unless` mask joins the
+//!   fallback output (`FALLBACK`): a file it rejects goes to tree-sitter.
+//!
 //! Anything else is refused by name.
 
 use super::block::{BlockOp, BlockProgram, ClassTable};
@@ -41,6 +44,8 @@ struct Lowering {
     /// Classes, lowered when first used.
     classes: HashMap<String, Vec<(u32, u32)>>,
     names: HashMap<String, u16>,
+    /// The masks any of whose bits sends the file to tree-sitter: a compiled variant's `unless`.
+    fallbacks: Vec<u16>,
 }
 
 /// Compile `stmts`, with `outputs` (mask names) as the block program's outputs.
@@ -51,6 +56,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str]) -> Res
         products: HashMap::new(),
         classes: HashMap::new(),
         names: HashMap::new(),
+        fallbacks: Vec::new(),
     };
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
@@ -61,25 +67,56 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str]) -> Res
             low.classes.insert(name.clone(), ranges.clone());
         }
     }
-    for stmt in stmts {
-        match stmt {
-            Stmt::Lexer(_) | Stmt::Class(..) => {}
-            Stmt::Mask(name, expr) => {
-                let value = low.expr(expr)?;
-                low.names.insert(name.clone(), value);
-            }
-            other => return Err(format!("not compiled yet: {}", statement(other))),
-        }
-    }
+    low.stmts(stmts)?;
     for name in outputs {
-        let value = low.name(name)?;
+        let value = if *name == FALLBACK { low.fallback() } else { low.name(name)? };
         low.program.outputs.push(value);
     }
     let program = live(&low.program);
     Ok(Compiled { rows: rows(&program) })
 }
 
+/// The output name for the fallback bit: set somewhere when the file goes to tree-sitter.
+pub(in crate::code_rule_dsl) const FALLBACK: &str = "fallback";
+
 impl Lowering {
+    fn stmts(&mut self, stmts: &[Stmt]) -> Result<(), String> {
+        // Of a run of variants only the first is compiled; a file it rejects falls back.
+        let mut in_run = false;
+        for stmt in stmts {
+            match stmt {
+                Stmt::Variant { body, unless, .. } => {
+                    if !in_run {
+                        self.stmts(body)?;
+                        if let Some(e) = unless {
+                            let v = self.expr(e)?;
+                            self.fallbacks.push(v);
+                        }
+                    }
+                    in_run = true;
+                    continue;
+                }
+                Stmt::Lexer(_) | Stmt::Class(..) => {}
+                Stmt::Mask(name, expr) => {
+                    let value = self.expr(expr)?;
+                    self.names.insert(name.clone(), value);
+                }
+                other => return Err(format!("not compiled yet: {}", statement(other))),
+            }
+            in_run = false;
+        }
+        Ok(())
+    }
+
+    /// The OR of the fallback masks (`empty` without any).
+    fn fallback(&mut self) -> u16 {
+        let mut out = self.op(BlockOp::Const(0));
+        for v in self.fallbacks.clone() {
+            out = self.op(BlockOp::Or(out, v));
+        }
+        out
+    }
+
     fn product(&mut self, product: Product) -> (u16, u8) {
         if let Some(&at) = self.products.get(&product) {
             return at;

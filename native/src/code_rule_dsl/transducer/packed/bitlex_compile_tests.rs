@@ -96,3 +96,59 @@ fn unsupported_operations_are_refused() {
     let error = bitlex_compile::compile(&stmts, &["b"]).expect_err("refused");
     assert!(error.contains("next"), "{error}");
 }
+
+/// Of a run of variants the compiler keeps the first; its `unless` mask is the fallback bit. On a
+/// file the evaluator runs it on, its masks are equal and the fallback bit is clear; on any other,
+/// the fallback bit is set. The second variant has a machine, which is not compiled.
+const VARIANTS: &str = r#"
+class quote     = '"'
+class backslash = '\\'
+class slash     = '/'
+mask escaped    = after_odd_run(backslash)
+variant plain {
+  mask inside   = toggle(quote & ~escaped)
+} unless slash & ~inside
+variant general {
+  machine m {
+    events {
+      q = quote & ~escaped
+    }
+    states out in
+    start out
+    final out
+    out on q -> in
+    in  on q -> out
+  }
+  mask inside   = m.in(in)
+}
+mask code       = ~inside
+"#;
+
+#[test]
+fn the_first_variant_is_compiled_and_its_test_is_the_fallback() {
+    let names = ["inside", "code", bitlex_compile::FALLBACK];
+    let stmts = ::bitlex::syntax::parse(VARIANTS).expect("parses");
+    let compiled = bitlex_compile::compile(&stmts, &names).unwrap_or_else(|e| panic!("compiles: {e}"));
+    let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
+    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let mut cases = inputs();
+    cases.extend([b"{\"a/b\": 1}".to_vec(), b"{\"a\": 1} // c".to_vec(), b"/".to_vec()]);
+    let (mut plain, mut general) = (0, 0);
+    for bytes in cases {
+        let tables = std::collections::HashMap::new();
+        let out = ::bitlex::eval::Ev::run(&stmts, &bytes, &tables).expect("evaluates");
+        let kept_plain = out.variants == ["plain"];
+        let want = evaluated(&stmts, &bytes, &names[..2]);
+        for (executor, got) in executors(&p, &bytes) {
+            let fallback = cut(got[2].clone(), bytes.len()).iter().any(|&w| w != 0);
+            assert_eq!(fallback, !kept_plain, "{executor}, {} bytes", bytes.len());
+            if kept_plain {
+                for k in 0..2 {
+                    assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{}, {executor}, {} bytes", names[k], bytes.len());
+                }
+            }
+        }
+        if kept_plain { plain += 1 } else { general += 1 }
+    }
+    assert!(plain > 0 && general > 0, "both variants reached: {plain} plain, {general} general");
+}
