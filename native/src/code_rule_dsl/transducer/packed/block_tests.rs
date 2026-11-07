@@ -232,19 +232,21 @@ fn check_lowering(name: &str, p: &Program) {
     }
 }
 
-/// The generated MSL's lane code: the carry helpers (everything before the first summary or
-/// kernel), each round's summary function, and `tempo_block`.
+/// The generated MSL's lane code: every function (the carry helpers, the rounds' carry-outs,
+/// tables, carry-ins and halo operands, `halo_window`) and `tempo_block`. Only round kernels,
+/// which hold the look-back, are left out.
 fn lane_code(msl: &str) -> Vec<(String, String)> {
-    let first = ["static inline uint summary_", "kernel void"].iter().filter_map(|m| msl.find(m)).min().expect("code");
-    let mut out = vec![("helpers".to_owned(), msl[..first].to_owned())];
-    for marker in ["static inline uint summary_", "kernel void tempo_block("] {
+    let mut out = Vec::new();
+    for marker in ["static inline ", "kernel void tempo_block("] {
         for (at, _) in msl.match_indices(marker) {
             let code = &msl[at..];
-            let code = &code[..code.find("\n}\n").expect("its end")];
-            let name = code[..code.find('(').expect("a name")].rsplit(' ').next().unwrap_or("").to_owned();
+            let end = code.find("\n}\n").map_or(code.find('\n').unwrap_or(code.len()), |e| e + 2);
+            let code = &code[..end.min(code.len())];
+            let name = code[..code.find('(').unwrap_or(0)].rsplit(' ').next().unwrap_or("").to_owned();
             out.push((name, code.to_owned()));
         }
     }
+    assert!(out.iter().any(|(name, _)| name == "tempo_block"), "no tempo_block");
     out
 }
 
@@ -622,24 +624,45 @@ fn carried_chain_equals_reference_on_every_executor() {
 }
 
 /// The look-back's fallback: polling no times, every group computes its predecessors' aggregates
-/// itself, and the outputs are the same.
+/// itself, and the outputs are the same. The second program needs two rounds (a `toggle` of a
+/// halo the first round publishes), so the fallback also recomputes an earlier round's carries.
 #[test]
 #[cfg(target_os = "macos")]
 fn lookback_fallback_equals_reference() {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_polling, run_source};
-    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
-    let p = program(rows);
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
-    for bytes in runs() {
-        let escaped = after_odd_run_reference(&bits(&bytes, |b| b == b'\\'));
-        let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
-        let want = vec![words_of(&toggle_reference(&quote))];
-        for width in LaneWidth::ALL {
-            let source = generate_polling(&native, width, ClassStrategy::Planes, 0);
-            let (got, _) = run_source(&native, &source, &bytes, width).expect("runs");
-            assert_eq!(got, want, "{} bytes, {}-byte lanes", bytes.len(), width.bytes());
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_polling, rounds, run_source};
+    let one = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
+    let two = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n";
+    for (rows, want_rounds) in [(one, 1), (two, 2)] {
+        let p = program(rows);
+        let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+        assert_eq!(rounds(&native), want_rounds, "rounds of\n{rows}");
+        for bytes in runs() {
+            let escaped = after_odd_run_reference(&bits(&bytes, |b| b == b'\\'));
+            let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
+            let inside = toggle_reference(&quote);
+            let mut want = vec![words_of(&inside)];
+            if want_rounds == 2 {
+                want.push(words_of(&toggle_reference(&prev_reference(&inside, 5))));
+            }
+            for width in LaneWidth::ALL {
+                for spins in [0, 64] {
+                    let source = generate_polling(&native, width, ClassStrategy::Planes, spins);
+                    let (got, _) = run_source(&native, &source, &bytes, width).expect("runs");
+                    assert_eq!(got, want, "{} bytes, {}-byte lanes, {spins} polls", bytes.len(), width.bytes());
+                }
+            }
         }
     }
+}
+
+/// Stage 1 on generated MSL is one round (its two scanned carries and the halo of
+/// `nonquote_scalar` fused) and the final pass: two dispatches.
+#[test]
+#[cfg(target_os = "macos")]
+fn stage1_is_one_round() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    assert_eq!(metal_program_backend::block_program::rounds(&native), 1);
 }
 
 #[test]

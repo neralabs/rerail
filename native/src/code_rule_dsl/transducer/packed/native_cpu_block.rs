@@ -190,6 +190,8 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         } else {
             (vec![], vec![])
         };
+        // Each table's class bytes, looked up once per block for every class taken from it.
+        let mut classes: Vec<Option<Vec<Value>>> = vec![None; native.tables.len()];
         for (at, inst) in native.insts.iter().enumerate() {
             let v = |x: u16| values[usize::from(x)];
             let value = match *inst {
@@ -200,12 +202,23 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 }
                 BlockInst::Class { table, .. } => {
                     let sel = constants[at].expect("a splat per class");
-                    let (lo, hi) = tables[usize::from(table)];
-                    let parts: Vec<Value> = (0..4)
-                        .map(|part| {
-                            let l = f.ins().swizzle(lo, low[part]);
-                            let h = f.ins().swizzle(hi, high[part]);
-                            let both = f.ins().band(l, h);
+                    let t = usize::from(table);
+                    if classes[t].is_none() {
+                        let (lo, hi) = tables[t];
+                        classes[t] = Some(
+                            (0..4)
+                                .map(|part| {
+                                    let l = f.ins().swizzle(lo, low[part]);
+                                    let h = f.ins().swizzle(hi, high[part]);
+                                    f.ins().band(l, h)
+                                })
+                                .collect(),
+                        );
+                    }
+                    let bytes = classes[t].clone().expect("looked up");
+                    let parts: Vec<Value> = bytes
+                        .iter()
+                        .map(|&both| {
                             let picked = f.ins().band(both, sel);
                             f.ins().icmp(IntCC::NotEqual, picked, zero16)
                         })

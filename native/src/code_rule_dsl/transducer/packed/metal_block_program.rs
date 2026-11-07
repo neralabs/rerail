@@ -305,29 +305,25 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
     if native.insts.iter().any(|i| matches!(i, BlockInst::Plane(_))) {
         helpers.push_str(TRANSPOSE8);
     }
-    let mut out = format!("{CARRY}\n{EQ16}\n{helpers}\n");
     let plan = Plan::new(native);
+    let mut out = format!("{CARRY}\n{EQ16}\n{helpers}\n");
+    let mut widths: Vec<usize> = plan.rounds.iter().map(|r| r.scanned.len()).filter(|&m| m > 0).collect();
+    widths.sort_unstable();
+    widths.dedup();
+    for m in widths {
+        out.push_str(&table_helpers(m));
+    }
     if !plan.windowed.is_empty() {
         out.push_str(&halo_window(native, &plan));
     }
-    for (j, &at) in plan.rounds.iter().enumerate() {
-        let inst = native.insts[at];
-        let ret = if matches!(inst, BlockInst::Prev(..)) { "ulong" } else { "uint" };
-        out.push_str(&format!(
-            "// Round {j}: the lane's summary of %{at}.\n\
-             static inline {ret} summary_{j}(device const uint4* bytes, device atomic_uint* states, device const ulong* halos, uint groups, uint g, uint l) {{\n\
-             \x20 const uint gl = g * {GROUP}u + l;\n"
-        ));
-        out.push_str(&lane_values(native, &plan, width, at));
-        out.push_str(&format!("  return {};\n}}\n\n", summary_of(&inst)));
-        out.push_str(&round_kernel(j, &inst, spins));
+    for r in 0..plan.rounds.len() {
+        out.push_str(&round_functions(native, &plan, width, r));
+        out.push_str(&round_kernel(&plan, r, spins));
     }
-    out.push_str(
-        "kernel void tempo_block(\n\
-         \x20   device const uint4* bytes [[buffer(0)]],\n",
-    );
     out.push_str(&format!(
-        "    device {}* out [[buffer(1)]],\n\
+        "kernel void tempo_block(\n\
+         \x20   device const uint4* bytes [[buffer(0)]],\n\
+         \x20   device {}* out [[buffer(1)]],\n\
          \x20   constant uint& lanes [[buffer(2)]],\n\
          \x20   device atomic_uint* states [[buffer(3)]],\n\
          \x20   device const ulong* halos [[buffer(4)]],\n\
@@ -337,7 +333,9 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
          \x20 const uint groups = lanes / {GROUP}u;\n",
         width.word()
     ));
-    out.push_str(&lane_values(native, &plan, width, native.insts.len()));
+    out.push_str(&lane_carries(&plan, plan.rounds.len(), "gl", "g", "cv"));
+    let all: Vec<usize> = (0..native.insts.len()).collect();
+    out.push_str(&body(native, &plan, width, &all, &mut Vec::new()));
     for (k, v) in native.outputs.iter().enumerate() {
         out.push_str(&format!("  out[{k}u * lanes + gl] = v{v};\n"));
     }
@@ -345,115 +343,73 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
     out
 }
 
-/// A carried instruction's summary of its operand, the carry helpers' function for its kind.
-fn summary_of(inst: &BlockInst) -> String {
-    match *inst {
-        BlockInst::Prev(a, _) => format!("halo_last(v{a})"),
-        BlockInst::Toggle(a) => format!("summary_toggle(v{a})"),
-        BlockInst::AfterOddRun(a) => format!("summary_after_odd_run(v{a})"),
-        _ => unreachable!("not carried"),
-    }
-}
-
-fn kind_name(inst: &BlockInst) -> &'static str {
-    match inst {
-        BlockInst::Toggle(_) => "parity",
-        BlockInst::AfterOddRun(_) => "borrow",
-        BlockInst::Prev(..) => "halo",
-        _ => unreachable!("not carried"),
-    }
-}
-
-/// Round `j`'s kernel: the group's aggregate published, the look-back for its exclusive prefix,
-/// then its inclusive prefix published. A halo (`prev`) needs no look-back: the round writes the
-/// group's last 64 bits, which only later rounds read.
-fn round_kernel(j: usize, inst: &BlockInst, spins: u32) -> String {
-    let kind = kind_name(inst);
-    let mut out = format!(
-        "kernel void tempo_round_{j}(device const uint4* bytes [[buffer(0)]], constant uint& lanes [[buffer(2)]],\n\
-         \x20                          device atomic_uint* states [[buffer(3)]], device ulong* halos [[buffer(4)]],\n\
-         \x20                          uint g [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
-         \x20 const uint groups = lanes / {GROUP}u;\n"
-    );
-    if kind == "halo" {
-        out.push_str(&format!(
-            "  const ulong h = summary_{j}(bytes, states, halos, groups, g, l);\n\
-             \x20 if (l == 0u) halos[{j}u * groups + g] = h;\n}}\n\n"
-        ));
-        return out;
-    }
-    out.push_str(&format!(
-        "  device atomic_uint* state = states + {j}u * groups;\n\
-         \x20 const uint agg = reduce_{kind}(summary_{j}(bytes, states, halos, groups, g, l));\n"
-    ));
-    out.push_str(&format!(
-        "  if (l == 0u) atomic_store_explicit(&state[g], CARRY_AGGREGATE | agg, memory_order_relaxed);\n\
-         \x20 // Look-back, bounded: at most {spins} polls per predecessor, then its aggregate recomputed here.\n\
-         \x20 uint prefix = carry_identity({k}u);\n\
-         \x20 for (uint back = 1u; back <= g; back++) {{\n\
-         \x20   const uint p = g - back;\n\
-         \x20   uint st = 0u;\n\
-         \x20   for (uint spin = 0u; spin < {spins}u && (st >> 30u) == 0u; spin++) {{\n\
-         \x20     st = simd_broadcast(atomic_load_explicit(&state[p], memory_order_relaxed), 0u);\n\
-         \x20   }}\n\
-         \x20   if ((st >> 30u) == 0u) {{\n\
-         \x20     st = CARRY_AGGREGATE | reduce_{kind}(summary_{j}(bytes, states, halos, groups, p, l));\n\
-         \x20   }}\n\
-         \x20   prefix = combine_{kind}(st & CARRY_VALUE, prefix);\n\
-         \x20   if ((st >> 30u) == 2u) break;\n\
-         \x20 }}\n\
-         \x20 if (l == 0u) atomic_store_explicit(&state[g], CARRY_INCLUSIVE | combine_{kind}(prefix, agg), memory_order_relaxed);\n}}\n\n",
-        k = kind_index(inst)
-    ));
-    out
-}
-
-fn kind_index(inst: &BlockInst) -> u32 {
-    kind(inst)
+/// The rounds generated MSL dispatches before `tempo_block` (each one dispatch).
+pub(in crate::code_rule_dsl) fn rounds(native: &BlockNative) -> usize {
+    Plan::new(native).rounds.len()
 }
 
 /// Polls of a predecessor's state before computing it here.
 const SPINS: u32 = 64;
 
-/// How generated MSL treats each instruction: whether its value depends on no scanned carry
-/// (`local`: a function of the bytes alone), and the round of each instruction that needs one.
-struct Plan {
-    local: Vec<bool>,
-    /// Instructions that are rounds, in order: carried ones, except a `prev` of a local value
-    /// whose operand has no `prev` in it (its halo is recomputed from the 64 bytes before).
-    rounds: Vec<usize>,
-    /// The local `prev`s, by operand: their halo comes from `halo_window`.
-    windowed: Vec<usize>,
+/// A round: up to three scanned carries (`toggle`, `after_odd_run`) resolved by one scan, and the
+/// `prev`s of carried values whose halos it publishes (`06-block-parallel.md` §3.3's fused
+/// rounds). A group's summary is a table from the round's carry-in vector to its carry-out
+/// vector, `m` bits for each of the `2^m` carry-ins; groups combine by composing tables. A halo
+/// is published for each candidate carry-in of the group, and read for the actual one.
+struct Round {
+    scanned: Vec<usize>,
+    halos: Vec<usize>,
 }
+
+/// How generated MSL treats each instruction.
+struct Plan {
+    /// The local `prev`s: of a value of the bytes alone with no `prev` in it; their halo is
+    /// recomputed over the 64 bytes before the lane (`halo_window`).
+    windowed: Vec<usize>,
+    rounds: Vec<Round>,
+    /// The most halos a round publishes (the halo buffer's stride).
+    halo_stride: usize,
+}
+
+/// Where a carried instruction is resolved.
+enum Placement {
+    Scanned { round: usize, bit: usize },
+    Halo { round: usize, index: usize },
+    Windowed,
+}
+
+/// Candidate carry-ins of a group per round: at most 2^3.
+const CANDIDATES: usize = 8;
 
 impl Plan {
     fn new(native: &BlockNative) -> Self {
         let n = native.insts.len();
-        let operands = |inst: &BlockInst| -> Vec<u16> {
-            match *inst {
-                BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::AfterOddRun(a) => vec![a],
-                BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => vec![a, b],
-                _ => vec![],
-            }
-        };
         let mut local = vec![true; n];
         let mut has_prev = vec![false; n];
-        let mut rounds = Vec::new();
         let mut windowed = Vec::new();
+        let mut rounds: Vec<Round> = Vec::new();
         for at in 0..n {
             let ops = operands(&native.insts[at]);
-            let ops_local = ops.iter().all(|&a| local[usize::from(a)]);
-            let ops_prev = ops.iter().any(|&a| has_prev[usize::from(a)]);
+            let ops_local = ops.iter().all(|&a| local[a]);
+            let ops_prev = ops.iter().any(|&a| has_prev[a]);
             match native.insts[at] {
                 BlockInst::Prev(a, _) if ops_local && !has_prev[usize::from(a)] => {
                     windowed.push(at);
-                    local[at] = true;
                     has_prev[at] = true;
                 }
                 ref inst if inst.carried() => {
-                    rounds.push(at);
                     local[at] = false;
                     has_prev[at] = ops_prev || matches!(inst, BlockInst::Prev(..));
+                    // A new round when the operand reads a halo of the current round (resolved
+                    // only at its end), or the round has three scanned carries already.
+                    let reads: Vec<usize> = cone(native, &ops);
+                    let blocked = rounds.last().is_none_or(|r| r.halos.iter().any(|h| reads.contains(h)));
+                    let scanned = !matches!(inst, BlockInst::Prev(..));
+                    if blocked || (scanned && rounds.last().is_some_and(|r| r.scanned.len() == 3)) {
+                        rounds.push(Round { scanned: vec![], halos: vec![] });
+                    }
+                    let round = rounds.last_mut().expect("a round");
+                    if scanned { round.scanned.push(at) } else { round.halos.push(at) }
                 }
                 _ => {
                     local[at] = ops_local;
@@ -461,12 +417,249 @@ impl Plan {
                 }
             }
         }
-        Plan { local, rounds, windowed }
+        let halo_stride = rounds.iter().map(|r| r.halos.len()).max().unwrap_or(0).max(1);
+        Plan { windowed, rounds, halo_stride }
     }
 
-    fn round_of(&self, at: usize) -> Option<usize> {
-        self.rounds.iter().position(|&r| r == at)
+    fn placement(&self, at: usize) -> Placement {
+        if self.windowed.contains(&at) {
+            return Placement::Windowed;
+        }
+        for (round, r) in self.rounds.iter().enumerate() {
+            if let Some(bit) = r.scanned.iter().position(|&x| x == at) {
+                return Placement::Scanned { round, bit };
+            }
+            if let Some(index) = r.halos.iter().position(|&x| x == at) {
+                return Placement::Halo { round, index };
+            }
+        }
+        unreachable!("not carried")
     }
+}
+
+fn operands(inst: &BlockInst) -> Vec<usize> {
+    match *inst {
+        BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::AfterOddRun(a) => vec![usize::from(a)],
+        BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => {
+            vec![usize::from(a), usize::from(b)]
+        }
+        _ => vec![],
+    }
+}
+
+/// Tables of `m`-bit carry vectors: apply, compose (`a` then `b`), the identity, and the SIMD
+/// group's exclusive scan (Hillis-Steele over shuffles, five steps) with the group's total.
+fn table_helpers(m: usize) -> String {
+    let mask = (1u32 << m) - 1;
+    let n = 1usize << m;
+    let compose: Vec<String> = (0..n).map(|c| format!("(tapply{m}(b, tapply{m}(a, {c}u)) << {}u)", c * m)).collect();
+    let identity: u32 = (0..n as u32).map(|c| c << (c as usize * m)).sum();
+    let steps: String = [1, 2, 4, 8, 16]
+        .iter()
+        .map(|d| format!("  x = select(x, tcompose{m}(simd_shuffle_up(x, ushort({d})), x), l >= {d}u);\n"))
+        .collect();
+    format!(
+        "static inline uint tapply{m}(uint t, uint c) {{ return (t >> (c * {m}u)) & {mask}u; }}\n\
+         static inline uint tcompose{m}(uint a, uint b) {{ return {}; }}\n\
+         constant uint TID{m} = {identity}u;\n\
+         static inline uint texclusive{m}(uint t, uint l, thread uint& total) {{\n\
+         \x20 uint x = t;\n{steps}\
+         \x20 total = simd_broadcast(x, ushort(31));\n\
+         \x20 return select(simd_shuffle_up(x, ushort(1)), TID{m}, l == 0u);\n}}\n\n",
+        compose.join(" | ")
+    )
+}
+
+/// Parameters of a round-`r` function: the lane, and the carry-in vectors of rounds `..=r`
+/// (`..r` when `own` is false).
+fn params(r: usize, own: bool) -> String {
+    let upto = if own { r + 1 } else { r };
+    let cs: String = (0..upto).map(|k| format!(", uint cv{k}")).collect();
+    format!("device const uint4* bytes, device atomic_uint* states, device const ulong* halos, uint groups, uint gl, uint g, uint l{cs}")
+}
+
+fn args(r: usize, lane: &str, group: &str, prefix: &str, own: Option<&str>) -> String {
+    let cs: String = (0..r).map(|k| format!(", {prefix}{k}")).collect();
+    let own = own.map(|c| format!(", {c}")).unwrap_or_default();
+    format!("bytes, states, halos, groups, {lane}, {group}, l{cs}{own}")
+}
+
+/// The statements computing every round's lane carry-in vector, `{prefix}0..`, for rounds `..r`.
+fn lane_carries(plan: &Plan, r: usize, lane: &str, group: &str, prefix: &str) -> String {
+    (0..r.min(plan.rounds.len()))
+        .map(|k| format!("  const uint {prefix}{k} = carries_{k}({});\n", args(k, lane, group, prefix, None)))
+        .collect()
+}
+
+/// Round `r`'s functions: the lane's carry-outs for a carry-in vector, its table, its carry-in
+/// vector after the scan, each published halo's operand, and each halo's reader.
+fn round_functions(native: &BlockNative, plan: &Plan, width: LaneWidth, r: usize) -> String {
+    let round = &plan.rounds[r];
+    let m = round.scanned.len();
+    let mut out = String::new();
+    if m > 0 {
+        let mut couts = Vec::new();
+        let code = body(native, plan, width, &cone(native, &round.scanned), &mut couts);
+        let vector: Vec<String> = couts
+            .iter()
+            .filter(|(round_of, _, _)| *round_of == r)
+            .map(|(_, bit, e)| format!("((({e}) & 1u) << {bit}u)"))
+            .collect();
+        out.push_str(&format!(
+            "// Round {r}: the lane's carry-outs of %{:?} for carry-ins cv{r}.\n\
+             static inline uint couts_{r}({}) {{\n{code}  return {};\n}}\n",
+            round.scanned,
+            params(r, true),
+            vector.join(" | ")
+        ));
+        let table: Vec<String> = (0..1usize << m)
+            .map(|c| format!("(couts_{r}({}) << {}u)", args(r, "gl", "g", "cv", Some(&format!("{c}u"))), c * m))
+            .collect();
+        out.push_str(&format!(
+            "static inline uint table_{r}({}) {{ return {}; }}\n",
+            params(r, false),
+            table.join(" | ")
+        ));
+        out.push_str(&format!(
+            "static inline uint carries_{r}({}) {{\n\
+             \x20 uint total = 0u;\n\
+             \x20 const uint e = texclusive{m}(table_{r}({}), l, total);\n\
+             \x20 const uint before = atomic_load_explicit(&states[{r}u * groups + max(g, 1u) - 1u], memory_order_relaxed);\n\
+             \x20 return tapply{m}(e, select(0u, tapply{m}(before & CARRY_VALUE, 0u), g > 0u));\n}}\n",
+            params(r, false),
+            args(r, "gl", "g", "cv", None)
+        ));
+    } else {
+        out.push_str(&format!("static inline uint carries_{r}({}) {{ return 0u; }}\n", params(r, false)));
+    }
+    for (index, &at) in round.halos.iter().enumerate() {
+        let BlockInst::Prev(a, _) = native.insts[at] else { unreachable!() };
+        let a = usize::from(a);
+        let code = body(native, plan, width, &cone(native, &[a]), &mut Vec::new());
+        out.push_str(&format!(
+            "// Round {r}: the operand of %{at}'s prev, for the lane's carry-ins cv{r}.\n\
+             static inline {} operand_{r}_{index}({}) {{\n{code}  return v{a};\n}}\n",
+            width.word(),
+            params(r, true)
+        ));
+        let entry = if m > 0 {
+            format!(
+                "select(0u, tapply{m}(atomic_load_explicit(&states[{r}u * groups + max(g, 2u) - 2u], memory_order_relaxed) & CARRY_VALUE, 0u), g > 1u)"
+            )
+        } else {
+            "0u".into()
+        };
+        out.push_str(&format!(
+            "// The group before's last 64 bits of %{a}, for its actual carry-in.\n\
+             static inline ulong group_halo_{r}_{index}(device atomic_uint* states, device const ulong* halos, uint groups, uint g) {{\n\
+             \x20 const uint entry = {entry};\n\
+             \x20 return select(0ul, halos[(({r}u * groups + max(g, 1u) - 1u) * {CANDIDATES}u + entry) * {}u + {index}u], g > 0u);\n}}\n",
+            plan.halo_stride
+        ));
+    }
+    out.push('\n');
+    out
+}
+
+/// Round `r`'s kernel: the group's table published as its aggregate, the look-back for its
+/// exclusive prefix, its inclusive prefix published, then the halos for each candidate carry-in.
+fn round_kernel(plan: &Plan, r: usize, spins: u32) -> String {
+    let round = &plan.rounds[r];
+    let m = round.scanned.len();
+    let mut out = format!(
+        "kernel void tempo_round_{r}(device const uint4* bytes [[buffer(0)]], constant uint& lanes [[buffer(2)]],\n\
+         \x20                          device atomic_uint* states [[buffer(3)]], device ulong* halos [[buffer(4)]],\n\
+         \x20                          uint g [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
+         \x20 const uint groups = lanes / {GROUP}u;\n\
+         \x20 const uint gl = g * {GROUP}u + l;\n"
+    );
+    out.push_str(&lane_carries(plan, r, "gl", "g", "cv"));
+    if m > 0 {
+        let fallback = lane_carries(plan, r, "pl", "p", "q").replace("  const", "      const");
+        out.push_str(&format!(
+            "  uint agg = 0u;\n\
+             \x20 const uint e = texclusive{m}(table_{r}({own}), l, agg);\n\
+             \x20 device atomic_uint* state = states + {r}u * groups;\n\
+             \x20 if (l == 0u) atomic_store_explicit(&state[g], CARRY_AGGREGATE | agg, memory_order_relaxed);\n\
+             \x20 // Look-back, bounded: at most {spins} polls per predecessor, then its aggregate computed here.\n\
+             \x20 uint prefix = TID{m};\n\
+             \x20 for (uint back = 1u; back <= g; back++) {{\n\
+             \x20   const uint p = g - back;\n\
+             \x20   uint st = 0u;\n\
+             \x20   for (uint spin = 0u; spin < {spins}u && (st >> 30u) == 0u; spin++) {{\n\
+             \x20     st = simd_broadcast(atomic_load_explicit(&state[p], memory_order_relaxed), ushort(0));\n\
+             \x20   }}\n\
+             \x20   if ((st >> 30u) == 0u) {{\n\
+             \x20     const uint pl = p * {GROUP}u + l;\n{fallback}\
+             \x20     uint theirs = 0u;\n\
+             \x20     texclusive{m}(table_{r}({theirs}), l, theirs);\n\
+             \x20     st = CARRY_AGGREGATE | theirs;\n\
+             \x20   }}\n\
+             \x20   prefix = tcompose{m}(st & CARRY_VALUE, prefix);\n\
+             \x20   if ((st >> 30u) == 2u) break;\n\
+             \x20 }}\n\
+             \x20 if (l == 0u) atomic_store_explicit(&state[g], CARRY_INCLUSIVE | tcompose{m}(prefix, agg), memory_order_relaxed);\n",
+            own = args(r, "gl", "g", "cv", None),
+            theirs = args(r, "pl", "p", "q", None),
+        ));
+    }
+    for index in 0..round.halos.len() {
+        for v in 0..1usize << m {
+            let cv = if m > 0 { format!("tapply{m}(e, {v}u)") } else { "0u".into() };
+            out.push_str(&format!(
+                "  {{\n\
+                 \x20   const ulong h = halo_last(operand_{r}_{index}({}));\n\
+                 \x20   if (l == 0u) halos[(({r}u * groups + g) * {CANDIDATES}u + {v}u) * {}u + {index}u] = h;\n\
+                 \x20 }}\n",
+                args(r, "gl", "g", "cv", Some(&cv)),
+                plan.halo_stride
+            ));
+        }
+    }
+    out.push_str("}\n\n");
+    out
+}
+
+/// The statements for the instructions in `chosen` of lane `gl` (group `g`, lane `l`), with the
+/// rounds' carry-in vectors `c0..` in scope; each carried instruction's carry-out of its own
+/// round is recorded in `couts` as `(round, bit, expression)`.
+fn body(native: &BlockNative, plan: &Plan, width: LaneWidth, chosen: &[usize], couts: &mut Vec<(usize, usize, String)>) -> String {
+    let m = width.word();
+    let chunks = width.bytes() / 16;
+    let w = width.bytes();
+    let mut out = String::new();
+    let windowed: Vec<usize> = plan.windowed.iter().copied().filter(|at| chosen.contains(at)).collect();
+    if !windowed.is_empty() {
+        let mut ops: Vec<usize> = plan.windowed.iter().flat_map(|&at| operands(&native.insts[at])).collect();
+        ops.sort_unstable();
+        ops.dedup();
+        for a in &ops {
+            out.push_str(&format!("  ulong w{a} = 0ul;\n"));
+        }
+        let wargs: String = ops.iter().map(|a| format!(", w{a}")).collect();
+        out.push_str(&format!("  halo_window(bytes, int(gl * {w}u) - 64{wargs});\n"));
+    }
+    out.push_str(&emit(native, width, chosen, &format!("gl * {chunks}u"), &format!("gl * {w}u"), |at, inst, out| {
+        match (plan.placement(at), *inst) {
+            (Placement::Windowed, BlockInst::Prev(a, k)) => out.push_str(&format!("  const {m} v{at} = apply_prev(v{a}, {k}u, w{a});\n")),
+            (Placement::Halo { round, index }, BlockInst::Prev(a, k)) => out.push_str(&format!(
+                "  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, group_halo_{round}_{index}(states, halos, groups, g)));\n"
+            )),
+            (Placement::Scanned { round, bit }, BlockInst::AfterOddRun(a)) => {
+                out.push_str(&format!(
+                    "  uint o{at} = 0u;\n\
+                     \x20 const {m} v{at} = after_odd_run(v{a}, {m}((cv{round} >> {bit}u) & 1u), o{at});\n"
+                ));
+                couts.push((round, bit, format!("o{at}")));
+            }
+            (Placement::Scanned { round, bit }, BlockInst::Toggle(a)) => {
+                out.push_str(&format!("  const {m} v{at} = apply_toggle(v{a}, (cv{round} >> {bit}u) & 1u);\n"));
+                couts.push((round, bit, format!("(cv{round} >> {bit}u) ^ summary_toggle(v{a})")));
+            }
+            _ => unreachable!("placement"),
+        }
+    }));
+    out
 }
 
 /// The instructions in `chosen`, as straight-line statements for a word of `width` whose first
@@ -592,58 +785,6 @@ fn halo_window(native: &BlockNative, plan: &Plan) -> String {
     out
 }
 
-/// The straight-line statements defining `v0..v{upto}` for global lane `gl` of group `g`, lane
-/// `l`: local `prev`s from `halo_window`, rounds from their states and halos.
-fn lane_values(native: &BlockNative, plan: &Plan, width: LaneWidth, upto: usize) -> String {
-    let m = width.word();
-    let chunks = width.bytes() / 16;
-    let w = width.bytes();
-    let chosen: Vec<usize> = (0..upto).collect();
-    let mut out = String::new();
-    let windowed: Vec<usize> = plan.windowed.iter().copied().filter(|&at| at < upto).collect();
-    if !windowed.is_empty() {
-        let mut operands: Vec<usize> = plan
-            .windowed
-            .iter()
-            .map(|&at| if let BlockInst::Prev(a, _) = native.insts[at] { usize::from(a) } else { unreachable!() })
-            .collect();
-        operands.sort_unstable();
-        operands.dedup();
-        for a in &operands {
-            out.push_str(&format!("  ulong w{a} = 0ul;\n"));
-        }
-        let args: String = operands.iter().map(|a| format!(", w{a}")).collect();
-        out.push_str(&format!("  halo_window(bytes, int(gl * {w}u) - 64{args});\n"));
-    }
-    out.push_str(&emit(native, width, &chosen, &format!("gl * {chunks}u"), &format!("gl * {w}u"), |at, inst, out| {
-        if let BlockInst::Prev(a, k) = *inst {
-            match plan.round_of(at) {
-                None => out.push_str(&format!("  const {m} v{at} = apply_prev(v{a}, {k}u, w{a});\n")),
-                Some(j) => out.push_str(&format!(
-                    "  const ulong h{j} = halo_before(v{a}, l, halo_of_group_before(halos + {j}u * groups, g));\n\
-                     \x20 const {m} v{at} = apply_prev(v{a}, {k}u, h{j});\n"
-                )),
-            }
-            return;
-        }
-        let j = plan.round_of(at).expect("a round");
-        let (kind, apply) = match *inst {
-            BlockInst::Toggle(a) => ("parity", format!("apply_toggle(v{a}, i{j})")),
-            BlockInst::AfterOddRun(a) => ("borrow", format!("apply_after_odd_run(v{a}, i{j})")),
-            _ => unreachable!(),
-        };
-        out.push_str(&format!(
-            "  const uint e{j} = carry_before(states + {j}u * groups, {}u, g);\n\
-             \x20 const uint s{j} = {};\n\
-             \x20 const uint i{j} = lane_in_{kind}(s{j}, e{j}, l);\n\
-             \x20 const {m} v{at} = {apply};\n",
-            kind_index(inst),
-            summary_of(inst)
-        ));
-    }));
-    out
-}
-
 /// Generated MSL run: every output's words over `bytes`, as 64-bit words of the stream.
 pub(in crate::code_rule_dsl) fn run_generated(
     native: &BlockNative,
@@ -673,7 +814,8 @@ pub(in crate::code_rule_dsl) fn run_source(
 ) -> Result<(Vec<Vec<u64>>, f64), Error> {
     // The planes form has the same plan: `class` is local in both, and carried instructions
     // are kept in order.
-    let rounds = Plan::new(native).rounds.len();
+    let plan = Plan::new(native);
+    let rounds = plan.rounds.len();
     let pipelines: Vec<metal::ComputePipelineState> = (0..rounds)
         .map(|j| format!("tempo_round_{j}"))
         .chain(std::iter::once("tempo_block".to_owned()))
@@ -684,7 +826,7 @@ pub(in crate::code_rule_dsl) fn run_source(
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let stream = Stream::new(bytes, width, native.outputs.len())?;
     let states = MappedBuffer::zeroed::<u32>(device, rounds.max(1) * stream.groups)?;
-    let halos = MappedBuffer::zeroed::<u64>(device, rounds.max(1) * stream.groups)?;
+    let halos = MappedBuffer::zeroed::<u64>(device, rounds.max(1) * stream.groups * CANDIDATES * plan.halo_stride)?;
     let lanes = stream.lanes as u32;
     let passes: Vec<Pass<'_>> = pipelines
         .iter()
