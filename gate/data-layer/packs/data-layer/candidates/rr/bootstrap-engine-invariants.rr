@@ -1,0 +1,415 @@
+.policy "data-layer:bootstrap-engine-invariants" revision 1
+.description "The bootstrap engine is lazy-only: deleted surfaces stay deleted, and its planners, lowerers and runners keep their contracts."
+.language python
+.mode block
+.scope include "l3200_metadata/**/*.py", "l2055_lazy_result/purity.py", "l2000_connection/schema_transaction.py"
+.scope include "impl/common/l2200_sql_dialect/{sql_connection,sql_core_support_free_functions,sql_core_support_mixin}.py"
+.scope include "impl/common/l2200_sql_dialect/{sql_execution_mixin,sql_schema_services,sql_bootstrap_metadata_services}.py"
+.scope include "impl/common/l2070_server_plan/steps/bootstrap_interrogation.py", "impl/read_through/connection.py"
+.scope include "impl/common/l7245_versioned_backends/{generic_sparse,staged_table_triggers}.py"
+.scope include "data_layer_testing/helpers/{bootstrap,bootstrap_manifest}.py"
+// Python linter: scripts/lint_bootstrap_engine_invariants.py. It guards the lazy-only bootstrap engine with 45 codes,
+// BEI001 … BEI047, in six families. Its many name lists are bootstrap-engine-invariants.tables.rr: bei_set(SET, x)
+// for each of the linter's frozensets, under the linter's own name.
+//   1. Deleted surfaces, by text: a deleted cold-bootstrap or schema-sidecar name anywhere in the source (BEI035, at
+//      its first occurrence), a deleted non-batch surface in schema_transaction.py (BEI046).
+//   2. Deleted surfaces, by name: a def or class named like an old engine symbol (BEI001), a direct/eager surface
+//      (BEI002) or a callback surface (BEI047); the last two also as any Name or Attribute.
+//   3. Expressions: everywhere (BEI018, BEI021, BEI022, BEI028, BEI035, BEI041, BEI042), and in the engine files
+//      only (BEI003, BEI004, BEI008, BEI009, BEI010, BEI017, BEI020).
+//   4. Function contracts: a def of a given name in a given file must not call some names (bei_ban below), or
+//      must have a shape: @pure_lazy, `-> LazyResult[…]`, keyword-only refs, required calls (BEI005 … BEI047).
+//   5. Classes: lifecycle effects (PipelineLifecycleEffect subclasses) take no connection authority (BEI032).
+//   6. Coverage: every BootstrapDataPrimitiveKind member has an install family in the coordinator (BEI038).
+// The engine files are l3200_metadata/bootstrap_state.py and bootstrap_coordinator.py (the linter's BOOTSTRAP_FILES);
+// the policy options bootstrapPaths and enginePaths add others, as the linter's tests patch those constants.
+// A file is read at all only when it is an engine file, is schema_transaction.py, sql_connection.py or
+// bootstrap_interrogation.py, has "bootstrap" in its name, or mentions bootstrap, schema_transaction,
+// materialized_pipeline, physical_table or reconciliation (the linter's _source_may_need_bootstrap_invariant_scan).
+// Names are matched by spelling (Name id, Attribute attr); nothing is resolved. "In def f" is ast.walk(f): nested
+// defs, lambdas and decorators included (def_walk).
+
+#include "python/ast.rr"
+#include "python/calls.rr"
+#include "data-layer/boot-python.rr"     // callee_name, deco_word, def_walk, ann_top, ann_subscript
+#include "bootstrap-engine-invariants.tables.rr"
+
+.violation BEI(at: loc, c: symbol, why: symbol) code {c} "{why}"
+
+// ---- files -------------------------------------------------------------------------------------------------------
+.decl bei_engine(d: number)
+bei_engine(d) :- doc(d, p, _), (p = "l3200_metadata/bootstrap_state.py" ; p = "l3200_metadata/bootstrap_coordinator.py").
+bei_engine(d) :- (option_item("bootstrapPaths", _, p) ; option_item("enginePaths", _, p)), doc(d, p, _).
+.decl bei_doc(d: number)  // the file is scanned
+bei_doc(d) :- bei_engine(d).
+bei_doc(d) :- file_name(d, n), (n = "schema_transaction.py" ; n = "sql_connection.py" ; n = "bootstrap_interrogation.py").
+bei_doc(d) :- file_name(d, n), contains("bootstrap", n).
+bei_doc(d) :- source(d, sp), (contains("Bootstrap", sp) ; contains("bootstrap", sp) ; contains("schema_transaction", sp) ;
+    contains("materialized_pipeline", sp) ; contains("physical_table", sp) ; contains("reconciliation", sp)).
+// bei_node(n, d): node n of scanned document d. bei_fn(f, file, x): def f, named x, in a scanned file so named.
+.decl bei_node(n: node, d: number)
+bei_node(n, d) :- docof(n, d), bei_doc(d).
+.decl bei_fn(f: node, file: symbol, x: symbol)
+bei_fn(f, file, x) :- kind(f, "function_definition"), bei_node(f, d), file_name(d, file), def_name(f, x).
+// bei_efn: the same, for the checks the linter runs only in engine files (and on three schema_transaction.py defs).
+.decl bei_efn(f: node, file: symbol, x: symbol)
+bei_efn(f, file, x) :- bei_fn(f, file, x), docof(f, d), bei_engine(d).
+bei_efn(f, "schema_transaction.py", x) :- bei_fn(f, "schema_transaction.py", x),
+    (x = "bootstrap_interrogation_lazy" ; x = "bootstrap_interrogation_request_no_io" ; x = "bootstrap_schema_tail_lazy").
+
+// ---- words of the tree ---------------------------------------------------------------------------------------------
+// bei_ref(n, x): n is an ast.Name or an Attribute, named x (its id or attr).
+.decl bei_ref(n: node, x: symbol)
+bei_ref(n, x) :- ast_name(n, x).
+bei_ref(n, x) :- attr_of(n, _, x).
+// bei_kind_ref(n, k, x): n is `k.x`, k a bare name: `BootstrapDataPrimitiveKind.TABLE`.
+.decl bei_kind_ref(n: node, k: symbol, x: symbol)
+bei_kind_ref(n, k, x) :- attr_of(n, o, x), kind(o, "identifier"), text(o, k).
+// bei_calls(f, c, x): def f makes call c of x.
+.decl bei_calls(f: node, c: node, x: symbol)
+bei_calls(f, c, x) :- callee_name(c, x), def_walk(c, f), kind(f, "function_definition").
+// bei_kw(c, k, v): call c passes k=v; bei_arg0(c, a): its first positional argument is a. Parentheses are taken
+// off v and a, as ast has no node for them.
+.decl bei_kw(c: node, k: symbol, v: node)
+bei_kw(c, k, m) :- call_arg(c, -1, k, v), unparen(v, m).
+.decl bei_arg0(c: node, a: node)
+bei_arg0(c, m) :- call_arg(c, 0, "", a), unparen(a, m).
+// bei_npos(c, k): call c has k positional arguments, `*xs` included (the length of ast's Call.args).
+.decl bei_npos(c: node, k: number)
+bei_npos(c, k) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"),
+    k = count : { child(al, a, _), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "comment") }.
+.decl bei_empty_tuple(v: node)  // `()`
+bei_empty_tuple(v) :- kind(v, "tuple"), count : { child(v, e, _), !kind(e, "comment") } = 0.
+// bei_lazy_result(f): the printed return annotation starts with "LazyResult[", which is the linter's test on
+// ast.unparse(returns). It does when the annotation's leftmost operand is a subscript of the bare name LazyResult:
+// `-> LazyResult[int]` and `-> LazyResult[int] | None` do; `-> "LazyResult[int]"` and `-> lazy.LazyResult[int]` do not.
+.decl bei_lazy_result(f: node)
+bei_lazy_result(f) :- field(f, "return_type", a), ann_top(a, e), bei_leftmost(e, m), ann_subscript(m, v, _),
+    kind(v, "identifier"), text(v, "LazyResult").
+// bei_leftmost(e, m): m starts e's printed form: e itself, or (down the left of `A | B`) A's leftmost. In an
+// annotation tree-sitter writes `A | B` as a union_type of `type` nodes; elsewhere as a binary_operator.
+.decl bei_leftmost(e: node, m: node)
+bei_leftmost(e, e) :- ann_top(_, e).
+bei_leftmost(e, m) :- bei_leftmost(e, x), kind(x, "binary_operator"), field(x, "left", m).
+bei_leftmost(e, m) :- bei_leftmost(e, x), kind(x, "union_type"), child(x, m, 0).
+bei_leftmost(e, m) :- bei_leftmost(e, x), kind(x, "type"), child(x, m, 0).
+.decl bei_pure(f: node)  // decorated @pure_lazy
+bei_pure(f) :- deco_word(f, "pure_lazy").
+.decl bei_del(f: node, s: node, x: symbol)  // `del x` (one of its targets) in def f
+bei_del(f, s, x) :- kind(s, "delete_statement"), def_walk(s, f), child(s, t, _), kind(t, "identifier"), text(t, x).
+bei_del(f, s, x) :- kind(s, "delete_statement"), def_walk(s, f), child(s, l, _), kind(l, "expression_list"),
+    child(l, t, _), kind(t, "identifier"), text(t, x).
+
+// ---- 1. deleted surfaces, by text ----------------------------------------------------------------------------------
+.decl bei_first(d: number, s: symbol, l: number)  // surface s first occurs on line l
+bei_first(d, s, l) :- bei_doc(d), bei_text_surface(s), l = min k : { src_line(d, k, sp), contains(s, sp) }.
+.decl bei_text_surface(s: symbol)
+bei_text_surface(s) :- bei_set("DELETED_COLD_BOOTSTRAP_SURFACES", s).
+bei_text_surface(s) :- bei_set("DELETED_SCHEMA_SIDECAR_SURFACES", s).
+bei_text_surface(s) :- bei_set("DELETED_NON_BATCH_BOOTSTRAP_SCHEMA_SURFACES", s).
+BEI(@place(p, l), "BEI035", cat("deleted surface must not be reintroduced: ", s)) :- bei_first(d, s, l), doc(d, p, _),
+    (bei_set("DELETED_COLD_BOOTSTRAP_SURFACES", s) ; bei_set("DELETED_SCHEMA_SIDECAR_SURFACES", s)).
+BEI(@place(p, l), "BEI046", cat("deleted non-batch bootstrap schema surface: ", s)) :- bei_first(d, s, l), doc(d, p, _),
+    file_name(d, "schema_transaction.py"), bei_set("DELETED_NON_BATCH_BOOTSTRAP_SCHEMA_SURFACES", s).
+
+// ---- 2. deleted surfaces, by name ----------------------------------------------------------------------------------
+.decl bei_named(n: node, x: symbol)  // a def or class named x, in a scanned file
+bei_named(n, x) :- def_name(n, x), bei_node(n, _).
+BEI(n, "BEI001", cat("old bootstrap engine symbol must be deleted: ", x)) :- bei_named(n, x), bei_set("OLD_BOOTSTRAP_SYMBOLS", x).
+BEI(n, "BEI002", cat("direct bootstrap/eager transition surface: ", x)) :- bei_named(n, x), bei_set("DIRECT_BOOTSTRAP_NAMES", x).
+BEI(n, "BEI002", cat("direct bootstrap/eager transition surface: ", x)) :- bei_ref(n, x), bei_node(n, _),
+    bei_set("DIRECT_BOOTSTRAP_NAMES", x).
+BEI(n, "BEI047", cat("deleted bootstrap callback/fallback surface: ", x)) :- bei_named(n, x),
+    bei_set("DELETED_BOOTSTRAP_CALLBACK_SURFACES", x).
+BEI(n, "BEI047", cat("deleted bootstrap callback/fallback surface: ", x)) :- bei_ref(n, x), bei_node(n, _),
+    bei_set("DELETED_BOOTSTRAP_CALLBACK_SURFACES", x).
+// Sync and async bootstrap entry points next to (or instead of) the lazy one, in production bootstrap files: an
+// async def or a …_async def with "bootstrap" in its name, or any such def whose …_lazy counterpart exists.
+.decl bei_feature_file(d: number)
+bei_feature_file(d) :- bei_doc(d), !path_part(d, "tests"), !path_part(d, "data_layer_testing"),
+    (bei_engine(d) ; file_name(d, n), contains("bootstrap", n)).
+BEI(f, "BEI047", cat("bootstrap surface must be lazy-only: ", x)) :- bei_fn(f, _, x), docof(f, d), bei_feature_file(d),
+    contains("bootstrap", x), !suffix("_lazy", x), !bei_pure(f),
+    (is_async(f) ; suffix("_async", x) ; bei_fn(g, _, cat(@replace_all(x, "_(async|sync)$", ""), "_lazy")), docof(g, d)).
+
+// ---- 3. expressions --------------------------------------------------------------------------------------------------
+// Everywhere.
+// BEI018: plan_bootstrap_schema_generation reads legacy state; any `x.schema_generation or …` infers a counter.
+BEI(n, "BEI018", "schema generation planning must consume BootstrapObservation facts only") :-
+    bei_fn(f, _, "plan_bootstrap_schema_generation"), !is_async(f), def_walk(n, f), ast_name(n, x),
+    (x = "BootstrapObservedState" ; x = "SCHEMA_GENERATION_GLOBAL_TAG").
+BEI(m, "BEI018", "schema generation/version counters must be explicit, not inferred with 'or'") :- bool_operand(_, "or", v),
+    unparen(v, m), attr_of(m, _, a), (a = "schema_generation" ; a = "schema_version"), bei_node(m, _).
+// BEI021: the test bootstrap helpers (data_layer_testing/helpers/bootstrap*) probe or cache proofs themselves.
+.decl bei_helper_file(d: number)
+bei_helper_file(d) :- bei_doc(d), doc(d, p, _), glob("data_layer_testing/helpers/bootstrap*", p).
+BEI(c, "BEI021", "test bootstrap helpers must use the lazy bootstrap coordinator path") :- callee_name(c, x),
+    bei_set("HELPER_BOOTSTRAP_PROBE_NAMES", x), docof(c, d), bei_helper_file(d).
+BEI(n, "BEI021", "test bootstrap helpers must not maintain helper-owned bootstrap proof state") :- bei_ref(n, x),
+    bei_set("HELPER_BOOTSTRAP_PROOF_ATTRS", x), docof(n, d), bei_helper_file(d).
+// BEI022: bootstrap_interrogation.py synthesizes facts from manifests, or falls back with `or` to request defaults.
+BEI(f, "BEI022", "interrogation decoding must consume explicit proof/seed rows") :- bei_fn(f, "bootstrap_interrogation.py", x),
+    bei_set("INTERROGATION_MANIFEST_SYNTHESIS_NAMES", x).
+BEI(t, "BEI022", "interrogation facts must not fall back to request defaults or manifest-derived hashes") :-
+    bool_top(t, "or"), docof(t, d), bei_doc(d), file_name(d, "bootstrap_interrogation.py"), bool_operand(t, "or", v),
+    unparen(v, m), bei_ref(m, x), (x = "request" ; x = "proof_hashes" ; x = "seed_hashes").
+// BEI028: backend-specific probes in bootstrap files.
+BEI(n, "BEI028", "backend-specific bootstrap probes must live behind interrogation/replay collaborators") :-
+    attr_of(n, _, x), bei_set("BACKEND_PROBE_ATTRS", x), docof(n, d), bei_doc(d),
+    !file_name(d, "bootstrap_backend_collaborators.py"), (file_name(d, f), prefix("bootstrap", f) ; path_part(d, "bootstrap")).
+// BEI041 and BEI035: in the SQL dialect (and generic_sparse.py), reconciliation probes and deferred_state.pending_*.
+BEI(c, "BEI041", cat("schema reconciliation planning must consume SchemaStateSnapshot facts, not call ", x)) :-
+    callee_name(c, x), bei_set("RECONCILIATION_PLANNING_PROBE_CALLS", x), docof(c, d), bei_doc(d),
+    (path_part(d, "l2200_sql_dialect") ; file_name(d, "generic_sparse.py")).
+BEI(n, "BEI035", cat("deleted schema sidecar pending deferred-state field: ", x)) :- bei_kind_ref(n, "deferred_state", x),
+    prefix("pending_", x), docof(n, d), bei_doc(d), path_part(d, "l2200_sql_dialect").
+// BEI042: deleted application-plan scaffolding named in the application plan or the coordinator.
+BEI(n, "BEI042", cat("deleted lazy-result scaffolding: ", x)) :- bei_ref(n, x), bei_set("DELETED_APPLICATION_PLAN_SCAFFOLDING", x),
+    docof(n, d), bei_doc(d), (file_name(d, "bootstrap_application_plan.py") ; file_name(d, "bootstrap_coordinator.py")).
+
+// Engine files only.
+.decl bei_enode(n: node, d: number)
+bei_enode(n, d) :- docof(n, d), bei_engine(d).
+// BEI003: `x.resolve()`, except directly in run / run_async.
+BEI(c, "BEI003", ".resolve() is forbidden in bootstrap engine files") :- kind(c, "call"), field(c, "function", g),
+    attr_of(g, _, "resolve"), bei_enode(c, _), !bei_in_run(c).
+.decl bei_in_run(c: node)
+bei_in_run(c) :- def_frame(c, f), def_name(f, x), bei_set("BOOTSTRAP_RUN_WRAPPER_NAMES", x).
+// BEI004: a lambda, unless it is a `default_factory=` value.
+BEI(l, "BEI004", "lambda-backed bootstrap trampolines are forbidden; use named ServerPlan/IR steps") :- kind(l, "lambda"),
+    bei_enode(l, _), !bei_factory(l).
+.decl bei_factory(l: node)
+bei_factory(l) :- bei_kw(_, "default_factory", v), unparen(v, l).
+// BEI008: BootstrapServerPlanContract(step_refs=(), steps=(one,)), a single-terminal skeleton.
+BEI(c, "BEI008", "BootstrapApplicationPlan must contain real planned step refs") :-
+    callee_name(c, "BootstrapServerPlanContract"), bei_enode(c, _), bei_kw(c, "step_refs", r), bei_empty_tuple(r),
+    bei_kw(c, "steps", s), kind(s, "tuple"), count : { child(s, e, _), !kind(e, "comment") } <= 1.
+// BEI009: the interrogation placeholder.
+BEI(c, "BEI009", "lazy bootstrap index interrogation must use typed plan-owned facts") :-
+    callee_name(c, "_bootstrap_engine_placeholder"), bei_enode(c, _), bei_arg0(c, a),
+    plain_str(a, "lazy bootstrap index interrogation").
+// BEI010: the coordinator passes a runtime connection to _plan_physical_schema_contract.
+BEI(c, "BEI010", "lazy coordinator must derive desired physical contracts without a runtime connection") :-
+    callee_name(c, "_plan_physical_schema_contract"), bei_enode(c, d), file_name(d, "bootstrap_coordinator.py"),
+    bei_kw(c, "conn", _).
+// BEI017: publish_bootstrap_metadata_lazy calls take preplanned artifacts only, by keyword; in the coordinator's
+// installer they come from application_plan. (Its definition's parameters: in section 4.)
+BEI(c, "BEI017", "metadata publication must not receive positional fallback inputs") :-
+    callee_name(c, "publish_bootstrap_metadata_lazy"), bei_enode(c, _), bei_npos(c, k), k > 0.
+BEI(c, "BEI017", cat("metadata publication call must pass preplanned artifact ", k)) :-
+    callee_name(c, "publish_bootstrap_metadata_lazy"), bei_enode(c, _), bei_artifact(k), !bei_kw(c, k, _).
+BEI(v, "BEI017", "metadata publication artifacts must come from BootstrapApplicationPlan") :-
+    callee_name(c, "publish_bootstrap_metadata_lazy"), bei_enode(c, d), file_name(d, "bootstrap_coordinator.py"),
+    def_frame(c, f), def_name(f, "_enqueue_application_schema_lazy"), bei_artifact(k), bei_kw(c, k, v),
+    !bei_kind_ref(v, "application_plan", _).
+.decl bei_artifact(k: symbol)
+bei_artifact("publication_plan"). bei_artifact("publication_rows").
+// BEI020: the coordinator's SQL assertions fall back with table_source_refs.get(key, default). The linter's other
+// BEI020 branch, a Name fallback_schema_ref, is dead code: it receives only Call nodes, so it never fires.
+BEI(c, "BEI020", "bootstrap SQL assertions must fail closed when a planned source ref is missing") :-
+    kind(c, "call"), field(c, "function", g), bei_kind_ref(g, "table_source_refs", "get"), bei_npos(c, k), k > 1,
+    bei_enode(c, d), file_name(d, "bootstrap_coordinator.py"), def_frame(c, f), def_name(f, "_application_sql_assertions_for_plan").
+
+// ---- 4. function contracts -----------------------------------------------------------------------------------------
+// 4a. Forbidden calls. bei_watch(fam, code, f): def f's calls are checked against family fam; bei_ban(fam, x): x is
+// forbidden there. Each family is one of the linter's collectors.
+.decl bei_watch(fam: symbol, code: symbol, f: node)
+.decl bei_ban(fam: symbol, x: symbol)
+BEI(c, code, cat("forbidden call here: ", x)) :- bei_watch(fam, code, f), bei_calls(f, c, x), bei_ban(fam, x).
+// @pure_lazy engine defs call no executable surface (BEI005) and no boundary/materialization surface (BEI023).
+bei_watch("executable", "BEI005", f) :- bei_efn(f, _, _), bei_pure(f).
+bei_ban("executable", x) :- bei_set("EXECUTABLE_BOOTSTRAP_NAMES", x).
+bei_watch("boundary", "BEI023", f) :- bei_efn(f, _, _), bei_pure(f).
+bei_ban("boundary", x) :- bei_set("FORBIDDEN_PURE_LAZY_BOUNDARY_CALLS", x).
+// The interrogation entry points compose no helper refs directly.
+bei_watch("interrogation", "BEI011", f) :- bei_fn(f, "bootstrap_coordinator.py", "execute_interrogation_plan").
+bei_watch("interrogation", "BEI011", f) :- bei_fn(f, "schema_transaction.py", "bootstrap_interrogation_lazy").
+bei_ban("interrogation", "lazy_tuple"). bei_ban("interrogation", "physical_table_exists_many_lazy").
+bei_ban("interrogation", "columns_exist_many_lazy"). bei_ban("interrogation", "physical_indexes_many_lazy").
+bei_ban("interrogation", "bootstrap_schema_state_facts_lazy"). bei_ban("interrogation", "bootstrap_manifest_facts_lazy").
+bei_ban("interrogation", "bootstrap_proof_facts_lazy"). bei_ban("interrogation", "bootstrap_seed_facts_lazy").
+bei_ban("interrogation", "bootstrap_backend_facts_lazy"). bei_ban("interrogation", "bootstrap_transition_artifact_facts_lazy").
+bei_ban("interrogation", "bootstrap_ddl_lockdown_facts_lazy").
+// Legacy primitive helpers, from the coordinator's installer or the schema transaction's primitive surfaces.
+bei_watch("legacy", "BEI014", f) :- bei_fn(f, "bootstrap_coordinator.py", "_enqueue_application_schema_lazy").
+bei_watch("legacy", "BEI014", f) :- bei_fn(f, "schema_transaction.py", x),
+    glob("ensure_{commit_triggers,queue,logged_table,table_event_trigger,large_column_metadata_schema}_lazy", x).
+bei_ban("legacy", x) :- bei_set("LEGACY_PRIMITIVE_HELPER_NAMES", x).
+// The schema tail publishes facts only.
+bei_watch("tail", "BEI024", f) :- bei_efn(f, "schema_transaction.py", "bootstrap_schema_tail_lazy").
+bei_ban("tail", "_materialize_schema_operation_records"). bei_ban("tail", "_flush_deferred_create_table_ddl_batch").
+bei_ban("tail", "flush_schema_plan"). bei_ban("tail", "flush_schema_plan_async").
+// The deleted install scaffolds use no direct installers (BEI037); build_execution_plan_lazy calls them not (BEI043).
+bei_watch("direct_install", "BEI037", f) :- bei_fn(f, "bootstrap_coordinator.py", x), bei_scaffold(x).
+bei_ban("direct_install", x) :- bei_set("COORDINATOR_DIRECT_INSTALL_CALLS", x).
+bei_watch("scaffold", "BEI043", f) :- bei_fn(f, "bootstrap_coordinator.py", "build_execution_plan_lazy").
+bei_ban("scaffold", x) :- bei_scaffold(x).
+.decl bei_scaffold(x: symbol)
+bei_scaffold("_materialize_application_lazy_results"). bei_scaffold("_install_application_lazy_results").
+// Lifecycle effects are lowered at the post-application boundary, not in plan_application.
+bei_watch("lifecycle", "BEI019", f) :- bei_efn(f, "bootstrap_coordinator.py", "plan_application").
+bei_ban("lifecycle", "lower_bootstrap_lifecycle_effects").
+// The run wrappers call no eager or internal surface.
+bei_watch("run", "BEI034", f) :- bei_efn(f, "bootstrap_coordinator.py", x), bei_set("BOOTSTRAP_RUN_WRAPPER_NAMES", x).
+bei_ban("run", x) :- bei_set("BOOTSTRAP_RUN_WRAPPER_FORBIDDEN_CALLS", x).
+// ensure_versioning_domain_schema owns the versioning tables alone (any file).
+bei_watch("versioning", "BEI045", f) :- bei_fn(f, _, "ensure_versioning_domain_schema").
+bei_ban("versioning", "ensure_tables").
+// The ensure_bootstrap_*_lazy primitives delegate to batch installers (BEI046) and not to the tripwire (BEI036).
+.decl bei_primitive(f: node)  // a schema-transaction bootstrap primitive lowerer: ensure_bootstrap_…_lazy
+bei_primitive(f) :- bei_fn(f, "schema_transaction.py", x), prefix("ensure_bootstrap_", x), suffix("_lazy", x).
+bei_watch("nonbatch", "BEI046", f) :- bei_primitive(f).
+bei_ban("nonbatch", x) :- bei_set("FORBIDDEN_ENSURE_BOOTSTRAP_SCHEMA_LOWERING_CALLS", x).
+bei_watch("tripwire", "BEI036", f) :- bei_primitive(f).
+bei_ban("tripwire", "_unsupported_bootstrap_schema_surface_lazy").
+// BEI044: bootstrap lowerers emit no ordinary SQL step, except by calling themselves.
+BEI(c, "BEI044", cat("bootstrap lowerer must collect work into the fused terminal payload, not call ", x)) :-
+    bei_fn(f, "schema_transaction.py", n), bei_lowerer(n), bei_calls(f, c, x),
+    bei_set("BOOTSTRAP_APPLICATION_SQL_STEP_EMITTERS", x), x != n.
+.decl bei_lowerer(n: symbol)
+bei_lowerer(n) :- bei_fn(_, "schema_transaction.py", n), prefix("ensure_bootstrap_", n).
+bei_lowerer("_build_ddl_effect_lazy"). bei_lowerer("_enqueue_bootstrap_dml_statements_lazy").
+bei_lowerer("assert_bootstrap_sql_assertions_lazy"). bei_lowerer("bootstrap_schema_tail_lazy").
+
+// 4b. Shapes: decorated @pure_lazy, returning LazyResult[…], with keyword-only contract refs.
+.decl bei_lazy_surface(f: node, code: symbol)  // f must be @pure_lazy and return LazyResult[…], or code fires
+bei_lazy_surface(f, "BEI029") :- bei_efn(f, "bootstrap_coordinator.py", x), bei_set("BOOTSTRAP_RUNNER_NAMES", x).
+bei_lazy_surface(f, "BEI033") :- bei_efn(f, "bootstrap_coordinator.py", x), bei_set("BOOTSTRAP_LAZY_API_NAMES", x).
+bei_lazy_surface(f, "BEI039") :- bei_primitive(f).
+bei_lazy_surface(f, "BEI039") :- bei_fn(f, "schema_transaction.py", x), bei_set("SCHEMA_TRANSACTION_LAZY_PLAN_SURFACES", x).
+BEI(f, code, "lazy bootstrap surface must be decorated with @pure_lazy") :- bei_lazy_surface(f, code), !bei_pure(f).
+BEI(f, code, "lazy bootstrap surface must return LazyResult[...]") :- bei_lazy_surface(f, code), !bei_lazy_result(f).
+BEI(f, "BEI039", cat("bootstrap primitive lowerer must accept keyword-only ", r)) :- bei_primitive(f), bei_ref_param(r),
+    !param_named(f, r, "kwonly").
+BEI(s, "BEI040", cat("bootstrap primitive lowerer must preserve contract ref ", r)) :- bei_primitive(f), bei_del(f, s, r),
+    bei_ref_param(r).
+.decl bei_ref_param(r: symbol)
+bei_ref_param("produced_ref"). bei_ref_param("dependency_refs").
+// The schema tail takes the application plan's produced ref (BEI024), and the coordinator passes it (BEI025).
+BEI(f, "BEI024", "bootstrap_schema_tail_lazy must accept the produced tail ref") :-
+    bei_efn(f, "schema_transaction.py", "bootstrap_schema_tail_lazy"),
+    !param_named(f, "produced_ref", "pos"), !param_named(f, "produced_ref", "kwonly").
+BEI(c, "BEI025", "application tail installation must pass produced_ref") :- bei_materializer(f),
+    bei_calls(f, c, "bootstrap_schema_tail_lazy"), !bei_kw(c, "produced_ref", _).
+BEI(a, "BEI025", "application install must consume dependency refs, not reset them to ()") :- bei_materializer(f),
+    assign_target(a, t), def_walk(a, f), !field(a, "type", _), kind(t, "identifier"), text(t, "schema_dependency_refs"),
+    assign_value(a, v), bei_empty_tuple(v).
+BEI(n, "BEI026", "contributor primitive lowering must be in BootstrapDataPrimitivePlan before install") :- bei_materializer(f),
+    def_walk(n, f), bei_kind_ref(n, "BootstrapDataPrimitiveKind", _).
+.decl bei_materializer(f: node)
+bei_materializer(f) :- bei_efn(f, "bootstrap_coordinator.py", "_materialize_application_lazy_results").
+// BEI006: a @pure_lazy engine def wraps executable work in LazyResult.of(…).
+BEI(c, "BEI006", "LazyResult.of(...) must not wrap executable bootstrap work") :- bei_efn(f, _, _), bei_pure(f),
+    def_walk(c, f), kind(c, "call"), field(c, "function", g), bei_kind_ref(g, "LazyResult", "of"), bei_arg0(c, a),
+    callee_name(a, x), (bei_set("EXECUTABLE_BOOTSTRAP_NAMES", x) ; suffix("_direct", x) ; prefix("build_", x)).
+// BEI007: the application executor discards conn, or returns synthetic zero mutation counts (four or more zero
+// fields) outside a `… == ….ZERO_APPLICATION_TERMINALS` fast path.
+BEI(s, "BEI007", "bootstrap application executor must use typed execution authority, not discard conn") :-
+    bei_efn(f, _, "execute_application_plan"), bei_del(f, s, "conn").
+BEI(c, "BEI007", "bootstrap application executor returns synthetic zero mutation facts") :-
+    bei_efn(f, _, "execute_application_plan"), bei_calls(f, c, "BootstrapExecutionFacts"), !bei_zero_guarded(c, f),
+    bei_kw(c, "mutation_counts", m), callee_name(m, "BootstrapMutationCounts"),
+    count : { bei_kw(m, _, v), bei_zero(v) } >= 4.
+.decl bei_zero_guarded(c: node, f: node)
+bei_zero_guarded(c, f) :- bei_calls(f, c, "BootstrapExecutionFacts"), py_if(i, t, _), def_walk(i, f), bei_if_holds(i, c),
+    unparen(t, u), kind(u, "comparison_operator"), child(u, o, _), attr_of(o, _, "ZERO_APPLICATION_TERMINALS").
+// bei_if_holds(i, c): c is inside ast If i. An `elif` is an If whose orelse holds every later clause, so a call in a
+// later `elif` or the `else` is inside it too.
+.decl bei_if_holds(i: node, c: node)
+bei_if_holds(i, c) :- bei_calls(_, c, "BootstrapExecutionFacts"), py_if(i, _, _), within(c, i).
+bei_if_holds(e, c) :- bei_calls(_, c, "BootstrapExecutionFacts"), kind(e, "elif_clause"), precedes(e, x), within(c, x).
+.decl bei_zero(v: node)  // a literal equal to 0 in Python: 0, 0.0, 0j, 0x0, False
+bei_zero(v) :- kind(v, "false").
+bei_zero(v) :- (kind(v, "integer") ; kind(v, "float")), text(v, t), contains("0", t),
+    match("(0[xXoObB][0_]*|[0_]*\\.?[0_]*([eE][+-]?[0-9_]+)?)[jJ]?", t).
+// BEI012 and BEI016: in the coordinator's installer, metadata publication consumes produced refs, and the final
+// schema tail comes after the last publication.
+BEI(c, "BEI016", "metadata publication must consume produced BootstrapApplicationPlan refs") :- bei_installer(f),
+    bei_calls(f, c, "publish_bootstrap_metadata_lazy"), bei_kw(c, "dependency_refs", v), bei_empty_tuple(v).
+BEI(@place(p, t), "BEI012", "cold application final tail must depend on planned metadata/proof publication") :-
+    bei_installer(f), docof(f, d), doc(d, p, _), bei_last(f, "bootstrap_schema_tail_lazy", t),
+    !bei_calls(f, _, "publish_bootstrap_metadata_lazy").
+BEI(@place(p, t), "BEI012", "cold application final tail must depend on planned metadata/proof publication") :-
+    bei_installer(f), docof(f, d), doc(d, p, _), bei_last(f, "bootstrap_schema_tail_lazy", t),
+    bei_last(f, "publish_bootstrap_metadata_lazy", m), m > t.
+.decl bei_last(f: node, x: symbol, l: number)  // the installer's last call of x is on line l
+bei_last(f, x, l) :- bei_installer(f), (x = "bootstrap_schema_tail_lazy" ; x = "publish_bootstrap_metadata_lazy"),
+    bei_calls(f, _, x), l = max k : { bei_calls(f, c, x), line(c, k) }.
+// BEI019: the installer's tail call executes no lifecycle effects.
+BEI(c, "BEI019", "cold application tail must not execute lifecycle effects as ServerPlan callbacks") :- bei_installer(f),
+    bei_calls(f, c, "bootstrap_schema_tail_lazy"), bei_kw(c, "lifecycle_effects", _).
+.decl bei_installer(f: node)
+bei_installer(f) :- bei_efn(f, "bootstrap_coordinator.py", "_enqueue_application_schema_lazy").
+// BEI043: the installer builds the terminal itself: it calls bootstrap_schema_tail_lazy and fetches no preinstalled
+// tail; the deleted scaffolds are gone.
+BEI(f, "BEI043", "_enqueue_application_schema_lazy must be the single installer that calls bootstrap_schema_tail_lazy") :-
+    bei_fn(f, "bootstrap_coordinator.py", "_enqueue_application_schema_lazy"), !bei_calls(f, _, "bootstrap_schema_tail_lazy").
+BEI(n, "BEI043", "_enqueue_application_schema_lazy must return the terminal LazyResult directly") :-
+    bei_fn(f, "bootstrap_coordinator.py", "_enqueue_application_schema_lazy"), def_walk(n, f), attr_of(n, _, x),
+    (x = "lazy_results" ; x = "application_tail_result").
+BEI(f, "BEI043", cat("deleted application install scaffold must be removed: ", x)) :- bei_fn(f, "bootstrap_coordinator.py", x),
+    bei_scaffold(x).
+// BEI015: apply_lifecycle_effects skips the DDL lockdown effect (`if …APPLY_DDL_LOCKDOWN…: continue` without
+// calling apply_bootstrap_ddl_lockdown_effect in that body).
+BEI(i, "BEI015", "required DDL lockdown lifecycle effect must execute, not be skipped") :- bei_efn(f, "bootstrap_coordinator.py",
+    "apply_lifecycle_effects"), py_if(i, t, b), def_walk(i, f),
+    (n = t ; has(t, n, "attribute")), bei_kind_ref(n, "BootstrapLifecycleEffectKind", "APPLY_DDL_LOCKDOWN"),
+    child(b, s, _), kind(s, "continue_statement"),
+    count : { has(b, c, "call"), callee_name(c, "apply_bootstrap_ddl_lockdown_effect") } = 0.
+// BEI027: transition replay planning names every identity it validates.
+BEI(f, "BEI027", "transition replay planning must validate backend/observed/desired/artifact identity") :-
+    bei_efn(f, "bootstrap_coordinator.py", "_transition_replay_plan_for_observation"),
+    count : { bei_identity(x), count : { def_walk(n, f), bei_ref(n, x) } = 0 } > 0.
+.decl bei_identity(x: symbol)
+bei_identity("backend_facts"). bei_identity("backend_fingerprint"). bei_identity("observed_hash").
+bei_identity("desired_hash"). bei_identity("artifact_hash").
+// BEI034: run / run_async call both public lazy APIs.
+BEI(f, "BEI034", "bootstrap wrapper must call the public lazy APIs") :- bei_efn(f, "bootstrap_coordinator.py", x),
+    bei_set("BOOTSTRAP_RUN_WRAPPER_NAMES", x), bei_set("BOOTSTRAP_LAZY_API_NAMES", y), !bei_calls(f, _, y).
+// BEI013: execute_runtime_rows synthesizes no physical facts.
+BEI(n, "BEI013", "execute_runtime_rows must not synthesize physical table/column/index facts") :-
+    bei_fn(f, "bootstrap_interrogation.py", "execute_runtime_rows"), def_walk(n, f),
+    bei_kind_ref(n, "BootstrapInterrogationRowKind", x), (x = "TABLE" ; x = "COLUMN" ; x = "INDEX").
+// BEI017: publish_bootstrap_metadata_lazy (a plain def) takes no rebuild inputs.
+BEI(nm, "BEI017", "metadata publication must accept preplanned rows/plan, not rebuild inputs") :-
+    bei_fn(f, _, "publish_bootstrap_metadata_lazy"), !is_async(f), sig_param(f, _, nm, _, "pos", _, _), text(nm, x),
+    (x = "bootstrap_plan" ; x = "model_classes").
+// BEI036: the tripwire itself, and placeholder text in the primitives.
+BEI(f, "BEI036", "_unsupported_bootstrap_schema_surface_lazy is a temporary tripwire and must be deleted") :-
+    bei_fn(f, "schema_transaction.py", "_unsupported_bootstrap_schema_surface_lazy").
+BEI(at, "BEI036", cat("placeholder primitive lowering text: ", m)) :- bei_primitive(f), str_part(s, _, v, at, _), def_walk(s, f),
+    bei_set("BOOTSTRAP_PRIMITIVE_STUB_STRINGS", m), contains(m, v).
+
+// ---- 5. lifecycle effect classes -----------------------------------------------------------------------------------
+// BEI032: in a class with a PipelineLifecycleEffect base (a Name or Attribute; `PipelineLifecycleEffect[T]` is
+// a Subscript and does not count): a parameter or name conn / connection / …, an attribute .conn / ._conn / …, or a
+// getattr / hasattr / __setattr__ call. "In the class" is ast.walk(class): its bases and decorators too.
+.decl bei_effect(k: node)
+bei_effect(k) :- kind(k, "class_definition"), field(k, "superclasses", al), child(al, b, _), bei_ref(b, "PipelineLifecycleEffect"),
+    bei_node(k, _).
+.decl bei_in_effect(n: node, k: node)
+bei_in_effect(n, k) :- bei_effect(k), inside(n, k, "class_definition").
+bei_in_effect(n, k) :- bei_effect(k), inside(n, dc, "decorator"), child(dd, dc, _), field(dd, "definition", k).
+BEI(nm, "BEI032", "bootstrap lifecycle effects must not accept connection authority") :- bei_effect(k),
+    sig_param(g, _, nm, _, _, _, _), bei_in_effect(g, k), text(nm, x), bei_set("BOOTSTRAP_LIFECYCLE_CONNECTION_NAMES", x).
+BEI(n, "BEI032", "bootstrap lifecycle effects must not use connection authority") :- bei_effect(k), ast_name(n, x),
+    bei_in_effect(n, k), bei_set("BOOTSTRAP_LIFECYCLE_CONNECTION_NAMES", x).
+BEI(n, "BEI032", "bootstrap lifecycle effects must not recover connection authority") :- bei_effect(k), attr_of(n, _, x),
+    bei_in_effect(n, k), bei_set("BOOTSTRAP_LIFECYCLE_CONNECTION_ATTRS", x).
+BEI(c, "BEI032", "bootstrap lifecycle effects must not use dynamic connection dispatch or mutation") :- bei_effect(k),
+    callee_name(c, x), bei_in_effect(c, k), bei_set("BOOTSTRAP_LIFECYCLE_CONNECTION_CALLS", x).
+
+// ---- 6. primitive install coverage ---------------------------------------------------------------------------------
+// BEI038: each member of class BootstrapDataPrimitiveKind (l3200_metadata/bootstrap_data_plan.py) is named as
+// BootstrapDataPrimitiveKind.X in one of the coordinator's install functions; a member that is not is reported at
+// line 1 of the coordinator.
+BEI(@place("l3200_metadata/bootstrap_coordinator.py", 1), "BEI038", cat("no lazy install family for BootstrapDataPrimitiveKind.", x)) :-
+    bei_kind_member(x), doc(dc, "l3200_metadata/bootstrap_coordinator.py", _),
+    count : { bei_install_fn(f), docof(f, dc), def_walk(n, f), bei_kind_ref(n, "BootstrapDataPrimitiveKind", x) } = 0.
+.decl bei_kind_member(x: symbol)  // a member of the enum: `X = …` or `X: T …` directly in its body
+bei_kind_member(x) :- doc(d, "l3200_metadata/bootstrap_data_plan.py", _), kind(k, "class_definition"), docof(k, d),
+    def_name(k, "BootstrapDataPrimitiveKind"), field(k, "body", b), body_stmt(b, s, _), child(s, a, 0),
+    assign_target(a, t), kind(t, "identifier"), text(t, x).
+.decl bei_install_fn(f: node)
+bei_install_fn(f) :- kind(f, "function_definition"), def_name(f, x),
+    (bei_set("PRIMITIVE_INSTALL_FUNCTION_NAMES", x) ; x = "_data_primitive_plan_for_plan" ; x = "_install_schema_primitive_contract").

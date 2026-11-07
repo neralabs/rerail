@@ -1,0 +1,164 @@
+{
+  "cases": [
+    {
+      "id": "alias-reporter-data_layer-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-data_layer-nested-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/nested/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-testing.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "testing.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-data_layer-tests-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/tests/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-data_layer-test-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/test/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-data_layer-.venv-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/.venv/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-data_layer-venv-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/venv/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-data_layer-tmp-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/tmp/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-data_layer-__pycache__-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/__pycache__/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-impl-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-api-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-public-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "public/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-scripts-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "scripts/a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-a.py",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "a.py",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-data_layer-a.txt",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/a.txt",
+          "source": "from one import A as B, C as D\nX = Y\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-reporter-same-line-multiplicity",
+      "check": "data_layer_compat_aliases",
+      "files": [
+        {
+          "path": "data_layer/a.py",
+          "source": "A = A = B; from one import C as D, C as D\n"
+        }
+      ]
+    }
+  ]
+}

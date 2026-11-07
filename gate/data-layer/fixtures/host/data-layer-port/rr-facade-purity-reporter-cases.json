@@ -1,0 +1,164 @@
+{
+  "cases": [
+    {
+      "id": "facade-report-bad-target",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/rippling.py",
+          "source": "def helper(): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-locking",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/_file_locking.py",
+          "source": "class C: pass\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-mime",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/_mime_sniffing.py",
+          "source": "install()\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-merge",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/versioned_merge.py",
+          "source": "a = create()\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-rebase",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/versioned_rebase.py",
+          "source": "import impl.a\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-squash",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/versioned_squash.py",
+          "source": "import impl.a, impl.b\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-outside",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/other.py",
+          "source": "def helper(): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-nested",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/nested/rippling.py",
+          "source": "def helper(): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-order",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/rippling.py",
+          "source": "a = create(); import impl.a\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-clean",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/rippling.py",
+          "source": "Alias = Thing\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-docstring",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/rippling.py",
+          "source": "\"\\ud800=\"\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-invalid",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/rippling.py",
+          "source": "def broken(:\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-bom",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/rippling.py",
+          "source": "\ufeffdef helper(): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-no-trigger",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/rippling.py",
+          "source": "pass\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-normalized",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/rippling.py",
+          "source": "import \uff49\uff4d\uff50\uff4c.a # =\n"
+        }
+      ]
+    },
+    {
+      "id": "facade-report-relative",
+      "check": "data_layer_facade_purity",
+      "files": [
+        {
+          "path": "data_layer/rippling.py",
+          "source": "from .impl.a import Thing\n"
+        }
+      ]
+    }
+  ]
+}
