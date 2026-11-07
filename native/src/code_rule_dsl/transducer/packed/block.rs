@@ -37,8 +37,8 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     Xor(u16, u16),
     /// `a & !b`.
     AndNot(u16, u16),
-    /// Each byte's bit from `k` bytes before (`1..=16`), across blocks: simdjson's `follows`
-    /// (`a << k` with the previous word's top `k` bits). Carry: a halo of `k` bits.
+    /// Each byte's bit from `k` bytes before (`1..=63`), across blocks: simdjson's `follows`
+    /// (`a << k` with the previous word's top `k` bits). Carry: a halo, the 64 bits before.
     Prev(u16, u8),
     /// Each byte's bit is the XOR of `a`'s bits up to and including it, across the stream:
     /// simdjson's `prefix_xor` (the inside-string mask). Carry: parity.
@@ -228,8 +228,8 @@ impl BlockProgram {
             .all(|(at, op)| op.operands().iter().all(|&v| usize::from(v) < at));
         let tables = self.ops.iter().all(|op| match *op {
             BlockOp::Class { table, bits } => usize::from(table) < self.tables.len() && bits != 0,
-            // A distance of at most 16 bytes: Metal's narrowest lane holds the whole halo.
-            BlockOp::Prev(_, k) => (1..=16).contains(&k),
+            // Up to 63 bytes: the halo is one 64-bit word on every executor.
+            BlockOp::Prev(_, k) => (1..=63).contains(&k),
             _ => true,
         });
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables {

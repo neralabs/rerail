@@ -579,7 +579,7 @@ fn carried_round_trip_and_refusals() {
     assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
     for (rows, why) in [
         ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 0\n  block 0 output %1\n", "distance 0"),
-        ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 17\n  block 0 output %1\n", "distance 17"),
+        ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 64\n  block 0 output %1\n", "distance 64"),
         ("  block 0 %0 = toggle %0\n  block 0 output %0\n", "toggle of itself"),
         ("  block 0 %0 = after_odd_run %1\n  block 0 output %0\n", "a later operand"),
     ] {
@@ -590,7 +590,7 @@ fn carried_round_trip_and_refusals() {
 
 #[test]
 fn prev_equals_reference_on_every_executor() {
-    for k in [1usize, 2, 7, 15, 16] {
+    for k in [1usize, 2, 7, 15, 16, 17, 31, 32, 33, 48, 63] {
         let rows = format!("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, {k}\n  block 0 output %1\n");
         check_all(&rows, |bytes| vec![words_of(&prev_reference(&bits(bytes, |b| b == b'\\'), k))]);
     }

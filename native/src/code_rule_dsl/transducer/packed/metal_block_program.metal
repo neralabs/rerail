@@ -53,7 +53,8 @@ static inline M pattern(ulong c, uint lane) {
 
 template <typename M>
 static inline void run(device const uint4* bytes, device M* values, constant BlockArgs& p,
-                       device const BlockStep* steps, device atomic_uint* states, uint lane, uint g, uint l) {
+                       device const BlockStep* steps, device atomic_uint* states, device const ulong* halos, uint lane,
+                       uint g, uint l) {
   const uint chunks = uint(sizeof(M)) / 2u;
   const uint groups = p.lanes / 32u;
   device const uint4* mine = bytes + lane * chunks;
@@ -75,7 +76,7 @@ static inline void run(device const uint4* bytes, device M* values, constant Blo
       case 5u: out = a ^ b; break;
       case 6u: out = a & ~b; break;
       case 7u: out = plane_lane(mine, s.imm, M(0)); break;
-      case 8u: out = apply_prev(a, s.imm, lane_in_halo(summary_prev(a, s.imm), carry_before(state, 2u, g), l)); break;
+      case 8u: out = apply_prev(a, s.imm, halo_before(a, l, halo_of_group_before(halos + s.b * groups, g))); break;
       case 9u: out = apply_toggle(a, lane_in_parity(summary_toggle(a), carry_before(state, 0u, g), l)); break;
       case 10u: out = apply_after_odd_run(a, lane_in_borrow(summary_after_odd_run(a), carry_before(state, 1u, g), l)); break;
       default: out = M(0); break;
@@ -84,31 +85,42 @@ static inline void run(device const uint4* bytes, device M* values, constant Blo
   }
 }
 
-// A carried step's group aggregate: the SIMD group's combined lane summaries of its operand.
+// A carried step's group aggregate: the SIMD group's combined lane summaries of its operand
+// (`toggle`, `after_odd_run`), or its last 64 bits (`prev`, into `halos`).
 template <typename M>
 static inline uint aggregate(device const M* values, constant BlockArgs& p, device const BlockStep* steps, uint lane) {
   const BlockStep s = steps[p.to];
   const M a = values[s.a * p.lanes + lane];
-  switch (s.op) {
-    case 8u: return reduce_halo(summary_prev(a, s.imm));
-    case 9u: return reduce_parity(summary_toggle(a));
-    default: return reduce_borrow(summary_after_odd_run(a));
-  }
+  return select(reduce_borrow(summary_after_odd_run(a)), reduce_parity(summary_toggle(a)), s.op == 9u);
+}
+
+template <typename M>
+static inline ulong group_halo(device const M* values, constant BlockArgs& p, device const BlockStep* steps, uint lane) {
+  const BlockStep s = steps[p.to];
+  return halo_last(values[s.a * p.lanes + lane]);
 }
 
 #define BLOCK_KERNELS(W, M)                                                                                     \
   kernel void block_program_##W(device const uint4* bytes [[buffer(0)]], device M* values [[buffer(1)]],       \
                                 constant BlockArgs& p [[buffer(2)]], device const BlockStep* steps [[buffer(3)]], \
-                                device atomic_uint* states [[buffer(4)]], uint lane [[thread_position_in_grid]], \
-                                uint g [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {   \
-    run<M>(bytes, values, p, steps, states, lane, g, l);                                                         \
+                                device atomic_uint* states [[buffer(4)]], device const ulong* halos [[buffer(6)]], \
+                                uint lane [[thread_position_in_grid]], uint g [[threadgroup_position_in_grid]],   \
+                                uint l [[thread_index_in_simdgroup]]) {                                          \
+    run<M>(bytes, values, p, steps, states, halos, lane, g, l);                                                  \
   }                                                                                                              \
   kernel void block_summary_##W(device const M* values [[buffer(1)]], constant BlockArgs& p [[buffer(2)]],      \
                                 device const BlockStep* steps [[buffer(3)]], device uint* aggregates [[buffer(5)]], \
-                                uint lane [[thread_position_in_grid]], uint g [[threadgroup_position_in_grid]],   \
-                                uint l [[thread_index_in_simdgroup]]) {                                          \
-    const uint agg = aggregate<M>(values, p, steps, lane);                                                       \
-    if (l == 0u) aggregates[g] = agg;                                                                            \
+                                device ulong* halos [[buffer(6)]], uint lane [[thread_position_in_grid]],         \
+                                uint g [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {  \
+    const uint groups = p.lanes / 32u;                                                                           \
+    const BlockStep s = steps[p.to];                                                                             \
+    if (s.op == 8u) {                                                                                            \
+      const ulong h = group_halo<M>(values, p, steps, lane);                                                     \
+      if (l == 0u) halos[s.b * groups + g] = h;                                                                  \
+    } else {                                                                                                     \
+      const uint agg = aggregate<M>(values, p, steps, lane);                                                     \
+      if (l == 0u) aggregates[g] = agg;                                                                          \
+    }                                                                                                            \
   }
 
 BLOCK_KERNELS(16, ushort)

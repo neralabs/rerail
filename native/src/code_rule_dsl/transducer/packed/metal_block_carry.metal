@@ -7,17 +7,17 @@ using namespace metal;
 // threadgroups the combined summaries pass through look-back states. Shared by the interpreter
 // and generated MSL. No loops and no branches here.
 //
-// Kinds: 0 parity (`toggle`), 1 borrow (`after_odd_run`: bit 0 generate, bit 1 propagate),
-// 2 halo (`prev`: the top k bits, with bit 16 marking a value present).
+// Kinds: 0 parity (`toggle`), 1 borrow (`after_odd_run`: bit 0 generate, bit 1 propagate).
+// `prev` needs no scan: its carry is a halo, the 64 bits before a lane, from the lanes before it
+// in the group and the group before's last 64 bits (published in its round, read in later ones).
 
 // A look-back state: a flag in the top two bits (1: the group's aggregate, 2: its inclusive
 // prefix), the value below.
 constant uint CARRY_AGGREGATE = 1u << 30;
 constant uint CARRY_INCLUSIVE = 2u << 30;
 constant uint CARRY_VALUE = (1u << 30) - 1u;
-constant uint HALO_PRESENT = 1u << 16;
 
-static inline uint carry_identity(uint kind) { return select(select(0u, 2u, kind == 1u), 0u, kind == 2u); }
+static inline uint carry_identity(uint kind) { return select(0u, 2u, kind == 1u); }
 
 // `a` then `b`.
 static inline uint combine_parity(uint a, uint b) { return (a ^ b) & 1u; }
@@ -26,9 +26,8 @@ static inline uint combine_borrow(uint a, uint b) {
   const uint p = (a >> 1u) & (b >> 1u) & 1u;
   return g | (p << 1u);
 }
-static inline uint combine_halo(uint a, uint b) { return select(a, b, (b & HALO_PRESENT) != 0u); }
 static inline uint combine_carry(uint kind, uint a, uint b) {
-  return select(select(combine_parity(a, b), combine_borrow(a, b), kind == 1u), combine_halo(a, b), kind == 2u);
+  return select(combine_parity(a, b), combine_borrow(a, b), kind == 1u);
 }
 
 static inline uint ballot(bool x) { return uint(static_cast<simd_vote::vote_t>(simd_ballot(x))); }
@@ -40,7 +39,6 @@ static inline uint reduce_borrow(uint s) {
   const uint g = uint((ulong(G | P) + ulong(G)) >> 32u);
   return g | (uint(P == 0xffffffffu) << 1u);
 }
-static inline uint reduce_halo(uint s) { return simd_broadcast(s, 31u) | HALO_PRESENT; }
 
 // A lane's carry in: the group's exclusive prefix `e` combined with the lanes before it.
 // Metal has no prefix XOR across a SIMD group; for one bit, the parity of the ballot below the lane.
@@ -56,11 +54,52 @@ static inline uint lane_in_borrow(uint s, uint e, uint l) {
   const uint sum = uint(ulong(A) + ulong(G) + ulong(e & 1u));
   return ((sum ^ A ^ G) >> l) & 1u;
 }
-static inline uint lane_in_halo(uint s, uint e, uint l) { return select(simd_shuffle_up(s, 1u), e & 0xffffu, l == 0u); }
 
 // The lane's word of each carried operation, from its operand `a` and its carry in.
-template <typename M> static inline uint summary_prev(M a, uint k) { return uint(a >> (uint(sizeof(M)) * 8u - k)); }
-template <typename M> static inline M apply_prev(M a, uint k, uint cin) { return M(M(a << k) | M(cin)); }
+// The 64 bits before lane l (the newest at bit 63): the words of the lanes before it, then the
+// group before's last 64 bits `P` where the group runs out.
+// Lane l - d's word: `w` (shuffled up by d) inside the group, else the word `d - l` back in `P`.
+static inline ulong halo_word(ulong w, uint d, uint l, ulong P, uint bits) {
+  const uint back = uint(max(int(d) - int(l), 1));
+  return select(w, P >> (64u - back * bits), l < d);
+}
+static inline ulong halo_before(ushort a, uint l, ulong P) {
+  const ulong m = 0xfffful;
+  return ((halo_word(simd_shuffle_up(a, 1u), 1u, l, P, 16u) & m) << 48u) |
+         ((halo_word(simd_shuffle_up(a, 2u), 2u, l, P, 16u) & m) << 32u) |
+         ((halo_word(simd_shuffle_up(a, 3u), 3u, l, P, 16u) & m) << 16u) |
+         (halo_word(simd_shuffle_up(a, 4u), 4u, l, P, 16u) & m);
+}
+static inline ulong halo_before(uint a, uint l, ulong P) {
+  const ulong m = 0xfffffffful;
+  return ((halo_word(simd_shuffle_up(a, 1u), 1u, l, P, 32u) & m) << 32u) |
+         (halo_word(simd_shuffle_up(a, 2u), 2u, l, P, 32u) & m);
+}
+// SIMD-group shuffles have no 64-bit form: the halves move separately.
+static inline ulong shuffle_up64(ulong a, ushort d) {
+  return ulong(simd_shuffle_up(uint(a), d)) | (ulong(simd_shuffle_up(uint(a >> 32u), d)) << 32u);
+}
+static inline ulong broadcast64(ulong a, ushort lane) {
+  return ulong(simd_broadcast(uint(a), lane)) | (ulong(simd_broadcast(uint(a >> 32u), lane)) << 32u);
+}
+static inline ulong halo_before(ulong a, uint l, ulong P) {
+  return select(shuffle_up64(a, 1), P, l == 0u);
+}
+// The group's last 64 bits, for the group after.
+static inline ulong halo_last(ushort a) {
+  return (ulong(simd_broadcast(a, 31u)) << 48u) | (ulong(simd_broadcast(a, 30u)) << 32u) |
+         (ulong(simd_broadcast(a, 29u)) << 16u) | ulong(simd_broadcast(a, 28u));
+}
+static inline ulong halo_last(uint a) { return (ulong(simd_broadcast(a, 31u)) << 32u) | ulong(simd_broadcast(a, 30u)); }
+static inline ulong halo_last(ulong a) { return broadcast64(a, 31); }
+// `prev` by k (1..63): the word shifted up, the newest k bits of the halo below.
+template <typename M> static inline M apply_prev(M a, uint k, ulong before) {
+  return M((ulong(a) << k) | (before >> (64u - k)));
+}
+// The halo of group g's lanes: the group before's last 64 bits (zero for the first group).
+static inline ulong halo_of_group_before(device const ulong* halos, uint g) {
+  return select(0ul, halos[max(g, 1u) - 1u], g > 0u);
+}
 
 static inline ushort prefix_xor(ushort x) {
   x ^= ushort(x << 1u); x ^= ushort(x << 2u); x ^= ushort(x << 4u); x ^= ushort(x << 8u);

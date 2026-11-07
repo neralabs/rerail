@@ -73,8 +73,7 @@ fn kind(inst: &BlockInst) -> u32 {
     match inst {
         BlockInst::Toggle(_) => 0,
         BlockInst::AfterOddRun(_) => 1,
-        BlockInst::Prev(..) => 2,
-        _ => unreachable!("not carried"),
+        _ => unreachable!("scanned carries only"),
     }
 }
 
@@ -125,12 +124,13 @@ pub(in crate::code_rule_dsl) fn interpret(
     let steps_buffer = MappedBuffer::from_slice(device, &steps)?;
     let states = MappedBuffer::zeroed::<u32>(device, carried.len().max(1) * stream.groups)?;
     let aggregates = MappedBuffer::zeroed::<u32>(device, stream.groups)?;
+    let halos = MappedBuffer::zeroed::<u64>(device, carried.len().max(1) * stream.groups)?;
     let args = |from: usize, to: usize| BlockArgs { from: from as u32, to: to as u32, lanes: stream.lanes as u32, pad: 0 };
     let state_bytes = (stream.groups * 4) as u64;
     let mut passes: Vec<Pass<'_>> = Vec::new();
     let lanes_pass = |pipeline, a: BlockArgs| Pass {
         pipeline,
-        buffers: vec![(0, &*stream.source.buffer, 0), (1, &*stream.values.buffer, 0), (3, &*steps_buffer.buffer, 0), (4, &*states.buffer, 0), (5, &*aggregates.buffer, 0)],
+        buffers: vec![(0, &*stream.source.buffer, 0), (1, &*stream.values.buffer, 0), (3, &*steps_buffer.buffer, 0), (4, &*states.buffer, 0), (5, &*aggregates.buffer, 0), (6, &*halos.buffer, 0)],
         args: vec![(2, bytes_of(&a))],
         groups: stream.groups,
         threads: GROUP,
@@ -141,6 +141,11 @@ pub(in crate::code_rule_dsl) fn interpret(
             passes.push(lanes_pass(&run, args(from, at)));
         }
         passes.push(lanes_pass(&summary, args(at, at)));
+        // A halo (`prev`) is the group before's last 64 bits, written by the summary pass: no scan.
+        if matches!(native.insts[at], BlockInst::Prev(..)) {
+            from = at;
+            continue;
+        }
         let p = [stream.groups as u32, kind(&native.insts[at])];
         passes.push(Pass {
             pipeline: &scan,
@@ -304,9 +309,10 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
     let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
     for (j, &at) in carried.iter().enumerate() {
         let inst = native.insts[at];
+        let ret = if matches!(inst, BlockInst::Prev(..)) { "ulong" } else { "uint" };
         out.push_str(&format!(
             "// Round {j}: the lane's summary of %{at}.\n\
-             static inline uint summary_{j}(device const uint4* bytes, device atomic_uint* states, uint groups, uint g, uint l) {{\n\
+             static inline {ret} summary_{j}(device const uint4* bytes, device atomic_uint* states, device const ulong* halos, uint groups, uint g, uint l) {{\n\
              \x20 const uint gl = g * {GROUP}u + l;\n"
         ));
         out.push_str(&lane_values(native, width, at));
@@ -321,6 +327,7 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
         "    device {}* out [[buffer(1)]],\n\
          \x20   constant uint& lanes [[buffer(2)]],\n\
          \x20   device atomic_uint* states [[buffer(3)]],\n\
+         \x20   device const ulong* halos [[buffer(4)]],\n\
          \x20   uint gl [[thread_position_in_grid]],\n\
          \x20   uint g [[threadgroup_position_in_grid]],\n\
          \x20   uint l [[thread_index_in_simdgroup]]) {{\n\
@@ -338,7 +345,7 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
 /// A carried instruction's summary of its operand, the carry helpers' function for its kind.
 fn summary_of(inst: &BlockInst) -> String {
     match *inst {
-        BlockInst::Prev(a, k) => format!("summary_prev(v{a}, {k}u)"),
+        BlockInst::Prev(a, _) => format!("halo_last(v{a})"),
         BlockInst::Toggle(a) => format!("summary_toggle(v{a})"),
         BlockInst::AfterOddRun(a) => format!("summary_after_odd_run(v{a})"),
         _ => unreachable!("not carried"),
@@ -355,22 +362,27 @@ fn kind_name(inst: &BlockInst) -> &'static str {
 }
 
 /// Round `j`'s kernel: the group's aggregate published, the look-back for its exclusive prefix,
-/// then its inclusive prefix published. A halo depends on the group before only, so it is
-/// published as inclusive at once.
+/// then its inclusive prefix published. A halo (`prev`) needs no look-back: the round writes the
+/// group's last 64 bits, which only later rounds read.
 fn round_kernel(j: usize, inst: &BlockInst, spins: u32) -> String {
     let kind = kind_name(inst);
     let mut out = format!(
         "kernel void tempo_round_{j}(device const uint4* bytes [[buffer(0)]], constant uint& lanes [[buffer(2)]],\n\
-         \x20                          device atomic_uint* states [[buffer(3)]], uint g [[threadgroup_position_in_grid]],\n\
-         \x20                          uint l [[thread_index_in_simdgroup]]) {{\n\
-         \x20 const uint groups = lanes / {GROUP}u;\n\
-         \x20 device atomic_uint* state = states + {j}u * groups;\n\
-         \x20 const uint agg = reduce_{kind}(summary_{j}(bytes, states, groups, g, l));\n"
+         \x20                          device atomic_uint* states [[buffer(3)]], device ulong* halos [[buffer(4)]],\n\
+         \x20                          uint g [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
+         \x20 const uint groups = lanes / {GROUP}u;\n"
     );
     if kind == "halo" {
-        out.push_str("  if (l == 0u) atomic_store_explicit(&state[g], CARRY_INCLUSIVE | agg, memory_order_relaxed);\n}\n\n");
+        out.push_str(&format!(
+            "  const ulong h = summary_{j}(bytes, states, halos, groups, g, l);\n\
+             \x20 if (l == 0u) halos[{j}u * groups + g] = h;\n}}\n\n"
+        ));
         return out;
     }
+    out.push_str(&format!(
+        "  device atomic_uint* state = states + {j}u * groups;\n\
+         \x20 const uint agg = reduce_{kind}(summary_{j}(bytes, states, halos, groups, g, l));\n"
+    ));
     out.push_str(&format!(
         "  if (l == 0u) atomic_store_explicit(&state[g], CARRY_AGGREGATE | agg, memory_order_relaxed);\n\
          \x20 // Look-back, bounded: at most {spins} polls per predecessor, then its aggregate recomputed here.\n\
@@ -382,7 +394,7 @@ fn round_kernel(j: usize, inst: &BlockInst, spins: u32) -> String {
          \x20     st = simd_broadcast(atomic_load_explicit(&state[p], memory_order_relaxed), 0u);\n\
          \x20   }}\n\
          \x20   if ((st >> 30u) == 0u) {{\n\
-         \x20     st = CARRY_AGGREGATE | reduce_{kind}(summary_{j}(bytes, states, groups, p, l));\n\
+         \x20     st = CARRY_AGGREGATE | reduce_{kind}(summary_{j}(bytes, states, halos, groups, p, l));\n\
          \x20   }}\n\
          \x20   prefix = combine_{kind}(st & CARRY_VALUE, prefix);\n\
          \x20   if ((st >> 30u) == 2u) break;\n\
@@ -428,8 +440,14 @@ fn lane_values(native: &BlockNative, width: LaneWidth, upto: usize) -> String {
         if inst.carried() {
             let j = round;
             round += 1;
+            if let BlockInst::Prev(a, k) = *inst {
+                out.push_str(&format!(
+                    "  const ulong h{j} = halo_before(v{a}, l, halo_of_group_before(halos + {j}u * groups, g));\n\
+                     \x20 const {m} v{at} = apply_prev(v{a}, {k}u, h{j});\n"
+                ));
+                continue;
+            }
             let (kind, apply) = match *inst {
-                BlockInst::Prev(a, k) => ("halo", format!("apply_prev(v{a}, {k}u, i{j})")),
                 BlockInst::Toggle(a) => ("parity", format!("apply_toggle(v{a}, i{j})")),
                 BlockInst::AfterOddRun(a) => ("borrow", format!("apply_after_odd_run(v{a}, i{j})")),
                 _ => unreachable!(),
@@ -519,12 +537,13 @@ pub(in crate::code_rule_dsl) fn run_source(
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let stream = Stream::new(bytes, width, native.outputs.len())?;
     let states = MappedBuffer::zeroed::<u32>(device, rounds.max(1) * stream.groups)?;
+    let halos = MappedBuffer::zeroed::<u64>(device, rounds.max(1) * stream.groups)?;
     let lanes = stream.lanes as u32;
     let passes: Vec<Pass<'_>> = pipelines
         .iter()
         .map(|pipeline| Pass {
             pipeline,
-            buffers: vec![(0, &*stream.source.buffer, 0), (1, &*stream.values.buffer, 0), (3, &*states.buffer, 0)],
+            buffers: vec![(0, &*stream.source.buffer, 0), (1, &*stream.values.buffer, 0), (3, &*states.buffer, 0), (4, &*halos.buffer, 0)],
             args: vec![(2, bytes_of(&lanes))],
             groups: stream.groups,
             threads: GROUP,
