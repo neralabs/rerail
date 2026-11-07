@@ -1246,3 +1246,30 @@ Count(@place("a.py", 1), n) :- n = count : { many() }.
     assert_eq!(rows.iter().filter(|row| row["code"] == "BOOLEAN").count(), 1);
     assert_eq!(rows.iter().find(|row| row["code"] == "COUNT").unwrap()["parameters"]["n"], 1);
 }
+
+#[test]
+fn dynamic_regex_patterns_preserve_whole_string_matching_and_roundtrip() {
+    let rule = r#"
+.language python
+.decl pattern(id: number, re: symbol)
+pattern(0, "cache").
+pattern(1, "(?i)cache").
+.decl sample(id: number, s: symbol)
+sample(0, "cache").
+sample(1, "notcache").
+sample(2, "CACHE").
+.violation Found(at: span, pattern_id: number, sample_id: number) code "MATCH" "found"
+Found(@place("a.py", 1), p, i) :- pattern(p, re), sample(i, s), match(re, s).
+.violation Missing(at: span, pattern_id: number, sample_id: number) code "MISS" "missing"
+Missing(@place("a.py", 1), p, i) :- pattern(p, re), sample(i, s), !match(re, s).
+"#;
+    let parsed = parse(rule).unwrap();
+    let printed = print(&parsed).unwrap();
+    assert_eq!(parse(&printed).unwrap(), parsed, "{printed}");
+    let rows = finding_contract("", rule);
+    let mut matches: Vec<_> = rows.iter().filter(|row| row["code"] == "MATCH")
+        .map(|row| (row["parameters"]["pattern_id"].as_i64().unwrap(), row["parameters"]["sample_id"].as_i64().unwrap())).collect();
+    matches.sort();
+    assert_eq!(matches, [(0, 0), (1, 0), (1, 2)]);
+    assert_eq!(rows.iter().filter(|row| row["code"] == "MISS").count(), 3);
+}
