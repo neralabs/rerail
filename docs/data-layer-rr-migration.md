@@ -529,3 +529,20 @@ Build time is separate from rule execution. No repository-wide cold run was perf
 - [Native Boolean-relation regression and build records](../fixtures/host/data-layer-port/rr-nullary-native-tdd.json.gz).
 
 The inventory is 63 drafts and 37 absent translations. Full migration acceptance remains false.
+
+
+## Final-shape follow-up merge, 7 November
+
+The integration engine now merges Final rerail shape through f2a67f63e6c22ec8351dd69150939fbaf87cefd0.
+The integration checkpoint is f0f13c481c73a8665531993cb16e13122fa3575a.
+Upstream adds the prior workstream's documentation, fixtures, scripts, TypeScript tests, and a revised guest-document design.
+Native Rust source and the rule libraries are unchanged by this merge.
+The SQLite build disables its global memory-management LRU, and Cargo adds the upstream laboratory profiles.
+The rebuilt CLI took 41.69 seconds. Compile time is separate from execution.
+All 115 backend-coupling assertions pass again, with 153 native calls and 62 complete returned-value comparisons.
+All 45 API cases and 33 reporter cases pass again. Both positive controls still reject disabled detection.
+The receipts retain the exact rebuilt executable hash and source commit.
+The inventory remains 63 drafts and 37 absent translations. This focused merge check does not certify the entire integrated test suite.
+
+- [Post-merge original assertions](../fixtures/host/data-layer-port/rr-coupling-followup-native-direct-contracts.json.gz).
+- [Post-merge API and reporter contracts](../fixtures/host/data-layer-port/rr-final-shape-followup-native-contracts.json.gz).
