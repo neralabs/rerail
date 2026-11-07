@@ -306,8 +306,11 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
         helpers.push_str(TRANSPOSE8);
     }
     let mut out = format!("{CARRY}\n{EQ16}\n{helpers}\n");
-    let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
-    for (j, &at) in carried.iter().enumerate() {
+    let plan = Plan::new(native);
+    if !plan.windowed.is_empty() {
+        out.push_str(&halo_window(native, &plan));
+    }
+    for (j, &at) in plan.rounds.iter().enumerate() {
         let inst = native.insts[at];
         let ret = if matches!(inst, BlockInst::Prev(..)) { "ulong" } else { "uint" };
         out.push_str(&format!(
@@ -315,7 +318,7 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
              static inline {ret} summary_{j}(device const uint4* bytes, device atomic_uint* states, device const ulong* halos, uint groups, uint g, uint l) {{\n\
              \x20 const uint gl = g * {GROUP}u + l;\n"
         ));
-        out.push_str(&lane_values(native, width, at));
+        out.push_str(&lane_values(native, &plan, width, at));
         out.push_str(&format!("  return {};\n}}\n\n", summary_of(&inst)));
         out.push_str(&round_kernel(j, &inst, spins));
     }
@@ -334,7 +337,7 @@ pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: La
          \x20 const uint groups = lanes / {GROUP}u;\n",
         width.word()
     ));
-    out.push_str(&lane_values(native, width, native.insts.len()));
+    out.push_str(&lane_values(native, &plan, width, native.insts.len()));
     for (k, v) in native.outputs.iter().enumerate() {
         out.push_str(&format!("  out[{k}u * lanes + gl] = v{v};\n"));
     }
@@ -412,21 +415,83 @@ fn kind_index(inst: &BlockInst) -> u32 {
 /// Polls of a predecessor's state before computing it here.
 const SPINS: u32 = 64;
 
-/// The straight-line statements defining `v0..v{upto}` for global lane `gl` of group `g`, lane
-/// `l`; carried instructions read their round's state for the group before.
-fn lane_values(native: &BlockNative, width: LaneWidth, upto: usize) -> String {
+/// How generated MSL treats each instruction: whether its value depends on no scanned carry
+/// (`local`: a function of the bytes alone), and the round of each instruction that needs one.
+struct Plan {
+    local: Vec<bool>,
+    /// Instructions that are rounds, in order: carried ones, except a `prev` of a local value
+    /// whose operand has no `prev` in it (its halo is recomputed from the 64 bytes before).
+    rounds: Vec<usize>,
+    /// The local `prev`s, by operand: their halo comes from `halo_window`.
+    windowed: Vec<usize>,
+}
+
+impl Plan {
+    fn new(native: &BlockNative) -> Self {
+        let n = native.insts.len();
+        let operands = |inst: &BlockInst| -> Vec<u16> {
+            match *inst {
+                BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::AfterOddRun(a) => vec![a],
+                BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => vec![a, b],
+                _ => vec![],
+            }
+        };
+        let mut local = vec![true; n];
+        let mut has_prev = vec![false; n];
+        let mut rounds = Vec::new();
+        let mut windowed = Vec::new();
+        for at in 0..n {
+            let ops = operands(&native.insts[at]);
+            let ops_local = ops.iter().all(|&a| local[usize::from(a)]);
+            let ops_prev = ops.iter().any(|&a| has_prev[usize::from(a)]);
+            match native.insts[at] {
+                BlockInst::Prev(a, _) if ops_local && !has_prev[usize::from(a)] => {
+                    windowed.push(at);
+                    local[at] = true;
+                    has_prev[at] = true;
+                }
+                ref inst if inst.carried() => {
+                    rounds.push(at);
+                    local[at] = false;
+                    has_prev[at] = ops_prev || matches!(inst, BlockInst::Prev(..));
+                }
+                _ => {
+                    local[at] = ops_local;
+                    has_prev[at] = ops_prev;
+                }
+            }
+        }
+        Plan { local, rounds, windowed }
+    }
+
+    fn round_of(&self, at: usize) -> Option<usize> {
+        self.rounds.iter().position(|&r| r == at)
+    }
+}
+
+/// The instructions in `chosen`, as straight-line statements for a word of `width` whose first
+/// byte is chunk `base` (16-byte chunks) and stream byte `offset` (for `const`'s phase).
+/// `carried` writes each carried instruction's statements.
+fn emit(
+    native: &BlockNative,
+    width: LaneWidth,
+    chosen: &[usize],
+    base: &str,
+    offset: &str,
+    mut carried: impl FnMut(usize, &BlockInst, &mut String),
+) -> String {
     let m = width.word();
     let chunks = width.bytes() / 16;
     let bits = width.bytes();
-    let insts = &native.insts[..upto];
+    let insts: Vec<&BlockInst> = chosen.iter().map(|&at| &native.insts[at]).collect();
     let mut out = String::new();
     if insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))) {
         for c in 0..chunks {
-            out.push_str(&format!("  const uint4 c{c} = bytes[gl * {chunks}u + {c}u];\n"));
+            out.push_str(&format!("  const uint4 c{c} = bytes[{base} + {c}u];\n"));
         }
     }
     let used: std::collections::BTreeSet<u16> =
-        insts.iter().filter_map(|i| if let BlockInst::Class { table, .. } = *i { Some(table) } else { None }).collect();
+        insts.iter().filter_map(|i| if let BlockInst::Class { table, .. } = **i { Some(table) } else { None }).collect();
     for t in used {
         for c in 0..chunks {
             out.push_str(&format!("  const uint4 k{t}_{c} = classes_t{t}(c{c});\n"));
@@ -435,32 +500,10 @@ fn lane_values(native: &BlockNative, width: LaneWidth, upto: usize) -> String {
     if insts.iter().any(|i| matches!(i, BlockInst::Plane(_))) {
         out.push_str(&planes(width));
     }
-    let mut round = 0usize;
-    for (at, inst) in insts.iter().enumerate() {
+    for &at in chosen {
+        let inst = &native.insts[at];
         if inst.carried() {
-            let j = round;
-            round += 1;
-            if let BlockInst::Prev(a, k) = *inst {
-                out.push_str(&format!(
-                    "  const ulong h{j} = halo_before(v{a}, l, halo_of_group_before(halos + {j}u * groups, g));\n\
-                     \x20 const {m} v{at} = apply_prev(v{a}, {k}u, h{j});\n"
-                ));
-                continue;
-            }
-            let (kind, apply) = match *inst {
-                BlockInst::Toggle(a) => ("parity", format!("apply_toggle(v{a}, i{j})")),
-                BlockInst::AfterOddRun(a) => ("borrow", format!("apply_after_odd_run(v{a}, i{j})")),
-                _ => unreachable!(),
-            };
-            let lane = ", l";
-            out.push_str(&format!(
-                "  const uint e{j} = carry_before(states + {j}u * groups, {}u, g);\n\
-                 \x20 const uint s{j} = {};\n\
-                 \x20 const uint i{j} = lane_in_{kind}(s{j}, e{j}{lane});\n\
-                 \x20 const {m} v{at} = {apply};\n",
-                kind_index(inst),
-                summary_of(inst)
-            ));
+            carried(at, inst, &mut out);
             continue;
         }
         let rhs = match *inst {
@@ -485,8 +528,8 @@ fn lane_values(native: &BlockNative, width: LaneWidth, upto: usize) -> String {
                     .collect::<Vec<_>>()
                     .join(" | ")
             }
-            BlockInst::Const(c) if bits == 64 => format!("{c:#018x}ul"),
-            BlockInst::Const(c) => format!("{m}({c:#018x}ul >> ((gl * {bits}u) & 63u))"),
+            // The pattern's bits from the word's first byte on: a right rotation by its phase.
+            BlockInst::Const(c) => format!("{m}(rotate({c:#018x}ul, ulong((64u - (({offset}) & 63u)) & 63u)))"),
             BlockInst::Not(a) => format!("{m}(~v{a})"),
             BlockInst::And(a, b) => format!("v{a} & v{b}"),
             BlockInst::Or(a, b) => format!("v{a} | v{b}"),
@@ -496,6 +539,108 @@ fn lane_values(native: &BlockNative, width: LaneWidth, upto: usize) -> String {
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
     }
+    let _ = bits;
+    out
+}
+
+/// The instructions `at` reads, transitively, with `at`, in order.
+fn cone(native: &BlockNative, roots: &[usize]) -> Vec<usize> {
+    let mut keep = vec![false; native.insts.len()];
+    let mut stack: Vec<usize> = roots.to_vec();
+    while let Some(at) = stack.pop() {
+        if std::mem::replace(&mut keep[at], true) {
+            continue;
+        }
+        match native.insts[at] {
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::AfterOddRun(a) => stack.push(usize::from(a)),
+            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => {
+                stack.push(usize::from(a));
+                stack.push(usize::from(b));
+            }
+            _ => {}
+        }
+    }
+    (0..native.insts.len()).filter(|&at| keep[at]).collect()
+}
+
+/// `halo_window`: the operands of the local `prev`s over the 64 bytes from stream byte `base`
+/// (a multiple of 16; before the stream, zero), as 64-bit words. A lane calls it once, with
+/// `base` 64 bytes before its first byte: the words are those operands' halos.
+fn halo_window(native: &BlockNative, plan: &Plan) -> String {
+    let operands: Vec<usize> = plan
+        .windowed
+        .iter()
+        .map(|&at| if let BlockInst::Prev(a, _) = native.insts[at] { usize::from(a) } else { unreachable!() })
+        .collect();
+    let mut wanted = operands.clone();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let params: String = wanted.iter().map(|a| format!(", thread ulong& w{a}")).collect();
+    let mut out = format!(
+        "// The 64 bytes from `base` (zero before the stream): the local prevs' operands.\n\
+         static inline void halo_window(device const uint4* bytes, int base{params}) {{\n\
+         \x20 const uint b = uint(max(base, 0));\n"
+    );
+    out.push_str(&emit(native, LaneWidth::W64, &cone(native, &wanted), "b / 16u", "b", |_, _, _| unreachable!("local")));
+    for a in &wanted {
+        // A window that starts before the stream: its bits from the stream's start on.
+        out.push_str(&format!(
+            "  w{a} = select(select(ulong(v{a}) << uint(-base), ulong(v{a}), base >= 0), 0ul, base <= -64);\n"
+        ));
+    }
+    out.push_str("}\n\n");
+    out
+}
+
+/// The straight-line statements defining `v0..v{upto}` for global lane `gl` of group `g`, lane
+/// `l`: local `prev`s from `halo_window`, rounds from their states and halos.
+fn lane_values(native: &BlockNative, plan: &Plan, width: LaneWidth, upto: usize) -> String {
+    let m = width.word();
+    let chunks = width.bytes() / 16;
+    let w = width.bytes();
+    let chosen: Vec<usize> = (0..upto).collect();
+    let mut out = String::new();
+    let windowed: Vec<usize> = plan.windowed.iter().copied().filter(|&at| at < upto).collect();
+    if !windowed.is_empty() {
+        let mut operands: Vec<usize> = plan
+            .windowed
+            .iter()
+            .map(|&at| if let BlockInst::Prev(a, _) = native.insts[at] { usize::from(a) } else { unreachable!() })
+            .collect();
+        operands.sort_unstable();
+        operands.dedup();
+        for a in &operands {
+            out.push_str(&format!("  ulong w{a} = 0ul;\n"));
+        }
+        let args: String = operands.iter().map(|a| format!(", w{a}")).collect();
+        out.push_str(&format!("  halo_window(bytes, int(gl * {w}u) - 64{args});\n"));
+    }
+    out.push_str(&emit(native, width, &chosen, &format!("gl * {chunks}u"), &format!("gl * {w}u"), |at, inst, out| {
+        if let BlockInst::Prev(a, k) = *inst {
+            match plan.round_of(at) {
+                None => out.push_str(&format!("  const {m} v{at} = apply_prev(v{a}, {k}u, w{a});\n")),
+                Some(j) => out.push_str(&format!(
+                    "  const ulong h{j} = halo_before(v{a}, l, halo_of_group_before(halos + {j}u * groups, g));\n\
+                     \x20 const {m} v{at} = apply_prev(v{a}, {k}u, h{j});\n"
+                )),
+            }
+            return;
+        }
+        let j = plan.round_of(at).expect("a round");
+        let (kind, apply) = match *inst {
+            BlockInst::Toggle(a) => ("parity", format!("apply_toggle(v{a}, i{j})")),
+            BlockInst::AfterOddRun(a) => ("borrow", format!("apply_after_odd_run(v{a}, i{j})")),
+            _ => unreachable!(),
+        };
+        out.push_str(&format!(
+            "  const uint e{j} = carry_before(states + {j}u * groups, {}u, g);\n\
+             \x20 const uint s{j} = {};\n\
+             \x20 const uint i{j} = lane_in_{kind}(s{j}, e{j}, l);\n\
+             \x20 const {m} v{at} = {apply};\n",
+            kind_index(inst),
+            summary_of(inst)
+        ));
+    }));
     out
 }
 
@@ -526,7 +671,9 @@ pub(in crate::code_rule_dsl) fn run_source(
     bytes: &[u8],
     width: LaneWidth,
 ) -> Result<(Vec<Vec<u64>>, f64), Error> {
-    let rounds = native.insts.iter().filter(|i| i.carried()).count();
+    // The planes form has the same plan: `class` is local in both, and carried instructions
+    // are kept in order.
+    let rounds = Plan::new(native).rounds.len();
     let pipelines: Vec<metal::ComputePipelineState> = (0..rounds)
         .map(|j| format!("tempo_round_{j}"))
         .chain(std::iter::once("tempo_block".to_owned()))

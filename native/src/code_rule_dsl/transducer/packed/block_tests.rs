@@ -696,6 +696,56 @@ fn check_stage1(name: &str, bytes: &[u8], outputs: &[Vec<u64>], want: (usize, u6
     assert!(outputs[1].iter().all(|&w| w == 0), "{name}: a control character inside a string");
     let last = bytes.len() - 1;
     assert_eq!(outputs[2][last / 64] >> (last % 64) & 1, 0, "{name}: an unclosed string");
+    assert!(!utf8_invalid(bytes, outputs), "{name}: invalid UTF-8");
+}
+
+/// Stage 1's UTF-8 verdict: an error bit anywhere, or a sequence open at the last byte.
+fn utf8_invalid(bytes: &[u8], outputs: &[Vec<u64>]) -> bool {
+    let open = bytes.len().checked_sub(1).is_some_and(|last| outputs[4][last / 64] >> (last % 64) & 1 == 1);
+    outputs[3].iter().any(|&w| w != 0) || open
+}
+
+/// Inputs around every UTF-8 rule: each boundary character, overlong forms, surrogates, values
+/// past U+10FFFF, stray continuations and truncated leads, at offsets across block and lane
+/// edges and at the very end.
+fn utf8_inputs() -> Vec<Vec<u8>> {
+    let atoms: Vec<&[u8]> = vec![
+        b"a", b"\x7f", "\u{80}".as_bytes(), "\u{7ff}".as_bytes(), "\u{800}".as_bytes(), "\u{fffd}".as_bytes(),
+        "\u{ffff}".as_bytes(), "\u{10000}".as_bytes(), "\u{10ffff}".as_bytes(), "\u{d7ff}".as_bytes(), "\u{e000}".as_bytes(),
+        b"\xc0\x80", b"\xc1\xbf", b"\xe0\x80\x80", b"\xe0\x9f\xbf", b"\xf0\x80\x80\x80", b"\xf0\x8f\xbf\xbf",
+        b"\xed\xa0\x80", b"\xed\xbf\xbf", b"\xf4\x90\x80\x80", b"\xf5\x80\x80\x80", b"\xff", b"\xfe",
+        b"\x80", b"\xbf", b"\xc2", b"\xe0\xa0", b"\xf0\x90\x80", b"\xc2\xc2\x80", b"\xe1\x80\xc0",
+    ];
+    let mut out = Vec::new();
+    for (i, atom) in atoms.iter().enumerate() {
+        for pad in [0usize, 1, 13, 14, 15, 30, 31, 61, 62, 63, 64, 125, 126, 127] {
+            let mut v = vec![b' '; pad];
+            v.extend_from_slice(atom);
+            out.push(v.clone());
+            v.extend_from_slice(b" x");
+            v.extend_from_slice(atoms[(i * 7 + pad) % atoms.len()]);
+            v.extend(std::iter::repeat_n(b'y', pad % 5));
+            out.push(v);
+        }
+    }
+    // Long valid text with every length of character, then one error deep inside.
+    let text: Vec<u8> = "a\u{e9}\u{4e2d}\u{1f600}".repeat(700).into_bytes();
+    out.push(text.clone());
+    let mut broken = text;
+    broken[5000] = 0x80;
+    out.push(broken);
+    out
+}
+
+#[test]
+fn stage1_utf8_equals_std_on_every_executor() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    for bytes in utf8_inputs() {
+        let want = std::str::from_utf8(&bytes).is_err();
+        for (name, got) in executors(&p, &bytes) {
+            assert_eq!(utf8_invalid(&bytes, &got), want, "{name}: {:x?}", &bytes[bytes.len().saturating_sub(12)..]);
+        }
+    }
 }
 
 fn stage1_files() -> Vec<(String, usize, (usize, u64))> {
