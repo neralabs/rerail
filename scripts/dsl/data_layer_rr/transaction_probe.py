@@ -16,13 +16,17 @@ def probe(module,values,suite=None):
     if mode=='detector':
         if suite is None:
             detector=module.NonLocalStateDetector(set(values.get('outer',[])))
-            detector.local_vars.update(values.get('initial',[]));detector.visit(tree)
+            detector.local_vars.update(values.get('initial',[]))
+            for supplied in [tree,*values.get('additionalTrees',[])]:detector.visit(supplied)
             return dict(violations=detector.violations,local_vars=sorted(detector.local_vars),
                 outer_scope_vars=sorted(detector.outer_scope_vars),in_nested_function=detector.in_nested_function)
-        rows=graph(suite,'detector',tree,dict(outerVars=values.get('outer',[]),initialLocals=values.get('initial',[])))
+        local=set(values.get('initial',[]));found=[]
         from transaction_port import ordered
-        return dict(violations=[(r['line'],r['parameters']['column'],r['message']) for r in ordered(rows) if r['code']!='TX_LOCAL'],
-            local_vars=sorted({r['parameters']['name'] for r in rows if r['code']=='TX_LOCAL'}),
+        for supplied in [tree,*values.get('additionalTrees',[])]:
+            rows=graph(suite,'detector',supplied,dict(outerVars=values.get('outer',[]),initialLocals=sorted(local)))
+            local.update(r['parameters']['name'] for r in rows if r['code']=='TX_LOCAL')
+            found.extend((r['line'],r['parameters']['column'],r['message']) for r in ordered(rows) if r['code']!='TX_LOCAL')
+        return dict(violations=found,local_vars=sorted(local),
             outer_scope_vars=sorted(set(values.get('outer',[]))),in_nested_function=False)
     if mode=='source':
         if suite is None:return module.lint_source(path,values.get('source',''),tree)

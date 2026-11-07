@@ -433,7 +433,13 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/versioned-table-names.rr",
-      "sha256": "89e8ebae9c9e0a767dd799909afaa273e78fa1980447306293bd3cbd02f81873"
+      "sha256": "d3038643f1c93e3a86bd47cd444c5825b350db44383353f7bc7d47ec77b5cb4f",
+      "repairs": [
+        {
+          "reason": "Use typed tape and token relations for slice upper bounds after Final shape 43c8c521d",
+          "sha256": "d3038643f1c93e3a86bd47cd444c5825b350db44383353f7bc7d47ec77b5cb4f"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/blade/syntax.rr",
@@ -1405,7 +1411,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/transaction-closures.rr",
-      "sha256": "52c73460e99f4cd2bd7c828cb8a4d891ca3bfcd7c3dd8ac8b93de6df3cc580dc",
+      "sha256": "5be30a7fae19a43461ac5e9e1538594605ac3f2a179f507452ea1b34bc74147d",
       "origin": "authored",
       "upstreamPath": "scripts/lint_transaction_closures.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1624,7 +1630,7 @@
       "legacySha256": "83f35c1e002c5f11945b0fdf18a02ecae99f2a976a0124b87ffcdb84f0e8da56",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/transaction-closures.rr",
-      "ruleSha256": "52c73460e99f4cd2bd7c828cb8a4d891ca3bfcd7c3dd8ac8b93de6df3cc580dc"
+      "ruleSha256": "5be30a7fae19a43461ac5e9e1538594605ac3f2a179f507452ea1b34bc74147d"
     },
     {
       "check": "transaction_callback_wrappers",

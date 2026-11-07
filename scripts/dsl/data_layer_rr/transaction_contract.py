@@ -107,13 +107,16 @@ class Contract:
 
     def pytest_runtest_setup(self,item):
         self.item=item
-        if self.backend:self.backend.item=item
+        if self.backend:
+            self.backend.item=item
+            self.backend.apply_transaction_constants()
 
     def pytest_runtest_logreport(self,report):
         self.cases.setdefault(report.nodeid,[]).append(dict(phase=report.when,outcome=report.outcome))
 
     def pytest_unconfigure(self):
         sys.setprofile(None);threading.setprofile(None)
+        if self.backend:self.backend.restore_transaction_constants()
         for owner,name,original in reversed(self.originals):setattr(owner,name,original)
 
     def finish(self,code):

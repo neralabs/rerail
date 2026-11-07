@@ -188,7 +188,17 @@ VTN001(n) :- here(n), kind(n, "call"), field(n, "function", fn), attr_of(fn, _, 
 VTN004(n) :- here(n), call_dotted(n, "VersionedTableNames").
 
 // on_Subscript: a slice whose upper bound is -4, -7 or -13, anywhere inside derive_versioned_table_names(…).
-VTN003(n) :- here(n), ( n ~ `$O[:-$K]` ; n ~ `$O[$A:-$K]` ; n ~ `$O[:-$K:$S]` ; n ~ `$O[$A:-$K:$S]` ),
+.decl vtn_slice_upper(s: node, upper: node)
+// The upper bound immediately follows the first colon. Token adjacency skips comments.
+// With a lower bound, the slice and that expression start at the same token.
+vtn_slice_upper(s, upper) :- kind(s, "slice"), first_token(s, colon), text(colon, ":"),
+    token_after(colon, first), child(s, upper, _), first_token(upper, first).
+vtn_slice_upper(s, upper) :- kind(s, "slice"), child(s, lower, _), first_token(s, first_lower),
+    first_token(lower, first_lower), last_token(lower, last_lower), token_after(last_lower, colon), text(colon, ":"),
+    token_after(colon, first_upper), child(s, upper, _), first_token(upper, first_upper).
+.violation VTN003Slice(at: node) code "VTN003" "do not recover a logical base by slicing a physical table name"
+VTN003Slice(n) :- here(n), kind(n, "subscript"), !op(n, ","), field(n, "subscript", slice), vtn_slice_upper(slice, raw),
+    unparen(raw, upper), kind(upper, "unary_operator"), op(upper, "-"), field(upper, "argument", operand), unparen(operand, K),
     ( value(K, "4") ; value(K, "7") ; value(K, "13") ),
     call_dotted(c, "derive_versioned_table_names"), within(n, c).
 

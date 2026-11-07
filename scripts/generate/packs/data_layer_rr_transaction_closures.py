@@ -207,4 +207,7 @@ tx_inventory_test(i) :- option("excludeTests", "true"), option_item("inventoryPa
  (contains("/test_", p) ; contains("/tests/", p) ; suffix("/conftest.py", p) ; p = "conftest.py").
 .violation Selected(at: span, index: number) code "TX_FILE" "selected"
 Selected(@place("input.py", 1), i) :- tx_inventory_selected(i).
+.violation TxConstant(at: span, table: symbol, value: symbol) code "TX_CONSTANT" "{value}"
+TxConstant(@place("constants.py", 1), "transaction", name) :- option("entryPoint", "constants"), tx_method(name).
+TxConstant(@place("constants.py", 1), "mutating", name) :- option("entryPoint", "constants"), tx_mutator(name).
 '''

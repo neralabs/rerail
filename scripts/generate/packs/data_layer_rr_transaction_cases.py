@@ -29,6 +29,10 @@ def main():
       ('tuple-target','items[0], other = seq\n'),('subscript-before-rhs','items[(items := [])] = items.append(1)\n'),
       ('unicode','nonlocal café, π\ncafé.append(1)\n'),('class-body','class C(items.append(1)):\n    items.append(2)\n')]
     for tag,source in detector_cases:add('detector-'+tag,source,'detector',['items','other','café'],report=False)
+    add('detector-initial-locals','items.append(1)\n','detector',['items'],['items'],report=False)
+    for tag,first,second in [('locals','items = []\n','items.append(1)\n'),('duplicates','items.append(1)\n','items.append(2)\n')]:
+        add('detector-repeated-'+tag,first,'detector',['items'],report=False)
+        api[-1]['arguments']['additionalTrees']=[dict(pythonAst=second,mode='exec')]
     for method in sorted(original.TRANSACTION_METHODS):
         for tag,args_text in [('keyword','fn=lambda t: items.append(t)'),('positional','0, lambda t: items.append(t)'),
           ('precedence','0, lambda t: items.append(t), fn=lambda t: t'),('first-pos','lambda t: items.append(t)'),

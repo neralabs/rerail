@@ -60,6 +60,19 @@ def scan(suite,module,entry,values):
 
 def install(suite,module):
     """Replace semantic APIs; list/set writes below are caller-visible storage operations."""
+    constants=suite.native('transaction_closures','constants',[])
+    if any(r['code']!='TX_CONSTANT' for r in constants):raise AssertionError('Unexpected native transaction constant output')
+    bindings=[]
+    for table,name in [('transaction','TRANSACTION_METHODS'),('mutating','MUTATING_METHODS')]:
+        target=getattr(module,name);values={r['parameters']['value'] for r in constants if r['parameters']['table']==table}
+        bindings.append((target,set(target),values))
+    def apply_constants():
+        # Collection retains the complete original parametrization. Each assertion sees native values,
+        # including aliases imported by its unchanged module during collection.
+        for target,_,values in bindings:target.clear();target.update(values)
+    def restore_constants():
+        for target,original,_ in bindings:target.clear();target.update(original)
+    suite.apply_transaction_constants=apply_constants;suite.restore_transaction_constants=restore_constants
     def detector_init(instance,outer_scope_vars):
         instance.outer_scope_vars=outer_scope_vars;instance.local_vars=set();instance.violations=[];instance.in_nested_function=False
     def detector_visit(instance,node):

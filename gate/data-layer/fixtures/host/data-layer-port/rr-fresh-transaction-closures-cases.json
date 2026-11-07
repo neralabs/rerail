@@ -1524,6 +1524,83 @@
       }
     },
     {
+      "id": "detector-initial-locals",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.append(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": [
+          "items"
+        ]
+      }
+    },
+    {
+      "id": "detector-repeated-locals",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items = []\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items = []\n",
+        "outer": [
+          "items"
+        ],
+        "initial": [],
+        "additionalTrees": [
+          {
+            "pythonAst": "items.append(1)\n",
+            "mode": "exec"
+          }
+        ]
+      }
+    },
+    {
+      "id": "detector-repeated-duplicates",
+      "check": "transaction_closures",
+      "entry": "probe",
+      "files": [],
+      "arguments": {
+        "mode": "detector",
+        "tree": {
+          "pythonAst": "items.append(1)\n",
+          "mode": "exec"
+        },
+        "file_path": {
+          "path": "impl/example.py"
+        },
+        "source": "items.append(1)\n",
+        "outer": [
+          "items"
+        ],
+        "initial": [],
+        "additionalTrees": [
+          {
+            "pythonAst": "items.append(2)\n",
+            "mode": "exec"
+          }
+        ]
+      }
+    },
+    {
       "id": "read-keyword",
       "check": "transaction_closures",
       "entry": "probe",
