@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Reject upstream detection; retain explicit host orchestration and passive DTOs."""
 import inspect
+import dataclasses
+import reprlib
 import sys
 import threading
 from dataclasses import is_dataclass
@@ -16,6 +18,8 @@ HOST = {
     'pure_lazy_runtime_purity': {'_preflight_current_allowlist_signing','_strict_allowlist_entry'},
 }
 
+STORAGE_WRAPPERS = {inspect.getsourcefile(reprlib.recursive_repr), inspect.getsourcefile(dataclasses.dataclass)}
+
 
 def codes(modules):
     result={}
@@ -30,7 +34,10 @@ def codes(modules):
                     # methods are passive; source-defined methods must pass the semantic guard.
                     storage = inspect.isclass(value) and (is_dataclass(value) or
                         (issubclass(value, tuple) and isinstance(getattr(value, '_fields', None), tuple)))
-                    passive = storage and function.__name__.startswith('__') and function.__code__.co_filename == '<string>'
+                    generated = function.__code__.co_filename == '<string>'
+                    wrapped_repr = (function.__name__ == '__repr__' and function.__code__.co_filename in STORAGE_WRAPPERS
+                        and inspect.unwrap(function).__code__.co_filename == '<string>')
+                    passive = storage and function.__name__.startswith('__') and (generated or wrapped_repr)
                     result[function.__code__]=(check,function.__qualname__,passive)
     return result
 
