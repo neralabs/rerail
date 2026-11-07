@@ -1996,6 +1996,10 @@ struct Run<'a> {
     model: Model,
     views: HashSet<String>,
     made: HashSet<(String, Vec<usize>)>,
+    /// Each derived table's secondary indexes, as column orders (`index_for`).
+    orders: HashMap<String, Vec<Vec<usize>>>,
+    /// Derived tables with no key: views materialized as plain tables (`ensure_indexes`).
+    keyless: HashSet<String>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
     /// Why the native engine declined the last stratum it was offered (EXPLAIN's `why`).
@@ -2039,6 +2043,7 @@ impl Run<'_> {
                     ))?;
                     self.views.remove(r);
                     self.model.view_src.remove(r);
+                    self.keyless.insert(r.clone());
                 }
             }
             if let Some(a) = a
@@ -2049,13 +2054,54 @@ impl Run<'_> {
                     .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
                     .collect();
                 if !cols.is_empty() && self.made.insert((a.rel.clone(), cols.clone())) {
-                    let name = format!("{}_{}", a.rel, cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"));
-                    let on = cols.iter().map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                    self.db.execute(&format!("CREATE INDEX IF NOT EXISTS {name} ON {}({on})", a.rel), [])?;
+                    self.index_for(&a.rel, &cols)?;
                 }
             }
             bound.extend(s.lit.vars());
         }
+        Ok(())
+    }
+
+    /// An index serving an equality search on `cols` of derived table `rel`, with as few indexes as serve every
+    /// search: each index is one column order, and serves a search whose columns are its first ones. The table's
+    /// key (all columns in order, or a lattice's key columns; `WITHOUT ROWID`, so the table is that order) serves
+    /// its prefixes. A search containing an index's columns extends that index (rebuilt once, the old one dropped)
+    /// rather than adding one, so the indexes form chains of searches (Soufflé's index selection: a minimum chain
+    /// cover, here greedy as searches arrive). Each secondary index of a `WITHOUT ROWID` table holds the whole row,
+    /// a copy of the relation that every insert maintains: on `calls.rr` this makes 22 indexes where one per search
+    /// made 96.
+    fn index_for(&mut self, rel: &str, cols: &[usize]) -> Result<()> {
+        let want: BTreeSet<usize> = cols.iter().copied().collect();
+        let key = if self.keyless.contains(rel) {
+            0
+        } else {
+            self.prog.lattice.get(rel).map_or_else(|| self.prog.decls.get(rel).map_or(0, Vec::len), |l| l.keys)
+        };
+        if want.len() <= key && want.iter().all(|&c| c < want.len()) {
+            return Ok(());
+        }
+        let orders = self.orders.entry(rel.to_owned()).or_default();
+        let prefix = |o: &[usize]| o.len() >= want.len() && o[..want.len()].iter().copied().collect::<BTreeSet<_>>() == want;
+        if orders.iter().any(|o| prefix(o)) {
+            return Ok(());
+        }
+        let name = |i: usize| format!("{rel}__o{i}");
+        let on = |o: &[usize]| o.iter().map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
+        // The longest order whose columns the search contains, extended by the search's other columns.
+        let extend = orders.iter().enumerate().filter(|(_, o)| o.iter().all(|c| want.contains(c))).max_by_key(|(_, o)| o.len()).map(|(i, _)| i);
+        let i = match extend {
+            Some(i) => {
+                let mut o = orders[i].clone();
+                o.extend(want.iter().filter(|c| !orders[i].contains(c)));
+                orders[i] = o;
+                i
+            }
+            None => {
+                orders.push(want.iter().copied().collect());
+                orders.len() - 1
+            }
+        };
+        self.db.execute_batch(&format!("DROP INDEX IF EXISTS {}; CREATE INDEX {} ON {rel}({})", name(i), name(i), on(&orders[i])))?;
         Ok(())
     }
 
@@ -3314,7 +3360,7 @@ fn run_named(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&l
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
