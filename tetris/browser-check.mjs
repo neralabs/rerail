@@ -96,6 +96,8 @@ try {
   assert.ok(await page.evaluate(() => document.body.classList.contains('graph-expanded')));
   await page.locator('#expand-graph').click();
   const traced = await page.request.get('http://127.0.0.1:4317/facts').then(response => response.json());
+  assert.ok(traced.trace.evaluation.waves.length > 1);
+  assert.equal(await page.locator('#wave-markers .wave-band').count(), traced.trace.evaluation.waves.length);
   assert.ok(traced.trace.evaluation.events.some(event => event.cache_hit));
   if ((await page.locator('#wave-play').textContent()).includes('Pause')) await page.locator('#wave-play').click();
   await page.locator('#wave-position').evaluate(input => { input.value = 0; input.dispatchEvent(new Event('input', { bubbles: true })); });
@@ -103,6 +105,8 @@ try {
   assert.equal(await page.locator('.fact-node[data-relation="screen_cell"] .screen-mini-grid[data-area="preview"] .svg-screen-cell').count(), 16);
   assert.equal(await page.locator('.fact-node[data-relation="screen_cell"] .sigil-count').textContent(), '◆216');
   assert.equal(await page.locator('.fact-node[data-relation="screen_cell"] .screen-mini-grid[data-area="board"] .svg-screen-cell.active').count(), 4);
+  assert.equal(await page.locator('.fact-node[data-wave-state="current"]').count(), 0);
+  assert.equal(await page.locator('.fact-node[data-wave-state="previous"]').count(), 0);
   const position = await page.locator('#wave-position').inputValue();
   await page.waitForTimeout(150);
   assert.equal(await page.locator('#wave-position').inputValue(), position, 'paused playback must stay still');
@@ -170,6 +174,38 @@ try {
     const style = getComputedStyle(element); return { width: parseFloat(style.strokeWidth), filter: style.filter };
   });
   assert.ok(glow.width >= 3.5 && glow.filter.includes('drop-shadow'), 'accepted changes need a strong, visible glow');
+  const recorded = updated.trace.evaluation;
+  const frontier = recorded.waves.find(wave => {
+    const last = new Map();
+    for (const event of recorded.events.slice(0, wave.end - 1)) {
+      if (event.changes.added.length || event.changes.removed.length) last.set(event.head, event.wave);
+    }
+    return [...last.values()].includes(wave.id) && [...last.values()].some(id => id < wave.id);
+  });
+  assert.ok(frontier, 'recorded round needs a visible frontier before a wave ends');
+  await page.locator('#wave-position').evaluate((input, position) => { input.value = position; input.dispatchEvent(new Event('input', { bubbles: true })); }, frontier.end - 1);
+  assert.equal(await page.locator('#evaluation-panel').getAttribute('data-current-wave'), String(frontier.id));
+  assert.match(await page.locator('#wave-label').textContent(), new RegExp(`Wave ${frontier.id} /`));
+  assert.ok(await page.locator('.fact-node[data-wave-state="current"]').count() > 0);
+  assert.ok(await page.locator('.fact-node[data-wave-state="previous"]').count() > 0);
+  assert.ok(await page.locator('.fact-node[data-wave-state="unchanged"]').count() > 0);
+  assert.equal(await page.locator('.node-accepted').count(), 0, 'seeking must clear transient glows from future steps');
+  const beforeAge = await page.locator('.fact-node[data-wave-state="current"]').first().getAttribute('data-relation');
+  const currentCount = await page.locator('.fact-node[data-wave-state="current"]').count();
+  await page.waitForTimeout(250);
+  assert.equal(await page.locator('.fact-node[data-wave-state="current"]').count(), currentCount, 'frontier persists when playback is paused');
+  await page.screenshot({ path: fileURLToPath(new URL('./.cache/wave-frontier.png', import.meta.url)), fullPage: true });
+  const nextWave = recorded.waves.find(wave => wave.id === frontier.id + 1);
+  if (nextWave) {
+    await page.locator('#wave-position').evaluate((input, position) => { input.value = position; input.dispatchEvent(new Event('input', { bubbles: true })); }, nextWave.start);
+    assert.equal(await page.locator(`.fact-node[data-relation="${beforeAge}"]`).getAttribute('data-wave-state'), 'previous');
+  }
+  await page.locator(`#wave-markers .wave-band[data-wave="${frontier.id}"]`).click();
+  assert.equal(Number(await page.locator('#wave-position').inputValue()), frontier.end - 1);
+  assert.equal(await page.locator(`#wave-markers .wave-band[data-wave="${frontier.id}"]`).getAttribute('aria-current'), 'true');
+  await page.locator('#wave-position').evaluate(input => { input.value = 0; input.dispatchEvent(new Event('input', { bubbles: true })); });
+  assert.equal(await page.locator('.fact-node[data-wave-state="current"]').count(), 0);
+  assert.equal(await page.locator('.fact-node[data-wave-state="previous"]').count(), 0);
   await page.locator('#round-history').selectOption(String(traced.sequence));
   assert.match(await page.locator('#trace-summary').textContent(), new RegExp(`Round ${traced.sequence} `));
   await page.setViewportSize({ width: 390, height: 844 });
@@ -188,5 +224,5 @@ try {
   assert.equal((await page.request.get('http://127.0.0.1:4317/facts').then(response => response.json())).trace.evaluation, null);
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
-  console.log('Browser checks passed: gameplay, manual time, fact colors, small recoils, receiver glow, sigils, screen grids, native source tooltips and selection, playback, history, desktop/mobile, offline assets.');
+  console.log('Browser checks passed: gameplay, manual time, fact colors, receiver effects, source browsing, wave markers, frontier persistence and rewind, playback, history, desktop/mobile, offline assets.');
 } finally { await browser.close(); }

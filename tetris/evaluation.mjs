@@ -1,5 +1,6 @@
 // Playback of native SQL rule events. This module does not evaluate rules.
 import { renderSourceLines, highlightSnippet } from './rr-source.mjs';
+import { partitionWaves, waveAtPosition, frontierState } from './waves.mjs';
 const ns = 'http://www.w3.org/2000/svg';
 const node = (name, attrs = {}, text) => {
   const el = document.createElementNS(ns, name);
@@ -102,10 +103,12 @@ export class EvaluationView {
   }
   load(result, autoplay) {
     this.pause();
+    this.clearAccepted();
     this.result = result;
     this.evaluation = result.trace.evaluation;
     this.events = this.evaluation.events;
     this.rules = new Map(this.evaluation.rules.map(rule => [rule.id, rule]));
+    this.waves = this.evaluation.waves ?? partitionWaves(this.evaluation.rules, this.events);
     this.selected = null;
     this.pinnedRule = null;
     this.firingRule = null;
@@ -116,6 +119,7 @@ export class EvaluationView {
     byId('round-input').textContent = `${result.trace.ms} ms native + transport`;
     byId('graph-empty').hidden = true;
     byId('wave-position').max = this.events.length;
+    this.drawWaveMarkers();
     this.onSelect(result);
     this.resetState();
     this.drawGraph();
@@ -124,15 +128,21 @@ export class EvaluationView {
   }
   resetState() {
     this.state = new Map(Object.entries(this.evaluation.initial ?? this.evaluation.seeds).map(([name, rows]) => [name, new Map(rows.map(row => [key(row), row]))]));
+    this.factWaves = new Map();
+    this.relationWaves = new Map();
   }
   apply(event) {
     if (!this.state.has(event.head)) this.state.set(event.head, new Map());
     const rows = this.state.get(event.head);
-    for (const row of updates(event).removed) rows.delete(key(row));
-    for (const row of updates(event).added) rows.set(key(row), row);
+    if (!this.factWaves.has(event.head)) this.factWaves.set(event.head, new Map());
+    const ages = this.factWaves.get(event.head);
+    for (const row of updates(event).removed) { rows.delete(key(row)); ages.delete(key(row)); }
+    for (const row of updates(event).added) { rows.set(key(row), row); ages.set(key(row), event.wave); }
+    if (hasChanges(event)) this.relationWaves.set(event.head, event.wave);
   }
   seek(position) {
     if (!this.events) return;
+    this.clearAccepted();
     this.position = Math.min(this.events.length, Math.max(0, position));
     this.resetState();
     for (const event of this.events.slice(0, this.position)) this.apply(event);
@@ -185,6 +195,7 @@ export class EvaluationView {
       return;
     }
     const event = this.events[index];
+    this.drawState();
     const rule = this.rules.get(event.rule);
     const activeEdges = this.edges.filter(edge => edge.rule === event.rule);
     this.clearActivity();
@@ -370,6 +381,7 @@ export class EvaluationView {
   }
   drawState() {
     if (!this.state) return;
+    this.updateWaveContext();
     for (const [name, card] of this.cards) {
       const rows = [...(this.state.get(name)?.values() ?? [])];
       const count = rows.length;
@@ -377,6 +389,10 @@ export class EvaluationView {
       card.querySelector('.node-sigil title').textContent = `${count} fact${count === 1 ? '' : 's'}`;
       this.drawNodeFacts(card, name, rows);
       card.classList.toggle('has-facts', count > 0); card.classList.toggle('selected', this.selected === name);
+      const age = frontierState(this.relationWaves.get(name), this.currentWave?.id);
+      card.dataset.waveState = age;
+      card.dataset.updatedWave = this.relationWaves.get(name) ?? 0;
+      card.querySelector('.node-sigil title').textContent += this.relationWaves.has(name) ? ` · last updated in wave ${this.relationWaves.get(name)}` : ' · unchanged since the round began';
     }
     byId('wave-position').value = this.position;
     const hidden = byId('show-empty').checked ? '' : ` · ${this.events.filter(isEmpty).length} empty checks not animated`;
@@ -430,7 +446,8 @@ export class EvaluationView {
     if (!displayRows.length) container.textContent = '∅ No facts in this relation.';
     for (const row of displayRows) {
       const line = document.createElement('span');
-      line.className = `fact-line ${event?.cache_hit && candidates.has(key(row)) ? 'duplicate' : added.has(key(row)) ? 'added' : candidates.has(key(row)) ? 'duplicate' : ''}`;
+      line.className = `fact-line wave-fact-${this.factAge(relation, row)}`;
+      line.title = this.factAgeLabel(relation, row);
       line.textContent = `${event?.cache_hit && candidates.has(key(row)) ? '↶ ' : added.has(key(row)) ? '+ ' : candidates.has(key(row)) ? '↶ ' : '  '}${literal(relation, row)}`; container.append(line);
     }
   }
@@ -444,6 +461,49 @@ export class EvaluationView {
     card.classList.add('node-accepted');
     this.acceptedTimers.set(relation, setTimeout(() => { card.classList.remove('node-accepted'); this.acceptedTimers.delete(relation); }, 1500));
   }
+  clearAccepted() {
+    for (const timer of this.acceptedTimers.values()) clearTimeout(timer);
+    this.acceptedTimers.clear();
+    for (const card of this.cards?.values() ?? []) card.classList.remove('node-accepted');
+  }
+  factAge(relation, row) {
+    return frontierState(this.factWaves.get(relation)?.get(key(row)), this.currentWave?.id);
+  }
+  factAgeLabel(relation, row) {
+    const wave = this.factWaves.get(relation)?.get(key(row));
+    return wave ? `Updated in wave ${wave}${wave === this.currentWave?.id ? ' (current wave)' : ' (earlier wave)'}` : 'Unchanged since the round began';
+  }
+  drawWaveMarkers() {
+    const markers = byId('wave-markers'); markers.replaceChildren();
+    this.waveButtons = new Map();
+    for (const wave of this.waves) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'wave-band';
+      const width = (wave.end - wave.start) / this.events.length * 100;
+      button.style.width = `${width}%`;
+      button.classList.toggle('compact-wave', width < 4);
+      button.dataset.wave = wave.id; button.dataset.start = wave.start; button.dataset.end = wave.end;
+      button.textContent = wave.id;
+      button.title = `Wave ${wave.id} · evaluations ${wave.start + 1}–${wave.end} · ${wave.updated.length} fact sets updated. Click to inspect just before its last evaluation.`;
+      button.setAttribute('aria-label', `Inspect wave ${wave.id} before its last evaluation`);
+      button.addEventListener('click', () => { this.pause(); this.seek(wave.end - 1); });
+      markers.append(button); this.waveButtons.set(wave.id, button);
+    }
+  }
+  updateWaveContext() {
+    this.currentWave = waveAtPosition(this.waves ?? [], this.position);
+    const wave = this.currentWave;
+    if (!wave) { byId('wave-label').textContent = 'No evaluation waves'; return; }
+    const completed = Math.max(0, Math.min(wave.end - wave.start, this.position - wave.start));
+    byId('wave-label').textContent = `Wave ${wave.id} / ${this.waves.length} · ${completed} / ${wave.end - wave.start} evaluations complete`;
+    byId('wave-label').title = this.evaluation.wave_basis ?? 'Dependency waves in recorded execution order';
+    byId('evaluation-panel').dataset.currentWave = wave.id;
+    byId('wave-position').setAttribute('aria-valuetext', `Wave ${wave.id} of ${this.waves.length}, evaluation ${this.position} of ${this.events.length}`);
+    for (const [id, button] of this.waveButtons) {
+      button.classList.toggle('active-wave', id === wave.id);
+      button.classList.toggle('past-wave', id < wave.id);
+      button.setAttribute('aria-current', String(id === wave.id));
+    }
+  }
   drawNodeFacts(card, relation, rows) {
     const preview = card.querySelector('.node-fact-preview');
     preview.replaceChildren();
@@ -451,10 +511,12 @@ export class EvaluationView {
       this.drawScreenSVG(preview, rows);
       return;
     }
+    const priority = { current: 0, previous: 1, unchanged: 2 };
+    rows = rows.toSorted((a, b) => priority[this.factAge(relation, a)] - priority[this.factAge(relation, b)]);
     if (relation === 'screen_text') {
       rows.slice(0, 4).forEach(([id, value], i) => {
         const x = 8 + i % 2 * 80, y = 24 + Math.floor(i / 2) * 28;
-        const tile = node('g', { class: 'screen-text-tile' });
+        const tile = node('g', { class: `screen-text-tile wave-fact-${this.factAge(relation, [id, value])}` });
         tile.append(node('rect', { x, y, width: 75, height: 24, rx: 3 }));
         tile.append(node('text', { x: x + 4, y: y + 9, class: 'tile-key' }, String(id).slice(0, 12)));
         tile.append(node('text', { x: x + 4, y: y + 19, class: 'tile-value' }, String(value).slice(0, 13)));
@@ -467,7 +529,7 @@ export class EvaluationView {
     if (!rows.length) preview.append(node('text', { x: 8, y: 36, class: 'tuple-empty' }, '∅'));
     displayed.forEach((row, index) => {
       const tuple = `(${row.map(value => JSON.stringify(value)).join(', ')})`;
-      const text = node('text', { x: 8, y: 32 + index * 12, class: 'node-tuple' }, tuple.length > 26 ? tuple.slice(0, 25) + '…' : tuple);
+      const text = node('text', { x: 8, y: 32 + index * 12, class: `node-tuple wave-fact-${this.factAge(relation, row)}` }, tuple.length > 26 ? tuple.slice(0, 25) + '…' : tuple);
       text.append(node('title', {}, literal(relation, row))); preview.append(text);
     });
     if (rows.length > 4) preview.append(node('text', { x: 8, y: 68, class: 'tuple-empty' }, '…'));
@@ -488,7 +550,8 @@ export class EvaluationView {
       grid.append(node('rect', { x: 0, y: 0, width: width * size, height: height * size, class: 'screen-grid-background' }));
       for (const row of rows.filter(row => row[0] === area)) {
         const [, x, y, color, style] = row;
-        const cell = node('rect', { x: x * size, y: y * size, width: size - 0.35, height: size - 0.35, class: `cell svg-screen-cell ${color} ${style}` });
+        const cell = node('rect', { x: x * size, y: y * size, width: size - 0.35, height: size - 0.35, class: `cell svg-screen-cell ${color} ${style} wave-fact-${this.factAge('screen_cell', row)}` });
+        cell.dataset.waveState = this.factAge('screen_cell', row);
         cell.append(node('title', {}, literal('screen_cell', row))); grid.append(cell);
       }
       grid.append(node('text', { x: 0, y: -5, class: 'grid-area-label' }, area)); container.append(grid); offset += width * size + 12;
@@ -510,7 +573,8 @@ export class EvaluationView {
         grid.style.gridTemplateRows = `repeat(${height}, var(--fact-grid-cell))`;
         for (const row of rows.filter(row => row[0] === area)) {
           const [, x, y, color, style] = row;
-          const cell = document.createElement('div'); cell.className = `cell ${color} ${style}`;
+          const cell = document.createElement('div'); cell.className = `cell ${color} ${style} wave-fact-${this.factAge(relation, row)}`;
+          cell.dataset.waveState = this.factAge(relation, row);
           cell.style.gridColumn = x + 1; cell.style.gridRow = y + 1; cell.title = literal(relation, row); grid.append(cell);
         }
         wrapper.append(grid); visual.append(wrapper);
@@ -518,7 +582,7 @@ export class EvaluationView {
     } else {
       visual.classList.add('text-fact-grid');
       for (const row of rows) {
-        const tile = document.createElement('div'); tile.className = 'text-fact-tile';
+        const tile = document.createElement('div'); tile.className = `text-fact-tile wave-fact-${this.factAge(relation, row)}`;
         const name = document.createElement('span'), value = document.createElement('strong');
         name.textContent = String(row[0]); value.textContent = row.slice(1).join(' · '); tile.title = literal(relation, row); tile.append(name, value); visual.append(tile);
       }

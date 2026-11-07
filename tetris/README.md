@@ -44,6 +44,19 @@ The panel also has buttons to advance game time.
 - Drag the graph to pan. Use **+** and **−** to zoom. Use **Fit graph** to restore the view.
 - Use the expand button for a larger view.
 
+The slider band marks dependency waves in the recorded native execution order.
+A wave ends before a rule reads a fact set produced earlier in that wave.
+Click a wave marker to stop just before its final evaluation.
+The wave label shows the current wave and the number of completed evaluations within it.
+
+Unchanged facts stay neutral. Facts updated in the current wave have a soft green highlight.
+Facts updated in earlier waves have a muted teal highlight.
+These states apply to nodes, fact tuples, and screen-grid cells.
+The frontier stays visible while playback is paused.
+Cache hits do not reset the age of unchanged facts.
+At a wave boundary, the next wave starts and completed updates become earlier-wave updates.
+Seeking clears transient glows. Returning to the start restores the initial, neutral fact snapshot.
+
 Green packets show accepted additions and removals. Amber packets show unchanged results or cache hits.
 Rejected packets retreat a few pixels and briefly thicken the receiver's border.
 Accepted updates give the receiving node a bright green glow.
@@ -166,6 +179,7 @@ HTML defines the layout and decorative marks. All game content comes from screen
 | `server.mjs` | Static assets and event-fact HTTP endpoint |
 | `browser.mjs` | Keyboard capture, timestep capture, and screen-fact display |
 | `evaluation.mjs` | Interactive SVG playback of native rule events |
+| `waves.mjs` | Dependency-wave boundaries and frontier-age categories |
 | `rr-source.mjs`, `source-browser.mjs` | Syntax highlighting and the full source browser |
 | `sources.mjs` | Read-only catalog of the running game and pinned `.rr` source files |
 
@@ -199,4 +213,5 @@ The checks observe an actual amber cache bounce, rule stepping, round history, a
 They also check small rejection recoils, accepted-update glows, corner sigils, screen grids, edge tooltips, and source selection.
 Round checks cover the initial fact snapshot, shared facts, and final screen reconstruction.
 Source checks cover the full catalog, syntax colors, file selection, search, and line navigation.
+Wave checks cover dependency barriers, native evaluation order, clickable slider markers, and persistent frontier colors when seeking.
 Screenshots are saved under `.cache/`.
