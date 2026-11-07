@@ -797,6 +797,21 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
     Ok(prog)
 }
 
+/// A program to run reads only relations it declares or the transducer makes: else an error, as in Soufflé, not a
+/// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.)
+pub(in crate::code_rule_dsl) fn declared(prog: &Program) -> Result<(), Error> {
+    for rule in &prog.rules {
+        let mut read = rule.body.iter().filter_map(|l| match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
+            _ => None,
+        });
+        if let Some(a) = read.find(|a| !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel)) {
+            return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
+        }
+    }
+    Ok(())
+}
+
 /// The prefix of the relations the engine names itself (helpers, axes, places): a rule file may not declare one
 /// (`rr::parse_file`), so a rule's relation never collides with them.
 pub(in crate::code_rule_dsl) const RESERVED: &str = "rr_";

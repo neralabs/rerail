@@ -280,7 +280,11 @@ pub(crate) fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, b
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
 pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
-    let parse = |text: &str| crate::code_rule_dsl::logic::rr::parse(&if extra.is_empty() { text.to_owned() } else { format!("{text}\n{extra}") });
+    let parse = |text: &str| -> Result<Program> {
+        let prog = crate::code_rule_dsl::logic::rr::parse(&if extra.is_empty() { text.to_owned() } else { format!("{text}\n{extra}") })?;
+        front::declared(&prog)?;
+        Ok(prog)
+    };
     if let [one] = programs {
         return Ok(parse(one)?);
     }
