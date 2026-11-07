@@ -136,6 +136,30 @@ pub(in crate::code_rule_dsl) struct BatchRun {
 /// Workers of the persistent dispatch: SIMD groups that take the batch's groups in order.
 const WORKERS: usize = 256;
 
+/// `run_batch`, split while the device refuses it for capacity (lessons ledger #26: a batch over
+/// a budget is split, never refused). Halves run one after another, in the files' order; a file
+/// alone that does not fit is the error. `launches` and `seconds` are the halves' sums.
+pub(in crate::code_rule_dsl) fn run_split(
+    programs: &[&BlockNative],
+    files: &[BatchFile<'_>],
+    width: LaneWidth,
+    executor: Executor,
+    spins: u32,
+) -> Result<BatchRun, Error> {
+    match run_batch(programs, files, width, executor, spins) {
+        Err(Error::BackendCapacity) if files.len() > 1 => {
+            let (a, b) = files.split_at(files.len() / 2);
+            let mut first = run_split(programs, a, width, executor, spins)?;
+            let second = run_split(programs, b, width, executor, spins)?;
+            first.files.extend(second.files);
+            first.launches += second.launches;
+            first.seconds += second.seconds;
+            Ok(first)
+        }
+        other => other,
+    }
+}
+
 /// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
 const SLAB_BUFFERS: [u64; crate::code_rule_dsl::residency::slabs::MAX_SLABS] = [0, 16, 17, 18];
 

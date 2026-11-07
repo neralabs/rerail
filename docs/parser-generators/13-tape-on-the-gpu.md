@@ -406,6 +406,32 @@ and a group of programs, one per language:
   its slab and its offset in it. A file already resident is not copied again.
 - **The CPU executors take the same batch.** The interpreter runs each step once over every
   file of a program. Cranelift's function loops over the files and then over their blocks.
+- **A batch over the device's buffer budget is split in halves** (`run_split`), never refused.
+  A file that alone does not fit is the error.
+
+**Timings.** JSON's program, 578 instructions with the tree rows and the fallback, ran over
+the 774 tracked JSON files of a data-layer checkout. That is 39.4 MB and 615,787 blocks. Two
+files go to the fallback. Every executor's results equal Cranelift's.
+
+GPU time is the best of 3. Cranelift's is thread CPU time, the best of 3, from a debug build.
+The machine was heavily loaded: load average about 100 on 18 cores.
+
+| executor | lanes | launches | ns per block | GB/s |
+|---|---:|---:|---:|---:|
+| Cranelift, one call | — | — | 194.6 | 0.33 |
+| generated MSL, lookups | 16 B | 5 | 120.2 | 0.53 |
+| generated MSL, lookups | 32 B | 3 | 69.4 | 0.92 |
+| generated MSL, lookups | 64 B | 2 | 44.3 | 1.44 |
+| generated MSL, planes | 16 B | 5 | 114.5 | 0.56 |
+| generated MSL, planes | 32 B | 3 | 65.4 | 0.98 |
+| generated MSL, planes | 64 B | 2 | 40.6 | 1.57 |
+| Metal interpreter | 16 B | 5 | 157.9 | 0.41 |
+| Metal interpreter | 32 B | 5 | 112.8 | 0.57 |
+| Metal interpreter | 64 B | 5 | 80.9 | 0.79 |
+
+The launches column counts the halves the budget split the batch into. One launch over all
+runs was repeated because a look-back ran out of polls. Narrow lanes need more groups, so more
+look-back state and more output lanes, and the budget splits them more often.
 - **Carries stay inside a file.** A file's first group starts from the identity; its other groups
   look back only to earlier groups of the same file.
 - **Generated MSL** has a function per program and one kernel. **The interpreter** reads each

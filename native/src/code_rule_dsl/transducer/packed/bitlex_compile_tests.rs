@@ -408,3 +408,55 @@ fn the_cpu_executors_take_a_batch() {
         }
     }
 }
+
+/// The batch's cost per 64-byte block on real files: JSON's program (masks, tree rows and the
+/// fallback) over every file listed in `RERAIL_JSON_FILES` (one path a line), in one batch.
+/// Generated MSL and the Metal interpreter at every lane width (GPU seconds, best of 3), and
+/// Cranelift's one call per program (thread CPU time, best of 3). Run by name: a measurement.
+#[test]
+#[ignore = "a measurement; run by name with RERAIL_JSON_FILES"]
+fn json_batch_cost_per_block() {
+    let list = std::env::var("RERAIL_JSON_FILES").expect("RERAIL_JSON_FILES: a file of paths");
+    let bytes: Vec<Vec<u8>> = std::fs::read_to_string(&list)
+        .expect("reads the list")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|path| std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}")))
+        .collect();
+    let program = batch_programs().remove(0);
+    let native = native_ir::lower(&program).expect("lowers").block_programs.remove(0);
+    let files: Vec<block::BatchFile<'_>> = bytes.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+    let total: usize = bytes.iter().map(Vec::len).sum();
+    let blocks: usize = bytes.iter().map(|b| b.len().div_ceil(64).max(1)).sum();
+    println!("{} files, {total} bytes, {blocks} blocks; {} instructions", files.len(), native.insts.len());
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let slices: Vec<&[u8]> = bytes.iter().map(Vec::as_slice).collect();
+    let runs = native_cpu_block::run_batch(&[&compiled], &files);
+    let fallback = runs.iter().filter(|r| r.outputs[0].iter().any(|&w| w != 0)).count();
+    println!("files to the fallback: {fallback}");
+    let s = compiled.batch_cpu_seconds(&slices, 3);
+    println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, REPEATED_LAUNCHES, run_split};
+        let before = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed);
+        for executor in [Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes), Executor::Interpreter] {
+            for width in LaneWidth::ALL {
+                let (mut best, mut launches) = (f64::MAX, 0);
+                for _ in 0..3 {
+                    let run = run_split(&[&native], &files, width, executor, 64).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));
+                    assert!(run.files == runs, "{executor:?} equals Cranelift");
+                    best = best.min(run.seconds);
+                    launches = run.launches;
+                }
+                println!(
+                    "{executor:?}, {:2}-byte lanes, {launches} launches: {:.3} ns per block, {:.2} GB/s (GPU time, best of 3)",
+                    width.bytes(),
+                    best / blocks as f64 * 1e9,
+                    total as f64 / best / 1e9
+                );
+            }
+        }
+        println!("repeated launches: {}", REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed) - before);
+    }
+}
