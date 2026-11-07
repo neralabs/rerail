@@ -148,7 +148,7 @@ pub(super) fn score_python(program: &str) -> (usize, BTreeMap<String, Departure>
 }
 
 fn program(name: &str) -> String {
-    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
+    crate::code_rule_dsl::tools::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
 }
 
 /// Where `calls.rr` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
@@ -515,8 +515,8 @@ at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
 #[test]
 fn imports_resolve_into_a_library_and_load_its_stubs() {
     // fixtures/python/world_load: ws/main.py imports os.path, json and collections; ws/rerail.env says `lib =
-    // ../lib`, a stub tree with os/__init__.pyi, os/path.pyi, collections/__init__.pyi and a VERSIONS file. The rules
-    // walk it with dir_entry and file_line and load what resolves (t21 E1, E2, E4); json is in no root.
+    // ../ts/stdlib`, a stub tree with os/__init__.pyi, os/path.pyi, collections/__init__.pyi and a VERSIONS file. The
+    // rules walk it with dir_entry and file_line and load what resolves (t21 E1, E2, E4); json is in no root.
     let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
     let rule = r#"
 .decl doc(d: number, path: symbol, module: symbol)
@@ -559,6 +559,24 @@ own(n) :- imp(n, _).
     assert_eq!(read("got"), "collections\tcollections\tlibrary\nos\tos\tlibrary\nos.path\tos\tlibrary\n");
     // The loaded documents' rows are not the corpus's: main.py's three imports only.
     assert_eq!(read("own").lines().count(), 3, "{}", read("own"));
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn calls_into_the_standard_library_reach_its_stubs() {
+    // fixtures/python/world_load/ws: `python.typeshed = ../ts`, a miniature typeshed. calls.rr includes
+    // python/modules.rr, which resolves `import os.path` into ts/stdlib/os/path.pyi and loads it: `os.path.join("a",
+    // "b")` targets the stub's `join`, and no row is about a stub. The stub defines `join` in both branches of a
+    // `sys.version_info` test: only the branch the run's Python (3.13, the default) takes binds it.
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("stdlib");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let rows: Vec<(&str, &str)> = text.lines().filter_map(|l| l.split_once('\t')).collect();
+    // Cells are `path:node`: the one call is main.py's, its target in the stub.
+    assert_eq!(rows.len(), 1, "{text}");
+    assert!(rows[0].0.starts_with("main.py:"), "{text}");
+    assert!(rows[0].1.rsplit_once(':').unwrap().0.ends_with("world_load/ts/stdlib/os/path.pyi"), "{text}");
     let _ = std::fs::remove_dir_all(&out);
 }
 
@@ -637,7 +655,14 @@ fn benchmark_python_calls_program_corpus() {
     let recording: Json = serde_json::from_str(&std::fs::read_to_string(std::env::var("RERAIL_PYTHON_CALLS").unwrap()).unwrap()).unwrap();
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi");
-    let report = corpus::run(&format!("{}\n{JEDI_SPANS}", program("calls")), &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so calls.rr loads the standard library's stubs (t21).
+    let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
+    let mut text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    // `RERAIL_PYTHON_ROUNDS`: the rounds' bound k, for measuring what more rounds decide.
+    if let Ok(k) = std::env::var("RERAIL_PYTHON_ROUNDS") {
+        text = text.replace(".pragma \"cross-rounds\" \"4\"", &format!(".pragma \"cross-rounds\" \"{k}\""));
+    }
+    let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("calls.rr over {} files: rounds {:?}; {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.rounds, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
     let rows = |rel: &str| -> Vec<Vec<String>> {
@@ -651,20 +676,29 @@ fn benchmark_python_calls_program_corpus() {
         line(src, s.min(src.len()))
     };
     let key = |n: &str| (file(n), at[n].0, at[n].1);
+    // A target in a loaded document (a stub, named by its absolute path) is outside the workspace: Jedi's
+    // `external`. Its rows are not written, so it has no span here.
+    let library = |f: &str| f.starts_with('/');
+    let mut target = |n: &str| -> (String, u64) {
+        let f = file(n);
+        if library(&f) { ("<library>".to_owned(), 0) } else { let s = at[n].0; let l = line_of(&f, s); (f, l) }
+    };
     let open: BTreeSet<(String, usize, usize)> = rows("call_open").iter().map(|r| key(&r[0])).collect();
     let mut named: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
     for r in rows("call_target") {
-        let (f, s) = (file(&r[1]), at[&r[1]].0);
-        named.entry(key(&r[0])).or_default().insert((f.clone(), line_of(&f, s)));
+        let t = target(&r[1]);
+        named.entry(key(&r[0])).or_default().insert(t);
     }
     let mut classes: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
     for r in rows("rr_jedi_cls") {
-        let (f, s) = (file(&r[1]), at[&r[1]].0);
-        classes.entry(key(&r[0])).or_default().insert((f.clone(), line_of(&f, s)));
+        let t = target(&r[1]);
+        classes.entry(key(&r[0])).or_default().insert(t);
     }
     let _ = std::fs::remove_dir_all(&out);
     let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
     let mut examples: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    // `RERAIL_PYTHON_CALLS_DUMP`: each call's category, `path:line<TAB>category<TAB>jedi`, to compare two runs.
+    let mut dump = String::new();
     for corpus in recording["corpora"].as_array().unwrap() {
         for (path, records) in corpus["records"].as_object().unwrap() {
             for record in records.as_array().unwrap() {
@@ -678,11 +712,19 @@ fn benchmark_python_calls_program_corpus() {
                 }
                 if open.contains(&k) {
                     *tally.entry("program unknown, jedi decided").or_default() += 1;
+                    dump += &format!("{path}:{}\tunknown\t{decided:?}\n", record[2]);
                     continue;
                 }
                 *tally.entry("both decided").or_default() += 1;
-                let defs = named.get(&k).cloned().unwrap_or_default();
-                let cls = classes.get(&k).cloned().unwrap_or_default();
+                let lib = ("<library>".to_owned(), 0);
+                let reaches_library = named.get(&k).is_some_and(|d| d.contains(&lib)) || classes.get(&k).is_some_and(|c| c.contains(&lib));
+                let mut defs = named.get(&k).cloned().unwrap_or_default();
+                let mut cls = classes.get(&k).cloned().unwrap_or_default();
+                defs.remove(&lib);
+                cls.remove(&lib);
+                if reaches_library {
+                    *tally.entry("(program reaches a stub)").or_default() += 1;
+                }
                 let at_of = |t: &Json| (t[1].as_str().unwrap().to_owned(), t[2].as_u64().unwrap());
                 let ok = decided.iter().any(|t| match t[0].as_str().unwrap() {
                     "def" => defs.contains(&at_of(t)),
@@ -699,6 +741,7 @@ fn benchmark_python_calls_program_corpus() {
                     "program another definition"
                 };
                 *tally.entry(what).or_default() += 1;
+                dump += &format!("{path}:{}\t{what}\t{decided:?}\n", record[2]);
                 if what != "agree" {
                     let list = examples.entry(what).or_default();
                     if list.len() < 12 {
@@ -707,6 +750,9 @@ fn benchmark_python_calls_program_corpus() {
                 }
             }
         }
+    }
+    if let Ok(path) = std::env::var("RERAIL_PYTHON_CALLS_DUMP") {
+        std::fs::write(path, dump).unwrap();
     }
     for (what, n) in &tally {
         println!("{n:>8}  {what}");

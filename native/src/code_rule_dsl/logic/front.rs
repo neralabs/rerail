@@ -50,7 +50,9 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
         }
         let start = pos;
         let rest = &src[pos..];
-        if rest.starts_with("//") {
+        // An `#include` (a `.rr` program's, passed through by `rr::translate`) is a directive the files it names
+        // resolve: the text parse reads past it, as `rr::parse` does.
+        if rest.starts_with("//") || rest.starts_with("#include") {
             pos += rest.find('\n').unwrap_or(rest.len());
             continue;
         }

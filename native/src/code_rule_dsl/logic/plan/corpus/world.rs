@@ -21,7 +21,7 @@
 //! to the root or absolute), are read. A path elsewhere, or missing, has no entries or lines.
 
 use super::{Error, Result, front};
-use crate::code_rule_dsl::logic::rr::{WORLD, quote};
+use crate::code_rule_dsl::logic::rr::WORLD;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -158,29 +158,23 @@ impl World {
         Ok(grew)
     }
 
-    /// The answers as `.rr` facts, for the relations the program declares.
-    pub(super) fn facts(&self, prog: &front::Program) -> String {
-        let mut out = String::new();
+    /// The answers as rows (JSON: a relation's rows, each a list of strings and numbers), for the relations the
+    /// program declares. Rows, not `.rr` text: parsing thousands of facts was most of a round.
+    pub(super) fn facts(&self, prog: &front::Program) -> serde_json::Value {
+        use serde_json::json;
+        let mut out = serde_json::Map::new();
         if prog.decls.contains_key("dir_entry") {
-            for (dir, entries) in &self.dirs {
-                for (name, is_dir) in entries {
-                    out += &format!("dir_entry({}, {}, {}).\n", quote(dir), quote(name), i32::from(*is_dir));
-                }
-            }
+            let rows: Vec<_> = self.dirs.iter().flat_map(|(dir, entries)| entries.iter().map(move |(name, is_dir)| json!([dir, name, i64::from(*is_dir)]))).collect();
+            out.insert("dir_entry".into(), rows.into());
         }
         if prog.decls.contains_key("file_line") {
-            for (path, lines) in &self.files {
-                for (i, line) in lines.iter().enumerate() {
-                    out += &format!("file_line({}, {}, {}).\n", quote(path), i + 1, quote(line));
-                }
-            }
+            let rows: Vec<_> = self.files.iter().flat_map(|(path, lines)| lines.iter().enumerate().map(move |(i, l)| json!([path, i + 1, l]))).collect();
+            out.insert("file_line".into(), rows.into());
         }
         if prog.decls.contains_key(LOADED) {
-            for l in self.loads.values() {
-                out += &format!("{LOADED}({}, {}, {}, {}).\n", quote(&l.path), quote(&l.module), quote(&l.grammar), quote(&l.role));
-            }
+            out.insert(LOADED.into(), self.loads.values().map(|l| json!([l.path, l.module, l.grammar, l.role])).collect::<Vec<_>>().into());
         }
-        out
+        serde_json::Value::Object(out)
     }
 
     /// The options of a run over the answers so far: `round` is `"discover"` or `"final"`.
@@ -203,6 +197,16 @@ impl World {
             self.refused.len(),
             self.dropped
         )
+    }
+}
+
+/// Adds the rows `facts` gives ([`World::facts`]) to `prog`'s facts.
+pub(super) fn add_facts(prog: &mut front::Program, facts: Option<&serde_json::Value>) {
+    for (rel, rows) in facts.and_then(|f| f.as_object()).into_iter().flatten() {
+        let rows = rows.as_array().into_iter().flatten().filter_map(|r| r.as_array()).map(|r| {
+            r.iter().map(|v| v.as_i64().map_or_else(|| front::Value::Str(v.as_str().unwrap_or_default().to_owned()), front::Value::Int)).collect::<Vec<_>>()
+        });
+        prog.facts.entry(rel.clone()).or_default().extend(rows);
     }
 }
 
