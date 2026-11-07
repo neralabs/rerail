@@ -7842,3 +7842,25 @@ No engine build or repository benchmark was needed for this rule correction.
 The earlier checkpoint receipts retain their exact harness hashes and remain historical.
 The inventory remains 60 drafts and 40 absent translations. Full migration acceptance remains false.
 The configured reporter also rejects its disabled policy. Its control retains the complete native report.
+
+
+## 2026-11-07: Final-shape merge and the 61st draft
+
+The engine now merges Final rerail shape through af51b565dcda2ef9de05ecda996b46e7c42677cf.
+The merge retains the local typed readers and bulk capture inserts instead of restoring older implementations.
+It also retains demanded, cached grammar verdicts and raw-text views on invalid Python.
+Upstream chunk-mix statistics and batch release are integrated. The guest-document proposal remains documentation only.
+A new regression found that error directives wrote the old violation index but missed the public diagnostic transport.
+Native lowering now publishes syntax and input errors through the same lossless report format.
+All 40 focused reader tests pass; one upstream test remains ignored, and the broad external syntax checker remains excluded.
+All 12 tape-view tests pass. The merge and repair unit builds took 56.41 and 44.60 seconds.
+The CLI build took 46.48 seconds. These compile times are separate from execution.
+
+The sync/async-signature rule is newly translated, rather than repaired from an existing draft.
+Its original positive test first failed against an empty native policy.
+The final Datalog predicate preserves dictionary overwrites, insertion order, positional-parameter selection, annotation preference, and async flags.
+Five original tests and five complete API returns pass. All 52 supplemental API cases and 21 reporter cases pass.
+Both positive mutation controls reject disabled detection.
+The rule needs no Python producer or new rule-specific native detector.
+The inventory is 61 drafts and 39 absent translations. Full migration acceptance remains false.
+No repository cold run was performed. No Linear tickets were created.

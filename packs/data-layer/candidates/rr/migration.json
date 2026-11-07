@@ -1114,6 +1114,13 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "packs/data-layer/candidates/rr/sync-async-signatures.rr",
+      "sha256": "e53898844d12fe6686deec8a36692f2b854da475d16948a79ba7efcff4e083c4",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_sync_async_signatures.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -1467,8 +1474,9 @@
       "batch": 5,
       "legacyPath": "packs/data-layer/candidates/rules/data-layer-sync-async-signatures.json",
       "legacySha256": "ef99509b0a370a866cf85e124284c7bf90ce2e8d3e34f1decf10fae408c8a3c7",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "packs/data-layer/candidates/rr/sync-async-signatures.rr",
+      "ruleSha256": "e53898844d12fe6686deec8a36692f2b854da475d16948a79ba7efcff4e083c4"
     },
     {
       "check": "async_sync_delegation",
@@ -2028,12 +2036,13 @@
   ],
   "engineSource": {
     "branch": "jeremy/data-layer-rr-engine-20261106",
-    "commit": "96329a41e40555871833f81280b60bd27e57965a",
+    "commit": "9812044892dbfef36c4fcb375452e8f6b6ee0acc",
     "finalShapeCommit": "5332989f8",
     "qualityBaseCommit": "8f399baeae405bdad5fee4d65e123c25076f5ccf",
     "status": "Integration candidate; primary production addon unchanged",
     "syntaxCommit": "fa50cd94c",
-    "latestFinalShapeSurveyCommit": "9d3a2328cc256e58e45dee1d36c47a09708b9f38",
-    "latestQualitySurveyCommit": "cb569f94866707aaf2269fc35ea97fa5c14b7dc3"
+    "latestFinalShapeSurveyCommit": "af51b565dcda2ef9de05ecda996b46e7c42677cf",
+    "latestQualitySurveyCommit": "cb569f94866707aaf2269fc35ea97fa5c14b7dc3",
+    "mergedFinalShapeCommit": "af51b565dcda2ef9de05ecda996b46e7c42677cf"
   }
 }

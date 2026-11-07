@@ -39,7 +39,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **60 target drafts and 40 absent translations**. None has full acceptance yet.
+The current inventory contains **61 target drafts and 39 absent translations**. None has full acceptance yet.
 Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
 Reader success is a syntax milestone. It is not rule completion.
 
@@ -429,3 +429,33 @@ Both the direct assertion and reporter controls reject disabled detection.
 - [Supplemental API and reporter contracts](../fixtures/host/data-layer-port/rr-removed-native-supplemental-contracts.json.gz).
 - [API defects before repair](../fixtures/host/data-layer-port/rr-removed-ast-red.json.gz).
 - [Reporter multiplicity before repair](../fixtures/host/data-layer-port/rr-removed-reporter-red.json.gz).
+
+
+## Final-shape merge and sync/async signatures, 7 November
+
+The integration engine merges Final rerail shape through `af51b565dcda2ef9de05ecda996b46e7c42677cf`.
+Its checkpoint is `9812044892dbfef36c4fcb375452e8f6b6ee0acc`.
+The merge retains typed repository readers, bulk capture insertion, and demanded Python grammar verdicts.
+Raw-text rules keep source views when syntax fails. AST rules can require a successful verdict.
+Chunk statistics now account for file mix, and corpus bindings release their completed batches.
+Structural digests remain distinct from the canonical serialization required by existing signed hashes.
+The proposed guest-document design is merged as documentation, not claimed as implemented.
+
+The new `sync_async_signatures` port runs its mismatch predicate in Datalog.
+It preserves first non-self positional-parameter selection and ignores positional-only and keyword-only parameters as the source does.
+It keeps the last recordable definition of each bare name, including nested methods and untyped signatures.
+Its output order retains the dictionary's first insertion order.
+The native type projection selects the first interesting type through exactly the source's annotation edges.
+It does not serialize unrelated Constant values, which cannot produce a mismatch.
+
+All five original tests pass, with five complete nested DTO comparisons and no host-only cases.
+The 52 additional API cases cover all transaction/connection combinations, annotation forms, duplicate definitions, and actual async flags.
+All 21 configured reporter cases pass, including Unicode layer-directory digits and exact source roots.
+Both the original positive test and the reporter reject disabled detection.
+Original display strings normalize only the caller's temporary root. Detector logic never runs in Python.
+
+- [Original signature assertions](../fixtures/host/data-layer-port/rr-signatures-native-direct-contracts.json.gz).
+- [Supplemental API and reporter contracts](../fixtures/host/data-layer-port/rr-signatures-native-supplemental-contracts.json.gz).
+- [Original positive test before the port](../fixtures/host/data-layer-port/rr-signatures-first-positive-red.json.gz).
+
+The inventory is 61 drafts and 39 absent translations. Full acceptance remains false.

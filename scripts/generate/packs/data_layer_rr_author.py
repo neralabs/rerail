@@ -140,6 +140,7 @@ def main():
     from data_layer_rr_dynamic import dynamic_module_loading
     from data_layer_rr_ast import classvar_check, forwardref
     from data_layer_rr_types import type_safety_patterns
+    from data_layer_rr_signatures import sync_async_signatures
     from data_layer_rr_aliases import data_layer_compat_aliases
     generators = [('removed_compat_surfaces', removed), ('versioned_lifecycle_legacy_surfaces', lifecycle),
                   ('permission_error', permission_error),
@@ -154,6 +155,7 @@ def main():
                   ('type_safety_patterns', lambda s, t: type_safety_patterns(s, t, header)),
                   ('forwardref', lambda s, t: forwardref(s, t, header)),
                   ('data_layer_compat_aliases', lambda s, t: data_layer_compat_aliases(s, t, header)),
+                  ('sync_async_signatures', lambda s, t: sync_async_signatures(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     for check, generate in generators:
         entry = by_check[check]
