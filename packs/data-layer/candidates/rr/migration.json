@@ -1005,10 +1005,17 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
-      "sha256": "fe6cb20060963766c446edae143d49d4f1dd0da51e0ec31cb3fc5c8cb74ea120",
+      "sha256": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
       "origin": "authored",
       "upstreamPath": "scripts/lint_removed_compat_surfaces.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "fe6cb20060963766c446edae143d49d4f1dd0da51e0ec31cb3fc5c8cb74ea120",
+          "after": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
+          "reason": "Preserve normalized identifiers, semantic visit order, distinct configured reporter events, and exact configured scope/source gates"
+        }
+      ]
     },
     {
       "destination": "packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
@@ -1117,7 +1124,7 @@
       "legacySha256": "4c8214eb6c3e30bc6afd0f3d02d25cc2a522e0af1f0343e1e1c64242ead43d6e",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
-      "ruleSha256": "fe6cb20060963766c446edae143d49d4f1dd0da51e0ec31cb3fc5c8cb74ea120"
+      "ruleSha256": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6"
     },
     {
       "check": "versioned_lifecycle_legacy_surfaces",

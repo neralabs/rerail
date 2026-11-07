@@ -42,15 +42,40 @@ def removed(source, target):
     text = header('removed_compat_surfaces', target)
     text += '.decl removed_name(x: symbol)\n'
     text += ''.join(f'removed_name({json.dumps(x)}).\n' for x in sorted(values))
+    text += '.decl removed_root(x: symbol)\n'
+    text += ''.join(f'removed_root({json.dumps(x)}).\n' for x in constants(source / 'scripts/lint_removed_compat_surfaces.py')['_DEFAULT_ROOTS'])
     return text + '''
 .decl removed_symbol(n: node, x: symbol)
-removed_symbol(n, x) :- ast_name(n, x), removed_name(x).
-removed_symbol(n, x) :- kind(n, "attribute"), field(n, "attribute", a), text(a, x), removed_name(x).
-removed_symbol(n, x) :- def_name(n, x), removed_name(x).
-// The source detector deduplicates by (line, name), across definitions, Names and Attributes.
-.violation Removed(at: span, name: symbol) code "RCS001"
+removed_symbol(n, @nfkc(raw)) :- ast_name(n, raw), removed_name(@nfkc(raw)).
+removed_symbol(n, @nfkc(raw)) :- kind(n, "attribute"), field(n, "attribute", a), text(a, raw), removed_name(@nfkc(raw)).
+removed_symbol(n, @nfkc(raw)) :- def_name(n, raw), removed_name(@nfkc(raw)).
+.decl removed_hidden(d: number)
+removed_hidden(d) :- path_part(d, "tests").
+removed_hidden(d) :- path_part(d, "test").
+removed_hidden(d) :- path_part(d, ".git").
+removed_hidden(d) :- path_part(d, ".venv").
+removed_hidden(d) :- path_part(d, "venv").
+removed_hidden(d) :- path_part(d, "__pycache__").
+removed_hidden(d) :- path_part(d, "tmp").
+.decl removed_selected(d: number)
+removed_selected(d) :- doc(d, _, _), option("entryPoint", "scan_file").
+removed_selected(d) :- doc(d, p, _), !option("entryPoint", _), file_name(d, f), suffix(".py", f),
+    removed_root(root), prefix(cat(root, "/"), p), !removed_hidden(d),
+    source(d, sp), text(sp, t), removed_name(name), contains(name, t).
+.decl removed_hit(d: number, l: number, name: symbol, ordinal: number)
+removed_hit(d, l, x, i) :- removed_symbol(n, x), docof(n, d), removed_selected(d), line(n, l),
+    visit_index(n, i), !syntax_error(d, _, _).
+// scan_file deduplicates by line and name, retaining the first semantic visit.
+.decl removed_first(d: number, l: number, name: symbol, ordinal: number)
+removed_first(d, l, x, first) :- removed_hit(d, l, x, _), first = min i : { removed_hit(d, l, x, i) }.
+.violation RemovedAPI(at: span, name: symbol, ordinal: number) code "RCS001"
     "removed compatibility surface '{name}' must not be reintroduced"
-Removed(@place(p, l), x) :- removed_symbol(n, x), docof(n, d), doc(d, p, _), line(n, l), !syntax_error(d, _, _).
+RemovedAPI(@place(p, l), x, i) :- removed_first(d, l, x, i), doc(d, p, _), option("entryPoint", "scan_file").
+// The configured reporter preserves each collector event, including repeated names on one line.
+.violation Removed(at: node, name: symbol, ordinal: number) code "RCS001"
+    "removed compatibility surface '{name}' must not be reintroduced"
+Removed(n, x, i) :- removed_symbol(n, x), docof(n, d), removed_selected(d), visit_index(n, i),
+    !option("entryPoint", _), !syntax_error(d, _, _).
 '''
 
 

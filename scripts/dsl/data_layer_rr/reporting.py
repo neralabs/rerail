@@ -71,9 +71,12 @@ def run(args):
                     if len(words) != 2:
                         raise ValueError('Unsupported compiled severity metadata: ' + text)
                     severities[words[0]] = words[1]
+            native_rows = result['diagnostics']
+            if case['check'] == 'removed_compat_surfaces':
+                native_rows = sorted(native_rows, key=lambda r: (r['path'], r['parameters']['ordinal']))
             actual = [dict(linter_name=identity.removeprefix(prefix).replace('-', '_'), code=r['code'],
                 path=r['path'], line=r['line'], message=r['message'],
-                severity=severities.get(r['clause'], 'hard-fail')) for r in result['diagnostics']]
+                severity=severities.get(r['clause'], 'hard-fail')) for r in native_rows]
             program = result['programInputs']
             phases = result['phases']
         else:
@@ -95,7 +98,7 @@ def run(args):
                     line=v.line, message=v.message, severity=v.severity) for v in plugin.reporter(view)]
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
-        if native:
+        if native and case['check'] != 'removed_compat_surfaces':
             last = {'type_safety_patterns': 'message', 'forwardref': 'code', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code'}[case['check']]
             actual.sort(key=lambda row: (row['path'], row['line'], row[last], *([row['message']] if case['check'] == 'hnsw_architecture' else [])))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)
@@ -107,7 +110,7 @@ def run(args):
             if expected['id'] != case['id']:
                 raise ValueError('Reporter case identity changed')
             try:
-                if case['check'] == 'hnsw_architecture':
+                if case['check'] in {'hnsw_architecture', 'removed_compat_surfaces'}:
                     row['comparisonContract'] = 'File groups are unordered (source FactEngine.as_completed); every in-file value, duplicate, and order is exact'
                     compare(reporter_file_groups(expected['value']), reporter_file_groups(actual))
                 else:

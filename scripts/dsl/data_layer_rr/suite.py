@@ -377,10 +377,11 @@ class Suite:
             else:
                 source = path.read_text()
             rows = self.native(check, entry, [dict(path=path.name, source=source)])
-            rows.sort(key=lambda r: (r['line'], r['message']))
             if check == 'removed_compat_surfaces':
+                rows.sort(key=lambda r: r['parameters']['ordinal'])
                 location = path.relative_to(module._REPO_ROOT).as_posix() if path.is_relative_to(module._REPO_ROOT) else path.as_posix()
                 return tuple(module.Violation(location, r['line'], r['code'], r['message']) for r in rows)
+            rows.sort(key=lambda r: (r['line'], r['message']))
             return [module.Violation(path, r['parameters']['cls'], r['parameters']['method'], r['line']) for r in rows]
 
         if check == 'no_source_inspection':

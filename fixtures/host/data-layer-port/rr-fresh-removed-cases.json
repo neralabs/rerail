@@ -863,6 +863,310 @@
           "path": "misc/a.txt"
         }
       }
+    },
+    {
+      "id": "removed-global",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "global TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-nonlocal",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def f():\n    nonlocal TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-except-name",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try: pass\nexcept ValueError as TimerClaim: pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-import-direct",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "import TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-import-alias",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "import anything as TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-with-target",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "with source() as TimerClaim: pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-comprehension",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x = [TimerClaim for TimerClaim in data]\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-class-pattern",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "match x:\n    case TimerClaim(): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-pattern-keyword",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "match x:\n    case Thing(TimerClaim=_): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-except-star",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try: pass\nexcept* TimerClaim: pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-string-annotation",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x: \"TimerClaim\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-annotation",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x: TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-type-alias",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "type TimerClaim = object\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-parameter-name",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "type Alias[TimerClaim] = object\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-parameter-bound",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def f[T: TimerClaim](): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-fstring",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x = f\"TimerClaim {TimerClaim}\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-del",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "del TimerClaim\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-lambda-parameter",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x = lambda TimerClaim: 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
+    },
+    {
+      "id": "removed-named-expression",
+      "check": "removed_compat_surfaces",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "x = (TimerClaim := 1)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        }
+      }
     }
   ]
 }

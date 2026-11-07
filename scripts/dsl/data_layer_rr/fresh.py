@@ -15,8 +15,6 @@ from types import SimpleNamespace
 
 from dto import canonical
 from migration import ROOT, PIN, git, sha, compare, read_json, write_json
-from suite import Suite
-from native_guard import codes
 
 
 def arguments(values, root):
@@ -80,6 +78,8 @@ def run(args):
     report['harnessFiles'] = {p.relative_to(ROOT).as_posix(): sha(p.read_bytes()) for p in harness_paths}
     harness_before = {p.resolve(): sha(p.read_bytes()) for p in (ROOT / 'scripts/dsl').rglob('*.py')}
     if native:
+        from suite import Suite
+        from native_guard import codes
         engine = args.engine.resolve()
         report['engineSha256'] = sha(engine.read_bytes())
         report['oracleSha256'] = sha(args.oracle.read_bytes())

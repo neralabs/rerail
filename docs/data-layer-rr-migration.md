@@ -402,3 +402,30 @@ This regression run does not recertify those rules' older supplemental or report
 - [HNSW API and reporter contracts](../fixtures/host/data-layer-port/rr-hnsw-native-supplemental-contracts.json.gz).
 - [Native Constant TDD ladder](../fixtures/host/data-layer-port/rr-hnsw-native-constant-ladder.json.gz).
 - [Three-rule original regression](../fixtures/host/data-layer-port/rr-three-hnsw-regression.json.gz).
+
+
+## Removed compatibility surfaces, 7 November
+
+This rule now passes all four original tests, 73 supplemental API cases, and 15 configured reporter cases.
+The original positive control rejects disabled detection. The original direct suite has no host-only cases.
+Supplemental cases cover every forbidden name, Unicode normalization, duplicate occurrences, and AST name positions.
+They include globals, imports, exception bindings, patterns, annotations, type parameters, and assignment targets.
+
+The prior draft failed six API cases because it lost semantic visit order and identifier normalization.
+It also deduplicated configured reporter events. One source reporter returned three findings where that draft returned two.
+The direct API now deduplicates by line and name in first-visit order.
+The configured reporter retains every AST occurrence. Its source-trigger gate and file roots remain explicit in the policy.
+The generator preserves these corrections.
+
+The argument transport now distinguishes a path keyword dictionary from a path marker.
+Its unit tests run with the standard library. Pytest loads only when the native assertion runner starts.
+The tooling passes 38 tests, and both format tests pass.
+The previous HNSW checkpoint remains bound to its recorded harness hashes.
+The inventory still contains 60 drafts and 40 absent translations. Full migration acceptance remains false.
+
+Both the direct assertion and reporter controls reject disabled detection.
+
+- [Original removed-surface assertions](../fixtures/host/data-layer-port/rr-removed-native-direct-contracts.json.gz).
+- [Supplemental API and reporter contracts](../fixtures/host/data-layer-port/rr-removed-native-supplemental-contracts.json.gz).
+- [API defects before repair](../fixtures/host/data-layer-port/rr-removed-ast-red.json.gz).
+- [Reporter multiplicity before repair](../fixtures/host/data-layer-port/rr-removed-reporter-red.json.gz).

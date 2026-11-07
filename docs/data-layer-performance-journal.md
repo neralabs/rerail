@@ -7819,3 +7819,26 @@ All pass, including 224 native calls and 63 complete API returns. The 35 cases w
 No shard exceeded 39 seconds. Their previous supplemental and reporter receipts remain historical.
 The HNSW reporter also rejects a policy with all ten violation clauses disabled.
 The two format tests pass. Full migration acceptance remains false.
+
+
+## 2026-11-07: removed-surface API and reporter parity
+
+The unchanged original module passes all four tests through native execution, with four complete API-return comparisons.
+A 54-case audit first exposed six defects in visit order and identifier normalization.
+The expanded 73-case corpus passes. It checks every forbidden name and additional AST name positions.
+These cases include positive findings and clean declaration contexts. They are supplemental, not original pytest cases.
+
+The configured reporter preserves AST occurrences, while scan_file deduplicates by line and name.
+The former draft reported two findings where the source reporter reported three.
+The repaired policy has separate outputs for these two contracts. All 15 reporter cases pass.
+The generator retains normalization, first-visit ordering, source gates, and configured scope.
+An unchanged original positive test rejects the disabled policy.
+
+The supplemental harness initially confused a path keyword dictionary with a path marker.
+A failing unit established that transport error. The fix preserves both dictionary and path types.
+The format suite then exposed an unnecessary pytest import in that pure helper.
+Runner imports now load only during native assertion execution. All 38 tooling tests and both format tests pass.
+No engine build or repository benchmark was needed for this rule correction.
+The earlier checkpoint receipts retain their exact harness hashes and remain historical.
+The inventory remains 60 drafts and 40 absent translations. Full migration acceptance remains false.
+The configured reporter also rejects its disabled policy. Its control retains the complete native report.
