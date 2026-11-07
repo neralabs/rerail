@@ -1249,6 +1249,20 @@ fn stage1_loop_keeps_values_in_registers() {
     assert_eq!(carried_params(&compiled.clif), words, "stage 1's carried state is not packed");
 }
 
+/// Stage 1's loop is simdjson's size (decision 0049): one reduction per 64-bit mask and one
+/// lookup per table for every class, at most 150 instructions per 64 bytes.
+#[test]
+#[cfg(target_arch = "aarch64")]
+#[ignore = "red guard (decision 0049): on at step 2, stage 1's codegen"]
+fn stage1_loop_is_simdjsons_size() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let lines = machine_loop(&compiled.disassembly);
+    eprintln!("stage 1 loop: {} instructions (at most 150)", lines.len());
+    assert!(lines.len() <= 150, "stage 1's loop: {} instructions (at most 150):\n{}", lines.len(), lines.join("\n"));
+}
+
 /// A program's carried state in bits (decision 0048): one bit per `toggle`, `after_odd_run` and
 /// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
 /// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one

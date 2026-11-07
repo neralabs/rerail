@@ -679,3 +679,59 @@ fn json_loop_keeps_values_in_registers() {
 /// traffic is live values in the body; the target is stage 1's 0.
 const JSON_LOOP: usize = 1939;
 const JSON_LOOP_STACK: usize = 164;
+
+// --- Tier 1 is simdjson's stage 1 (decision 0049) ---------------------------------------------
+//
+// A language's block program (tier 1) does only the work that needs every byte: one
+// classification, the string state, the token starts and the per-byte errors. Everything about
+// a token (its kind, its text's checks, its place in the tree) is tier 2's, once per token.
+
+/// A tier-1 program's violations: more string state than simdjson's (one `after_odd_run`, one
+/// `toggle`), a `fill` (a run is a token's; tier 2 reads it from the token's text), or a look-back
+/// past the byte before (a token start looks one byte back, as simdjson's `follows`).
+fn tier1_violations(p: &block::BlockProgram) -> Vec<String> {
+    use super::block::BlockOp::*;
+    let count = |f: fn(&block::BlockOp) -> bool| p.ops.iter().filter(|op| f(op)).count();
+    let mut out = Vec::new();
+    let runs = count(|op| matches!(op, AfterOddRun(_)));
+    if runs > 1 {
+        out.push(format!("{runs} after_odd_runs (simdjson: 1, the escapes)"));
+    }
+    let toggles = count(|op| matches!(op, Toggle(_)));
+    if toggles > 1 {
+        out.push(format!("{toggles} toggles (simdjson: 1, the strings)"));
+    }
+    let fills = count(|op| matches!(op, Fill(..)));
+    if fills > 0 {
+        out.push(format!("{fills} fills (a run is a token's: tier 2)"));
+    }
+    for (at, op) in p.ops.iter().enumerate() {
+        if let Prev(_, k) = *op
+            && k > 1
+        {
+            out.push(format!("%{at}: a look-back of {k} bytes (a token start looks 1 back)"));
+        }
+    }
+    out
+}
+
+/// JSON's tier 1 is simdjson's stage 1: no more state, at most 4 carried bits, and a Cranelift
+/// loop of at most 150 instructions with no stack traffic (simdjson's is about 100-150 per 64
+/// bytes).
+#[test]
+#[cfg(target_arch = "aarch64")]
+#[ignore = "red guard (decision 0049): on at step 3, when json.bitlex's dense part is stage 1's"]
+fn json_tier1_is_simdjsons_stage1() {
+    let program = json_program();
+    let p = &program.block_programs()[0];
+    let violations = tier1_violations(p);
+    let bits = super::block_tests::state_bits(p);
+    let native = native_ir::lower(&program).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let lines = super::block_tests::machine_loop(&compiled.disassembly);
+    let (stack, _) = super::block_tests::loop_costs(&lines);
+    eprintln!("json tier 1: {} violations, {bits} state bits, loop {} instructions, {stack} stack", violations.len(), lines.len());
+    assert!(violations.is_empty(), "{} violations:\n{}", violations.len(), violations.join("\n"));
+    assert!(bits <= 4, "json tier 1: {bits} state bits (at most 4)");
+    assert!(lines.len() <= 150 && stack == 0, "json tier 1 loop: {} instructions (at most 150), {stack} stack loads or stores (0)", lines.len());
+}
