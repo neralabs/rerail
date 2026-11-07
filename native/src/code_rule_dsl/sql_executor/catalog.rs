@@ -15,9 +15,13 @@ const TABLES: &[&str] = &[
     "CREATE TEMP TABLE rr_plan(execution INTEGER NOT NULL, step INTEGER NOT NULL, stratum INTEGER NOT NULL, output TEXT NOT NULL, reads TEXT NOT NULL, sql TEXT NOT NULL, PRIMARY KEY (execution, step)) WITHOUT ROWID",
 ];
 
-/// A relation's role in its program: read from outside, made natively, a lattice, or derived.
-fn kind(program: &front::Program, name: &str) -> &'static str {
-    if program.inputs.iter().any(|i| i == name) {
+/// A relation's role in its program: made by a SQL producer, read from outside, made natively, a
+/// lattice, or derived.
+fn kind(run: &session::Execution, name: &str) -> &'static str {
+    let program = &run.program;
+    if run.producers.iter().any(|p| p == name) {
+        "sql"
+    } else if program.inputs.iter().any(|i| i == name) {
         "input"
     } else if program.natives.contains_key(name) {
         "native"
@@ -49,7 +53,7 @@ fn literal(l: &front::Literal) -> (&'static str, Option<&str>, bool, Option<Stri
 
 /// The column names of a typed view: the `.decl` names, unique ignoring case, or `present` for a
 /// logically nullary relation's unit column.
-fn view_columns(decl: &[(String, String)]) -> Vec<String> {
+pub(super) fn view_columns(decl: &[(String, String)]) -> Vec<String> {
     if decl.is_empty() {
         return vec!["present".into()];
     }
@@ -99,7 +103,7 @@ impl CodeRuleSqlExecutor {
             let program = &run.program;
             let steps = &run.emitted.program.steps;
             for (name, decl) in &program.decls {
-                let kind = kind(program, name);
+                let kind = kind(run, name);
                 let stratum = steps.iter().filter(|s| &s.output == name).map(|s| s.stratum).min();
                 let columns = view_columns(decl);
                 let physical = if program.nullary.contains(name) { 1 } else { decl.len() };

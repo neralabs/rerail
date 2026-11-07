@@ -461,3 +461,58 @@ fn the_catalog_lists_rules_relations_and_plans_and_names_their_columns() {
     assert_eq!(rows(&executor, "SELECT count(*) FROM rr_relation"), json!([[0]]));
     assert_eq!(rows(&executor, "SELECT count(*) FROM temp.sqlite_schema WHERE name = 'rr_rel_reach'"), json!([[0]]));
 }
+
+#[test]
+fn sql_producers_read_tables_and_derived_relations_and_refuse_cycles() {
+    let (_dir, mut executor) = executor();
+    edge(&mut executor, json!([[1, 2], [2, 3], [3, 4], [1, 5]]));
+    executor
+        .connection()
+        .execute_batch("CREATE TEMP TABLE team_api(name TEXT, owner TEXT); INSERT INTO team_api VALUES ('reach', 'core'), ('ends', 'web');")
+        .unwrap();
+    // Kind 1 reads an ordinary table; its symbol column is interned and joins a rule's constant.
+    // Kind 2 reads `reach` once it is complete, and a rule builds on the aggregate.
+    let program = r#"
+.decl edge(src: number, dst: number)
+.input edge
+.decl reach(src: number, dst: number)
+reach(x, y) :- edge(x, y).
+reach(x, z) :- reach(x, y), edge(y, z).
+.decl owner(rel: symbol, team: symbol)
+.input owner(IO=sql, query="SELECT name, owner FROM team_api")
+.decl fanout(src: number, n: number)
+.input fanout(IO=sql, query="SELECT src, count(*) FROM rr_rel_reach GROUP BY src")
+.decl wide(src: number)
+wide(s) :- fanout(s, n), n >= 3.
+.decl core_owned(rel: symbol)
+core_owned(r) :- owner(r, "core").
+.output wide, core_owned
+"#;
+    executor.run(program.into(), "python".into(), None).unwrap();
+    assert_eq!(rows(&executor, "SELECT src, n FROM rr_rel_fanout ORDER BY src"), json!([[1, 4], [2, 2], [3, 1]]));
+    assert_eq!(rows(&executor, "SELECT src FROM rr_rel_wide"), json!([[1]]));
+    assert_eq!(rows(&executor, "SELECT sym_text(rel) FROM rr_rel_core_owned"), json!([["reach"]]));
+    assert_eq!(
+        rows(&executor, "SELECT name, kind FROM rr_relation WHERE name IN ('owner', 'fanout') ORDER BY name"),
+        json!([["fanout", "sql"], ["owner", "sql"]])
+    );
+    assert_eq!(
+        rows(&executor, "SELECT reads FROM rr_plan WHERE output = 'fanout'"),
+        json!([["[\"reach\"]"]])
+    );
+    // Tuple maintenance cannot maintain a producer: the change fails and the session is unchanged.
+    let change = json!([{"name": "edge", "insert": [[5, 6]], "delete": []}]).to_string();
+    assert!(executor.apply_changes(change, None).unwrap_err().to_string().contains("SQL producers"));
+    assert_eq!(rows(&executor, "SELECT src, n FROM rr_rel_fanout WHERE src = 1"), json!([[1, 4]]));
+    // Recursion through a producer is refused.
+    let cycle = r#"
+.decl a(x: number)
+.decl b(x: number)
+.input b(IO=sql, query="SELECT x + 1 FROM rr_rel_a WHERE x < 3")
+a(1).
+a(x) :- b(x).
+.output a
+"#;
+    let err = executor.run(cycle.into(), "python".into(), None).unwrap_err().to_string();
+    assert!(err.contains("no recursion through SQL"), "{err}");
+}

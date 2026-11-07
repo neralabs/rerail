@@ -331,6 +331,12 @@ pub(super) fn maintain(
     changes: &mut BTreeMap<String, Delta>,
     limit: u32,
 ) -> Result<Value> {
+    if !run.producers.is_empty() {
+        return Err(error(format!(
+            "programs with SQL producers ({}) are rerun, not maintained: run the program again",
+            run.producers.join(", ")
+        )));
+    }
     let e = Arc::clone(&run.emitted);
     let arities: BTreeMap<_, _> = e.program.relations.iter().cloned().collect();
     let mut positions = BTreeMap::<String, u32>::new();

@@ -348,6 +348,16 @@ After every run, removal and reset, the session rebuilds a catalog of its retain
 For example, `SELECT src, dst FROM rr_rel_reach` reads `reach`, whose own columns are `c0, c1`. The `rr_` prefix is reserved.
 Design: `docs/sql-access/01-design.md`.
 
+### SQL producers
+
+A relation can take its rows from a SQL query:
+- `.input r(IO=sql, query="SELECT …")`.
+- The query may read session tables and the program's own relations, by name or through `rr_rel_<name>`.
+- The relation's step runs once every relation the query reads is complete. Rules that read `r` run after it.
+- Recursion through a producer is refused.
+- `symbol` columns are interned.
+- A program with producers is not tuple-maintained: `applyChanges` fails for it, and it must be run again.
+
 ## Execution boundary
 
 The planner emits seed statements and recursive delta statements.

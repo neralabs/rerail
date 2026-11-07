@@ -112,6 +112,29 @@ A producer is declared like a Soufflé `.input` with an IO parameter. Rules see 
 big_module($m) :- module_size($m, $c), $c > 500.
 ```
 
+**Built (step 2, `sql_executor/producers.rs`), in executor sessions:**
+- `.input r(IO=sql, query="…")` takes `r` out of the inputs and adds one step of its own stratum.
+  The scheduler orders strata by what their steps read, so no renumbering is needed.
+- SQLite resolves what the query reads. Inside a savepoint that is rolled back, each wave relation
+  gets a placeholder table and its typed view, and an authorizer records the tables the prepared
+  query reads. Emitter views count as the relations they read. The query must give the
+  declaration's number of columns.
+- A cycle through a producer is refused: "no recursion through SQL".
+- `symbol` columns go through `sym_atom`.
+- Pruning keeps every relation a producer's query names, so rules feeding a producer are not
+  dropped.
+- The catalog lists producers as kind `sql`. `rr_plan.reads` is the list SQLite resolved.
+- **Incremental updates are refused.** `applyChanges` and friends fail for a program with
+  producers ("are rerun, not maintained"), and the session keeps its previous results.
+
+**Not built yet:**
+- re-running such a program automatically on change;
+- invalidation by the ordinary tables a producer reads, which are not yet in the execution's
+  inputs;
+- the corpus path. Its input readers still refuse `IO=sql`.
+
+**Target design:**
+
 - **It is a wave step.** A producer is a `wave_step` row whose statement is
   `INSERT INTO new_<rel> <query>`. The scheduler runs it like any lowered rule, on the owner
   connection.

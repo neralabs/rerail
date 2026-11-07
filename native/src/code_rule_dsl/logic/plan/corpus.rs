@@ -30,6 +30,7 @@ pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod bridge;
 mod inputs;
+pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
 mod world;
 mod library;
 mod typing;

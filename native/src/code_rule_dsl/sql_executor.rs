@@ -21,6 +21,7 @@ mod indexes;
 mod live;
 mod maintenance;
 mod overlay;
+mod producers;
 mod reductions;
 mod walks;
 mod updates;
@@ -343,13 +344,13 @@ impl CodeRuleSqlExecutor {
     /// the session's bound facts, previous outputs, or existing database tables.
     #[napi]
     pub fn lower(&self, program: String, dialect: String) -> Result<String> {
-        let program = front::prune(rr::parse(&program).map_err(error)?);
+        let program = producers::prune(rr::parse(&program).map_err(error)?);
         let arities: BTreeMap<_, _> = program
             .decls
             .iter()
             .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
             .collect();
-        let emitted = self.compile(program, &dialect)?;
+        let (emitted, _) = self.compile(program, &dialect)?;
         serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program, "logical_arities":arities,"indexes":indexes::wanted(&emitted)}))
             .map_err(error)
     }
@@ -364,7 +365,7 @@ impl CodeRuleSqlExecutor {
         max_waves: Option<u32>,
     ) -> Result<String> {
         self.run_program(
-            front::prune(rr::parse(&program).map_err(error)?),
+            producers::prune(rr::parse(&program).map_err(error)?),
             &dialect,
             max_waves.unwrap_or(1024),
         )
@@ -379,7 +380,7 @@ impl CodeRuleSqlExecutor {
         max_waves: Option<u32>,
     ) -> Result<String> {
         self.run_program(
-            front::prune(rr::parse_file(Path::new(&path)).map_err(error)?),
+            producers::prune(rr::parse_file(Path::new(&path)).map_err(error)?),
             &dialect,
             max_waves.unwrap_or(1024),
         )
@@ -498,7 +499,10 @@ impl CodeRuleSqlExecutor {
         Ok(())
     }
 
-    fn compile(&self, mut program: front::Program, dialect: &str) -> Result<plan::emit::Emitted> {
+    /// Lower and emit a program. Its SQL producers' steps are added last; their relations are
+    /// returned beside the program.
+    fn compile(&self, mut program: front::Program, dialect: &str) -> Result<(plan::emit::Emitted, Vec<String>)> {
+        let producers = producers::take(&mut program)?;
         for name in &program.inputs {
             if let Some((arity, types)) = self.input_shapes.get(name)
                 && let Some(cols) = program.decls.get(name)
@@ -657,7 +661,8 @@ impl CodeRuleSqlExecutor {
         lattices::transfers(&mut emitted, &tops);
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
         emitted.program.lattice_operations = lattice_operations;
-        Ok(emitted)
+        producers::steps(&self.db, &mut emitted, &program, &producers)?;
+        Ok((emitted, producers.into_iter().map(|p| p.rel).collect()))
     }
 
     fn run_program(
@@ -673,7 +678,7 @@ impl CodeRuleSqlExecutor {
             .iter()
             .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
             .collect();
-        let emitted = self.compile(program, dialect)?;
+        let (emitted, producers) = self.compile(program, dialect)?;
         let indexes = indexes::wanted(&emitted);
         let mut objects: Vec<(String, bool)> = emitted
             .views
@@ -838,6 +843,7 @@ impl CodeRuleSqlExecutor {
             counts,
             emitted: Arc::new(emitted.clone()),
             program: declared,
+            producers,
             outputs,
             max_waves,
             reductions: None,
