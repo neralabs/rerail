@@ -470,6 +470,21 @@ pv($c, "gen", $x) :- gcls($c, $x, $k), ghead($x, $h), $x != $h, cparam($k, _, _)
 // A function's own type variable, from the argument its parameter is given (a method's arguments follow `self`).
 pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !method($f, _), rpvar($f, $i, _), posarg($c, $i, $a), pv($a, $k, $v).
 pv($c, $k, $v) :- callee($c, $e), attr_of($e, _, _), pv($e, "fn", $f), method($f, _), rpvar($f, $i, _), pred($i, $j), posarg($c, $j, $a), pv($a, $k, $v).
+
+// ---- implicit calls -------------------------------------------------------------------------------------------
+// icall(c, o, a): c's value is what o's method a returns, a call with no node for the method: a subscript `o[i]` is
+// `o.__getitem__(i)`. A class's subscript (`list[int]`, a generic alias) is no call of it.
+.decl icall(c: node, o: node, a: sym)
+icall($c, $o, "__getitem__") :- vpos($c), kind($c, "subscript"), field($c, "value", $o).
+vroot($o) :- icall(_, $o, _).
+need_attr($k, $a) :- icall(_, $o, $a), pv($o, "inst", $k).
+// ifn(c, f): the method an implicit call runs.
+.decl ifn(c: node, f: node)
+ifn($c, $f) :- icall($c, $o, $a), pv($o, "inst", $k), fv($k, $a, "fn", $f).
+pv($c, $k, $v) :- ifn($c, $f), !isasync($f), !isgen($f), fret($f, $k, $v).
+cret($c, $w, $k) :- ifn($c, $f), rret($f, $w, $k).
+gbind($c, $x) :- icall($c, $o, _), ifn($c, $f), rtvar($f, $a, $y), pv($o, "gen", $m), ahead($m, $h), pv($h, "cls", $k), tmap($k, $i, $a, $y), sarg($m, $i, $x).
+gbind($c, $x) :- icall($c, $o, _), ifn($c, $f), rtvar($f, $a, $y), pv($o, "inst", $k), tfix($k, $a, $y, $x).
 tv($c, "decl", $m) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), rann($f, $t), aleaf($t, $m), dtype($m, _).
 // Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
 .decl cann(c: node, x: sym, t: node)
@@ -652,7 +667,7 @@ tracked("identifier"). tracked("attribute"). tracked("call"). tracked("parenthes
 tracked("boolean_operator"). tracked("assignment"). tracked("named_expression").
 // Values that are no workspace callable and whose methods are no workspace definition: literals and operators on them.
 tracked("integer"). tracked("float"). tracked("string"). tracked("concatenated_string"). tracked("true"). tracked("false").
-tracked("none"). tracked("list"). tracked("dictionary"). tracked("set"). tracked("tuple"). tracked("list_comprehension").
+tracked("none"). tracked("subscript"). tracked("list"). tracked("dictionary"). tracked("set"). tracked("tuple"). tracked("list_comprehension").
 tracked("dictionary_comprehension"). tracked("set_comprehension"). tracked("comparison_operator"). tracked("not_operator").
 .decl iattr(c: node, a: sym)
 iattr($c, $a) :- field(_, "left", $t), kind($t, "attribute"), attr_of($t, $o, $a), pv($o, "inst", $c).
@@ -743,6 +758,15 @@ vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), !rclosed($f), retparam(
 vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), !rclosed($f), method($f, _), retparam($f, _, _).
 vopen($c) :- vpos($c), callee($c, $e), pv($e, "inst", _).
 vopen($c) :- vpos($c), callee($c, $e), pv($e, "mod", _).
+// An implicit call's value: unknown when its receiver is, when no workspace method is found, when the method's
+// return is.
+vopen($c) :- vpos($c), icall($c, $o, _), vopen($o).
+vopen($c) :- vpos($c), icall($c, _, _), !ifn($c, _).
+vopen($c) :- vpos($c), icall($c, $o, $a), pv($o, "inst", $k), attr_open($k, $a).
+vopen($c) :- vpos($c), ifn($c, $f), isasync($f).
+vopen($c) :- vpos($c), ifn($c, $f), !rclosed($f), isgen($f).
+vopen($c) :- vpos($c), ifn($c, $f), !rclosed($f), retval($f, $r), !retparam($f, _, $r), vopen($r).
+vopen($c) :- vpos($c), ifn($c, $f), !rclosed($f), method($f, _), retparam($f, _, _).
 
 // ---- call targets ---------------------------------------------------------------------------------------------
 .decl call_target(c: node, f: node)

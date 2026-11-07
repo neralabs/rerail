@@ -677,6 +677,27 @@ fn a_method_declared_to_return_its_class_parameter_returns_what_the_receivers_ge
     let _ = std::fs::remove_dir_all(&project);
 }
 
+#[test]
+fn a_subscript_is_a_call_of_its_receivers_getitem() {
+    // `b[0]` is `b.__getitem__(0)`: its value is what B's `__getitem__` returns, so `.run()` targets V.run; a generic's
+    // `__getitem__` returns what the receiver's annotation binds (`x: M[str, Box]`). A class's subscript
+    // (`M[str, Box]`, a generic alias) is no call of `__getitem__`: calling it stays unknown.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("subscript");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Generic, TypeVar\n_K = TypeVar(\"_K\")\n_V = TypeVar(\"_V\")\nclass V:\n    def run(self) -> int: ...\nclass Box:\n    def m(self) -> int: ...\nclass B:\n    def __getitem__(self, i: int) -> V: ...\nclass M(Generic[_K, _V]):\n    def __getitem__(self, k: _K) -> _V: ...\ndef f(b: B, x: M[str, Box]) -> None:\n    b[0].run()\n    x[\"a\"].m()\n    M[str, Box]()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    assert_eq!(open.lines().count(), 1, "{open}");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a
