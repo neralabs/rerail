@@ -22,7 +22,7 @@ use std::path::Path;
 
 use super::super::{Error, Result};
 use super::{Report, Typing};
-use crate::code_rule_dsl::logic::front::{self, Literal, Program};
+use crate::code_rule_dsl::logic::front::{self, Literal, Program, Value};
 use crate::code_rule_dsl::typing::file_local::Binding;
 
 const PREFIX: &str = "typing_";
@@ -34,9 +34,6 @@ const SEP: &str = "__";
 pub(crate) fn is_bridged(rel: &str) -> bool {
     rel.strip_prefix(PREFIX).is_some_and(|rest| rest.split_once(SEP).is_some_and(|(p, o)| !p.is_empty() && !o.is_empty()))
 }
-
-/// The bridged relations' rows, by relation.
-pub(crate) type Facts = BTreeMap<String, Vec<Vec<front::Value>>>;
 
 /// A bridged relation: the program, its output, and the output's node columns.
 struct Bridged {
@@ -64,11 +61,14 @@ fn source(name: &str) -> Result<String> {
     std::fs::read_to_string(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))
 }
 
+/// The rows of the bridged relations, by relation: added to the rule's facts as they are, not printed and parsed.
+pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
+
 /// What the bridged runs did: each program's report.
 pub(crate) type Runs = Vec<(String, Report)>;
 
-/// The facts of the bridged relations `prog` reads, as rows, and each program's run (each program once, however many
-/// rules read it). `scratch` holds the programs' runs (`<scratch>/typing-<program>`).
+/// The facts of the bridged relations `prog` reads, by relation, and each program's run. `scratch` holds the
+/// programs' runs (`<scratch>/typing-<program>`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<(Facts, Runs)> {
     let wanted = wanted(prog);
@@ -76,7 +76,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
     for b in &wanted {
         by_program.entry(b.program.as_str()).or_default().push(b);
     }
-    let (mut facts, mut runs): (Facts, Runs) = (BTreeMap::new(), Vec::new());
+    let (mut facts, mut runs) = (Facts::new(), Vec::new());
     for (name, bridged) in by_program {
         let src = source(name)?;
         let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
@@ -127,12 +127,11 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             let path = r[0].rsplit_once(':').map(|(p, _)| p.to_owned()).ok_or_else(|| Error::Plan(format!("{name}: node {}", r[0])))?;
             at.insert(r[0].clone(), [path, r[1].clone(), r[2].clone(), r[3].clone()]);
         }
-        use front::Value;
-        let int = |v: &str| v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("{name}: {v} is not a number")));
         for b in &bridged {
             let nodes = &columns[b.output.as_str()];
             let types: Vec<&str> = program.decls[&b.output].iter().map(|(_, ty)| ty.as_str()).collect();
-            let out = facts.entry(b.rel.clone()).or_default();
+            let int = |v: &str| v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("{name}: {}: not a number: {v}", b.output)));
+            let held = facts.entry(b.rel.clone()).or_default();
             for r in rows(&b.output)? {
                 let mut args = Vec::new();
                 for ((v, &node), ty) in r.iter().zip(nodes).zip(&types) {
@@ -145,7 +144,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
                         args.push(int(v)?);
                     }
                 }
-                out.push(args);
+                held.push(args);
             }
         }
         let _ = std::fs::remove_dir_all(&out);

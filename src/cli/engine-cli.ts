@@ -6,6 +6,7 @@ import { loadNativeBinding, type CodeRuleDslSourceFormat, type NativeSlicePolicy
 export const ENGINE_USAGE = [
   "  rerail engine dump --rule <file>... [--clause <id>] [--fused] [--setplan]",
   "  rerail engine asm <file.rir>",
+  "  rerail engine sql <store.sqlite> <request.json>",
 ];
 
 /**
@@ -16,7 +17,14 @@ export function runEngineCommand(args: readonly string[], usage: () => string): 
   const [subcommand, ...rest] = args;
   if (subcommand === "dump") return dump(rest, usage);
   if (subcommand === "asm") return assemble(rest, usage);
+  if (subcommand === "sql") return sql(rest, usage);
   throw new Error(`Usage:\n${ENGINE_USAGE.join("\n")}\n\n${usage()}`);
+}
+
+function sql(args: readonly string[], usage: () => string): number {
+  if (args.length !== 2) throw new Error(`rerail engine sql takes a store and a request file\n\n${usage()}`);
+  process.stdout.write(loadNativeBinding().executeSqlRequest(resolve(args[0] ?? ""), readFileSync(resolve(args[1] ?? ""), "utf8")));
+  return 0;
 }
 
 function dump(args: readonly string[], usage: () => string): number {

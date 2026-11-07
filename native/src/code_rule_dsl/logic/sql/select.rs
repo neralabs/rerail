@@ -128,6 +128,10 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "parsed" => &["s", "grammar", "root"],
         "sub_tape" => &["at", "grammar", "t"],
         "host_node" => &["n", "h"],
+        // Decision 0058's tape operations.
+        "parse_of" => &["x", "g", "t"],
+        "unparse_of" => &["t", "x"],
+        "splice_of" => &["t", "n", "t2", "t3"],
         // The repository inputs (`facts::repository`).
         "option" => &["name", "v"],
         "option_item" => &["name", "i", "v"],
@@ -228,6 +232,28 @@ impl FromItem {
 }
 
 impl Select {
+    /// Session plans precede materialization. Leave their join order to SQLite, whose tables
+    /// and indexes are available when each wave is prepared. Correlated subqueries keep scope.
+    pub(in crate::code_rule_dsl) fn sqlite_order(&mut self) {
+        let derived = self.from.iter().filter(|i| matches!(i.relation, Relation::Derived { .. })).count();
+        let delta = self.from.iter().any(|i| matches!(i.relation, Relation::Derived { delta: true, .. }));
+        let cte = self.from.iter().any(|i| matches!(i.relation, Relation::Cte(_)));
+        // Base sources already supply native probe estimates. A single delta is the wave's
+        // anchor: scanning the entire base relation each wave loses semi-naive scaling.
+        let keep_anchor = !cte && (derived == 0 || (derived == 1 && delta));
+        for item in &mut self.from {
+            if !keep_anchor && item.join == Join::Cross { item.join = Join::On(Vec::new()); }
+        }
+        let ons = self.from.iter_mut().flat_map(|item| match &mut item.join {
+            Join::On(on) => on.iter_mut().collect::<Vec<_>>(), Join::Cross => Vec::new(),
+        });
+        for expression in self.columns.iter_mut().map(|(e, _)| e).chain(&mut self.predicates).chain(ons) {
+            expression.visit_mut(&mut |e| {
+                if let SqlExpression::Exists { query, .. } | SqlExpression::Scalar(query) = e { query.sqlite_order(); }
+            });
+        }
+    }
+
     pub(in crate::code_rule_dsl) fn render(&self) -> String {
         let columns = self
             .columns
@@ -360,10 +386,13 @@ enum Columns<'a> {
     Positional,
 }
 
-fn columns<'a>(relation: &Relation, ctes: &'a BTreeMap<&str, Vec<Option<String>>>) -> Result<Columns<'a>, String> {
+fn columns<'a>(relation: &'a Relation, ctes: &'a BTreeMap<&str, Vec<Option<String>>>) -> Result<Columns<'a>, String> {
     Ok(match relation {
-        // A batch source of a named input (a `py.*` family read by the demand statement) keeps its names.
-        Relation::Input { rel, .. } | Relation::Batch { rel, .. } => input_columns(rel).map_or(Columns::Positional, |names| Columns::Named(names.to_vec())),
+        Relation::Input { rel, .. } => input_columns(rel).map_or(Columns::Positional, |names| Columns::Named(names.to_vec())),
+        // A batch source declares its own SQL projection. Even a familiar fact relation may
+        // be supplied positionally, and an extension may supply arbitrary named columns.
+        Relation::Batch { source, .. } if source.positional => Columns::Positional,
+        Relation::Batch { source, .. } => Columns::Named(source.columns.iter().map(String::as_str).collect()),
         Relation::Derived { .. } | Relation::Bound { .. } => Columns::Positional,
         Relation::DocRange { .. } => Columns::Named(vec!["d", "lo", "hi"]),
         Relation::Integers => Columns::Named(vec!["i"]),

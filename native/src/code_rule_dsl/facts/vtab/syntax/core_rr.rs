@@ -239,7 +239,7 @@ pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool
 }
 
 /// A string literal's prefix letters, lowercased, and its decoded contents.
-fn string_contents(family: Family, text: &str) -> Option<(String, String)> {
+pub(super) fn string_contents(family: Family, text: &str) -> Option<(String, String)> {
     let p: String = text.chars().take_while(char::is_ascii_alphabetic).collect();
     let rest = &text[p.len()..];
     let prefix = p.to_lowercase();

@@ -8,12 +8,15 @@
 //! parsed(at, grammar, r)      `guest` and `doc_root` joined: the view `core.rr` has always declared
 //! sub_tape(at, grammar, t)    `guest` and `tape_of` joined
 //! host_node(n, h)             h is the innermost host node over the bytes guest node n stands for
+//! parse_of(x, g, t)           `@parse(g, x)` is tape t (decision 0058 §4): a value document places it
+//! splice_of(t, n, t2, t3)     `@splice(t, n, t2)` is tape t3
+//! unparse_of(t, x)            `@unparse(t)` is x, for a guest's or a value's tape
 //! ```
 //!
 //! A withheld guest (one that does not parse, `.on guest_error skip`) has its `guest`, `doc_role`, `tape_of` and
 //! `sub_tape` rows, and no `doc_root` or `parsed`: it has no nodes.
 
-use super::{Document, Guest, Placement, Projected, Relation};
+use super::{Document, Guest, Made, Placement, Projected, Relation};
 
 #[derive(Default)]
 pub(super) struct GuestRows {
@@ -24,16 +27,20 @@ pub(super) struct GuestRows {
     parsed: Vec<[i64; 3]>,
     sub_tape: Vec<[i64; 3]>,
     host_node: Vec<[i64; 2]>,
+    parse_of: Vec<[i64; 3]>,
+    splice_of: Vec<[i64; 4]>,
+    unparse_of: Vec<[i64; 2]>,
 }
 
 fn hex(digest: &[u8; 32]) -> String {
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    super::tape_hex(digest)
 }
 
 impl GuestRows {
     /// Document `p`'s rows (`d` is its document, `guest` its place when it is one); `docs` are the batch's documents
     /// projected before it, its host among them.
-    pub(super) fn document(&mut self, p: &Projected, d: &Document, guest: Option<&Guest>, withheld: bool, docs: &[Projected], host_nodes: bool, string: &mut dyn FnMut(&str) -> usize) {
+    /// `wants` says whether `host_node` and `unparse_of` are read.
+    pub(super) fn document(&mut self, p: &Projected, d: &Document, guest: Option<&Guest>, withheld: bool, docs: &[Projected], [host_nodes, unparse]: [bool; 2], string: &mut dyn FnMut(&str) -> usize) {
         let key = i64::from(p.key);
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
@@ -43,7 +50,22 @@ impl GuestRows {
             self.root.push([key, r]);
         }
         let Some(g) = guest else { return };
+        if unparse {
+            self.unparse_of.push([tape, string(super::unparsed(d)) as i64]);
+        }
         let grammar = string(&g.grammar) as i64;
+        // A value document has no host: what made it is its row.
+        match &g.made {
+            Made::Host => {}
+            Made::Parse { text } => {
+                self.parse_of.push([string(text) as i64, grammar, tape]);
+                return;
+            }
+            Made::Splice { tape: t, node, with } => {
+                self.splice_of.push([string(t) as i64, *node, string(with) as i64, tape]);
+                return;
+            }
+        }
         self.guest.push([key, i64::from(g.host), g.at, grammar]);
         self.sub_tape.push([g.at, grammar, tape]);
         let Some(r) = root else { return };
@@ -85,6 +107,9 @@ impl GuestRows {
             ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| vec![s, atom(g), r]))),
             ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| vec![a, atom(g), atom(t)]))),
             ("host_node", rel(&["n", "h"], &mut self.host_node.iter().map(|r| r.to_vec()))),
+            ("parse_of", rel(&["x", "g", "t"], &mut self.parse_of.iter().map(|&[x, g, t]| vec![atom(x), atom(g), atom(t)]))),
+            ("splice_of", rel(&["t", "n", "t2", "t3"], &mut self.splice_of.iter().map(|&[t, n, t2, t3]| vec![atom(t), n, atom(t2), atom(t3)]))),
+            ("unparse_of", rel(&["t", "x"], &mut self.unparse_of.iter().map(|&[t, x]| vec![atom(t), atom(x)]))),
         ]
     }
 }

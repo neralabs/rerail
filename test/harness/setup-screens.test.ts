@@ -135,6 +135,18 @@ describe("T1 banner", () => {
 });
 
 describe("T2b may Rerail read sessions", () => {
+  it("never says nothing is sent while a remote is set up: it names each remote's host and how to stop", () => {
+    const sent = renderQuestion(sessionsQuestion({ carriedArgs: [], remoteHosts: ["ingest.example.com"] }), "agent");
+    expect(sent).not.toContain("Nothing is sent anywhere");
+    expect(sent).toContain("  ! Sent to the remote set up on this computer: ingest.example.com.");
+    expect(sent).toContain("rerail remote remove <name>");
+    const two = renderQuestion(sessionsQuestion({ carriedArgs: [], remoteHosts: ["a.example.com", "b.example.com"] }), "agent");
+    expect(two).toContain("Sent to the remotes set up on this computer: a.example.com, b.example.com.");
+    const unknown = renderQuestion(sessionsQuestion({ carriedArgs: [], remoteHosts: null }), "agent");
+    expect(unknown).not.toContain("Nothing is sent anywhere");
+    expect(renderQuestion(sessionsQuestion({ carriedArgs: [], remoteHosts: [] }), "agent")).toContain("  ✓ Stays on this computer. Nothing is sent anywhere.");
+  });
+
   it("says what it sees and why, and its yes carries the folder the run was named", () => {
     const form = sessionsQuestion({ carriedArgs: ["--repo", "/Users/me/code/acme-web"] });
     const text = renderQuestion(form, "agent");

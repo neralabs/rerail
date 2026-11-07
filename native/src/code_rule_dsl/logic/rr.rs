@@ -37,7 +37,10 @@ pub(in crate::code_rule_dsl) fn core_names() -> &'static std::collections::BTree
 
 /// The library `#include` reads from.
 pub(in crate::code_rule_dsl) fn library() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib")
+    // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
+    std::env::var_os("RERAIL_RR_LIB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib"))
 }
 
 /// A program's `.rr` text, which includes nothing.

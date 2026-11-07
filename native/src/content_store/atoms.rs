@@ -196,6 +196,20 @@ fn key(path: &Path) -> PathBuf {
     }
 }
 
+/// The file's exclusive lock, without waiting. WASI has no file locks; the browser build is the only process on
+/// its in-memory filesystem, so the lock is always free there.
+fn try_lock(file: &File) -> Result<(), TryLockError> {
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = file;
+        Ok(())
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        file.try_lock()
+    }
+}
+
 fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
@@ -380,7 +394,7 @@ impl Atoms {
             std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(sidecar(path, suffix))
         };
         let file = open("-atoms.lock")?;
-        match file.try_lock() {
+        match try_lock(&file) {
             Ok(()) => {}
             Err(TryLockError::Error(error)) => return Err(error.into()),
             Err(TryLockError::WouldBlock) => {
@@ -392,7 +406,7 @@ impl Atoms {
                 loop {
                     std::thread::sleep(pause);
                     pause = (pause * 2).min(Duration::from_millis(20));
-                    match file.try_lock() {
+                    match try_lock(&file) {
                         Ok(()) => break,
                         Err(TryLockError::Error(error)) => return Err(error.into()),
                         Err(TryLockError::WouldBlock) if Instant::now() < deadline => {}
@@ -556,7 +570,7 @@ impl Atoms {
             .read(true)
             .write(true)
             .open(sidecar(path, "-atoms.want"))
-            .is_ok_and(|file| matches!(file.try_lock(), Err(TryLockError::WouldBlock)));
+            .is_ok_and(|file| matches!(try_lock(&file), Err(TryLockError::WouldBlock)));
         *wanted = (Some(Instant::now()), seen);
         seen
     }

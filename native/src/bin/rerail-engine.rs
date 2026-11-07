@@ -2,12 +2,13 @@
 //!
 //!   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //!   rerail-engine asm <file.rir>
-//!   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
+//!   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]
 //!   rerail-engine gc <store.sqlite> [--history-mb <n>]
+//!   rerail-engine sql <store.sqlite> <request.json>
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -29,6 +30,10 @@ fn run(args: &[String]) -> Result<String, String> {
         Some("asm") => match &args[1..] {
             [file] => rerail_engine::tools::assemble(&read(file)?),
             _ => Err(USAGE.into()),
+        },
+        Some("sql") => match &args[1..] {
+            [store, request] => rerail_engine::tools::sql(Path::new(store), &read(request)?),
+            _ => Err("usage: rerail-engine sql <store.sqlite> <request.json>".into()),
         },
         Some("logic") => logic(&args[1..]),
         Some("run-rr") if args.len() == 4 || args.len() == 5 => {
@@ -56,16 +61,23 @@ fn run(args: &[String]) -> Result<String, String> {
 
 /// `logic`: a program over a corpus, its outputs as T's (list step 23).
 fn logic(args: &[String]) -> Result<String, String> {
-    let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), "program".to_owned(), false, 1_usize << 18);
+    let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
+    let mut sql = false;
     let mut args = args.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
+            "--sql" => sql = true,
             "--metal" => metal = true,
-            "--modes" => modes = args.next().ok_or("--modes requires a value")?.clone(),
+            "--modes" => modes = Some(args.next().ok_or("--modes requires a value")?.clone()),
             "--chunk" => chunk = args.next().ok_or("--chunk requires a value")?.parse().map_err(|_| "--chunk takes a node count")?,
             other => positional.push(other.to_owned()),
         }
     }
+    let modes = match (sql, modes) {
+        (true, Some(_)) => return Err("--sql cannot be combined with --modes".into()),
+        (true, None) => String::new(),
+        (false, modes) => modes.unwrap_or_else(|| "program".into()),
+    };
     // `<program> <corpus> <out>` on the typing programs' own ingestion, or `<program> <corpus> <T facts> <out>` to
     // reproduce T (its statistics and node ids).
     let (program, root, facts, out) = match positional.as_slice() {
@@ -73,7 +85,8 @@ fn logic(args: &[String]) -> Result<String, String> {
         [program, root, facts, out] => (program, root, Some(Path::new(facts.as_str())), out),
         _ => return Err(USAGE.into()),
     };
-    // A directory: every `.rr` in it, run as one program (each file parsed once for all of them).
+    // A directory: every `.rr` in it, run as one program (each file parsed once for all of them); each file's
+    // `#include`s are read in.
     let programs = if Path::new(program.as_str()).is_dir() {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
@@ -81,9 +94,9 @@ fn logic(args: &[String]) -> Result<String, String> {
             .filter(|path| path.extension().is_some_and(|x| x == "rr"))
             .collect();
         files.sort();
-        files.iter().map(|path| rerail_engine::tools::read_rr(path)).collect::<Result<Vec<_>, _>>()?
+        files.iter().map(|path| rerail_engine::tools::program_text(path)).collect::<Result<Vec<_>, _>>()?
     } else {
-        vec![rerail_engine::tools::read_rr(Path::new(program))?]
+        vec![rerail_engine::tools::program_text(Path::new(program.as_str()))?]
     };
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));

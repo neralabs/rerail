@@ -1,6 +1,6 @@
 # 0055: Embedded languages are guest documents the library declares; a tape is a value rules can make
 
-Status: accepted (2026-11-07). The `.rr` path's guests are built for Python and Rust files: file-local embeds, `sub_tape` and `parsed` requests, embeds of embeds, `.guests` and `.on guest_error` (see [What was built](#what-was-built)). `@parse`, global embeds, the matcher path's guests and tape operations are not built yet.
+Status: accepted (2026-11-07). The `.rr` path's guests are built for Python and Rust files: file-local embeds, `sub_tape` and `parsed` requests, embeds of embeds, `.guests` and `.on guest_error` (see [What was built](#what-was-built)). Decision 0058 builds hiding, kinds across grammars, normalized strings and `@parse`, `@splice`, `@unparse`. Global embeds and the matcher path's guests are not built yet.
 
 ## Intro
 
@@ -405,13 +405,11 @@ that take a type as a string is not built.
 
 Where this differs from the decision above:
 
-- **`.guests off` turns off the libraries' embeds, not a rule's own request.** A rule that writes
-  `parsed` or `sub_tape` asked for that guest, so it is made. Guests are documents of the batch
-  either way. Hiding a guest's nodes from rules that do not go through `guest` (§5) is not built:
-  `kind(n, "call")` sees a call inside a parsed annotation (O85).
+- **`.guests off`** first turned off the libraries' embeds. Decision 0058 made it what §5 asked for:
+  embeds are always made, and `.guests off` hides guests from rules that do not reach them through
+  a guest relation.
 - **Grammars** are `annotation` or a language label from the registry (`python`, `rust`, `sql`,
-  `typescript`, …). Kinds resolve in the run's dialect, so a SQL guest's kinds do not match in a
-  Python run yet (O85).
+  `typescript`, …). A guest's kinds resolve in its own grammar where a rule reaches it (0058 §2).
 - **The corpus runner collects `.py` and `.rs` files only**, so Markdown, HTML, Vue and Blade hosts
   wait for it. The matcher path's Vue and Blade guests are not yet these documents (step 1's test).
 - **Embeds are file-local.** An `embed` whose body reads another file's facts runs inside the chunk,

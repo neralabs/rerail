@@ -286,7 +286,33 @@ export interface NativeExclusiveFileLock {
   release(): void;
 }
 
+/** A connection-local SQL extension context over the native content store. */
+export interface NativeCodeRuleSqlExecutor {
+  bindSnapshot(snapshotJson: string): void;
+  bindStored(scope: string, paths?: string[] | null): void;
+  bindRelation(relationJson: string): void;
+  /** Drop generated outputs while keeping fact bindings and registered extensions. */
+  reset(): void;
+  /** Per-operation limits: {max_steps?: number, timeout_ms?: number}. An empty object removes limits. */
+  setLimits(limitsJson: string): void;
+  createIndex(relation: string, columns: number[]): void;
+  /** Register deterministic aggregate/merge/widen SQL functions for a custom lattice. */
+  registerLattice(name: string, specificationJson: string): void;
+  lower(program: string, dialect: string): string;
+  run(program: string, dialect: string, maxWaves?: number | null): string;
+  runFile(path: string, dialect: string, maxWaves?: number | null): string;
+  /** Atomic [{name, insert?: rows, delete?: rows}] batch; returns deltas and refreshed strata. */
+  applyChanges(changesJson: string, maxWaves?: number | null): string;
+  query(sql: string, parametersJson?: string | null, maxRows?: number | null): string;
+}
+
+export interface NativeCodeRuleSqlExecutorConstructor {
+  new(storePath: string): NativeCodeRuleSqlExecutor;
+}
+
 export interface NativeBinding {
+  CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
+  executeSqlRequest(storePath: string, requestJson: string): string;
   health(): NativeHealth;
   nativeMemoryProfile(): string;
   processSessionId(pid: number): number | null;

@@ -29,7 +29,12 @@ pub(in crate::code_rule_dsl) struct Database {
 }
 
 impl Database {
-    pub(super) fn ensure_idle(&self) -> rusqlite::Result<()> {
+    /// Forget execution bookkeeping after a standalone SQL session drops its generated objects.
+    pub(in crate::code_rule_dsl) fn reset_execution(&self) {
+        *self.storage.borrow_mut() = Storage::default();
+        self.flush_prepared_statement_cache();
+    }
+    pub(in crate::code_rule_dsl) fn ensure_idle(&self) -> rusqlite::Result<()> {
         // SAFETY: this connection and its statements belong to the current worker.
         // SQLite retains the statement list until statements are finalized here.
         unsafe {
@@ -52,7 +57,7 @@ impl Database {
         self.prepare_cached(&format!("{query}\n/* native estimates {:x} */", self.plan_signature.get()))
     }
     /// Binds `source` to the vtab `name` and refreshes the plan signature.
-    pub(super) fn bind(&self, name: &str, source: Arc<dyn Source>) -> rusqlite::Result<()> {
+    pub(in crate::code_rule_dsl) fn bind(&self, name: &str, source: Arc<dyn Source>) -> rusqlite::Result<()> {
         self.modules.bind(self, name, Arc::clone(&source))?;
         let mut bound = self.bound.borrow_mut();
         bound.insert(name.to_owned(), source);
@@ -60,13 +65,25 @@ impl Database {
         Ok(())
     }
     /// Empties every vtab: a later reader sees no rows rather than another lease's.
-    pub(super) fn clear_bindings(&self) {
+    pub(in crate::code_rule_dsl) fn clear_bindings(&self) {
         for name in std::mem::take(&mut *self.bound.borrow_mut()).into_keys() {
             if let Some(binding) = self.modules.get(&name) {
                 binding.clear();
             }
         }
         self.plan_signature.set(0);
+    }
+
+    /// Remove session-owned modules as well as their rows when an extension session closes.
+    pub(in crate::code_rule_dsl) fn remove_bindings(&self) -> rusqlite::Result<()> {
+        self.ensure_idle()?;
+        self.flush_prepared_statement_cache();
+        let names: Vec<String> = self.bound.borrow().keys().cloned().collect();
+        self.clear_bindings();
+        for name in names {
+            self.modules.unregister(self, &name)?;
+        }
+        Ok(())
     }
     /// SQLite-owned storage held by a suspended consumer, without scanning rows.
     pub(in crate::code_rule_dsl) fn resident_bytes(&self) -> rusqlite::Result<usize> {

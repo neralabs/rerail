@@ -382,7 +382,11 @@ impl crate::code_rule_dsl::origin::Origin for SubTree {
 
 /// Node ids of sub-trees have the top bit set; tapes use small indices, tree-sitter addresses.
 /// Blade trees (`blade::forte::tree`) draw their ids from the same counter.
-pub(crate) const ID_FLAG: usize = 1 << 63;
+/// On wasm32 (the browser build) the top bit is bit 31, which leaves 7 bits of tree counter above a tree's 24
+/// bits of nodes: enough for an explorer's few files, not for a corpus (wasm/README.md).
+pub(crate) const ID_FLAG: usize = 1 << (usize::BITS - 1);
+/// The tree counter's bits between `ID_FLAG` and a tree's 24 bits of nodes: 39 on 64-bit targets, 7 on wasm32.
+pub(crate) const TREE_MASK: usize = (1 << (usize::BITS - 25)) - 1;
 pub(crate) static NEXT_TREE: AtomicUsize = AtomicUsize::new(0);
 
 impl SubTree {
@@ -435,7 +439,7 @@ impl SubTree {
                 stack.push((child, index));
             }
         }
-        let tree = NEXT_TREE.fetch_add(1, Ordering::Relaxed) & ((1 << 39) - 1);
+        let tree = NEXT_TREE.fetch_add(1, Ordering::Relaxed) & TREE_MASK;
         Self {
             lang: SubLang(grammar),
             source: SubSource { text, offset },

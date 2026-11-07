@@ -25,9 +25,11 @@ use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
 mod guests;
+mod hiding;
+pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
-mod inputs;
 mod bridge;
+mod inputs;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -137,7 +139,12 @@ pub(crate) fn thread_usage() -> (f64, f64) {
         let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
         (t(info.user_time), t(info.system_time))
     }
-    #[cfg(not(target_os = "macos"))]
+    // The browser build's one thread (`prof::single_thread_cpu`), all of it user time.
+    #[cfg(target_family = "wasm")]
+    {
+        (crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64(), 0.0)
+    }
+    #[cfg(not(any(target_os = "macos", target_family = "wasm")))]
     {
         let mut u: libc::rusage = unsafe { std::mem::zeroed() };
         unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut u) };
@@ -147,12 +154,20 @@ pub(crate) fn thread_usage() -> (f64, f64) {
 }
 
 pub(crate) fn usage() -> (f64, f64, f64) {
-    let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-    let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
-    // macOS reports ru_maxrss in bytes, Linux in kilobytes.
-    let rss = if cfg!(target_os = "macos") { u.ru_maxrss as f64 / 1e6 } else { u.ru_maxrss as f64 / 1e3 };
-    (s(u.ru_utime), s(u.ru_stime), rss)
+    // wasm32: the one thread's time as user CPU, and no resident-set counter.
+    #[cfg(target_family = "wasm")]
+    {
+        (crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64(), 0.0, 0.0)
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        // macOS reports ru_maxrss in bytes, Linux in kilobytes.
+        let rss = if cfg!(target_os = "macos") { u.ru_maxrss as f64 / 1e6 } else { u.ru_maxrss as f64 / 1e3 };
+        (s(u.ru_utime), s(u.ru_stime), rss)
+    }
 }
 
 /// What a corpus run did: its phases' CPU (user, system) and the peak RSS after each, and the outcome.
@@ -219,10 +234,13 @@ fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
 /// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty.
 const NOT_MADE: [(&str, &str); 1] = [("string_annotation", "Ruff's table of the call positions that take a type as a string is not built")];
 
-/// The embed slice of a lowered file-local program (decision 0055): the rules its guest requests need (`embed`,
-/// `embed_value`, `rr_embed_req`), with those as its outputs; `None` when no rule makes a request.
+/// The embed slice of a lowered program (decisions 0055, 0058): the rules its requests need (`embed`, `embed_value`
+/// and the demands), with those as its outputs; `None` when no rule makes a request. It is cut from the whole
+/// program, not its file-local part, and runs over each chunk: a guest or a value is made from its chunk's
+/// documents, so a demand whose context the split would run cross-file (`q(_, x)`, a value's nodes) is still asked
+/// in the chunk.
 fn embed_slice(local: &front::Program) -> Option<front::Program> {
-    let wanted: Vec<&str> = guests::LIBRARY.iter().copied().chain([guests::DEMAND]).filter(|r| local.rules.iter().any(|x| x.head.rel == *r)).collect();
+    let wanted: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|r| local.rules.iter().any(|x| x.head.rel == *r)).collect();
     if wanted.is_empty() {
         return None;
     }
@@ -264,15 +282,23 @@ pub(crate) fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, b
 pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
     let parse = |text: &str| crate::code_rule_dsl::logic::rr::parse(&if extra.is_empty() { text.to_owned() } else { format!("{text}\n{extra}") });
-    if let [one] = programs {
-        return Ok(parse(one)?);
+    let mut parsed = programs.iter().map(|text| parse(text)).collect::<std::result::Result<Vec<_>, _>>()?;
+    // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that
+    // makes none is left as written.
+    if parsed.iter().any(|p| p.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str()))) {
+        for p in &mut parsed {
+            let bound = hiding::bound(p);
+            hiding::hide(p, bound);
+        }
+    }
+    if parsed.len() == 1 {
+        return Ok(parsed.pop().expect("one program"));
     }
     let axis = crate::code_rule_dsl::logic::front::AXIS;
     let mut all = Program::default();
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
-    for (i, text) in programs.iter().enumerate() {
-        let mut prog = parse(text)?;
+    for (i, mut prog) in parsed.into_iter().enumerate() {
         // Kind sets by their kinds: this program's name for each, and the shared one.
         let mut set_of: BTreeMap<String, String> = BTreeMap::new();
         for (name, kinds) in std::mem::take(&mut prog.kindsets) {
@@ -291,8 +317,9 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             .keys()
             .chain(prog.facts.keys())
             .chain(prog.rules.iter().map(|r| &r.head.rel))
-            // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047).
-            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r))
+            // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047);
+            // a repository file a policy reads (`.input r(IO=…)`) is its own.
+            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !guests::SHARED.contains(&r.as_str()))
             .cloned()
             .collect();
         let rename = |rel: &str| -> String {
@@ -320,6 +347,7 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
                 }
             }
         }
+        all.nullary.extend(prog.nullary.iter().map(|rel|rename(rel)));
         for (rel, cols) in prog.decls {
             all.decls.entry(rename(&rel)).or_insert(cols);
         }
@@ -359,6 +387,32 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
 /// Records the run's manifest in the persistent store, and, when it is new, starts collection on a thread of its own:
 /// passes until one finds nothing twice or 200 ms have gone (`RERAIL_CORPUS_GC=off`: none). The history's high-water
 /// mark is `RERAIL_CORPUS_HISTORY_MB` (default 512), the low-water mark three quarters of it.
+/// The chunk builder's thread, in `scope`.
+#[cfg(not(target_family = "wasm"))]
+fn spawn_chunks<'scope, T: Send + 'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    build: impl FnOnce() -> T + Send + 'scope,
+) -> std::thread::ScopedJoinHandle<'scope, T> {
+    scope.spawn(build)
+}
+
+/// wasm32 has no threads: the chunk builder runs to its end here, before the chunks are evaluated.
+#[cfg(target_family = "wasm")]
+fn spawn_chunks<'scope, T>(_: &'scope std::thread::Scope<'scope, '_>, build: impl FnOnce() -> T) -> Ran<T> {
+    Ran(build())
+}
+
+/// A chunk builder that already ran (wasm32), joined as a thread would be.
+#[cfg(target_family = "wasm")]
+struct Ran<T>(T);
+
+#[cfg(target_family = "wasm")]
+impl<T> Ran<T> {
+    fn join(self) -> std::thread::Result<T> {
+        Ok(self.0)
+    }
+}
+
 fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32]) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -463,9 +517,12 @@ pub(crate) fn run_with_options(
     let mut prog = combine(programs, "")?;
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
-    for (rel, rows) in bridged {
-        prog.facts.entry(rel).or_default().extend(rows);
-    }
+    let add_bridged = |prog: &mut front::Program| {
+        for (rel, rows) in &bridged {
+            prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
+        }
+    };
+    add_bridged(&mut prog);
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
     // And the values derived from them (`logic::derived`): each chunk's join specs.
@@ -501,7 +558,7 @@ pub(crate) fn run_with_options(
                 let rust = typing.rust.unwrap_or(rs.len() > python.len());
                 (if rust { rs } else { python }, rust)
             };
-            // A document's key is a function of its path (decision 0050), so a memoised row's node ids stay valid.
+            // A document's key is a function of its path (decision 0052), so a memoised row's node ids stay valid.
             let keys = memo::doc_keys(&files);
             (keys.into_iter().zip(files).collect(), HashMap::new(), rust)
         }
@@ -515,20 +572,23 @@ pub(crate) fn run_with_options(
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             prog = combine(programs, &facts)?;
+            add_bridged(&mut prog);
         }
         declared = d;
     }
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     external_inputs(&mut prog, root)?;
     // Guest requests (decision 0055) are outputs, so the file-local part keeps the rules that make them.
-    for rel in guests::LIBRARY.iter().copied().chain([guests::DEMAND]) {
+    for rel in guests::LIBRARY.iter().copied().chain(guests::DEMANDS) {
         if prog.rules.iter().any(|r| r.head.rel == rel) && !prog.outputs.iter().any(|o| o == rel) {
             prog.outputs.push(rel.to_owned());
         }
     }
-    let library_guests = !prog.facts.get(syntax::GUEST_POLICY).into_iter().flatten().any(|row| matches!(row.as_slice(), [front::Value::Str(k), front::Value::Str(v)] if k == "library" && v == "off"));
     let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
     let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
+    if !dialect.built() {
+        return Err(Error::Plan(format!("{label} is not in this build (its `lang-{label}` feature is off)")));
+    }
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
     let path = out.join("store.sqlite");
     let cross_path = out.join("cross.sqlite");
@@ -558,6 +618,9 @@ pub(crate) fn run_with_options(
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
+    // Only the rules an output reads, directly or through other rules: a rule that includes a library runs the part
+    // of it the rule uses, not all of it (T's front prunes the same way).
+    prog = front::prune(prog);
     // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
     crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
     // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
@@ -608,10 +671,10 @@ pub(crate) fn run_with_options(
         format!("{} sets made by the transducer's file-local FIX, bound {binding:?}: {}", sets.len(), names.join(", "))
     });
     let (local, cross) = (part(split.local), part(split.cross));
-    let slice = embed_slice(&local.program).map(part);
+    let slice = embed_slice(&lowered.program).map(part);
     let slice_reads: BTreeSet<String> = slice.iter().flat_map(|s| &s.program.rules).flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect();
     crate::code_rule_dsl::logic::profile::decision("guests", || match &slice {
-        Some(s) => format!("an embed slice of {} rules runs per chunk, up to {} rounds, before the file-local part (decision 0055); library embeds {}", s.program.rules.len(), guests::DEPTH, if library_guests { "on" } else { "off (.guests off)" }),
+        Some(s) => format!("an embed slice of {} rules runs per chunk, up to {} rounds, before the file-local part (decision 0055)", s.program.rules.len(), guests::DEPTH),
         None => "no rule asks for a guest".into(),
     });
     // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
@@ -737,7 +800,11 @@ pub(crate) fn run_with_options(
     // A chunk: its nodes and sources (none when it is only memo hits), its documents (key, path, source, nodes) and
     // the memo hits read since the last chunk.
     type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<crate::content_store::SourceId>, u64)>, Vec<memo::Entry>, Vec<syntax::Document>);
+    #[cfg(not(target_family = "wasm"))]
     let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Chunk>>(1);
+    // wasm32 has no threads: the builder runs to its end first (`spawn_chunks`), so every chunk waits here.
+    #[cfg(target_family = "wasm")]
+    let (send, chunks_in) = std::sync::mpsc::channel::<Result<Chunk>>();
     // What each side of the channel is doing, for the other's waits (`profile::wait`).
     let (worker_doing, main_doing) = (crate::code_rule_dsl::logic::profile::Activity::default(), crate::code_rule_dsl::logic::profile::Activity::default());
     worker_doing.set("parse");
@@ -755,7 +822,7 @@ pub(crate) fn run_with_options(
     };
     let stat_index = &stat_index;
     let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, crate::content_store::SourceId)>)> {
-    let worker = scope.spawn(|| {
+    let worker = spawn_chunks(scope, || {
         let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
         let add = |acc: &mut (f64, f64), from: (f64, f64)| {
             let now = thread_usage();
@@ -897,8 +964,7 @@ pub(crate) fn run_with_options(
         }
         // `RERAIL_PROF_CHUNKS=1`: the memory held as each chunk arrives (footprint, live heap, cross-file rows).
         if std::env::var_os("RERAIL_PROF_CHUNKS").is_some() {
-            let _ = tikv_jemalloc_ctl::epoch::advance();
-            let live = tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20;
+            let live = crate::code_rule_dsl::prof::live_heap_mb();
             eprintln!(
                 "chunk {chunks}: footprint {} MB (max {}), heap live {live} MB, outputs {} lines",
                 crate::code_rule_dsl::prof::footprint_mb(),
@@ -966,7 +1032,7 @@ pub(crate) fn run_with_options(
         let sources = match &slice {
             Some(slice) if !documents.is_empty() => {
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
-                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::default());
+                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label));
                 for _ in 0..guests::DEPTH {
                     // The slice's planner statistics: what it reads, measured in this round's batch.
                     let mut round = stats.clone();
@@ -978,7 +1044,7 @@ pub(crate) fn run_with_options(
                         modules.bind(&db, rel, Arc::clone(source))?;
                     }
                     let got = super::run_atoms_native_over(slice, &db, "main", round, BTreeSet::new(), modes)?;
-                    let new = made.make(guests::requests(&got.outputs, library_guests), &docs, tapes.as_ref()).map_err(Error::Plan)?;
+                    let new = made.make(guests::requests(&got.outputs), &docs, tapes.as_ref()).map_err(Error::Plan)?;
                     if new.is_empty() {
                         break;
                     }
@@ -1286,7 +1352,7 @@ pub(crate) fn run_with_options(
         decoded.sort();
         decoded.dedup();
         let mut text = decoded.join("\n");
-        if !text.is_empty() {
+        if !decoded.is_empty() {
             text.push('\n');
         }
         std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;

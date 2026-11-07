@@ -315,6 +315,8 @@ pub(in crate::code_rule_dsl) enum Value {
 pub(in crate::code_rule_dsl) struct Program {
     /// Each relation's columns: (name, type).
     pub(in crate::code_rule_dsl) decls: BTreeMap<String, Vec<(String, String)>>,
+    /// Logically nullary relations encoded with one physical unit column.
+    pub(in crate::code_rule_dsl) nullary: BTreeSet<String>,
     pub(in crate::code_rule_dsl) lattice: BTreeMap<String, LatticeDecl>,
     pub(in crate::code_rule_dsl) facts: BTreeMap<String, Vec<Vec<Value>>>,
     pub(in crate::code_rule_dsl) rules: Vec<Rule>,

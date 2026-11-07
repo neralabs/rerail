@@ -346,7 +346,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
 /// refuses afterwards, and then keeps the system allocator). Freed SQLite pages are then returned
 /// with the heap's (`purge_allocator_pages`) instead of staying fragmented in the system's zones:
 /// a slice's prefilter and ingest held ~140 MB there for ~30 MB live (O30).
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 pub(crate) fn sqlite_on_jemalloc() {
     use std::ffi::{c_int, c_void};
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -389,7 +389,7 @@ pub(crate) fn sqlite_on_jemalloc() {
 }
 
 fn open_runtime_connection(path: &Path) -> StoreResult<Connection> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     sqlite_on_jemalloc();
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE

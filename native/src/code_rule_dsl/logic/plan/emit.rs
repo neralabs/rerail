@@ -23,6 +23,7 @@
 use super::*;
 use crate::code_rule_dsl::waves::schedule;
 
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Emitted {
     pub(in crate::code_rule_dsl) program: schedule::Program,
     /// Statements the steps read besides the program's relations: `rdl_int`, then the views.
@@ -33,6 +34,37 @@ pub(in crate::code_rule_dsl) struct Emitted {
     pub(in crate::code_rule_dsl) views: Vec<(String, Query)>,
     /// The program's inputs, which its statements may read.
     pub(in crate::code_rule_dsl) inputs: Vec<String>,
+}
+
+impl Emitted {
+    /// Connection-local extension views must not shadow the public fact modules. All references
+    /// are rewritten through the checked query tree; SQL literals and user SQL are untouched.
+    pub(in crate::code_rule_dsl) fn for_session(&mut self, namespace: &str, bound: &BTreeSet<String>) {
+        let names: BTreeMap<String, String> = self.views.iter().filter(|(rel,_)|bound.contains(rel)).map(|(rel, _)| (rel.clone(), format!("__sql_{namespace}_{rel}"))).collect();
+        let old: HashSet<String> = self.views.iter().map(|(rel, q)| view_sql(rel, q)).collect();
+        self.setup.retain(|sql| !old.contains(sql));
+        let rewrite = |query: &mut Query| {
+            for block in query.ctes.iter_mut().flat_map(|c| &mut c.arms).chain([&mut query.body]) {
+                block.relations_mut(&mut |relation| {
+                    if let Relation::Derived { rel, .. } = relation {
+                        if let Some(private) = names.get(rel) { *rel = private.clone(); }
+                    }
+                });
+                block.sqlite_order();
+            }
+        };
+        for (rel, query) in &mut self.views {
+            rewrite(query);
+            if let Some(private) = names.get(rel) { *rel = private.clone(); }
+            self.setup.push(view_sql(rel, query));
+        }
+        for (step, query) in self.program.steps.iter_mut().zip(&mut self.queries) {
+            if let Some(query) = query {
+                rewrite(query);
+                step.sql = format!("INSERT OR IGNORE INTO new_{} {}", step.output, query.render());
+            }
+        }
+    }
 }
 
 /// `lowered` as the wave program `name`, planned over the statistics in schema `stats` of `db`,
@@ -47,7 +79,6 @@ pub(in crate::code_rule_dsl) fn emit(
     counts: Option<&BTreeMap<String, u64>>,
     batch: &HashMap<String, (Source, f64)>,
 ) -> Result<Emitted> {
-    let prog = &lowered.program;
     let inputs = Inputs {
         facts: "main.".to_owned(),
         stats: format!("{stats}."),
@@ -57,6 +88,11 @@ pub(in crate::code_rule_dsl) fn emit(
         given: None,
         kept: BTreeSet::new(),
     };
+    emit_inputs(&lowered.program,db,name,counts,inputs)
+}
+
+pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
+    let atoms=inputs.atoms.is_some();
     let mut model = make_plan(prog, db, inputs)?;
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
@@ -164,7 +200,7 @@ pub(in crate::code_rule_dsl) fn emit(
     }
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
     Ok(Emitted {
-        program: schedule::Program { name: name.to_owned(), relations, steps, file_local: false, partitions: Vec::new(), lattices },
+        program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
         setup,
         queries,
         views: planned_views,

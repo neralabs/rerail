@@ -900,10 +900,9 @@ impl PackedDemand {
             let anchors = self.anchors[range.clone()].iter().map(|file| file[programs.clone()].to_vec()).collect::<Vec<_>>();
             crate::code_rule_dsl::prof::peak("4.0.before_roots");
             if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-                let _ = tikv_jemalloc_ctl::epoch::advance();
                 eprintln!(
                     "ROOTS {range:?} x {programs:?}: live {} MB, footprint {} MB",
-                    tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
+                    crate::code_rule_dsl::prof::live_heap_mb(),
                     crate::code_rule_dsl::prof::footprint_mb()
                 );
                 if let Some(path) = std::env::var_os("RERAIL_HOLD").filter(|_| std::env::var("RERAIL_HOLD_AT").is_ok_and(|at| at == "roots")) {
