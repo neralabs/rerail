@@ -75,22 +75,33 @@ logically nullary relation has one column, `present`. The derived view wins over
 same name from another program.
 
 **Built (step 3): a corpus run's memo frames, through `bindCorpus(root, relations?)`.**
-- A corpus run records, per memo plan, the relations its entries hold rows of, with their declared
-  columns, in the additive table `corpus_plan_relations`. It is collected with the plan.
-- `bindCorpus` finds the root's newest manifest and reads that plan's entries for the manifest's
-  sources. It binds each relation as an input fact under its own name and `.decl` columns, plus
+- A corpus run records, per memo plan, the relations its entries hold, in the additive table
+  `corpus_plan_relations`. It is collected with the plan.
+  - An export's row holds its `.decl` columns: its entries hold rows of values.
+  - A file-local output's row holds `{"lines": columns}`: its entries hold rendered text lines.
+- `bindCorpus` finds the root's newest manifest and that plan's frames for the manifest's sources.
+  It binds each relation as a read-only input under its own name and `.decl` columns, plus
   `corpus_document(doc, path)`.
-- Nothing is evaluated. The bound rows are ordinary inputs, so SQL and rules both read them. A
-  node's document is `n >> 32`.
+- Nothing is evaluated. SQL and rules both read the bound relations. A node's document is `n >> 32`.
 
-Limits of step 3:
-- **The memo holds only what the file-local part hands on:** the exports. File-local outputs are
-  memoised as text lines and are not bound yet. Cross-file relations are not framed.
-- **Rows are decoded into the session when bound,** not read lazily per document. A source that
-  decodes one frame per document constraint (`doc_column`, `lookup_in`) is the next form.
+**Built: lazy per-document reads (`sql_executor/corpus.rs`).**
+- The frames stay compressed. Binding decompresses only each frame's first eight bytes, which
+  hold its document key.
+- Each relation's rows of a document are decoded when a statement first reads them, and kept.
+  - A lookup on a `node` or `loc` column decodes the one document the value names.
+  - A scan, or a lookup on another column, decodes every document once.
+- The source says its rows are made on lookup, so joins probe it rather than scan it.
+- A file-local output's lines are parsed when decoded. Its `int`, `node` and `loc` columns are
+  parsed as decimals. Every other column is interned as a symbol, including kind and field names,
+  which the lines hold as text.
 
-**Not built yet:** the remainder below, which is the target. That covers lazy per-document reads,
-cross-file relations, staleness, the overlay, materialisation and the decoding functions.
+Limits:
+- Cross-file relations are not framed, so they cannot be bound.
+- A frame that fails to decode reads as empty, because a source has no error path.
+- A lookup scans its document's rows. There is no per-document index yet.
+
+**Not built yet:** the remainder below, which is the target. That covers cross-file relations,
+staleness, the overlay, materialisation and the decoding functions.
 
 - **Storage is the frames the engine already writes**, read per (relation, document) and merged
   with the in-memory overlay. Nothing new is written for SQL's sake.

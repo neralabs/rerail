@@ -351,10 +351,21 @@ Design: `docs/sql-access/01-design.md`.
 ### A corpus run's rows
 
 `bindCorpus(root, relations?)` binds the relations that the newest corpus run of `root` memoised per file:
-- each relation is read from the frames the run wrote, under its declared columns;
-- `corpus_document(doc, path)` maps each document key to its file; a node's document is `n >> 32`.
+- each export, from the rows the run wrote, under its declared columns;
+- each file-local output, from the text lines the run wrote. Number and node columns are parsed;
+  other columns are interned as symbols;
+- `corpus_document(doc, path)`, which maps each document key to its file. A node's document is
+  `n >> 32`.
 
-Nothing is evaluated: SQL and rules read the bound rows as inputs.
+Nothing is evaluated: SQL and rules read the bound relations as read-only inputs. `applyChanges`
+does not change them.
+
+Frames are read lazily:
+- binding reads only each frame's document key, from its first eight decompressed bytes;
+- a lookup on a node or location column decodes the one document it names;
+- a scan, or a lookup on another column, decodes every document once.
+
+The result names each relation's form: `{"files": 2, "relations": {"def": "rows", "named": "lines"}}`.
 
 ### SQL producers
 

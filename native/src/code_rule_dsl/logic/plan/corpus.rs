@@ -881,6 +881,8 @@ pub(crate) fn run_with_options(
     }
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     let memo_program = memo::program_digest(&split.local);
+    // The file-local outputs, whose memo entries hold lines (recorded for a SQL session below).
+    let local_outputs = split.local.outputs.clone();
     // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
     // after pruning is not memoised (a round of `world` does not read them).
     let reads_declared = prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| a.rel == "declared_ret");
@@ -1472,11 +1474,17 @@ pub(crate) fn run_with_options(
     }
     // Publish all source references before releasing the lease and starting collection (decision 0053).
     // The memo's relations, named and typed, so a SQL session can read the run's frames (docs/sql-access).
-    let relations: Vec<(String, String)> = split
+    // An export's entry holds rows (its columns, as JSON); a file-local output's holds lines (`{"lines": columns}`).
+    let mut relations: Vec<(String, String)> = split
         .exports
         .iter()
         .filter_map(|rel| lowered.program.decls.get(rel).map(|cols| (rel.clone(), serde_json::to_string(cols).unwrap_or_default())))
         .collect();
+    for rel in &local_outputs {
+        if let Some(cols) = lowered.program.decls.get(rel).filter(|_| !relations.iter().any(|(r, _)| r == rel)) {
+            relations.push((rel.clone(), serde_json::json!({ "lines": cols }).to_string()));
+        }
+    }
     let collecting = if recording { record_run(store, root, &run_sources, &memo_program, &relations, reading)? } else { drop(reading); None };
     statements.enter("stats");
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.

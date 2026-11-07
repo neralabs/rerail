@@ -534,6 +534,9 @@ def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
 .decl dup(x: symbol)
 dup(x) :- def(a, x), def(b, x), a != b.
 .output dup
+.decl named(n: node, x: symbol)
+named(n, x) :- def(n, x), x = "g".
+.output named
 "#).unwrap();
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
@@ -542,7 +545,15 @@ dup(x) :- def(a, x), def(b, x), a != b.
     let store = std::env::var("RERAIL_TAPE_CACHE").map_or_else(|_| std::env::temp_dir().join("rerail-tape-cache.sqlite"), std::path::PathBuf::from);
     let mut executor = CodeRuleSqlExecutor::new(store.to_string_lossy().into_owned()).unwrap();
     let bound: Value = serde_json::from_str(&executor.bind_corpus(dir.to_string_lossy().into_owned(), None).unwrap()).unwrap();
-    assert_eq!(bound, json!({"files": 2, "relations": {"def": 3}}));
+    // `def` is handed on as rows; `named`, a file-local output, as its rendered lines. `dup` reads
+    // across files and is not in the memo.
+    assert_eq!(bound, json!({"files": 2, "relations": {"def": "rows", "named": "lines"}}));
+    assert_eq!(rows(&executor, "SELECT sym_text(named.x) FROM named JOIN def USING (n)"), json!([["g"]]));
+    // A point lookup on a node decodes only that node's document.
+    assert_eq!(
+        rows(&executor, "SELECT sym_text(x) FROM def WHERE n = (SELECT max(n) FROM named)"),
+        json!([["g"]])
+    );
     // A node names its document (`n >> 32`), which `corpus_document` maps to the file's path.
     assert_eq!(
         rows(&executor, "SELECT sym_text(d.path), sym_text(x) FROM def JOIN corpus_document d ON d.doc = n >> 32 ORDER BY 1, 2"),

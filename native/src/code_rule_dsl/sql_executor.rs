@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 mod catalog;
+mod corpus;
 mod documents;
 mod indexes;
 mod live;
@@ -173,22 +174,7 @@ impl CodeRuleSqlExecutor {
             types: Option<Vec<String>>,
         }
         let input: Input = serde_json::from_str(&relation_json).map_err(error)?;
-        if self.documents.is_some()
-            && self.inputs.contains_key(&input.name)
-            && !self.mutable_inputs.contains(&input.name)
-        {
-            return Err(error(
-                "native snapshot families cannot be replaced with bindRelation",
-            ));
-        }
         let logical_arity = input.columns.len();
-        if self
-            .input_shapes
-            .get(&input.name)
-            .is_some_and(|(arity, _)| *arity != logical_arity)
-        {
-            return Err(error("rebinding a fact cannot change its logical arity"));
-        }
         let logical_types = input.types.clone();
         if let Some(types) = &input.types {
             if types.len() != input.columns.len()
@@ -200,20 +186,6 @@ impl CodeRuleSqlExecutor {
                     "fact types must match columns and be number, symbol, node, or loc",
                 ));
             }
-        }
-        if !identifier(&input.name) || reserved(&input.name) {
-            return Err(error("a fact relation needs a non-reserved SQL identifier"));
-        }
-        let stored: bool = self
-            .db
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1 COLLATE NOCASE)",
-                [&input.name],
-                |r| r.get(0),
-            )
-            .map_err(error)?;
-        if stored || input.name.eq_ignore_ascii_case("atoms") {
-            return Err(error("a fact binding cannot replace a stored relation"));
         }
         let boolean = input.columns.is_empty();
         if boolean && input.rows.iter().any(|row| !row.is_empty()) {
@@ -241,20 +213,7 @@ impl CodeRuleSqlExecutor {
         if input.rows.iter().any(|r| r.len() != input.columns.len()) {
             return Err(error("a fact row does not have the declared arity"));
         }
-        if self
-            .inputs
-            .keys()
-            .any(|name| name.eq_ignore_ascii_case(&input.name) && *name != input.name)
-        {
-            return Err(error("fact names must be unique ignoring case"));
-        }
-        if self
-            .inputs
-            .get(&input.name)
-            .is_some_and(|s| s.columns() != input.columns)
-        {
-            return Err(error("rebinding a fact cannot change its columns"));
-        }
+        self.check_input(&input.name, &input.columns, logical_arity)?;
         let mut source =
             Relation::new(&input.columns.iter().map(String::as_str).collect::<Vec<_>>());
         let symbols: BTreeSet<&str> = input
@@ -281,67 +240,97 @@ impl CodeRuleSqlExecutor {
         for row in values {
             source.push(&row);
         }
-        self.invalidate(&BTreeSet::from([input.name.clone()]))?;
-        let source: Arc<dyn Source> = Arc::new(source);
-        self.db
-            .bind(&input.name, Arc::clone(&source))
+        self.install_input(input.name, Arc::new(source), logical_arity, logical_types, true)
+    }
+
+    /// Whether `name` may be bound as a fact relation of these columns.
+    fn check_input(&self, name: &str, columns: &[String], logical_arity: usize) -> Result<()> {
+        if self.documents.is_some() && self.inputs.contains_key(name) && !self.mutable_inputs.contains(name) {
+            return Err(error("native snapshot families cannot be replaced with bindRelation"));
+        }
+        if self.input_shapes.get(name).is_some_and(|(arity, _)| *arity != logical_arity) {
+            return Err(error("rebinding a fact cannot change its logical arity"));
+        }
+        if !identifier(name) || reserved(name) {
+            return Err(error("a fact relation needs a non-reserved SQL identifier"));
+        }
+        let stored: bool = self
+            .db
+            .query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1 COLLATE NOCASE)", [name], |r| r.get(0))
             .map_err(error)?;
-        self.mutable_inputs.insert(input.name.clone());
-        self.live_inputs.remove(&input.name);
-        self.input_shapes
-            .insert(input.name.clone(), (logical_arity, logical_types));
-        self.inputs.insert(input.name, source);
+        if stored || name.eq_ignore_ascii_case("atoms") {
+            return Err(error("a fact binding cannot replace a stored relation"));
+        }
+        if self.inputs.keys().any(|n| n.eq_ignore_ascii_case(name) && n != name) {
+            return Err(error("fact names must be unique ignoring case"));
+        }
+        if self.inputs.get(name).is_some_and(|s| s.columns() != columns) {
+            return Err(error("rebinding a fact cannot change its columns"));
+        }
         Ok(())
     }
 
-    /// Bind the relations of the newest corpus run of `root` from the rows its per-file memo already wrote
-    /// (`docs/sql-access/01-design.md` §2, option C): each as an input fact under its own name and declared
-    /// columns, plus `corpus_document(doc, path)` from each file's document key to its stored path. Nothing is
-    /// evaluated. `relations` limits which are bound; a name the run's memo does not hold is an error.
+    /// Bind a checked fact relation, invalidating what read the one it replaces. A mutable one takes
+    /// `applyChanges`.
+    fn install_input(&mut self, name: String, source: Arc<dyn Source>, logical_arity: usize, types: Option<Vec<String>>, mutable: bool) -> Result<()> {
+        self.invalidate(&BTreeSet::from([name.clone()]))?;
+        self.db.bind(&name, Arc::clone(&source)).map_err(error)?;
+        if mutable {
+            self.mutable_inputs.insert(name.clone());
+        } else {
+            self.mutable_inputs.remove(&name);
+        }
+        self.live_inputs.remove(&name);
+        self.input_shapes.insert(name.clone(), (logical_arity, types));
+        self.inputs.insert(name, source);
+        Ok(())
+    }
+
+    /// Bind the relations of the newest corpus run of `root` from what its per-file memo already wrote
+    /// (`docs/sql-access/01-design.md` §2, option C): each export's rows and each file-local output's lines, as a
+    /// read-only input under its own name and declared columns, plus `corpus_document(doc, path)` from each file's
+    /// document key to its stored path. Nothing is evaluated, and frames are decoded per document when a statement
+    /// reads them (`corpus`). `relations` limits which are bound; a name the run's memo does not hold is an error.
     #[napi]
     pub fn bind_corpus(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
         let canonical = std::fs::canonicalize(&root).map_or(root.clone(), |p| p.to_string_lossy().into_owned());
-        let (declared, entries) = plan::corpus::memo::read_run(&self.store, &canonical)
+        let (recorded, frames) = plan::corpus::memo::read_run(&self.store, &canonical)
             .map_err(error)?
             .ok_or_else(|| error(format!("{root}: no corpus run is recorded for this root")))?;
         let wanted: Vec<String> = match relations {
             Some(names) => {
-                if let Some(missing) = names.iter().find(|n| !declared.contains_key(*n)) {
+                if let Some(missing) = names.iter().find(|n| !recorded.contains_key(*n)) {
                     return Err(error(format!("{missing}: not a relation of the run's memo")));
                 }
                 names
             }
-            None => declared.keys().cloned().collect(),
+            None => recorded.keys().cloned().collect(),
         };
-        let mut counts = serde_json::Map::new();
+        let run = Arc::new(corpus::Run::open(frames)?);
+        let mut bound = serde_json::Map::new();
         for rel in &wanted {
-            let decl = &declared[rel];
-            let types: Option<Vec<&str>> = decl
-                .iter()
-                .map(|(_, ty)| match ty.as_str() {
-                    "sym" => Some("symbol"),
-                    "int" => Some("number"),
-                    "node" | "loc" => Some(ty.as_str()),
-                    _ => None,
-                })
-                .collect();
-            let rows: BTreeSet<&[i64]> = entries
-                .iter()
-                .filter_map(|(_, e)| e.rows.get(rel))
-                .flat_map(|(width, values)| values.chunks((*width).max(1)))
-                .collect();
-            counts.insert(rel.clone(), json!(rows.len()));
-            self.bind_relation(
-                json!({"name": rel, "columns": catalog::view_columns(decl), "types": types, "rows": rows}).to_string(),
-            )?;
+            // An export's columns, or `{"lines": columns}` for a file-local output's rendered lines.
+            let value: Value = serde_json::from_str(&recorded[rel]).map_err(error)?;
+            let (form, decl) = match value.get("lines") {
+                Some(cols) => (corpus::Form::Lines, cols.clone()),
+                None => (corpus::Form::Rows, value),
+            };
+            let decl: Vec<(String, String)> = serde_json::from_value(decl).map_err(error)?;
+            let columns = if decl.is_empty() { vec!["__presence".to_owned()] } else { catalog::view_columns(&decl) };
+            self.check_input(rel, &columns, decl.len())?;
+            let types = decl.iter().map(|(_, t)| t.clone()).collect();
+            let source = corpus::Corpus::new(Arc::clone(&run), rel, columns, types, form, self.store.atoms_handle());
+            let bound_types = source.bound_types();
+            bound.insert(rel.clone(), json!(if form == corpus::Form::Lines { "lines" } else { "rows" }));
+            self.install_input(rel.clone(), Arc::new(source), decl.len(), bound_types, false)?;
         }
-        let paths: Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
+        let paths: Vec<&str> = run.documents().map(|(_, p)| p).collect();
         let atoms = self.store.intern_atoms(&paths).map_err(error)?;
-        let documents: Vec<Value> = entries.iter().zip(atoms).map(|((_, e), path)| json!([e.key, path])).collect();
+        let documents: Vec<Value> = run.documents().zip(atoms).map(|((key, _), path)| json!([key, path])).collect();
         self.bind_relation(
             json!({"name": "corpus_document", "columns": ["doc", "path"], "types": ["number", "symbol"], "rows": documents}).to_string(),
         )?;
-        serde_json::to_string(&json!({"files": entries.len(), "relations": counts})).map_err(error)
+        serde_json::to_string(&json!({"files": run.len(), "relations": bound})).map_err(error)
     }
 
     /// Clear generated results while keeping bound facts and connection-local extensions.
