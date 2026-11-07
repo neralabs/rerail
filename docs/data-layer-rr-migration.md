@@ -60,7 +60,15 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **71 target drafts and 29 absent translations**. None has full acceptance yet.
+The current inventory contains **72 target drafts and 28 absent translations**. None has full acceptance yet.
+The 72nd draft, `async_sync_boundary`, passes all five original cases, 295 supplemental API/helper cases, and 158 reporter cases.
+The API corpus contains 165 scans: 148 positives, 16 clean results, and one exact decoding exception. Helpers account for 130 cases.
+The reporter corpus contains 74 positive cases. Native queries also back the original result's three category properties.
+Its [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-boundary-native-direct-contracts.json.gz)
+and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-boundary-native-supplemental-contracts.json.gz) retain all values and positive controls.
+The source returns whole file groups in worker-completion order. Twelve source runs demonstrate both cross-file permutations.
+The supplemental comparator preserves every field and per-file order. It accepts only permutations of complete, contiguous file groups.
+Both raw source and native values remain in the receipt. Production, CLI/enforcement, and persistent-workspace acceptance remain outstanding.
 The 71st draft, `async_patterns`, passes all 11 original tests, 158 supplemental API cases, and 136 configured reporter cases.
 The corpus includes 125 positive API cases and 98 positive reporter cases. All three absolute-path regressions now pass.
 Its [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-async-patterns-native-direct-contracts.json.gz)

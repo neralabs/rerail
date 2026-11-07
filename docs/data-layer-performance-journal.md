@@ -8393,3 +8393,48 @@ Evidence: [direct original contracts](../gate/data-layer/fixtures/host/data-laye
 and [supplemental contracts, regressions, and family controls](../gate/data-layer/fixtures/host/data-layer-port/rr-async-patterns-native-supplemental-contracts.json.gz).
 Production integration and persistent-workspace contracts remain required. No Linear ticket was created.
 The next missing translation is `async_sync_boundary`.
+
+## 2026-11-07 — Boundary collectors, helpers, and source completion order
+
+The 72nd draft translates `async_sync_boundary` on the same modern root engine. It needs no additional native capability or build.
+The native tree and dependencies still match the frozen executable's source commit. Final shape remains at `a2c9ee123`.
+
+The translation preserves three bridge categories, textual call-name rules, function-stack behavior, source triggers, allowlists, and informational paths.
+Lambdas and classes remain transparent to the collector's function stack. Decorators and defaults use the decorated function's context.
+An attribute chain retains its suffix when its receiver is a call or subscript. Executor matching uses the source's literal suffix test.
+The raw scanner retains allowlisted findings; configured reporting suppresses them. The source's substring path rules remain unchanged.
+
+Filesystem enumeration and DTO construction remain transport operations. Datalog counts the requested inventory, including repeated paths.
+Three native category queries back `LintResult` properties and return the original DTO objects by index.
+Call-name, allowlist, and informational helpers execute natively. No original detector method executes in the native test run.
+
+Commit `bcc05af1a` retains a real failing step: three original positive tests fail against an empty detector; both clean tests pass.
+The complete rule then passes all five tests. The supplemental corpus catches a decoding fault: the source propagates invalid UTF-8.
+Commit `ecc54a17e` preserves that exception through a native failure row instead of silently omitting the file.
+
+The first complete supplemental run also catches a cross-file ordering mismatch. All fields and counts agree.
+The source fact engine inserts bundles in `as_completed` order, then the scanner appends each whole file's findings.
+Twelve unchanged source runs produce both permutations. The receipt retains all twelve raw results and the source-file hashes.
+The comparator now permits only whole-file group permutations. It preserves in-file order, duplicates, every field, counts, and exact exceptions.
+It rejects interleaved file groups. Three new regression tests protect that boundary. No raw report value is rewritten.
+
+Final focused acceptance:
+
+- All five unchanged original tests pass: three positives and two clean cases. Nine native calls preserve five complete scanner returns.
+- The original category-property assertions also execute native queries. They do not count as additional original test cases.
+- All 295 supplemental cases pass: 165 raw scans and 130 helper contracts.
+- Raw scans include 148 positives, 16 clean cases, and one exact decoding exception.
+- Helper contracts include 112 allowlist cases, seven informational-path cases, and eleven supplied-AST call-name cases.
+- All 158 configured reporter cases pass, including 74 positives and 84 clean results.
+- An original positive rejects a disabled detector. Three independent reporter controls reject disabled bridge categories.
+- All 72 draft readers, 62 migration tooling tests, and both authoring gate tests pass.
+
+The final corpus uses 16 disjoint shards per interface, with two workers. Every case appears exactly once.
+The slowest final shard took 36 seconds. No full repository cold run was performed.
+The existing engine's focused native checks remain recorded in the preceding delivery; this translation changes no native code.
+
+Evidence: [direct original assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-boundary-native-direct-contracts.json.gz)
+and [complete supplemental corpus, regressions, ordering evidence, and family controls](../gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-boundary-native-supplemental-contracts.json.gz).
+The inventory is 72 drafts and 28 absent translations. Full migration acceptance remains false.
+Production integration, CLI/enforcement, persistent-workspace acceptance, and the remaining translations still require work.
+No Linear ticket was created.
