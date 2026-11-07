@@ -306,7 +306,7 @@ fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) 
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
         let mut row = Vec::with_capacity(types.len());
-        for (i, &t) in types.iter().enumerate() { row.push(read_value(r.get_ref(i)?, t, syms)?); }
+        for (i, &t) in types.iter().enumerate() { row.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         out.push(row);
     }
     Ok(out)
@@ -462,7 +462,9 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             for vals in got {
                 visits += 1;
                 row.clear();
-                for (v, &ty) in vals.iter().zip(&types) { row.push(read_value(ValueRef::from(v), ty, &mut syms)?); }
+                for (v, &ty) in vals.iter().zip(&types) {
+                    row.push(read_value(ValueRef::from(v), ty, &mut syms).map_err(|e| err(format!("{}: {e}", store.rels[head].table)))?);
+                }
                 if !store.rels[head].contains(&row) { fresh[head].add(&row); }
             }
         }
@@ -1112,7 +1114,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     let mut q = st.query([])?;
     let (mut rows, mut n) = (Vec::new(), 0);
     while let Some(r) = q.next()? {
-        for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms)?); }
+        for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
     let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new() });

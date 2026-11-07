@@ -1067,7 +1067,9 @@ impl Lowerer {
         let [STerm::Str(re), s] = args else { unreachable!("match with a pattern") };
         let whole = Term::Str(format!("^(?:{re})$"));
         let s = self.term(s)?;
-        let mut out = Vec::new();
+        // The test as well as the groups: a group the head alone reads is a column, which SQL does not filter on, so
+        // a text that does not match would make a row with no value (`pct_rest`'s `%%` step).
+        let mut out = vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![s.clone(), whole.clone()]), op: "=", r: Term::Int(1) }];
         for g in groups(re) {
             out.push(Literal::Cmp { l: Term::Var(g.clone()), op: "=", r: Term::Call("rx_group".to_owned(), vec![s.clone(), whole.clone(), Term::Str(g)]) });
         }
