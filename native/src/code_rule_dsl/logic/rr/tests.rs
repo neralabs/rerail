@@ -743,3 +743,27 @@ Seen(@place(p, l), t) :- doc(d, p, _), split_line(d, l, t).
     assert_eq!(result["files"], 2);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// async_executor uses str.split('\n'), not physical lines or Python splitlines.
+#[test]
+fn lf_lines_keep_other_separators_and_the_trailing_empty_line() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrlf");
+    let root = dir.join("corpus");
+    std::fs::create_dir_all(&root).unwrap();
+    let first = format!("{}\rtwo\u{2028}three\u{b}four", "x".repeat(400));
+    std::fs::write(root.join("a.py"), format!("{first}\nfive\n")).unwrap();
+    std::fs::write(root.join("empty.py"), "").unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, r#"
+.policy "lf-lines" revision 1
+.language python
+.violation Seen(at: span, text: symbol) "{text}"
+Seen(@place(p, l), t) :- doc(d, p, _), lf_line(d, l, t).
+"#).unwrap();
+    let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut actual: Vec<(String, u64, String)> = result["diagnostics"].as_array().unwrap().iter()
+        .map(|r| (r["path"].as_str().unwrap().to_owned(), r["line"].as_u64().unwrap(), r["parameters"]["text"].as_str().unwrap().to_owned())).collect();
+    actual.sort();
+    assert_eq!(actual, vec![("a.py".into(),1,first), ("a.py".into(),2,"five".into()),
+                           ("a.py".into(),3,"".into()), ("empty.py".into(),1,"".into())]);
+}
