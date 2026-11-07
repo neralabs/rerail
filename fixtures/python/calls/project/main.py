@@ -15,6 +15,11 @@ def main():
     dynamic.exercise()
     aliases.exercise()
     asyncs.exercise()
+    from pkg import hierarchy
+    from pkg.sub import deep
+
+    hierarchy.exercise()
+    deep.exercise()
 
 
 main()

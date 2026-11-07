@@ -6,7 +6,7 @@
 // native `calls` relation's is: `call_open` (unknown), else the definitions `call_target` names (none: no edge).
 //
 // Python semantics covered: LEGB scope lookup (class scopes are invisible to nested functions), imports (absolute,
-// one-dot relative, aliased, star, function-local), re-exports through module bindings, later unconditional bindings
+// relative (any number of dots), aliased, star, function-local), re-exports through module bindings, later unconditional bindings
 // shadowing earlier ones, decorators (transparent ones, workspace decorators through their returns, others unknown),
 // classes and inheritance (method lookup through bases, constructors to `__init__`, instances to `__call__`),
 // late-bound `self`/`cls` (the class and every workspace subclass), `super()`, and function values flowing through
@@ -81,7 +81,15 @@ ribind(s, x, @dot(m, y)) :- rifrom(s, x, m, y).
 ribind(s, t, t) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), child(n, c, 0), text(c, t), nearest(i, s, scope).
 ribind(s, a, m) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, m),
     field(x, "alias", al), text(al, a), nearest(i, s, scope).
-// A relative import the facts cannot place (two or more dots, or outside a package): what it binds is unknown.
+// Two dots or more: `..` is the package's parent (`from .. import x` in `pkg.sub.deep` is `pkg`), one level up per dot.
+.decl updots(t: symbol, k: number)
+updots("..", 1). updots("...", 2). updots("....", 3).
+impmod(i, q) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
+    child(mn, pre, 0), text(pre, t), updots(t, k), !child(mn, _, 1), docof(i, d), pkg(d, p), q = @pkg_up(p, k), q != "".
+impmod(i, @dot(q, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
+    child(mn, pre, 0), text(pre, t), updots(t, k), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p),
+    q = @pkg_up(p, k), q != "".
+// A relative import the facts cannot place (more dots than packages, or outside a package): what it binds is unknown.
 .decl irel_open(i: node)
 irel_open(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"), !impmod(i, _).
 rotgt(s, y) :- irel_open(i), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope).
@@ -371,15 +379,41 @@ vopen(c) :- vpos(c), callee(c, e), pv(e, "mod", _).
 
 // ---- call targets ---------------------------------------------------------------------------------------------
 .decl call_target(c: node, f: node)
-call_target(c, f) :- callee(c, e), pv(e, "fn", f).
+call_target(c, f) :- callee(c, e), pv(e, "fn", f), !mro_dropped(e, f).
+// Method resolution order. `found` is the union over every base, depth first, so in a diamond (`class D(B, C)`,
+// both from `A`) `D.who` finds `A.who` through `B` and `C.who` through `C`. C3 gives `C.who`. A definition found
+// on a class that another candidate class subclasses is never the one called, so it is dropped here, at the
+// call. Values (`pv`) still flow as the union: `pv` and `found` are one recursive component, where the negation
+// cannot go. Candidates neither of which subclasses the other are left to C3's left-to-right merge, which this
+// does not model: the call is unknown (`mro_ambiguous`), never both.
+.decl mro_cand(n: node, c: node, at: node)
+mro_cand(n, c, at) :- attr_of(n, o, a), pv(o, "cls", c), found(c, a, at).
+mro_cand(n, c, at) :- attr_of(n, o, a), pv(o, "inst", c), found(c, a, at).
+mro_cand(n, b, at) :- attr_of(n, o, a), pv(o, "super", c), base(c, b), found(b, a, at).
+// Per receiver class c: a late-bound `self` may be several classes, each with its own resolution.
+.decl mro_shadowed(n: node, c: node, at: node)
+mro_shadowed(n, c, at) :- mro_cand(n, c, at), mro_cand(n, c, x), x != at, anc(x, at).
+.decl mro_kept(n: node, f: node)
+mro_kept(n, f) :- mro_cand(n, c, at), !mro_shadowed(n, c, at), attr_of(n, _, a), bv(at, a, "fn", f).
+.decl mro_dropped(n: node, f: node)
+mro_dropped(n, f) :- mro_cand(n, c, at), mro_shadowed(n, c, at), attr_of(n, _, a), bv(at, a, "fn", f), !mro_kept(n, f).
+.decl mro_ambiguous(n: node)
+mro_ambiguous(n) :- mro_cand(n, c, x), mro_cand(n, c, y), x != y, !mro_shadowed(n, c, x), !mro_shadowed(n, c, y).
 call_target(c, f) :- callee(c, e), pv(e, "cls", k), found(k, "__init__", at), bv(at, "__init__", "fn", f).
 call_target(c, f) :- callee(c, e), pv(e, "inst", k), found(k, "__call__", at), bv(at, "__call__", "fn", f).
+// A class call also runs the class's `__new__` and its metaclass's `__call__`, where the workspace defines them.
+call_target(c, f) :- callee(c, e), pv(e, "cls", k), found(k, "__new__", at), bv(at, "__new__", "fn", f).
+call_target(c, f) :- callee(c, e), pv(e, "cls", k), anc(k, b), metacls(b, mc), found(mc, "__call__", at), bv(at, "__call__", "fn", f).
+.decl metacls(c: node, m: node)
+metacls(c, mc) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, kw, _), kind(kw, "keyword_argument"),
+    field(kw, "name", nm), text(nm, "metaclass"), field(kw, "value", v), pv(v, "cls", mc).
 .decl call_open(c: node)
 call_open(c) :- callee(c, e), vopen(e).
 call_open(c) :- callee(c, e), pv(e, "cls", k), attr_open(k, "__init__").
 call_open(c) :- callee(c, e), pv(e, "inst", k), attr_open(k, "__call__").
 call_open(c) :- callee(c, e), pv(e, "mod", _).
 call_open(c) :- callee(c, e), pv(e, "super", _).
+call_open(c) :- callee(c, e), mro_ambiguous(e).
 // Rounds that stop before the fixpoint (O41, decision 0047) leave a cross-file row missing, and a missing row reads
 // as no edge. The pending round adds `unconverged(1)`: a call with no target is then unknown, not "calls nothing".
 // A call with targets keeps them as a lower bound.

@@ -130,4 +130,25 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   type relations drafted here first; Python first for receiver typing.
 - **O41 narrowed:** at k = 4 calls.rr converges on the oracle (84 agree, 9 depart, 0 wrong). Cut short, the
   pending round makes the re-export unknown, never no edge.
+- **Python parity** (decision 0047, point 2).
+  - The runtime oracle gained the cases the native resolver models and the program did not: a metaclass
+    `__call__`, a `__new__`, a C3 diamond, and relative imports two dots up (`pkg/hierarchy.py`,
+    `pkg/sub/deep.py`).
+  - The tracer now records what CPython runs for a class call: the metaclass's `__call__`, `__new__` and
+    `__init__` where the workspace defines them, not `__init__` alone. It runs under 3.13.18, which reproduced
+    the old recording exactly.
+  - `calls.rr` now has:
+    - `__new__` and metaclass `__call__` targets;
+    - relative imports of any depth (`@pkg_up`);
+    - method resolution per receiver class. A definition on a class another candidate subclasses is dropped at
+      the call. Incomparable candidates make the call unknown, never both.
+
+  | | Agree | Depart | Wrong |
+  |---|---|---|---|
+  | `calls.rr` | 94 | 9 | 0 |
+  | native resolver | 84 | 19 | 0 |
+
+  Every departure of the program is one the native resolver also has. The program departs nowhere the native
+  resolver agrees. What is left before `calls:` can switch is the Jedi corpus comparison
+  (`benchmark_python_calls_corpus`), run once as the phase check.
 

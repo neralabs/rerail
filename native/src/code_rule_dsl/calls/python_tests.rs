@@ -216,6 +216,16 @@ const DEPARTURES: &[(&str, Departure, &str)] = &[
         "a call of a call's result: CPython calls the partial object, which calls `util.helper`",
     ),
     (
+        "pkg/hierarchy.py:7 `super().__call__(*args)`",
+        Departure::Unknown,
+        "a method of `super()` (in a metaclass: `type.__call__`)",
+    ),
+    (
+        "pkg/hierarchy.py:17 `super().__new__(cls)`",
+        Departure::Unknown,
+        "a method of `super()` (`object.__new__`)",
+    ),
+    (
         "pkg/models.py:27 `super().__init__(value)`",
         Departure::Unknown,
         "a method of `super()`",

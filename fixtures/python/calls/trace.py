@@ -12,7 +12,8 @@ call's span, so both are recorded there. CPython compiles `super().m()` without 
 so that `super()` is never recorded.
 What it called:
 - ["def", file, line]: a function the workspace defines, at its `def` line (a bound method's
-  function, a class's `__init__` or an instance's `__call__` where the workspace defines them);
+  function, an instance's `__call__` where the workspace defines it; for a class, its metaclass's
+  `__call__`, its `__new__` and its `__init__`, each where the workspace defines it);
 - ["lambda", file, line]: a lambda of the workspace;
 - ["class", file, line]: a class of the workspace whose `__init__` is no workspace function;
 - ["external", name]: anything else (builtins, the standard library, C callables)."""
@@ -87,6 +88,24 @@ def function_target(function: types.FunctionType) -> list[object]:
     return ["def", relative, source(relative).defs.get(code.co_firstlineno, code.co_firstlineno)]
 
 
+def workspace_function(function: object) -> bool:
+    return isinstance(function, types.FunctionType) and project_file(function.__code__.co_filename) is not None
+
+
+def targets(callable_: object) -> list[list[object]]:
+    """What a call of `callable_` runs: for a class, each of its metaclass's `__call__`, its `__new__` and its
+    `__init__` the workspace defines (CPython runs all three), else `target`'s one answer."""
+    if isinstance(callable_, type):
+        found = [
+            function_target(f)
+            for f in (type(callable_).__call__, callable_.__new__, callable_.__init__)
+            if workspace_function(f)
+        ]
+        if found:
+            return found
+    return [target(callable_)]
+
+
 def target(callable_: object) -> list[object]:
     if isinstance(callable_, types.MethodType):
         callable_ = callable_.__func__
@@ -130,9 +149,9 @@ def on_call(code: types.CodeType, offset: int, callable_: object, _arg0: object)
     if (start, end) not in file.calls:
         return None
     site = sites.setdefault((relative, start, end), {"start": start, "end": end, "line": line, "callees": []})
-    callee = target(callable_)
-    if callee not in site["callees"]:
-        site["callees"].append(callee)
+    for callee in targets(callable_):
+        if callee not in site["callees"]:
+            site["callees"].append(callee)
     return None
 
 

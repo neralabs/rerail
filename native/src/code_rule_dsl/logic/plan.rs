@@ -2183,7 +2183,7 @@ fn sym_char(inputs: &Inputs, t: &str) -> char {
 }
 
 fn prog_types<'p>(prog: &'p Program, r: &str) -> Vec<&'p str> {
-    prog.decls[r].iter().map(|(_, t)| t.as_str()).collect()
+    prog.decls.get(r).unwrap_or_else(|| panic!("no declaration of {r}")).iter().map(|(_, t)| t.as_str()).collect()
 }
 
 /// A relation's statistics from the native store (`set_fixpoint_stats`, T's `live_stats`): rows, then per column

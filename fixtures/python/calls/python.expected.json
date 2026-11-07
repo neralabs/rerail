@@ -1,5 +1,5 @@
 {
- "python": "3.13.14",
+ "python": "3.13.18",
  "runtime": {
   "main.py": [
    {
@@ -123,9 +123,33 @@
     ]
    },
    {
-    "start": 441,
-    "end": 447,
-    "line": 20,
+    "start": 503,
+    "end": 523,
+    "line": 21,
+    "callees": [
+     [
+      "def",
+      "pkg/hierarchy.py",
+      41
+     ]
+    ]
+   },
+   {
+    "start": 528,
+    "end": 543,
+    "line": 22,
+    "callees": [
+     [
+      "def",
+      "pkg/sub/deep.py",
+      6
+     ]
+    ]
+   },
+   {
+    "start": 546,
+    "end": 552,
+    "line": 25,
     "callees": [
      [
       "def",
@@ -606,6 +630,88 @@
     ]
    }
   ],
+  "pkg/hierarchy.py": [
+   {
+    "start": 271,
+    "end": 294,
+    "line": 7,
+    "callees": [
+     [
+      "external",
+      "builtins.type.__call__"
+     ]
+    ]
+   },
+   {
+    "start": 428,
+    "end": 448,
+    "line": 17,
+    "callees": [
+     [
+      "external",
+      "builtins.object.__new__"
+     ]
+    ]
+   },
+   {
+    "start": 668,
+    "end": 675,
+    "line": 42,
+    "callees": [
+     [
+      "def",
+      "pkg/hierarchy.py",
+      11
+     ],
+     [
+      "def",
+      "pkg/hierarchy.py",
+      6
+     ]
+    ]
+   },
+   {
+    "start": 680,
+    "end": 690,
+    "line": 43,
+    "callees": [
+     [
+      "def",
+      "pkg/hierarchy.py",
+      16
+     ],
+     [
+      "def",
+      "pkg/hierarchy.py",
+      19
+     ]
+    ]
+   },
+   {
+    "start": 695,
+    "end": 705,
+    "line": 44,
+    "callees": [
+     [
+      "def",
+      "pkg/hierarchy.py",
+      33
+     ]
+    ]
+   },
+   {
+    "start": 701,
+    "end": 704,
+    "line": 44,
+    "callees": [
+     [
+      "class",
+      "pkg/hierarchy.py",
+      37
+     ]
+    ]
+   }
+  ],
   "pkg/models.py": [
    {
     "start": 78,
@@ -904,6 +1010,32 @@
       "def",
       "pkg/nested.py",
       13
+     ]
+    ]
+   }
+  ],
+  "pkg/sub/deep.py": [
+   {
+    "start": 142,
+    "end": 152,
+    "line": 7,
+    "callees": [
+     [
+      "def",
+      "pkg/util.py",
+      4
+     ]
+    ]
+   },
+   {
+    "start": 157,
+    "end": 173,
+    "line": 8,
+    "callees": [
+     [
+      "def",
+      "pkg/nested.py",
+      1
      ]
     ]
    }
