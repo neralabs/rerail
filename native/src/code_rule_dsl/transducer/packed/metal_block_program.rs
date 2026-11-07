@@ -112,7 +112,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::AfterOddRun(a) => [10, u32::from(a), carry, 0],
         // Its second operand in `imm`: `b` is the carry's index.
         BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
-        BlockInst::Within => [13, 0, 0, 0],
+        BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
         BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
     }
 }
@@ -331,7 +331,7 @@ pub(in crate::code_rule_dsl) fn run_batch(
             .map(|k| {
                 let at = (row.out_base as usize + k * lanes) * word;
                 let w: Vec<u64> = lanes_bytes[at..at + lanes * word].chunks(8).take(words).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
-                undelay(&w, n.delay, len)
+                undelay(&w, n.output_delays[k], len)
             })
             .collect();
         let capacity = len.max(1);
@@ -913,7 +913,8 @@ fn emit(
             BlockInst::Xor(a, b) => format!("v{a} ^ v{b}"),
             BlockInst::AndNot(a, b) => format!("{m}(v{a} & ~v{b})"),
             // The bits of the word's bytes below the stream's end.
-            BlockInst::Within => format!("within_lane<{m}>(len, {offset})"),
+            BlockInst::Within(0) => format!("within_lane<{m}>(len, {offset})"),
+            BlockInst::Within(d) => format!("{m}(within_lane<{m}>(len + {d}u, {offset}) & ~within_lane<{m}>({d}u, {offset}))"),
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_) | BlockInst::Fill(..) => unreachable!(),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));

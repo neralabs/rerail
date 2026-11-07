@@ -138,7 +138,14 @@ fn errors_and_escapes_are_the_fallback_output() {
         let falls_back = out.errors.iter().any(|e| !e.contains("is in no token"));
         assert_eq!(want.iter().any(|&w| w != 0), falls_back, "{} bytes: {:?}", bytes.len(), out.errors);
         for (executor, got) in executors(&p, &bytes) {
-            assert_eq!(cut(got[2].clone(), bytes.len()), want, "{executor}, {} bytes", bytes.len());
+            // The fallback's outputs, one per delay, ORed: the OR of the masks.
+            let mut any = vec![0u64; bytes.len().div_ceil(64)];
+            for &k in &compiled.fallbacks {
+                for (a, w) in any.iter_mut().zip(cut(got[usize::from(k)].clone(), bytes.len())) {
+                    *a |= w;
+                }
+            }
+            assert_eq!(any, want, "{executor}, {} bytes", bytes.len());
         }
         if falls_back { falls += 1 } else { clean += 1 }
     }
@@ -259,7 +266,7 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
         let (runs, over) = prepared.run(&bytes, true);
         assert!(over.is_empty(), "over the launch budget: {over:?}");
         for (executor, got) in runs {
-            let falls = cut(got[0].clone(), n).iter().any(|&w| w != 0);
+            let falls = compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0));
             if !out.errors.is_empty() {
                 assert!(falls, "{executor}, {n} bytes: the evaluator rejects ({:?}) but the file does not fall back", out.errors);
                 rejected += 1;
@@ -432,7 +439,8 @@ fn json_batch_cost_per_block() {
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     let slices: Vec<&[u8]> = bytes.iter().map(Vec::as_slice).collect();
     let runs = native_cpu_block::run_batch(&[&compiled], &files);
-    let fallback = runs.iter().filter(|r| r.outputs[0].iter().any(|&w| w != 0)).count();
+    let falls = json_fallbacks();
+    let fallback = runs.iter().filter(|r| falls.iter().any(|&k| r.outputs[usize::from(k)].iter().any(|&w| w != 0))).count();
     println!("files to the fallback: {fallback}");
     let s = compiled.batch_cpu_seconds(&slices, 3);
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
@@ -461,9 +469,23 @@ fn json_batch_cost_per_block() {
     }
 }
 
-/// JSON's program and the fallback's output index (output 0).
+/// JSON's program.
 fn json_program() -> Program {
     batch_programs().remove(0)
+}
+
+/// JSON's fallback outputs (`bitlex_compile::Compiled::fallbacks`).
+fn json_fallbacks() -> Vec<u16> {
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
+        id => Some(id),
+    };
+    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
+    bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles").fallbacks
 }
 
 /// The tape a block program writes (decision 0046) equals tree-sitter's byte for byte, for every
@@ -475,6 +497,7 @@ fn json_tapes_equal_tree_sitter_byte_for_byte() {
     use crate::code_rule_dsl::tape::{Grammar, TapeImage};
     let grammar = Grammar::new(GrammarDialect::Json).expect("json");
     let program = json_program();
+    let falls = json_fallbacks();
     let block = &program.block_programs()[0];
     let compiled = native_cpu_block::compile(&native_ir::lower(&program).expect("lowers").block_programs.remove(0)).expect("compiles");
     let mut cases = inputs();
@@ -486,7 +509,7 @@ fn json_tapes_equal_tree_sitter_byte_for_byte() {
         let has_error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
         let want = parsed.to_bytes().expect("bytes");
         for (executor, outputs) in [("interpreter", block.interpret(&bytes)), ("cranelift", compiled.run(&bytes))] {
-            let written = tape_writer::tape_of(block, &outputs, 0, &grammar, source).unwrap_or_else(|e| panic!("{executor}: {e}"));
+            let written = tape_writer::tape_of(block, &outputs, &falls, &grammar, source).unwrap_or_else(|e| panic!("{executor}: {e}"));
             match written {
                 None => fallback += 1,
                 Some(_) if has_error => {
@@ -519,6 +542,7 @@ fn json_corpus_tapes_equal_tree_sitter() {
     let bytes: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap_or_else(|e| panic!("{p}: {e}"))).collect();
     let grammar = Grammar::new(GrammarDialect::Json).expect("json");
     let program = json_program();
+    let falls = json_fallbacks();
     let block = &program.block_programs()[0];
     let compiled = native_cpu_block::compile(&native_ir::lower(&program).expect("lowers").block_programs.remove(0)).expect("compiles");
     let files: Vec<block::BatchFile<'_>> = bytes.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
@@ -531,7 +555,7 @@ fn json_corpus_tapes_equal_tree_sitter() {
         };
         let parsed = TapeImage::parse(&grammar, source, &|| false).expect("parses").expect("encodes").primary;
         let has_error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
-        match tape_writer::tape_of(block, &run.outputs, 0, &grammar, source).unwrap_or_else(|e| panic!("{path}: {e}")) {
+        match tape_writer::tape_of(block, &run.outputs, &falls, &grammar, source).unwrap_or_else(|e| panic!("{path}: {e}")) {
             None => fallback += 1,
             Some(_) if has_error => panic!("{path}: a tape where tree-sitter finds an error"),
             Some(tape) if tape.to_bytes().expect("bytes") == parsed.to_bytes().expect("bytes") => equal += 1,
@@ -540,4 +564,75 @@ fn json_corpus_tapes_equal_tree_sitter() {
     }
     eprintln!("{} files: {equal} tapes equal, {fallback} to tree-sitter, {not_utf8} not UTF-8, {} differ", paths.len(), differ.len());
     assert!(differ.is_empty(), "tapes differ: {:?}", &differ[..differ.len().min(10)]);
+}
+
+
+// --- The shape of a compiled language (decision 0047) -----------------------------------------
+//
+// A Bitlex file compiles to simdjson's shape: straight-line bit operations, a carry only where the
+// language needs one. These rules hold for every compiled program; JSON's budgets are ratchets,
+// lowered as the compiler improves, never raised.
+
+/// A block program's violations of the shape rules, each a short line.
+fn shape_violations(p: &block::BlockProgram) -> Vec<String> {
+    use super::block::BlockOp::*;
+    let ops = &p.ops;
+    // Two byte classes that one class replaces: an `eq` with another, or two of one table. (A
+    // class whose products span tables is one lookup per table, ORed.)
+    let one_class = |a: u16, b: u16| match (ops[usize::from(a)], ops[usize::from(b)]) {
+        (Eq(_), Eq(_) | Class { .. }) | (Class { .. }, Eq(_)) => true,
+        (Class { table: x, .. }, Class { table: y, .. }) => x == y,
+        _ => false,
+    };
+    let mut out = Vec::new();
+    for (k, &v) in p.outputs.iter().enumerate() {
+        // An output `prev(x, k)` is `x` output `k` bytes later.
+        if matches!(ops[usize::from(v)], Prev(..)) {
+            out.push(format!("output {k} is a prev (an alignment)"));
+        }
+    }
+    for (at, op) in ops.iter().enumerate() {
+        match *op {
+            // `within` at a delay is a leaf, from the byte position.
+            Prev(a, _) if matches!(ops[usize::from(a)], Within(_)) => out.push(format!("%{at}: a prev of within")),
+            // `prev(prev(x, a), b)` is `prev(x, a + b)`, on the same carried word.
+            Prev(a, _) if matches!(ops[usize::from(a)], Prev(..)) => out.push(format!("%{at}: a prev of a prev")),
+            // Two byte classes combined are one class: one bitmask, not two and an operation.
+            And(a, b) | Or(a, b) | Xor(a, b) | AndNot(a, b) if one_class(a, b) => out.push(format!("%{at}: two byte classes combined")),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The carried words a program keeps from block to block: one per value some `prev` reads (every
+/// distance shares it), and one per other carried operation.
+fn carried_words(p: &block::BlockProgram) -> usize {
+    use super::block::BlockOp::*;
+    let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
+    bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | AfterOddRun(_) | Fill(..))).count()
+}
+
+/// JSON's program has simdjson's shape: no alignment carries, no `prev` of `within` or of a
+/// `prev`, no two byte classes combined; and its operations and carried words within budget.
+#[test]
+fn json_compiles_to_simdjsons_shape() {
+    let program = json_program();
+    let p = &program.block_programs()[0];
+    let violations = shape_violations(p);
+    assert!(violations.is_empty(), "{} violations:\n{}", violations.len(), violations.join("\n"));
+    let prevs = p.ops.iter().filter(|op| matches!(op, block::BlockOp::Prev(..))).count();
+    let (ops, words) = (p.ops.len(), carried_words(p));
+    eprintln!("json: {ops} operations, {prevs} prevs, {words} carried words, {} outputs", p.outputs.len());
+    assert!(ops <= JSON_OPS && words <= JSON_CARRIED_WORDS, "json: {ops} operations (budget {JSON_OPS}), {words} carried words (budget {JSON_CARRIED_WORDS})");
+}
+
+/// JSON's budgets (ratchets: lower them as the compiler improves).
+const JSON_OPS: usize = 527;
+const JSON_CARRIED_WORDS: usize = 90;
+
+#[test]
+#[ignore = "a dump; run by name"]
+fn dump_json_rows() {
+    std::fs::write(std::env::var("RERAIL_DUMP").expect("RERAIL_DUMP"), rir::disassemble(&json_program(), None)).expect("writes");
 }

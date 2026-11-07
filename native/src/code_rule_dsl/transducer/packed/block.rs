@@ -56,11 +56,11 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     /// `e`; a byte in both starts a new fill. One add per word (`carry::fill`). Carry: whether a
     /// fill is open into the next block, a borrow like `after_odd_run`'s.
     Fill(u16, u16),
-    /// The bytes inside the stream: bit `i` is set when `i` is below the stream's length. A
+    /// The bytes inside the stream at a delay `d`: bit `i` is set when `d <= i < len + d`. A
     /// program with a delay (`BlockProgram::delay`) runs past the end; the compiler cleans `~`
     /// with this, so no value has bits outside the stream. No carry: each executor knows the
-    /// length.
-    Within,
+    /// length and the position, so `within` at a delay is never a `prev` of `within`.
+    Within(u8),
 }
 
 /// The carried operations' word functions, shared by the CPU executors' references and the
@@ -141,14 +141,15 @@ impl BlockOp {
             BlockOp::Toggle(a) => format!("toggle %{a}"),
             BlockOp::AfterOddRun(a) => format!("after_odd_run %{a}"),
             BlockOp::Fill(a, b) => two("fill", a, b),
-            BlockOp::Within => "within".to_owned(),
+            BlockOp::Within(0) => "within".to_owned(),
+            BlockOp::Within(d) => format!("within {d}"),
         }
     }
 
     /// The values the operation reads.
     pub(super) fn operands(&self) -> Vec<u16> {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within => vec![],
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::AfterOddRun(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) => {
                 vec![a, b]
@@ -159,7 +160,7 @@ impl BlockOp {
     /// The operation with each operand `v` replaced by `f(v)`.
     pub(super) fn renumbered(&self, f: impl Fn(u16) -> u16) -> Self {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within => *self,
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) => *self,
             BlockOp::Not(a) => BlockOp::Not(f(a)),
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
             BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
@@ -210,7 +211,11 @@ impl BlockOp {
             ["toggle", a] => Ok(BlockOp::Toggle(value(a)?)),
             ["after_odd_run", a] => Ok(BlockOp::AfterOddRun(value(a)?)),
             ["fill", a, b] => Ok(BlockOp::Fill(value(a)?, value(b)?)),
-            ["within"] => Ok(BlockOp::Within),
+            ["within"] => Ok(BlockOp::Within(0)),
+            ["within", d] => match d.parse::<u8>() {
+                Ok(d) if (1..=63).contains(&d) => Ok(BlockOp::Within(d)),
+                _ => Err(format!("a bad within delay `{d}`")),
+            },
             _ => Err(format!("an unknown block operation `{}`", words.join(" "))),
         }
     }
@@ -247,7 +252,9 @@ impl BlockOp {
             BlockOp::Toggle(a) => two(out, 9, a, a),
             BlockOp::AfterOddRun(a) => two(out, 10, a, a),
             BlockOp::Fill(a, b) => two(out, 12, a, b),
-            BlockOp::Within => out.push(13),
+            // `within` alone keeps its byte; at a delay, a new one and the delay.
+            BlockOp::Within(0) => out.push(13),
+            BlockOp::Within(d) => out.extend([14, d]),
         }
     }
 }
@@ -308,6 +315,10 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
     pub(super) delay: u8,
+    /// Each output's own delay (`0..=delay`), in `outputs`' order; an output without one is
+    /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
+    /// shifts each by its own (decision 0047).
+    pub(super) output_delays: Vec<u8>,
     /// The tree section's node kinds and code facts, for the tape writer; every mask an output.
     pub(super) nodes: Vec<NodeRow>,
     pub(super) codes: Vec<CodeRow>,
@@ -351,7 +362,9 @@ impl BlockProgram {
         });
         // The extract pass writes undelayed positions only (a delay comes with the tape writer).
         let extracts = self.extracts.iter().all(|v| self.outputs.contains(v)) && (self.extracts.is_empty() || self.delay == 0);
-        let delay = self.delay <= 63;
+        let delay = self.delay <= 63
+            && self.output_delays.len() <= self.outputs.len()
+            && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
         let output = |v: u16| self.outputs.contains(&v);
         let nodes = self.nodes.iter().all(|r| output(r.start) && output(r.end) && r.level.is_none_or(|(u, d)| output(u) && output(d)))
             && self.codes.iter().all(|c| usize::from(c.node) < self.nodes.len() && output(c.when));
@@ -389,6 +402,11 @@ impl BlockProgram {
             out.extend_from_slice(b"delay");
             out.push(self.delay);
         }
+        // And the outputs' own delays, when any is not the program's.
+        if (0..self.outputs.len()).any(|k| self.output_delay(k) != self.delay) {
+            out.extend_from_slice(b"odelay");
+            out.extend((0..self.outputs.len()).map(|k| self.output_delay(k)));
+        }
         // And the tree section's rows.
         if !self.nodes.is_empty() || !self.codes.is_empty() {
             out.extend_from_slice(b"tree");
@@ -407,6 +425,15 @@ impl BlockProgram {
             }
         }
         out
+    }
+
+    /// Output `k`'s delay: its own, or the program's.
+    pub(super) fn output_delay(&self, k: usize) -> u8 {
+        // `u8::MAX`: none of its own (an output assembled before the program's delay was read).
+        match self.output_delays.get(k) {
+            Some(&d) if d != u8::MAX => d,
+            _ => self.delay,
+        }
     }
 
     /// Each extract's output index (its place in `outputs`).
@@ -488,7 +515,7 @@ impl BlockProgram {
             };
             let one = |a: u16| v(a).iter().enumerate().map(|(i, &x)| (i, x, 0));
             let words: Vec<u64> = match *op {
-                BlockOp::Within => place.iter().map(|&(at, len)| within(at, len)).collect(),
+                BlockOp::Within(d) => place.iter().map(|&(at, len)| within_at(at, len, d)).collect(),
                 BlockOp::Eq(byte) => blocks.iter().map(|block| eq(block, byte)).collect(),
                 BlockOp::Class { table, bits } => {
                     let table = &self.tables[usize::from(table)];
@@ -521,7 +548,8 @@ impl BlockProgram {
             .map(|(span, bytes)| {
                 self.outputs
                     .iter()
-                    .map(|&v| undelay(&values[usize::from(v)][span.clone()], self.delay, bytes.len()))
+                    .enumerate()
+                    .map(|(k, &v)| undelay(&values[usize::from(v)][span.clone()], self.output_delay(k), bytes.len()))
                     .collect()
             })
             .collect()
@@ -603,6 +631,11 @@ pub(super) fn padded_by(bytes: &[u8], extra: usize) -> Vec<[u8; 64]> {
 pub(super) fn within(at: usize, len: usize) -> u64 {
     let t = len.saturating_sub(at * 64).min(64) as u32;
     ((1u64 << (t >> 1)) << (t - (t >> 1))).wrapping_sub(1)
+}
+
+/// `within` at delay `d` for block `at`: the bits `d <= i < len + d`.
+pub(super) fn within_at(at: usize, len: usize, d: u8) -> u64 {
+    within(at, len + usize::from(d)) & !within(at, usize::from(d))
 }
 
 /// An executor's output words as the stream's mask: shifted down by the program's `delay` (bit

@@ -66,6 +66,9 @@ pub(in crate::code_rule_dsl) struct Compiled {
     /// `level KIND up`, `level KIND down`, `code KIND NAME`), and its output: a value asked for
     /// twice is one output.
     pub(super) labels: Vec<(String, u16)>,
+    /// The fallback's outputs (`FALLBACK`): one per delay its masks have, none brought to
+    /// another delay; the file goes to tree-sitter when any has a bit.
+    pub(super) fallbacks: Vec<u16>,
 }
 
 /// The grammar's ids for the tree section's rows.
@@ -88,7 +91,13 @@ struct Val {
     v: u16,
     d: u8,
     dirty: bool,
+    /// The bytes it holds, when it is a byte class at delay 0 (a function of the byte alone):
+    /// two classes combined are one class, a single bitmask (decision 0047).
+    set: Option<ByteSet>,
 }
+
+/// A set of bytes, bit `b` for byte `b`.
+type ByteSet = [u64; 4];
 
 /// The largest delay: the outputs are brought to it by `prev`s, and the executors shift it out.
 const MAX_DELAY: u8 = 63;
@@ -160,8 +169,14 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     let token_rows = low.tokens()?;
     let mut vals: Vec<(String, Val)> = Vec::new();
     for name in outputs {
-        let x = if *name == FALLBACK { low.fallback()? } else { low.name(name)? };
-        vals.push(((*name).to_owned(), x));
+        if *name == FALLBACK {
+            for x in low.fallback()? {
+                vals.push((FALLBACK.to_owned(), x));
+            }
+        } else {
+            let x = low.name(name)?;
+            vals.push(((*name).to_owned(), x));
+        }
     }
     // The rows: declared kinds in rank order, then the tokens; each mask an output.
     let has_tree = !low.tree.nodes.is_empty();
@@ -215,9 +230,11 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         } else {
             *x
         };
-        let v = low.at(x, delay)?;
+        // At its own delay: the host shifts each output by its own (decision 0047).
+        let v = x.v;
         let k = *index.entry(v).or_insert_with(|| {
             low.program.outputs.push(v);
+            low.program.output_delays.push(x.d);
             (low.program.outputs.len() - 1) as u16
         });
         labels.push((label.clone(), k));
@@ -242,7 +259,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     }
     low.program.delay = delay;
     let program = live(&low.program);
-    Ok(Compiled { rows: rows(&program), labels })
+    let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
+    Ok(Compiled { rows: rows(&program), labels, fallbacks })
 }
 
 impl Lowering {
@@ -305,13 +323,21 @@ impl Lowering {
         Ok(())
     }
 
-    /// The OR of the fallback masks (`empty` without any).
-    fn fallback(&mut self) -> Result<Val, String> {
-        let mut out = self.leaf(BlockOp::Const(0), false);
+    /// The fallback masks, ORed per delay (`empty` without any): a mask at one delay is never
+    /// brought to another, since the fallback asks only whether any bit is set.
+    fn fallback(&mut self) -> Result<Vec<Val>, String> {
+        let mut by_delay: Vec<Val> = Vec::new();
         for x in self.fallbacks.clone() {
-            out = self.or(out, x)?;
+            match by_delay.iter_mut().find(|y| y.d == x.d) {
+                Some(y) => *y = self.or(*y, x)?,
+                None => by_delay.push(x),
+            }
         }
-        Ok(out)
+        if by_delay.is_empty() {
+            by_delay.push(self.leaf(BlockOp::Const(0), false));
+        }
+        by_delay.sort_by_key(|x| x.d);
+        Ok(by_delay)
     }
 
     fn product(&mut self, product: Product) -> (u16, u8) {
@@ -348,7 +374,7 @@ impl Lowering {
 
     /// An operation on bytes or constants: delay 0.
     fn leaf(&mut self, op: BlockOp, dirty: bool) -> Val {
-        Val { v: self.op(op), d: 0, dirty }
+        Val { v: self.op(op), d: 0, dirty, set: None }
     }
 
     /// `x`'s value brought to delay `d` (at least `x.d`), by `prev`s of at most 63 bytes.
@@ -360,45 +386,78 @@ impl Lowering {
         let mut left = d - x.d;
         while left > 0 {
             let k = left.min(63);
-            v = self.op(BlockOp::Prev(v, k));
+            v = self.prev_op(v, k);
             left -= k;
         }
         Ok(v)
     }
 
-    /// `within`, the stream's bytes, at delay `d`.
+    /// `prev(v, k)`, folded into `v`'s own `prev` when it has one: `prev(prev(x, a), k)` is
+    /// `prev(x, a + k)`, on `x`'s carried word.
+    fn prev_op(&mut self, v: u16, k: u8) -> u16 {
+        match self.program.ops[usize::from(v)] {
+            BlockOp::Prev(x, a) if a + k <= MAX_DELAY => self.op(BlockOp::Prev(x, a + k)),
+            _ => self.op(BlockOp::Prev(v, k)),
+        }
+    }
+
+    /// `within`, the stream's bytes, at delay `d`: a leaf, never a carry.
     fn within(&mut self, d: u8) -> Result<u16, String> {
-        let w = self.leaf(BlockOp::Within, false);
-        self.at(w, d)
+        if d > MAX_DELAY {
+            return Err(format!("a delay of {d} bytes: more than {MAX_DELAY}"));
+        }
+        Ok(self.op(BlockOp::Within(d)))
     }
 
     fn two(&mut self, a: Val, b: Val, f: fn(u16, u16) -> BlockOp, dirty: bool) -> Result<Val, String> {
         let d = a.d.max(b.d);
         let (x, y) = (self.at(a, d)?, self.at(b, d)?);
-        Ok(Val { v: self.op(f(x, y)), d, dirty })
+        Ok(Val { v: self.op(f(x, y)), d, dirty, set: None })
+    }
+
+    /// Two byte classes combined by `f`, bit by bit over their sets: one class.
+    fn sets(&mut self, a: Val, b: Val, f: fn(u64, u64) -> u64) -> Option<Val> {
+        let (x, y) = (a.set?, b.set?);
+        Some(self.class_set(std::array::from_fn(|i| f(x[i], y[i]))))
     }
 
     fn and(&mut self, a: Val, b: Val) -> Result<Val, String> {
+        if let Some(c) = self.sets(a, b, |x, y| x & y) {
+            return Ok(c);
+        }
         self.two(a, b, BlockOp::And, a.dirty && b.dirty)
     }
 
     fn or(&mut self, a: Val, b: Val) -> Result<Val, String> {
+        if let Some(c) = self.sets(a, b, |x, y| x | y) {
+            return Ok(c);
+        }
         self.two(a, b, BlockOp::Or, a.dirty || b.dirty)
     }
 
     fn xor(&mut self, a: Val, b: Val) -> Result<Val, String> {
+        if let Some(c) = self.sets(a, b, |x, y| x ^ y) {
+            return Ok(c);
+        }
         self.two(a, b, BlockOp::Xor, a.dirty || b.dirty)
     }
 
     /// `a & ~b`: no bits outside the stream that `a` has none of.
     fn andnot(&mut self, a: Val, b: Val) -> Result<Val, String> {
+        if let Some(c) = self.sets(a, b, |x, y| x & !y) {
+            return Ok(c);
+        }
         self.two(a, b, BlockOp::AndNot, a.dirty)
     }
 
-    /// `~a`, inside the stream only.
+    /// `~a`, inside the stream only. A class's complement is a class, dirty when it holds the
+    /// padding's 0x00.
     fn not(&mut self, a: Val) -> Result<Val, String> {
+        if let Some(x) = a.set {
+            return Ok(self.class_set(x.map(|w| !w)));
+        }
         let w = self.within(a.d)?;
-        Ok(Val { v: self.op(BlockOp::AndNot(w, a.v)), d: a.d, dirty: false })
+        Ok(Val { v: self.op(BlockOp::AndNot(w, a.v)), d: a.d, dirty: false, set: None })
     }
 
     fn prev(&mut self, a: Val, k: u64) -> Result<Val, String> {
@@ -406,10 +465,10 @@ impl Lowering {
         let mut left = k;
         while left > 0 {
             let step = left.min(63) as u8;
-            v = self.op(BlockOp::Prev(v, step));
+            v = self.prev_op(v, step);
             left -= u64::from(step);
         }
-        Ok(Val { v, ..a })
+        Ok(Val { v, set: None, ..a })
     }
 
     /// `next(a, k)`: `a` itself, `k` bytes later. Two cleanings: past the end in `a`'s own
@@ -430,12 +489,12 @@ impl Lowering {
             let w = self.within(d)?;
             v = self.op(BlockOp::And(v, w));
         }
-        Ok(Val { v, d, dirty: false })
+        Ok(Val { v, d, dirty: false, set: None })
     }
 
     /// A carried operation of one operand: its state may run on past the end.
     fn carried(&mut self, a: Val, f: fn(u16) -> BlockOp) -> Val {
-        Val { v: self.op(f(a.v)), d: a.d, dirty: true }
+        Val { v: self.op(f(a.v)), d: a.d, dirty: true, set: None }
     }
 
     fn fill(&mut self, s: Val, e: Val) -> Result<Val, String> {
@@ -457,18 +516,38 @@ impl Lowering {
         Ok(value)
     }
 
+    /// A class of byte ranges (`class_set`).
+    fn class(&mut self, ranges: &[(u32, u32)]) -> Val {
+        let mut set = [0u64; 4];
+        for &(lo, hi) in ranges {
+            for b in lo..=hi.min(255) {
+                set[b as usize / 64] |= 1 << (b % 64);
+            }
+        }
+        self.class_set(set)
+    }
+
     /// A class: an `eq` for one byte, otherwise one `class` per table its products use, ORed.
     /// Dirty when the class holds the padding's byte, 0x00.
-    fn class(&mut self, ranges: &[(u32, u32)]) -> Val {
-        let bytes: Vec<u8> = (0..=255u8).filter(|&b| ranges.iter().any(|&(lo, hi)| lo <= u32::from(b) && u32::from(b) <= hi)).collect();
-        let dirty = bytes.first() == Some(&0);
+    fn class_set(&mut self, set: ByteSet) -> Val {
+        let has = |b: u32| set[b as usize / 64] >> (b % 64) & 1 == 1;
+        let bytes: Vec<u8> = (0..=255u8).filter(|&b| has(u32::from(b))).collect();
+        let dirty = has(0);
         match bytes.as_slice() {
-            [] => return self.leaf(BlockOp::Const(0), false),
-            [b] => return self.leaf(BlockOp::Eq(*b), dirty),
+            [] => return Val { set: Some(set), ..self.leaf(BlockOp::Const(0), false) },
+            [b] => return Val { set: Some(set), ..self.leaf(BlockOp::Eq(*b), dirty) },
             _ => {}
         }
+        // The set as ranges of consecutive bytes, for its products.
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+        for &b in &bytes {
+            match ranges.last_mut() {
+                Some((_, hi)) if *hi + 1 == u32::from(b) => *hi = u32::from(b),
+                _ => ranges.push((u32::from(b), u32::from(b))),
+            }
+        }
         let mut per_table: Vec<(u16, u8)> = Vec::new();
-        for product in products(ranges) {
+        for product in products(&ranges) {
             let (table, bit) = self.product(product);
             match per_table.iter_mut().find(|(t, _)| *t == table) {
                 Some((_, bits)) => *bits |= bit,
@@ -483,7 +562,7 @@ impl Lowering {
                 Some(acc) => self.op(BlockOp::Or(acc, v)),
             });
         }
-        Val { v: value.expect("a class of two bytes or more has a product"), d: 0, dirty }
+        Val { v: value.expect("a class of two bytes or more has a product"), d: 0, dirty, set: Some(set) }
     }
 
     fn expr(&mut self, e: &Expr) -> Result<Val, String> {
@@ -751,7 +830,7 @@ impl Lowering {
 
     /// `within` as a value at delay `d`.
     fn within_val(&mut self, d: u8) -> Result<Val, String> {
-        Ok(Val { v: self.within(d)?, d, dirty: false })
+        Ok(Val { v: self.within(d)?, d, dirty: false, set: None })
     }
 
     /// The starts of tokens whose text is `word`: the word's bytes from the start, and the
@@ -838,6 +917,7 @@ fn live(program: &BlockProgram) -> BlockProgram {
     }
     let n = |v: u16| number[usize::from(v)];
     out.outputs = program.outputs.iter().map(|&v| n(v)).collect();
+    out.output_delays = program.output_delays.clone();
     out.nodes = program.nodes.iter().map(|r| NodeRow { start: n(r.start), end: n(r.end), level: r.level.map(|(u, d)| (n(u), n(d))), ..*r }).collect();
     out.codes = program.codes.iter().map(|c| CodeRow { when: n(c.when), ..*c }).collect();
     out

@@ -9,7 +9,7 @@
 // eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane, 11 the byte before's plane), operands
 // a and b, and an immediate (eq's byte; const's pattern as b = low half, imm = high half; plane's
 // bit), and the carried operations 8 prev (imm the distance), 9 toggle, 10 after_odd_run, 12 fill
-// (imm its ends), each with its index among the program's carried steps in b; 13 within.
+// (imm its ends), each with its index among the program's carried steps in b; 13 within (imm its delay).
 struct BlockStep { uint op, a, b, imm; };
 // A program of the batch: its steps, its outputs (value slots, at `outs[out0..]`) and its extracts
 // (output indices, at `outs[ext0..]`).
@@ -109,7 +109,7 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
         v = select(f0, f1, cin != 0u);
         break;
       }
-      case 13u: v = within_lane<M>(f.len, gl * W); break;
+      case 13u: v = M(within_lane<M>(f.len + s.imm, gl * W) & ~within_lane<M>(s.imm, gl * W)); break;
       default: break;
     }
     slots[at * 32u + l] = v;

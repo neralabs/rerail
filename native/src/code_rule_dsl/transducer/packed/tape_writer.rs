@@ -163,27 +163,28 @@ fn check_nesting(nodes: &[WrittenNode]) -> Result<(), String> {
 
 impl BlockProgram {
     /// The tape of `source` (decision 0046): the interpreter's masks, then the writer. `None`
-    /// when the file goes to tree-sitter: its fallback output (`fallback`) has a bit, or its
+    /// when the file goes to tree-sitter: a fallback output (`fallbacks`) has a bit, or its
     /// masks make no tree.
     pub(in crate::code_rule_dsl) fn tape(
         &self,
         source: &str,
-        fallback: usize,
+        fallbacks: &[u16],
         grammar: &crate::code_rule_dsl::tape::Grammar,
     ) -> Result<Option<crate::code_rule_dsl::tape::TapeImage>, String> {
-        tape_of(self, &self.interpret(source.as_bytes()), fallback, grammar, source)
+        tape_of(self, &self.interpret(source.as_bytes()), fallbacks, grammar, source)
     }
 }
 
-/// The tape of `source` from a program's outputs over it, by any executor.
+/// The tape of `source` from a program's outputs over it, by any executor. `fallbacks`: the
+/// fallback's outputs, one per delay (`bitlex_compile::Compiled::fallbacks`).
 pub(in crate::code_rule_dsl) fn tape_of(
     program: &BlockProgram,
     outputs: &[Vec<u64>],
-    fallback: usize,
+    fallbacks: &[u16],
     grammar: &crate::code_rule_dsl::tape::Grammar,
     source: &str,
 ) -> Result<Option<crate::code_rule_dsl::tape::TapeImage>, String> {
-    if outputs[fallback].iter().any(|&w| w != 0) {
+    if fallbacks.iter().any(|&k| outputs[usize::from(k)].iter().any(|&w| w != 0)) {
         return Ok(None);
     }
     let Ok((nodes, supertypes)) = write(program, outputs, source.len()) else {

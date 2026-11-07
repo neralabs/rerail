@@ -1141,7 +1141,16 @@ fn within_and_delay_round_trip_and_refusals() {
     assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
     let undelayed = program("  block 0 %0 = within\n  block 0 %1 = eq 0x22\n  block 0 output %1\n");
     assert_ne!(undelayed.canonical_digest("-", b""), p.canonical_digest("-", b""), "the delay is in the digest");
+    // `within` at a delay: its own text and digest byte, `within` alone unchanged.
+    let at = program("  block 0 %0 = within 5\n  block 0 output %0\n");
+    let text = rir::disassemble(&at, None);
+    assert!(text.contains("%0 = within 5"), "{text}");
+    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), at.canonical_digest("-", b""));
+    assert_ne!(at.canonical_digest("-", b""), program("  block 0 %0 = within\n  block 0 output %0\n").canonical_digest("-", b""));
+    assert_eq!(block::within_at(0, 3, 5), 0b1110_0000);
+    assert_eq!(block::within_at(1, 70, 5), (1 << 11) - 1);
     for (rows, why) in [
+        ("  block 0 %0 = within 64\n  block 0 output %0\n", "a within delay of 64"),
         ("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 delay 64\n", "a delay of 64"),
         ("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 extract %0\n  block 0 delay 1\n", "an extract with a delay"),
     ] {

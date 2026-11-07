@@ -256,8 +256,15 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     for (value, op) in block.ops.iter().enumerate() {
         let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
     }
-    for value in &block.outputs {
-        let _ = writeln!(out, "  block {at} output %{value}");
+    for (k, value) in block.outputs.iter().enumerate() {
+        match block.output_delay(k) {
+            d if d == block.delay => {
+                let _ = writeln!(out, "  block {at} output %{value}");
+            }
+            d => {
+                let _ = writeln!(out, "  block {at} output %{value} delay {d}");
+            }
+        }
     }
     for value in &block.extracts {
         let _ = writeln!(out, "  block {at} extract %{value}");
@@ -457,6 +464,14 @@ struct Line<'a> {
 impl Line<'_> {
     fn next(&mut self) -> Result<Token, String> {
         self.tokens.next().ok_or_else(|| "a missing operand".to_owned())
+    }
+
+    /// The next token, if it is a word, without reading it.
+    fn peek_word(&mut self) -> Option<String> {
+        match self.tokens.peek() {
+            Some(Token::Word(word)) => Some(word.clone()),
+            _ => None,
+        }
     }
 
     fn word(&mut self) -> Result<String, String> {
@@ -708,6 +723,20 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     return Err(format!("block {at} output after an extract"));
                 }
                 program.outputs.push(line.number("%")?);
+                // `output %v delay d`: its own delay; recorded for every output once one has one
+                // (`u8::MAX` until the program's delay is read).
+                let own = if line.peek_word().as_deref() == Some("delay") {
+                    line.word()?;
+                    let d: u64 = line.number("")?;
+                    Some(u8::try_from(d).map_err(|_| format!("block {at} output delay {d} is more than 63"))?)
+                } else {
+                    None
+                };
+                if own.is_some() || !program.output_delays.is_empty() {
+                    let k = program.outputs.len() - 1;
+                    program.output_delays.resize(k, u8::MAX);
+                    program.output_delays.push(own.unwrap_or(u8::MAX));
+                }
             } else if first == "node" {
                 // `block N node R kind K start %s end %e [level %u %d] [extra]`, in rank order.
                 let r: usize = line.number("")?;

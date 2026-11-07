@@ -43,8 +43,9 @@ pub(super) struct CompiledBlock {
     outputs: usize,
     /// The outputs whose positions the extract pass writes.
     extracts: Vec<usize>,
-    /// The program's delay (`block::BlockProgram::delay`).
+    /// The program's delay (`block::BlockProgram::delay`), and each output's.
     delay: u8,
+    output_delays: Vec<u8>,
     /// The function as Cranelift IR, before code generation.
     pub(super) clif: String,
     /// The machine code, disassembled.
@@ -124,7 +125,7 @@ impl Batch {
                         positions(&words, count)
                     })
                     .collect();
-                let outputs = (0..program.outputs).map(|k| undelay(&out[k * n..(k + 1) * n], program.delay, bytes.len())).collect();
+                let outputs = (0..program.outputs).map(|k| undelay(&out[k * n..(k + 1) * n], program.output_delays[k], bytes.len())).collect();
                 BlockRun { outputs, positions }
             })
             .collect()
@@ -361,20 +362,32 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let v = |x: u16| values[usize::from(x)];
             let value = match *inst {
                 // The bits below the stream's end: t = clamp(len - 64 i, 0, 64) ones, by two
-                // shifts so that t = 64 needs no shift by 64 (`block::within`).
-                BlockInst::Within => {
-                    let start = f.ins().ishl_imm(i, 6);
-                    let left = f.ins().isub(len, start);
-                    let zero = f.ins().iconst(types::I64, 0);
-                    let full = f.ins().iconst(types::I64, 64);
-                    let left = f.ins().smin(left, full);
-                    let t = f.ins().smax(left, zero);
-                    let half = f.ins().ushr_imm(t, 1);
-                    let rest = f.ins().isub(t, half);
-                    let one = f.ins().iconst(types::I64, 1);
-                    let up = f.ins().ishl(one, half);
-                    let up = f.ins().ishl(up, rest);
-                    f.ins().iadd_imm(up, -1)
+                // shifts so that t = 64 needs no shift by 64 (`block::within`). At a delay `d`,
+                // the bits below `len + d` and not below `d` (`block::within_at`).
+                BlockInst::Within(d) => {
+                    let below = |f: &mut FunctionBuilder<'_>, end: Value| {
+                        let start = f.ins().ishl_imm(i, 6);
+                        let left = f.ins().isub(end, start);
+                        let zero = f.ins().iconst(types::I64, 0);
+                        let full = f.ins().iconst(types::I64, 64);
+                        let left = f.ins().smin(left, full);
+                        let t = f.ins().smax(left, zero);
+                        let half = f.ins().ushr_imm(t, 1);
+                        let rest = f.ins().isub(t, half);
+                        let one = f.ins().iconst(types::I64, 1);
+                        let up = f.ins().ishl(one, half);
+                        let up = f.ins().ishl(up, rest);
+                        f.ins().iadd_imm(up, -1)
+                    };
+                    if d == 0 {
+                        below(&mut f, len)
+                    } else {
+                        let end = f.ins().iadd_imm(len, i64::from(d));
+                        let upper = below(&mut f, end);
+                        let start = f.ins().iconst(types::I64, i64::from(d));
+                        let lower = below(&mut f, start);
+                        f.ins().band_not(upper, lower)
+                    }
                 }
                 BlockInst::EqByte(_) => {
                     let splat = constants[at].expect("a splat per compare");
@@ -533,7 +546,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let code = module.get_finalized_function(id);
     // SAFETY: `tempo_block` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
-    Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), extracts: native.extracts.clone(), delay: native.delay, clif, disassembly })
+    Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), extracts: native.extracts.clone(), delay: native.delay, output_delays: native.output_delays.clone(), clif, disassembly })
 }
 
 /// Four 16-byte compare results (each byte 0 or 0xff) as one 64-bit mask.
