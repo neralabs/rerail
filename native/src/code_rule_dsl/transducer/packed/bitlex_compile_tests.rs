@@ -318,37 +318,13 @@ fn json_msl_is_one_kernel() {
 #[test]
 #[cfg(target_os = "macos")]
 fn a_batch_of_files_and_programs_is_one_launch() {
-    use super::block_tests::{STAGE1, runs};
-    use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
-    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
-        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
-        id => Some(id),
-    };
-    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let compiled = |src: &str, names: &[&str], symbols: Option<&bitlex_compile::Symbols<'_>>| {
-        let stmts = ::bitlex::syntax::parse(src).expect("parses");
-        let rows = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).rows;
-        rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).expect("assembles")
-    };
-    let chain = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n  0000 STOP 0\n";
-    let programs = [
-        compiled(JSON, &[bitlex_compile::FALLBACK], Some(&symbols)),
-        compiled(LATER, &["a", "b", "c", "last_byte", "d", "e", "f", "g", "h", "i", "j"], None),
-        compiled(FORWARD, &NAMES, None),
-        rir::assemble(STAGE1).expect("assembles"),
-        rir::assemble(chain).expect("assembles"),
-    ];
+    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_batch};
+    let programs = batch_programs();
     let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs()[0]).collect();
     let natives: Vec<native_ir::BlockNative> = programs.iter().map(|p| native_ir::lower(p).expect("lowers").block_programs.remove(0)).collect();
     let natives: Vec<&native_ir::BlockNative> = natives.iter().collect();
-    let mut bytes: Vec<Vec<u8>> = inputs().into_iter().step_by(7).collect();
-    bytes.extend(runs());
-    bytes.extend(JSON_CASES.iter().map(|c| c.to_vec()));
-    bytes.push(Vec::new());
-    let files: Vec<BatchFile<'_>> = bytes.iter().enumerate().map(|(i, b)| BatchFile { bytes: b, program: (i * 3 + i / 5) % blocks.len() }).collect();
+    let bytes = batch_bytes();
+    let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
     for width in LaneWidth::ALL {
         for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes)] {
@@ -363,6 +339,72 @@ fn a_batch_of_files_and_programs_is_one_launch() {
                     assert_eq!(got.positions, want.positions, "{what}");
                 }
             }
+        }
+    }
+}
+
+/// The batch tests' programs: JSON's lexer and tree, three test lexers, simdjson's stage 1, and a
+/// chain of carries.
+fn batch_programs() -> Vec<Program> {
+    use super::block_tests::STAGE1;
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
+        id => Some(id),
+    };
+    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let compiled = |src: &str, names: &[&str], symbols: Option<&bitlex_compile::Symbols<'_>>| {
+        let stmts = ::bitlex::syntax::parse(src).expect("parses");
+        let rows = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).rows;
+        rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).expect("assembles")
+    };
+    let chain = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n  0000 STOP 0\n";
+    vec![
+        compiled(JSON, &[bitlex_compile::FALLBACK], Some(&symbols)),
+        compiled(LATER, &["a", "b", "c", "last_byte", "d", "e", "f", "g", "h", "i", "j"], None),
+        compiled(FORWARD, &NAMES, None),
+        rir::assemble(STAGE1).expect("assembles"),
+        rir::assemble(chain).expect("assembles"),
+    ]
+}
+
+/// The batch tests' files: lexer inputs, carry runs, JSON cases, and an empty file.
+fn batch_bytes() -> Vec<Vec<u8>> {
+    let mut bytes: Vec<Vec<u8>> = inputs().into_iter().step_by(7).collect();
+    bytes.extend(super::block_tests::runs());
+    bytes.extend(JSON_CASES.iter().map(|c| c.to_vec()));
+    bytes.push(Vec::new());
+    bytes
+}
+
+/// The files of a batch, interleaved over `programs` programs.
+fn batch_files(bytes: &[Vec<u8>], programs: usize) -> Vec<block::BatchFile<'_>> {
+    bytes.iter().enumerate().map(|(i, b)| block::BatchFile { bytes: b, program: (i * 3 + i / 5) % programs }).collect()
+}
+
+/// The CPU executors over the same batch: the interpreter (one dispatch per operation over all of
+/// a program's files) and Cranelift (one call per program, over all its files). Each file's
+/// results equal its program's interpreter on that file alone.
+#[test]
+fn the_cpu_executors_take_a_batch() {
+    let programs = batch_programs();
+    let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs()[0]).collect();
+    let compiled: Vec<_> = programs
+        .iter()
+        .map(|p| native_cpu_block::compile(&native_ir::lower(p).expect("lowers").block_programs.remove(0)).expect("compiles"))
+        .collect();
+    let compiled: Vec<&native_cpu_block::CompiledBlock> = compiled.iter().collect();
+    let bytes = batch_bytes();
+    let files = batch_files(&bytes, blocks.len());
+    let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
+    for (name, got) in [("interpreter", block::run_batch(&blocks, &files)), ("cranelift", native_cpu_block::run_batch(&compiled, &files))] {
+        assert_eq!(got.len(), files.len());
+        for (k, (got, want)) in got.iter().zip(&want).enumerate() {
+            let what = format!("{name}: file {k} ({} bytes, program {})", files[k].bytes.len(), files[k].program);
+            assert_eq!(got.outputs, want.outputs, "{what}");
+            assert_eq!(got.positions, want.positions, "{what}");
         }
     }
 }

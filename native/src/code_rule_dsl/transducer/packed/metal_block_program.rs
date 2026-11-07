@@ -17,6 +17,7 @@
 //! take their numbers in launch order from persistent workers; a group waits only on earlier groups
 //! of its file. A poll that runs out leaves the group unfinished, and the host launches again.
 use super::*;
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::block::BatchFile;
 use crate::code_rule_dsl::transducer::packed::block::{BlockRun, undelay};
 use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
 use metal::MTLSize;
@@ -121,11 +122,6 @@ pub(in crate::code_rule_dsl) enum Executor {
     Generated(ClassStrategy),
 }
 
-/// A file of a batch: its bytes, and its program's index in the batch's programs.
-pub(in crate::code_rule_dsl) struct BatchFile<'a> {
-    pub(in crate::code_rule_dsl) bytes: &'a [u8],
-    pub(in crate::code_rule_dsl) program: usize,
-}
 
 /// A batch's results: each file's outputs and extract positions, the launches it took, and their
 /// GPU seconds.

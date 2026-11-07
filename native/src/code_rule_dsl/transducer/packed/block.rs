@@ -313,6 +313,14 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     pub(super) codes: Vec<CodeRow>,
 }
 
+/// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
+/// takes a batch in this shape (decision 0044).
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) struct BatchFile<'a> {
+    pub(in crate::code_rule_dsl) bytes: &'a [u8],
+    pub(in crate::code_rule_dsl) program: usize,
+}
+
 /// A run's results: each output's words, and each extract's positions (`u32` byte offsets, in
 /// order).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -412,41 +420,83 @@ impl BlockProgram {
     /// The CPU interpreter with the extract pass: the outputs, then each extract's positions,
     /// sized by its count before it is written (`extract`).
     pub(super) fn run(&self, bytes: &[u8]) -> BlockRun {
-        let outputs = self.interpret(bytes);
-        let positions = self
-            .extract_outputs()
-            .into_iter()
-            .map(|k| {
-                let words = &outputs[k];
-                let count = words.iter().map(|w| w.count_ones() as usize).sum();
-                extract::positions(words, count)
-            })
-            .collect();
-        BlockRun { outputs, positions }
+        self.run_files(&[bytes]).pop().expect("one file")
     }
 
-    /// The CPU interpreter: every output's words over `bytes`, one dispatch per operation over
-    /// all the blocks (the stream and `delay` bytes past it). Bits past the end of `bytes` are
+    /// `run` over several files at once (`interpret_files`).
+    pub(super) fn run_files(&self, files: &[&[u8]]) -> Vec<BlockRun> {
+        let extracts = self.extract_outputs();
+        self.interpret_files(files)
+            .into_iter()
+            .map(|outputs| {
+                let positions = extracts
+                    .iter()
+                    .map(|&k| {
+                        let words = &outputs[k];
+                        let count = words.iter().map(|w| w.count_ones() as usize).sum();
+                        extract::positions(words, count)
+                    })
+                    .collect();
+                BlockRun { outputs, positions }
+            })
+            .collect()
+    }
+
+    /// The CPU interpreter: every output's words over `bytes`. Bits past the end of `bytes` are
     /// zero.
     pub(super) fn interpret(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
-        let blocks = padded_by(bytes, usize::from(self.delay));
+        self.interpret_files(&[bytes]).pop().expect("one file")
+    }
+
+    /// The CPU interpreter over a batch of files under this program: one dispatch per operation
+    /// over every file's blocks (each file's stream and `delay` bytes past it, end to end). A
+    /// carried operation starts each file with a zero carry, as a stream of its own; `within`
+    /// and the byte before a block are the block's file's.
+    pub(super) fn interpret_files(&self, files: &[&[u8]]) -> Vec<Vec<Vec<u64>>> {
+        let extra = usize::from(self.delay);
+        // Each block's file (its length, and its block number within it), and whether it is
+        // the file's first.
+        let (mut blocks, mut before) = (Vec::new(), Vec::new());
+        let mut place: Vec<(usize, usize)> = Vec::new();
+        let mut spans = Vec::with_capacity(files.len());
+        for bytes in files {
+            let own = padded_by(bytes, extra);
+            spans.push(blocks.len()..blocks.len() + own.len());
+            place.extend((0..own.len()).map(|at| (at, bytes.len())));
+            before.extend(before_blocks(&own));
+            blocks.extend(own);
+        }
+        let first: Vec<bool> = place.iter().map(|&(at, _)| at == 0).collect();
+        // A carried pass: the carry is `zero` at each file's first block.
+        fn carried<C: Copy>(xs: impl Iterator<Item = (usize, u64, u64)>, first: &[bool], zero: C, f: impl Fn(u64, u64, C) -> (u64, C)) -> Vec<u64> {
+            let mut c = zero;
+            xs.map(|(i, x, y)| {
+                if first[i] {
+                    c = zero;
+                }
+                let (out, next) = f(x, y, c);
+                c = next;
+                out
+            })
+            .collect()
+        }
         let mut values: Vec<Vec<u64>> = Vec::with_capacity(self.ops.len());
         for op in &self.ops {
             let v = |at: u16| &values[usize::from(at)];
             let two = |a: u16, b: u16, f: fn(u64, u64) -> u64| -> Vec<u64> {
                 v(a).iter().zip(v(b)).map(|(&x, &y)| f(x, y)).collect()
             };
+            let one = |a: u16| v(a).iter().enumerate().map(|(i, &x)| (i, x, 0));
             let words: Vec<u64> = match *op {
-                BlockOp::Within => (0..blocks.len()).map(|at| within(at, bytes.len())).collect(),
+                BlockOp::Within => place.iter().map(|&(at, len)| within(at, len)).collect(),
                 BlockOp::Eq(byte) => blocks.iter().map(|block| eq(block, byte)).collect(),
                 BlockOp::Class { table, bits } => {
                     let table = &self.tables[usize::from(table)];
                     blocks.iter().map(|block| class(block, table, bits)).collect()
                 }
-                BlockOp::Pair { before, table, bits } => {
-                    let (a, b) = (&self.tables[usize::from(before)], &self.tables[usize::from(table)]);
-                    let shifted = before_blocks(&blocks);
-                    blocks.iter().zip(&shifted).map(|(block, prev)| pair(prev, block, a, b, bits)).collect()
+                BlockOp::Pair { before: t, table, bits } => {
+                    let (a, b) = (&self.tables[usize::from(t)], &self.tables[usize::from(table)]);
+                    blocks.iter().zip(&before).map(|(block, prev)| pair(prev, block, a, b, bits)).collect()
                 }
                 BlockOp::Const(c) => vec![c; blocks.len()],
                 BlockOp::Not(a) => v(a).iter().map(|&x| !x).collect(),
@@ -455,55 +505,41 @@ impl BlockProgram {
                 BlockOp::Xor(a, b) => two(a, b, |x, y| x ^ y),
                 BlockOp::AndNot(a, b) => two(a, b, |x, y| x & !y),
                 // The carried operations: one pass over the blocks, the carry in a register.
-                BlockOp::Prev(a, k) => {
-                    let mut previous = 0;
-                    v(a).iter()
-                        .map(|&x| {
-                            let y = carry::prev(x, previous, k);
-                            previous = x;
-                            y
-                        })
-                        .collect()
-                }
-                BlockOp::Toggle(a) => {
-                    let mut c = 0;
-                    v(a).iter()
-                        .map(|&x| {
-                            let (y, out) = carry::toggle(x, c);
-                            c = out;
-                            y
-                        })
-                        .collect()
-                }
-                BlockOp::AfterOddRun(a) => {
-                    let mut c = 0;
-                    v(a).iter()
-                        .map(|&x| {
-                            let (y, out) = carry::after_odd_run(x, c);
-                            c = out;
-                            y
-                        })
-                        .collect()
-                }
+                BlockOp::Prev(a, k) => carried(one(a), &first, 0u64, |x, _, previous| (carry::prev(x, previous, k), x)),
+                BlockOp::Toggle(a) => carried(one(a), &first, 0u64, |x, _, c| carry::toggle(x, c)),
+                BlockOp::AfterOddRun(a) => carried(one(a), &first, 0u64, |x, _, c| carry::after_odd_run(x, c)),
                 BlockOp::Fill(a, b) => {
-                    let mut c = 0;
-                    v(a).iter()
-                        .zip(v(b))
-                        .map(|(&x, &y)| {
-                            let (f, out) = carry::fill(x, y, c);
-                            c = out;
-                            f
-                        })
-                        .collect()
+                    let pairs = v(a).iter().zip(v(b)).enumerate().map(|(i, (&x, &y))| (i, x, y));
+                    carried(pairs, &first, 0u64, |x, y, c| carry::fill(x, y, c))
                 }
             };
             values.push(words);
         }
-        self.outputs
-            .iter()
-            .map(|&v| undelay(&values[usize::from(v)], self.delay, bytes.len()))
+        spans
+            .into_iter()
+            .zip(files)
+            .map(|(span, bytes)| {
+                self.outputs
+                    .iter()
+                    .map(|&v| undelay(&values[usize::from(v)][span.clone()], self.delay, bytes.len()))
+                    .collect()
+            })
             .collect()
     }
+}
+
+/// The CPU interpreter over a batch (decision 0044): each file's run under its program, in the
+/// files' order. One `interpret_files` per program, over all of that program's files.
+pub(super) fn run_batch(programs: &[&BlockProgram], files: &[BatchFile<'_>]) -> Vec<BlockRun> {
+    let mut out: Vec<Option<BlockRun>> = vec![None; files.len()];
+    for (p, program) in programs.iter().enumerate() {
+        let mine: Vec<usize> = (0..files.len()).filter(|&i| files[i].program == p).collect();
+        let bytes: Vec<&[u8]> = mine.iter().map(|&i| files[i].bytes).collect();
+        for (i, run) in mine.into_iter().zip(program.run_files(&bytes)) {
+            out[i] = Some(run);
+        }
+    }
+    out.into_iter().map(|run| run.expect("every file names a program of the batch")).collect()
 }
 
 /// The extract pass on the CPU (`10-bit-programs.md` §4.1): a plane's set bits as

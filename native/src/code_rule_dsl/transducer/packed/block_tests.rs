@@ -193,10 +193,10 @@ fn eq_swar_form_equals_reference() {
 // --- What each executor lowers to ----------------------------------------------------------
 
 /// The Cranelift IR of the loop body: everything between the body block's label and the next
-/// block's.
+/// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
 fn body_of(clif: &str) -> Vec<String> {
     let lines: Vec<&str> = clif.lines().collect();
-    let start = lines.iter().position(|l| l.trim_start().starts_with("block1")).expect("a body block") + 1;
+    let start = lines.iter().position(|l| l.trim_start().starts_with("block2")).expect("a body block") + 1;
     lines[start..]
         .iter()
         .take_while(|l| !l.trim_start().starts_with("block"))
