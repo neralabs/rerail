@@ -2225,6 +2225,20 @@ impl LiveRel {
     }
 }
 
+/// A recursive relation's statistics measured before this run, when the caller gave them under its name
+/// (`Stats::measured`: the cross-file rounds give each hop relation's rows of the round before): its rows, and its
+/// columns' distinct counts and fanouts, which otherwise start at 1 until the first replan.
+fn prior_stats(model: &mut Model, prog: &Program, r: &str) -> Option<f64> {
+    let width = prog.decls.get(r)?.len();
+    let cols: Vec<[i64; 4]> = (0..width).map(|c| model.stats.col.get(&(r.to_owned(), sql_col(r, c))).copied()).collect::<Option<_>>()?;
+    let rows = cols.first().map_or(0, |m| m[0]);
+    for (c, [n, ndv, sq, _]) in cols.into_iter().enumerate() {
+        model.ndv.insert((r.to_owned(), c), ndv.max(1) as f64);
+        model.stats.fan.insert((r.to_owned(), c), if n != 0 { sq as f64 / n as f64 } else { 1.0 });
+    }
+    Some((rows as f64).max(1.0))
+}
+
 fn live_stats(model: &mut Model, r: &str, live: LiveRel) {
     let n = live.n;
     model.stats.card.insert(r.to_owned(), (n as f64).max(1.0));
@@ -2553,7 +2567,9 @@ impl Run<'_> {
             orders.push(order);
         }
         for r in &rels {
-            self.model.stats.card.insert((*r).clone(), est.get(r.as_str()).copied().unwrap_or(0.0).max(1.0));
+            let seeded = est.get(r.as_str()).copied().unwrap_or(0.0).max(1.0);
+            let card = prior_stats(&mut self.model, prog, r).map_or(seeded, |n| n.max(seeded));
+            self.model.stats.card.insert((*r).clone(), card);
         }
         let mut probes = Vec::new();
         for r in &rules {
@@ -2835,7 +2851,8 @@ impl Run<'_> {
         }
         for r in &rels {
             let rows: f64 = seed_plans.iter().filter(|(h, _)| h.rel == **r).map(|(_, p)| p.2).sum();
-            self.model.stats.card.insert((*r).clone(), rows.max(1.0));
+            let card = prior_stats(&mut self.model, prog, r).map_or(rows.max(1.0), |n| n.max(rows.max(1.0)));
+            self.model.stats.card.insert((*r).clone(), card);
         }
         let var_type = |v: &str, body: &[Literal]| -> Option<char> {
             body.iter().find_map(|l| match l {
