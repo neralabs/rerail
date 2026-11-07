@@ -61,8 +61,8 @@ fn public_rr_report_preserves_compiled_policy_metadata() {
 .policy "contract:metadata" revision 7
 .mode block
 .scope include "impl/**/*.py"
-.violation Nothing(at: span) "nothing"
-Nothing(@place("input.py", 1)) :- 0 = 1.
+.violation MetadataProbe(at: span) "nothing"
+MetadataProbe(@place("input.py", 1)) :- 0 = 1.
 "#).unwrap();
     let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     std::fs::remove_dir_all(root).unwrap();
