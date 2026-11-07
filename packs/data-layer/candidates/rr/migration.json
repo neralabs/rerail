@@ -1014,7 +1014,7 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr",
-      "sha256": "364aa315707106d4e8ce1d624cdf36f856c453440f6c1a6bcdcdfd17e38cd59d",
+      "sha256": "4c5505d988b1df7b0e9415a466a5cf0aa6f97a9f248bebaa5f748409e1f0cd92",
       "origin": "authored",
       "upstreamPath": "scripts/lint_rust_sql_grammar_boundary.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1374,7 +1374,7 @@
       "legacySha256": "80d7fab57e7782b6b7c49316084305fdaf5899389f1c2fa8a7f4d48c8cdfef65",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr",
-      "ruleSha256": "364aa315707106d4e8ce1d624cdf36f856c453440f6c1a6bcdcdfd17e38cd59d"
+      "ruleSha256": "4c5505d988b1df7b0e9415a466a5cf0aa6f97a9f248bebaa5f748409e1f0cd92"
     },
     {
       "check": "missing_async_pairs",

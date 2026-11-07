@@ -4,7 +4,7 @@
 .language rust
 .mode block
 .scope include "rust/nera_compiler_sql/src/**/*.rs"
-.scope exclude 
+.scope exclude
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_rust_sql_grammar_boundary.py
 .decl rust_boundary_input(d: number)
 rust_boundary_input(d) :- doc(d, _, _), option("entryPoint", "check_file").

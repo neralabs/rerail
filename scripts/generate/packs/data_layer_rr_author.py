@@ -32,7 +32,7 @@ def header(check, target):
     text += f'.policy {json.dumps(legacy["id"])} revision 1\n'
     text += f'.description "Port of nera-data-layer {check} at {PIN}."\n.language python\n.mode {legacy["mode"]}\n'
     for key in ['include', 'exclude']:
-        text += f'.scope {key} ' + ', '.join(json.dumps(x) for x in legacy['scope'][key]) + '\n'
+        text += (f'.scope {key} ' + ', '.join(json.dumps(x) for x in legacy['scope'][key])).rstrip() + '\n'
     text += f'// Source: https://github.com/neralabs/nera-data-layer/blob/{PIN}/scripts/lint_{check}.py\n'
     return text + '#include "python/ast.rr"\n'
 
