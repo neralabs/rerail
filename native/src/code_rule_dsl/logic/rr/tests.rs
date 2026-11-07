@@ -613,3 +613,25 @@ given(x) :- node(_, n, "call", x, _), !unset(n).
     assert_eq!(read("given"), "38\n46\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `@ed25519_ok` through a rule: an existing signature verifies, a tampered message does not.
+#[test]
+fn signatures_verify_through_rules() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("signatures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl candidate(name: symbol, message: symbol)
+candidate("original", "{\"allowlist\":[],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+candidate("tampered", "{\"allowlist\":[\"added.py\"],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+.decl verified(name: symbol)
+verified(name) :- candidate(name, message),
+    @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", message,
+    "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==") = 1.
+.output verified
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("verified.csv")).unwrap(), "original\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
