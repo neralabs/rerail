@@ -15,6 +15,8 @@ def async_sync_boundary(source, target, header):
 Count(@place("<inventory>", 1), n) :- option("entryPoint", "scan_tree"), n = count : { option_item("checkedPaths", _, _) }.
 .violation Category(at: span, index: number) code "BS_CATEGORY" "category"
 Category(@place("<category>", 1), i) :- option("entryPoint", "category"), option("category", c), option_item("categories", i, c).
+.violation ReadFailure(at: span) code "BS_READ_ERROR" "Source read failed"
+ReadFailure(@place("<inventory>", 1)) :- option("entryPoint", "scan_tree"), option("hasReadError", "true").
 
 .decl bs_api_helper()
 bs_api_helper() :- option("entryPoint", "_get_call_name").
@@ -40,7 +42,7 @@ bs_document(d, p) :- doc(d, p, _), !option("entryPoint", _), file_name(d, nm), s
 .decl bs_hidden(d: number)
 bs_hidden(d) :- path_part(d, part), (part = ".git" ; part = ".venv" ; part = "venv" ; part = "__pycache__" ; part = "tmp").
 .decl bs_source_enabled(d: number)
-bs_source_enabled(d) :- bs_document(d, _), source(d, span), text(span, source), bs_trigger(trigger), contains(trigger, source).
+bs_source_enabled(d) :- bs_document(d, _), !option("hasReadError", "true"), source(d, span), text(span, source), bs_trigger(trigger), contains(trigger, source).
 .decl bs_detect(c: node, category: symbol, name: symbol, async_: number, call_text: symbol)
 bs_detect(c, "SYNC_WRAPS_ASYNC", fn, 0, cat(name, "()")) :- bs_call(c, f), docof(c, d), bs_source_enabled(d), bs_name(f, name),
  (name = "asyncio.run" ; name = "asyncio.run_coroutine_threadsafe"), bs_context(c, fn, 0).

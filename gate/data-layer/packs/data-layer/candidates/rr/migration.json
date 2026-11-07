@@ -1391,7 +1391,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
-      "sha256": "25aa4f4af5731059cd4a52ca493778a74fd867eba691d9479ac2826d4c261ea4",
+      "sha256": "1708cb241fe76544f3a08c4f0d47e21e0a25184a30019df6df715c9af3e3ef57",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_sync_boundary.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1574,7 +1574,7 @@
       "legacySha256": "f342876eef567090dd1493a0a8411a057fb14915dca5d5184e023322f18a483a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
-      "ruleSha256": "25aa4f4af5731059cd4a52ca493778a74fd867eba691d9479ac2826d4c261ea4"
+      "ruleSha256": "1708cb241fe76544f3a08c4f0d47e21e0a25184a30019df6df715c9af3e3ef57"
     },
     {
       "check": "admin_async_purity",

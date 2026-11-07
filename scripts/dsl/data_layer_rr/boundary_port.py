@@ -43,14 +43,21 @@ def scan(suite, entry, module, args):
         elif candidate.is_dir():
             paths.extend(sorted(candidate.rglob('*.py')))
     checked = [p.relative_to(root).as_posix() for p in paths]
-    files = {}
+    files, error = {}, None
     for path, logical in zip(paths, checked):
         try:
             source = path.read_text(encoding='utf-8')
-        except (OSError, UnicodeError):
-            continue
+        except (OSError, UnicodeError) as caught:
+            error = caught
+            break
         files[logical] = dict(path=logical, source=source)
-    rows = suite.native('async_sync_boundary', entry, list(files.values()), dict(checkedPaths=checked))
+    rows = suite.native('async_sync_boundary', entry, list(files.values()),
+                        dict(checkedPaths=checked, hasReadError=str(error is not None).lower()))
+    failures = [r for r in rows if r['code'] == 'BS_READ_ERROR']
+    if failures:
+        if len(failures) != 1 or error is None or any(r['code'] not in {'BS_READ_ERROR', 'BS_COUNT'} for r in rows):
+            raise AssertionError('Invalid native boundary read failure')
+        raise error
     metadata = [r for r in rows if r['code'] == 'BS_COUNT']
     findings = [r for r in rows if r['code'] != 'BS_COUNT']
     if len(metadata) != 1 or any(r['code'] not in {'SYNC_WRAPS_ASYNC', 'ASYNC_WRAPS_SYNC', 'EXECUTOR_ESCAPE'} for r in findings):
