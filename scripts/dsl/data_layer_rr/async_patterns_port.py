@@ -21,6 +21,9 @@ def scan(suite, entry, module, args):
         options.update(providedTree=str(tree is not None).lower(), providedSource=source, sourceLines=source.splitlines())
         files = [dict(path='impl/common/_receiver_input.py', source=transport)]
     else:
+        # The source API excludes paths before opening them. The rule owns that predicate.
+        if scan(suite, 'should_exclude', module, args):
+            return []
         try:
             source = path.read_text(encoding='utf-8')
         except (OSError, UnicodeDecodeError) as caught:
