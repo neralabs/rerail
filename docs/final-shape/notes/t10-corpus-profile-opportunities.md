@@ -356,6 +356,123 @@ The profile names three causes:
 - **Per-node exports.** Twelve file-local exports (`fl…_violation`, `fl…_wstart`) hold about 349k rows on 200 files,
   most of a row per node. Each chunk copies them into SQLite at 20–28 ns a VM step.
 
+### 2f. Namespaces, climbs, content keys, planning and counters (2026-11-06)
+
+This section follows up §2e. It covers six items: shared relations across rules, climbs written as recursion,
+the counters, content keys, planning, and the cross-file rounds.
+
+**Rules in their own namespace, shared facts shared.** Each rule's relations carry its prefix (`p{i}_`). A
+congruence merge (`simplify::merge_identical`) then finds relations whose definitions are equal, recursive ones
+included. It is the greatest congruence, found by partition refinement. Such a class is named once in a shared
+namespace (`s_<name>`). The libraries' outputs keep their names as copy rules. On the hand-written rules (s200),
+this took CPU from 39 s to 11.7 s and peak RSS from 1.8 GB to 785 MB. Violations were unchanged.
+
+Relations that are equal up to their constants are only reported, not merged. There are 285 such relations in 57
+groups among the converted rules on s200 (`exists_0 ~ exists_83`), and 10 in 5 groups among the hand-written ones.
+Merging them would need the constant as a column.
+
+**Climbs as an axis.** `simplify::climbs_as_axes` finds a recursive component of unary node relations whose rules
+are bases, copies, or one step through `child` in one direction. It rewrites the component as its bases plus a
+`within` read. Two components of the pack qualify: `p33_m25/p33_u19` and `p33_m63/p33_u57`.
+
+**Content keys.** A source was hashed three times: by the worker, by the memo, and by the tape cache. Now it is
+hashed once (`put_source_hashed`), and the source id goes to the tape cache (`build_cached_as`).
+
+A stat index (`corpus_stats`) keeps each file's size, mtime and inode with its source, as git's index does. A warm
+run trusts an entry when the stat matches and the mtime is over 2 s before the run that recorded it (git's racy
+rule). It then reads and hashes nothing.
+
+| Run (full corpus, 94 rules) | Instructions before | After |
+|---|---|---|
+| cold | 804e9 | 755e9 |
+| warm | 20.9e9 | 15.4e9 (no file read) |
+| incremental (20 files) | 28.0e9 | 23.6e9 |
+
+What remains of cold content-key work is compression and one transaction per file: 1.7 s for sources and 2.0 s
+for tapes, under load. Hashing is 0.05 s of it at the SHA-256 roof. Batching the writes per chunk is the next step.
+
+**Planning.** The 4.3 s that §2e put on planning was mostly not planning:
+
+- Rebuilding EXPLAIN on every re-price, a profile-only cost, took 0.75 s. A kept plan now carries its EXPLAIN.
+- Candidate work was charged after the plan span closed. It landed on the stratum span and took that span's other
+  time with it. It is now charged where the orders are priced.
+
+Planning is now 1.7M candidates at 0.5–0.8 µs each (re-pricings included), and 1.8 s of plan spans when profiled.
+"Statistics and plan" splits into statistics (0.06 s), the demand split (0.6–0.9 s) and strata (0.16 s).
+
+Keying kept plans by rule address does not work. The demand split makes a new program each chunk, so no address
+survives, and every plan was searched again (28 s). The key stays text. Making the split once per run would make
+an address key possible and save the split's own 0.6 s.
+
+**The counters.** The rule is that every span doing work charges the units of that work, and every unit has a roof:
+a short loop on this machine doing the least that work needs. Added here:
+
+| Where | Unit | Roof |
+|---|---|---|
+| engine open: rows loaded from SQLite; Csr, Rel and sorted indexes built | index entry | a row id entered in a hash table, not presized (30 ns) |
+| engine open: SQLite reads | VM step | as before |
+| filtered input views | value | a hash-set insert |
+| digest, memo remember | byte | SHA-256 |
+| spec, engine close, profile record | spans only | none yet |
+
+A span with no counter is either fixed cost or a missing counter. The profile lists them by own CPU. On the cold run
+they went from 17.8 s (31% of own CPU) to 9.7 s (22%). Sampling the process (`sample`) found what the spans could
+not:
+
+- a filtered view scanned rows through `value()`, searching for each row's document. It now scans document by
+  document (`Source::filter_eq`);
+- a rule-number map was rebuilt with SipHash for every stratum.
+
+Cold instructions, unprofiled, went from 725e9 to 683e9.
+
+Still without a counter: `nearest` outside its CPU solve (1.3–2 s), `spec` (2.5 s: native join specs rebuilt per
+stratum per chunk, cacheable while the orders are unchanged), the demand split, tape parse less tree-sitter, and
+the main thread's wait.
+
+**All of it, measured again** (full corpus, 94 rules, profiled, a fresh clone; load 16–33):
+
+| Run | §2e | Now | Peak RSS |
+|---|---|---|---|
+| cold | 804e9 | 702e9 | 407 MB |
+| warm | 20.9e9 | 16.2e9 | 181 MB |
+| incremental (20 files) | 28.0e9 | 24.3e9 | 222 MB |
+
+Violations are 252 in every run.
+
+**Cross-file rounds.** See §2g.
+
+### 2g. Cross-file rounds: what they are, and why they should go
+
+`typing::cross_rounds` comes from typing's summaries (03 §13, I11, list step 29). Its idea is that a file's types
+are computed from the previous round's summaries of the files it imports, with k = 2 rounds and a cutoff when the
+summaries stop changing. In the corpus runner it is applied to the cross-file part of a program:
+
+- every recursive atom whose node may lie in another document (a *hop*) becomes two rules;
+- one rule is within the document (exact);
+- the other is across documents, reading `<rel>__prev`: the previous round's rows.
+
+Each round then reruns the whole cross-file program. The rounds stop when the hop relations' digest is unchanged, or
+after round K = 2.
+
+Why it is wrong here:
+
+1. **It can miss findings.** A chain crossing more than K files is cut. The result is an under-approximation,
+   reported as "not converged". On s200 the hand-written rules do not converge in 3 rounds: the hop rows grow
+   152,539 → 152,757 → 152,792.
+2. **It repeats work.** Each round reruns every rule of the cross-file part, not only those a change reaches.
+3. **It writes rows one at a time.** The previous rows go into `x.<rel>__prev` with one INSERT per row: most of
+   the 1.59M statements of §2e.
+
+The cross-file part already runs in one process, over one in-memory database of every file's exports. That is
+exactly where semi-naive evaluation computes the full fixpoint, cross-file chains included. Each wave joins only the
+new rows, so a chain through n files costs n waves of only the new rows, not n reruns of everything.
+
+The rounds pay for a separation (one file at a time, from summaries) that this part of the engine does not have.
+
+The proposal, not done here: run the cross-file part as one fixpoint and drop the rounds from the corpus runner. Keep
+bounded rounds only where summaries really are per file, in typing over files that are not loaded together. The
+incremental case is then the memo's job: unchanged files replay their exports, and the fixpoint reruns over them.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:
