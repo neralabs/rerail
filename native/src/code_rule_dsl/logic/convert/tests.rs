@@ -164,7 +164,7 @@ fn rule_files() -> Vec<PathBuf> {
 /// The codes a hand-written rule reports in log mode (`.mode log A, B`): the suite plugin, the production entry,
 /// drops them, as it drops a linter's `audit` severity. A violation's code is its `code "X"`, else its name.
 fn log_codes(check: &str) -> Vec<String> {
-    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
     let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
     let code_of = |name: &str| {
         text.lines()
@@ -180,11 +180,18 @@ fn log_codes(check: &str) -> Vec<String> {
         .collect()
 }
 
+/// Where the hand-written data-layer rules are: `docs/rule-syntax/data-layer` (More-ergonomic's drafts), or
+/// `RERAIL_HAND_DIR`. The data-layer pack's ports (`gate/data-layer/packs/data-layer/candidates/rr`) read
+/// `core.rr` relations the data-layer integration engine adds (`split_line`, `lf_line`), so they wait on that merge.
+fn hand_dir() -> PathBuf {
+    std::env::var_os("RERAIL_HAND_DIR").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::logic::rr::library().join("../data-layer"))
+}
+
 fn hand_written(check: &str) -> Option<String> {
     if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() {
         return None;
     }
-    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
     if !path.exists() {
         return None;
     }
@@ -607,7 +614,10 @@ fn measure_all(corpus: &Path, rules: &str) {
     let texts: Vec<String> = ids
         .iter()
         .map(|id| {
-            let written = id.strip_prefix("data-layer-").filter(|_| hand).and_then(|c| hand_written(&c.replace('-', "_")));
+            // `RERAIL_HAND_SKIP`: checks (comma-separated, as `layer-violations`) whose hand-written rule is left out.
+            let skip = std::env::var("RERAIL_HAND_SKIP").unwrap_or_default();
+            let skipped = |c: &str| skip.split(',').any(|s| s.trim() == c);
+            let written = id.strip_prefix("data-layer-").filter(|c| hand && !skipped(c)).and_then(|c| hand_written(&c.replace('-', "_")));
             if written.is_some() {
                 println!("HAND {id}");
             }
@@ -623,16 +633,16 @@ fn measure_all(corpus: &Path, rules: &str) {
     let mut texts = texts;
     // The hand-written rules of checks the pack has no rule for.
     if hand && mode != "skip" && rules == "*" {
-        let dir = crate::code_rule_dsl::logic::rr::library().join("../data-layer");
+        let dir = hand_dir();
         let mut extra: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| {
             let p = e.unwrap().path();
             (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
-        }).filter(|c| !ids.contains(&format!("data-layer-{c}"))).collect();
+        // `x.tables.rr` and `x.symbols.rr` are tables a policy includes, not checks.
+        }).filter(|c| !c.contains('.') && !ids.contains(&format!("data-layer-{c}"))).filter(|c| !std::env::var("RERAIL_HAND_SKIP").unwrap_or_default().split(',').any(|s| s.trim() == c)).collect();
         extra.sort();
         for c in extra {
-            // A rule reading a repository input the engine does not make yet (`input_error`, O80) cannot run.
+            // Repository inputs are read (`corpus::inputs`), `input_error` rows included.
             match hand_written(&c.replace('-', "_")) {
-                Some(t) if t.contains("input_error") => println!("HAND {c} (no converted rule): skipped, reads input_error (O80)"),
                 Some(t) => {
                     println!("HAND {c} (no converted rule)");
                     texts.push(t);
@@ -641,18 +651,6 @@ fn measure_all(corpus: &Path, rules: &str) {
             }
         }
     }
-    // A rule reading a repository file that exists (`.input r(IO=…, filename="…")`) or a directory (`dir="…"`) cannot
-    // run until files are read (O76): it is left out and named.
-    texts.retain(|t| {
-        let mut read: Vec<&str> = t.split("filename=\"").skip(1).filter_map(|f| f.split('"').next()).filter(|f| corpus.join(f).exists()).collect();
-        // A directory input (`dir="…"`) is not made at all yet.
-        read.extend(t.split("dir=\"").skip(1).filter_map(|f| f.split('"').next()));
-        if let Some(f) = read.first() {
-            let name = t.lines().find(|l| l.starts_with("// ")).unwrap_or("").chars().take(60).collect::<String>();
-            println!("SKIPPED (reads {f}, O76): {name}");
-        }
-        read.is_empty()
-    });
     let programs: Vec<&str> = texts.iter().map(String::as_str).collect();
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("measure-all");
     if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {

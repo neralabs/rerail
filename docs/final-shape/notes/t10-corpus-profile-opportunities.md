@@ -565,6 +565,81 @@ The rest do not yet run:
   over the content store raised (O93). It had used 7.6 GB of RSS and 793e9 instructions by then. On the same 200
   files, the converted rules take about 2 s.
 
+### 2j. Native joins, the data-layer pack's rules, and what the parser work changes (2026-11-07)
+
+**Native joins: relations built for every node and read for a few.** In 2i, 7.3 s of the 17.7 s in strata went to
+105 relations that demand (0048) refused. The guard's test was too narrow. It asked that one anchor bind the read
+and that every other positive atom be an anchor, but real readers bind their key from a rare kind or a derived
+relation and then step through `field`, `child`, `text` and the axes. For example:
+
+```text
+// one arm is every node of the corpus: 18.4M rows
+p17_m147(n) :- node(_, n, _, _, _), !p17_m146(n).
+// its one reader binds n first, from kind 1169
+violation_at(…) :- node(d, n, 1169, _, _), field(n, …), …, rr_nearest_ks7(n, v), …, p17_m147(n), …
+```
+
+Three changes, each on the full corpus, cold, profiled. 252 violations each time:
+
+| change | instructions | join rows | load |
+|---|---|---|---|
+| before (2i) | 681.2e9 | 131M | 10 |
+| demand's guard is reach through bounded lookups | 630.2e9 | | 40–49 |
+| plan cache searches again for a cheaper start; joins take their relation's demand; the data-layer engine merge | 625.7e9 | 61.4M | 59–73 |
+
+- **Reach.** A kept literal is reached when an anchor binds it or a lookup of bounded fan-out does: `node` by id;
+  `field` and `child` by either end; `doc` by id or path; an axis or any other base relation by its first column.
+  An axis read from its ancestor end is not a lookup. Since 0057, an axis read by its node is made for that node
+  only. Demanded relations went from 94 to 124–127. `p17_m147` fell from 1.48 s to 0.007 s.
+- **The plan cache (0038)** searched a kept order again only where its own work per node grew. A scan from a common
+  kind costs the same per node in every chunk. So `pre_458`, planned where its text test matched 3,397 names, kept
+  scanning 4.5M identifiers in 78 chunks where the test matched dozens. The planner now records each body's
+  cheapest start, and each kept order's work over that start. Where the ratio grows REPLAN times, it searches again;
+  79 plans were. `pre_458` fell from 1.10 s to 0.11 s.
+- **Demand for joins.** `p17_m132` (6M identifiers with text) has a scan rule and a join of derived relations, and
+  the join rule had kept it from demand. Its scans now decide, and the join takes the demand too: 1.14 s to 0.08 s.
+- **Left:** join rows cost 106 ns each against a 7.6 ns roof. `pre_773` (0.7 s) multiplies two independent
+  branches of one body, 24,688 rows to 5.0M. Document-keyed relations (`p27_m131(n)`, every node of the documents
+  where `exists_10` holds) still read every node of each demanded document.
+
+**The data-layer pack's rules.** The rules moved from More-ergonomic's drafts (`docs/rule-syntax/data-layer`, 56) to
+Data-layer-rule-expressivity's pack (`gate/data-layer/packs/data-layer/candidates/rr`, 68 checks, copied at
+994be7e84). Those read `core.rr` relations the data-layer engine adds (`split_line`, `lf_line`, repository inputs),
+so its engine was merged (ca930d974). It had already merged this branch at d334d5bf8.
+
+- **One at a time, on s50:** 50 of 68 run. Seven take over 40 s on 50 files, and the rest fail (O93). A typical rule
+  takes about 1 s in the run, most of it fixed cost: 937 lines of included library.
+- **Together, the 49 that run:**
+
+  | corpus | CPU | instructions | peak RSS |
+  |---|---|---|---|
+  | s50 | 17.2 s | 205e9 | 1.57 GB |
+  | s200 | 100.5 s | 1,064e9 | 5.19 GB |
+
+  The converted rules take about 2 s on s200.
+- **Fixed: an aggregate's context.** `count : { child(al, a, k), k < j, … }` made a context of j alone, which the
+  body only tests. So the helper crossed every argument of every call with every j: 20.6M rows for 4,133 counts on
+  50 files, in each of three libraries' copies. The context now holds every variable the body shares with the rule
+  (al and j). On s50, instructions fell from 248e9 to 206e9 and RSS from 2.26 GB to 1.58 GB.
+- **Next, by cost on s200:**
+  - `gis_before`, 40.7 s of 100.5: every node before every call of its file, quadratic, where the readers bind both
+    ends. A filter (every rule a functional lookup of its head and tests) should be inlined. The draft inliner was
+    correct, but the runner measures statistics and holds columns from the program before it is simplified.
+  - `cc_line`, 14.9 s: SQLite in the cross-file part, because `@prefix(…) = 0` has no native step, and a cross
+    product, because `split_line`'s statistics are not measured.
+  - Memory grows with which rules combine: 12 take 417 MB, 22 take 1.27 GB.
+
+**Parsing: what the Parser-generators worktree changes.** Its target is a side program of the transducer
+(`docs/parser-generators/12`, 13). Bitlex lexer and tree programs run on the transducer's own executors
+(interpreter, Cranelift, Metal) and write our v9np tape directly, byte for byte as `TapeImage::finish` does.
+
+- **Where it is:** JSON compiles to a block program, and its rows equal the reference evaluator's on every
+  executor. Python is lexing only. No executor writes a tape yet, and none of it is on the corpus path.
+- **What it replaces:** tree-sitter and the tape encode, 7.6 s and 3.6 s of excess here.
+- **What stays ours:** the tape format, store and restore, the memo lookup and the content hashing. Of the bytes'
+  6.3 s of excess, the memo lookup is 1.5 s at 11 ns a byte against SHA-256's 0.43 ns, the tape store 1.6 s and
+  the restore 0.6 s.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:

@@ -1518,3 +1518,33 @@ roles(r) :- doc_role(_, r).
     assert_eq!(roles, ["primary", "value"]);
     assert!(seen.is_empty(), "{seen:?}");
 }
+
+/// Python-style finditer consumers need every occurrence and code-point offsets, even for equal captures.
+#[test]
+fn match_all_symbol_positions_keep_duplicate_matches_and_unicode_offsets() {
+    let rule = r#"
+.language python
+.decl sample(s: symbol)
+sample("é xx xx").
+.violation Found(at: span, ordinal: number, start: number, end: number, capture: symbol) code "MATCH" "found"
+Found(@place("a.py", 1), i, a, b, capture) :- sample(s), match_all("(?<capture>xx)", s, i, a, b).
+.violation Bare(at: span, ordinal: number, start: number, end: number) code "BARE" "found"
+Bare(@place("a.py", 1), i, a, b) :- sample(s), match_all("x", s, i, a, b).
+"#;
+    let wanted = |rows: &[serde_json::Value], code: &str| {
+        let mut positions: Vec<_> = rows.iter().filter(|r| r["code"] == code).map(|r| {
+            let p = &r["parameters"];
+            (p["ordinal"].as_i64().unwrap(), p["start"].as_i64().unwrap(), p["end"].as_i64().unwrap())
+        }).collect();
+        positions.sort();
+        positions
+    };
+    let rows = finding_contract("", rule);
+    assert_eq!(wanted(&rows, "MATCH"), [(0, 2, 4), (1, 5, 7)]);
+    assert_eq!(wanted(&rows, "BARE"), [(0, 2, 3), (1, 3, 4), (2, 5, 6), (3, 6, 7)]);
+    assert!(rows.iter().filter(|r| r["code"] == "MATCH").all(|r| r["parameters"]["capture"] == "xx"));
+    let printed = print(&parse(rule).unwrap()).unwrap();
+    let roundtrip = finding_contract("", &printed);
+    assert_eq!(wanted(&roundtrip, "MATCH"), wanted(&rows, "MATCH"));
+    assert_eq!(wanted(&roundtrip, "BARE"), wanted(&rows, "BARE"));
+}
