@@ -718,6 +718,29 @@ fn a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered(
     let _ = std::fs::remove_dir_all(&project);
 }
 
+#[test]
+fn a_declared_generic_return_carries_the_receivers_binding() {
+    // t21 §5.1: `Seq[V]`'s `__iter__() -> It[_T]` is an It of V, so the loop's `__next__() -> _T` is a V; `Gen`'s
+    // `__iter__() -> It[V]` is one as written. The declared generic's class is exact: `Sub`'s `__next__` is typed by
+    // It's and does not reach the loop.
+    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("genret");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("m.py"),
+        "from typing import Generic, TypeVar\n_T = TypeVar(\"_T\")\nclass V:\n    def run(self) -> int: ...\nclass W:\n    def run(self) -> int: ...\nclass It(Generic[_T]):\n    def __next__(self) -> _T: ...\nclass Sub(It[W]):\n    def __next__(self) -> W: ...\nclass Seq(Generic[_T]):\n    def __iter__(self) -> It[_T]: ...\nclass Gen:\n    def __iter__(self) -> It[V]: ...\ndef f(s: Seq[V], g: Gen) -> None:\n    for x in s:\n        x.run()\n    for y in g:\n        y.run()\n",
+    )
+    .unwrap();
+    let out = project.join("out");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    assert_eq!(targets.lines().count(), 2, "{targets}");
+    // Both calls target one definition (V.run, not W.run).
+    let defs: BTreeSet<&str> = targets.lines().filter_map(|l| l.split('\t').nth(1)).collect();
+    assert_eq!(defs.len(), 1, "{targets}");
+    assert_eq!(std::fs::read_to_string(out.join("call_open.csv")).unwrap(), "");
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a

@@ -409,7 +409,7 @@ rret(f, "inst", k) :- rann(f, t), !isasync(f), aleaf(t, m), aself(m), method(f, 
 // cret(c, w, k): call c's declared return class. Joined with the subclasses last, so a new subclass row reaches
 // only the calls declared to return its base.
 .decl cret(c: node, w: symbol, k: node)
-cret(c, w, k) :- callee(c, e), pv(e, "fn", f), rret(f, w, k).
+cret(c, w, k) :- callee(c, e), pv(e, "fn", f), rret(f, w, k), !rgen(f, _).
 pv(c, w, s) :- cret(c, w, k), sub(k, s).
 
 // ---- generics (t21 §5.1, first version) --------------------------------------------------------------------------
@@ -465,11 +465,55 @@ rtvar(f, a, y) :- rann(f, t), !isasync(f), aleaf(t, r), kind(r, "identifier"), t
 .decl rpvar(f: node, i: number, y: symbol)
 rpvar(f, i, y) :- rann(f, t), !isasync(f), aleaf(t, r), kind(r, "identifier"), text(r, y), pann(f, x, pt), aleaf(pt, pr),
     kind(pr, "identifier"), text(pr, y), param(f, x, i), !rtvar(f, _, y).
+// rgen(f, r): f is declared to return the generic r (`-> Iterator[_T]`, `-> dict[str, V]`), a class's subscript, not a
+// special form's (`Optional[...]`, `type[...]`, `Callable[...]`). Read as written, so the recursion can tell its
+// calls apart.
+.decl rgen(f: node, r: node)
+rgen(f, r) :- rann(f, t), ann(t, r), !isasync(f), kind(r, "generic_type"), child(r, h, 0), gname(h, x), !gform_name(x).
+rgen(f, r) :- rann(f, t), ann(t, r), !isasync(f), kind(r, "subscript"), field(r, "value", h), gname(h, x), !gform_name(x).
+.decl gname(h: node, x: symbol)
+gname(h, x) :- kind(h, "identifier"), text(h, x).
+gname(h, x) :- kind(h, "attribute"), field(h, "attribute", a), text(a, x).
+.decl gform_name(x: symbol)
+gform_name("Optional"). gform_name("Union"). gform_name("type"). gform_name("Type"). gform_name("Callable"). gform_name("Literal").
+gform_name("Annotated"). gform_name("ClassVar"). gform_name("Final"). gform_name("TypeGuard"). gform_name("TypeIs").
+gform_name("Concatenate"). gform_name("Unpack"). gform_name("Required"). gform_name("NotRequired"). gform_name("ReadOnly").
+// tvar_of(f, z): argument z of f's declared generic is a parameter of f's class.
+.decl tvar_of(f: node, z: node)
+tvar_of(f, z) :- rgen(f, r), method(f, a), sarg(r, _, z), kind(z, "identifier"), text(z, y), cparam(a, _, y).
+// gfn(c, f): call c (a call, an implicit call) runs f, declared to return its class's parameter or a generic;
+// gcall(c, o, f): on o's value.
+.decl gret(f: node)
+gret(f) :- rtvar(f, _, _).
+gret(f) :- rgen(f, _).
+.decl gfn(c: node, f: node)
+gfn(c, f) :- callee(c, e), pv(e, "fn", f), gret(f).
+gfn(c, f) :- ifn(c, f), gret(f).
+.decl gcall(c: node, o: node, f: node)
+gcall(c, o, f) :- gfn(c, f), callee(c, n), attr_of(n, o, _).
+gcall(c, o, f) :- gfn(c, f), icall(c, o, _).
+// A generic value's class and arguments: an annotation's as written (`dict[str, V]`), or a call's declared generic
+// return, its type variables bound at the call (`list[V]`'s `__iter__() -> Iterator[_T]` is an Iterator of V). The
+// call's node stands for the generic it returns. Its class is exactly the declared one: a subclass's method is
+// typed by it.
+.decl ghcls(v: node, k: node)
+ghcls(m, k) :- gleaf(_, m), ahead(m, h), pv(h, "cls", k).
+ghcls(x, k) :- gcls(_, x, k), ghead(x, h), x != h, cparam(k, _, _).
+ghcls(c, k) :- gfn(c, f), rgen(f, r), ahead(r, h), pv(h, "cls", k).
+.decl garg(v: node, i: number, x: node)
+garg(m, i, x) :- ghcls(m, _), sarg(m, i, x).
+garg(c, j, x) :- gcall(c, _, f), rgen(f, r), sarg(r, j, z), tvar_of(f, z), text(z, y), method(f, a), gpar(c, a, y, x).
+garg(c, j, z) :- gfn(c, f), rgen(f, r), sarg(r, j, z), !tvar_of(f, z).
+pv(c, "gen", c) :- gfn(c, f), rgen(f, _), ghcls(c, _).
+pv(c, "inst", k) :- gfn(c, f), rgen(f, _), ghcls(c, k).
+// gpar(c, a, y, x): at call c, the receiver binds its class a's parameter y to the annotation x: through its generic
+// value's arguments, or its class's bases (`class D(M[str, int])`).
+.decl gpar(c: node, a: node, y: symbol, x: node)
+gpar(c, a, y, x) :- gcall(c, o, f), method(f, a), pv(o, "gen", g), ghcls(g, k), tmap(k, i, a, y), garg(g, i, x).
+gpar(c, a, y, x) :- gcall(c, o, f), method(f, a), pv(o, "inst", k), tfix(k, a, y, x).
 // gbind(c, x): call c's value is what annotation x declares.
 .decl gbind(c: node, x: node)
-gbind(c, x) :- callee(c, n), attr_of(n, o, _), pv(n, "fn", f), rtvar(f, a, y), pv(o, "gen", m), ahead(m, h), pv(h, "cls", k),
-    tmap(k, i, a, y), sarg(m, i, x).
-gbind(c, x) :- callee(c, n), attr_of(n, o, _), pv(n, "fn", f), rtvar(f, a, y), pv(o, "inst", k), tfix(k, a, y, x).
+gbind(c, x) :- gcall(c, _, f), rtvar(f, a, y), gpar(c, a, y, x).
 .decl ghead(x: node, h: node)
 ghead(x, h) :- gbind(_, x), kind(x, "subscript"), field(x, "value", h).
 ghead(x, h) :- gbind(_, x), kind(x, "generic_type"), child(x, h, 0).
@@ -499,9 +543,7 @@ need_attr(k, a) :- icall(_, o, a), pv(o, "inst", k).
 .decl ifn(c: node, f: node)
 ifn(c, f) :- icall(c, o, a), pv(o, "inst", k), fv(k, a, "fn", f).
 pv(c, k, v) :- ifn(c, f), !isasync(f), !isgen(f), fret(f, k, v).
-cret(c, w, k) :- ifn(c, f), rret(f, w, k).
-gbind(c, x) :- icall(c, o, _), ifn(c, f), rtvar(f, a, y), pv(o, "gen", m), ahead(m, h), pv(h, "cls", k), tmap(k, i, a, y), sarg(m, i, x).
-gbind(c, x) :- icall(c, o, _), ifn(c, f), rtvar(f, a, y), pv(o, "inst", k), tfix(k, a, y, x).
+cret(c, w, k) :- ifn(c, f), rret(f, w, k), !rgen(f, _).
 tv(c, "decl", m) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf(t, m), dtype(m, _).
 // Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
 .decl cann(c: node, x: symbol, t: node)
