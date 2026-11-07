@@ -696,12 +696,9 @@ impl Parser<'_> {
                     return self.fail("a pragma's two strings");
                 };
                 self.i += 2;
-                if key == "library-open" {
-                    // Decision 0058: relations a workspace run still derives about library nodes.
-                    prog.settings.push(("pragma".to_owned(), format!("\"library-open\" \"{k}\"")));
-                } else if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
+                if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
                     self.i -= 2;
-                    return self.fail("`.pragma \"cross-rounds\" \"k\"` or `.pragma \"library-open\" \"r s\"`");
+                    return self.fail("`.pragma \"cross-rounds\" \"k\"`");
                 } else {
                     prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
                 }

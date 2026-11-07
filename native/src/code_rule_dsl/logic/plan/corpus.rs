@@ -29,9 +29,6 @@ pub(in crate::code_rule_dsl) mod memo;
 mod bridge;
 mod inputs;
 mod world;
-mod library;
-/// The suffix of a relation's replayed library rows (decision 0058).
-pub(crate) const LIBRARY_SUFFIX: &str = library::SUFFIX;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -533,11 +530,6 @@ pub(crate) fn run_with_options(
     let mut prog = combine(programs, "")?;
     drop(combining);
     world::add_facts(&mut prog, options.get("worldFacts"));
-    // The library stage (decision 0058): the loaded documents alone, the program told so if it asks.
-    let library_stage = world_round.as_deref() == Some("library");
-    if library_stage && prog.decls.contains_key(library::STAGE) {
-        prog.facts.entry(library::STAGE.to_owned()).or_default().push(vec![front::Value::Str("library".to_owned())]);
-    }
     if world_round.as_deref() == Some("discover") {
         prog.outputs = world::requests(&prog);
     }
@@ -587,8 +579,8 @@ pub(crate) fn run_with_options(
                 let rust = typing.rust.unwrap_or(rs.len() > python.len());
                 (if rust { rs } else { python }, rust)
             };
-            // Documents a rule loaded (`world`), after the corpus's own; a library stage's are only those.
-            let mut files = if library_stage { Vec::new() } else { files };
+            // Documents a rule loaded (`world`), after the corpus's own.
+            let mut files = files;
             for (path, _) in world::library_files(options) {
                 if !files.contains(&path) {
                     files.push(path);
@@ -612,9 +604,6 @@ pub(crate) fn run_with_options(
         if !facts.is_empty() {
             prog = combine(programs, &facts)?;
             world::add_facts(&mut prog, options.get("worldFacts"));
-            if library_stage && prog.decls.contains_key(library::STAGE) {
-                prog.facts.entry(library::STAGE.to_owned()).or_default().push(vec![front::Value::Str("library".to_owned())]);
-            }
             add_bridged(&mut prog);
         }
         declared = d;
@@ -679,8 +668,7 @@ pub(crate) fn run_with_options(
     // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
     crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
     // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
-    // Not in a library stage: its rows are replayed for whatever a workspace's rules ask (decision 0058).
-    let (mut prog, demanded) = if library_stage { (prog, Vec::new()) } else { crate::code_rule_dsl::logic::magic::demand_negated_tests(prog) };
+    let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
     if !demanded.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
     }
@@ -704,29 +692,7 @@ pub(crate) fn run_with_options(
     if remerged > 0 {
         crate::code_rule_dsl::logic::profile::decision("merged after the joins were pushed", || format!("{remerged} relations merged into an identical one ({reshared} classes shared across programs)"));
     }
-    let mut split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
-    // The library's rows (decision 0058): bound for the cross-file part, which then derives no row of theirs about
-    // a library node. Only under the document keys they were made with.
-    let mut library_inputs: Vec<(String, usize, Vec<i64>)> = Vec::new();
-    // The stored rows' digest: the run's manifest names them, so collection keeps them (decision 0053).
-    let mut library_digest: Option<[u8; 32]> = None;
-    if !library_stage && let Some(file) = options.get(library::OPTION).and_then(|v| v.as_str()) {
-        let bytes = std::fs::read(file).ok();
-        library_digest = bytes.as_ref().map(|b| <sha2::Sha256 as sha2::Digest>::digest(b).into());
-        let rows = bytes.and_then(|b| library::Rows::decode(&b));
-        let keys: HashMap<&str, i64> = docs.iter().map(|(d, p)| (p.as_str(), *d)).collect();
-        match rows {
-            Some(rows) if rows.keys.iter().all(|(p, k)| keys.get(p.as_str()) == Some(k)) => {
-                library_inputs = library::replay(&mut split.cross, &rows, &library::open_relations(&prog));
-                let n: usize = library_inputs.iter().map(|(_, w, v)| v.len() / (*w).max(1)).sum();
-                crate::code_rule_dsl::logic::profile::decision("library rows (decision 0058)", || {
-                    format!("{} relations' rows about {} library documents replayed ({n} rows); their rules derive no row about a library node", library_inputs.len() - 1, rows.keys.len())
-                });
-            }
-            Some(_) => crate::code_rule_dsl::logic::profile::decision("library rows (decision 0058)", || "not replayed: a library document's key differs from the stage's".to_owned()),
-            None => crate::code_rule_dsl::logic::profile::decision("library rows (decision 0058)", || format!("not replayed: {file} is not a library stage's rows")),
-        }
-    }
+    let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     let memo_program = memo::program_digest(&split.local);
     // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
@@ -1279,12 +1245,7 @@ pub(crate) fn run_with_options(
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The run's manifest, then collection in the background while the cross-file part runs (decision 0053).
-    let mut run_sources = worker_cpu.2.clone();
-    if let Some(digest) = library_digest
-        && let Ok(Some(id)) = store.source_by_hash(crate::content_store::HashKey::from_sha256_digest(digest))
-    {
-        run_sources.push(id);
-    }
+    let run_sources = worker_cpu.2.clone();
     let collecting = if recording { record_run(store, root, &run_sources, &memo_program, lease)? } else { drop(lease); None };
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
@@ -1345,49 +1306,14 @@ pub(crate) fn run_with_options(
         let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
         modules.bind(&db, rel, source)?;
     }
-    // The library's rows (decision 0058), measured as inputs.
-    let mut library_totals = Totals::default();
-    for (rel, width, values) in std::mem::take(&mut library_inputs) {
-        let types: Vec<String> = cross.program.decls[&rel].iter().map(|(_, t)| t.clone()).collect();
-        let columns = (0..width).map(|i| format!("c{i}")).collect();
-        let values = (0..width).map(|c| Some(values.iter().skip(c).step_by(width).copied().collect())).collect();
-        let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
-        library_totals.add_rows(&rel, source.len(), source.as_ref(), &types.iter().map(String::as_str).collect::<Vec<_>>());
-        modules.bind(&db, &rel, source)?;
-    }
-    library_totals.apply(&mut cross_stats);
     phase("stats", statements.count());
     statements.enter("cross");
     let mut rounds = cross_rounds::Rounds::default();
     // `returns`, held for the typing outputs (`corpus::typing`).
-    let mut wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
-    // A library stage holds every relation its cross-file part derives, its output (decision 0058).
-    let mut library_rows = library::Rows::default();
-    let library_kept = if library_stage { library::kept(&cross.program) } else { BTreeSet::new() };
-    if library_stage {
-        wanted.extend(library_kept.iter().filter(|r| !prog.outputs.contains(*r)).cloned());
-        library_rows.keys = docs.iter().map(|(d, p)| (p.clone(), *d)).collect();
-    }
-    let mut collect = |db: &Connection, got: &Outcome, part: &front::Program| -> Result<()> {
-        if !library_stage {
-            return Ok(());
-        }
-        let derived: BTreeSet<&str> = part.rules.iter().map(|r| r.head.rel.as_str()).collect();
-        for rel in derived.into_iter().filter(|r| library_kept.contains(*r)) {
-            let width = part.decls[rel].len();
-            let rows = held_rows(db, got, rel, width)?;
-            library_rows.rels.insert(rel.to_owned(), (width, rows.into_iter().flatten().collect()));
-        }
-        Ok(())
-    };
+    let wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
     let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
-        if cross_rounds::cutoff().is_some() {
-            crate::code_rule_dsl::logic::profile::decision("per-document cutoff (decision 0059)", || {
-                format!("{} dependency relations; read by an unnamed reader: {}", bounded.deps.len(), bounded.global.iter().cloned().collect::<Vec<_>>().join(", "))
-            });
-        }
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Bounded rounds only for a program that declares them (decision 0056: a typing program); a rule's
         // cross-file part is one fixpoint, which no chain length cuts.
@@ -1401,12 +1327,11 @@ pub(crate) fn run_with_options(
         if bounded.hops.is_empty() || k.is_none() {
             rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
             let got = super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?;
-            collect(&db, &got, &cross.program)?;
             if wanted.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
-        } else if let Some(cone) = cross_rounds::cone_split(&bounded.program, &bounded.hops.iter().cloned().chain(bounded.deps.iter().filter(|d| d.head.is_none()).map(|d| d.name.clone())).collect()) {
+        } else if let Some(cone) = cross_rounds::cone_split(&bounded.program, &bounded.hops) {
             // The rounds run the hops' cone; what reads it and no hop reads runs once, after the last round.
             // Held: what the rest reads, unless an output (written to its table, read from there).
             let mut held = wanted.clone();
@@ -1422,10 +1347,8 @@ pub(crate) fn run_with_options(
                     let copied: BTreeSet<String> = ps.reads.iter().chain(cone.reads.iter().filter(|r| pre_derived.contains(*r))).cloned().collect();
                     let mut pre_held: BTreeSet<String> = held.iter().filter(|r| pre_derived.contains(*r)).cloned().collect();
                     pre_held.extend(copied.iter().cloned());
-                    let pre_rules = if library_stage { ps.pre.clone() } else { front::Program::default() };
                     let decls = ps.pre.decls.clone();
                     let got = super::run_atoms_native_over(&part(ps.pre), &db, "main", cross_stats.clone(), pre_held, modes)?;
-                    collect(&db, &got, &pre_rules)?;
                     if wanted.contains("returns") && pre_derived.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
                     }
@@ -1453,15 +1376,7 @@ pub(crate) fn run_with_options(
                 }
                 None => cone.cone,
             };
-            if cross_rounds::cutoff().is_some() {
-                crate::code_rule_dsl::logic::profile::decision("per-document cutoff (decision 0059)", || {
-                    let neg = cross_rounds::negated_changing(&round_prog);
-                    format!("the rounds negate {} relations that change with them: {}", neg.len(), neg.into_iter().collect::<Vec<_>>().join(", "))
-                });
-            }
-            let cone_rules = if library_stage { round_prog.clone() } else { front::Program::default() };
-            let got = run_rounds(&db, &modules, part(round_prog), &bounded.hops, &held, &round_stats, modes, k.expect("declared"), &mut rounds, (&bounded.deps, &bounded.global))?;
-            collect(&db, &got, &cone_rules)?;
+            let got = run_rounds(&db, &modules, part(round_prog), &bounded.hops, &held, &round_stats, modes, k.expect("declared"), &mut rounds)?;
             if wanted.contains("returns") && got.kept.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
@@ -1494,15 +1409,12 @@ pub(crate) fn run_with_options(
             let rest_wanted: BTreeSet<String> = wanted.iter().filter(|w| rest.rules.iter().any(|r| r.head.rel == **w)).cloned().collect();
             let rest = part(rest);
             let got = super::run_atoms_native_over(&rest, &db, "main", st, rest_wanted.clone(), modes)?;
-            collect(&db, &got, &rest.program)?;
             if rest_wanted.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
         } else {
-            let all_rules = if library_stage { bounded.program.clone() } else { front::Program::default() };
-            let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds, (&bounded.deps, &bounded.global))?;
-            collect(&db, &got, &all_rules)?;
+            let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, k.expect("declared"), &mut rounds)?;
             if wanted.contains("returns") {
                 returns = held_rows(&db, &got, "returns", 2)?;
             }
@@ -1522,9 +1434,6 @@ pub(crate) fn run_with_options(
         }
     }
     phase("cross", statements.count());
-    if library_stage {
-        library::write(out, &library_rows)?;
-    }
     statements.enter("write");
     let mut rows = BTreeMap::new();
     for (rel, lines) in &outputs {
@@ -1624,41 +1533,7 @@ fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Opti
     }
     let now = thread_usage();
     let mut final_options = world.options(options, prog, "final");
-    let mut summary = format!("{}; {:.2} s CPU on the main thread", world.summary(rounds), now.0 - start.0 + now.1 - start.1);
-    // The library's cross-file rows (decision 0058): the store's, or a library stage's, recorded for the next run.
-    let loaded: Vec<String> = world::library_files(&final_options).into_iter().map(|(p, _)| p).collect();
-    // Off unless `library.rows=on`: measured, replay costs more than the workspace's own demand-driven derivation of the
-    // library's rows (decision 0058, Measured).
-    let off = !prog.facts.get("env").into_iter().flatten().any(|r| matches!(r.as_slice(), [front::Value::Str(k), front::Value::Str(v)] if k == library::SETTING && v == "on"));
-    if !loaded.is_empty() && !off && tape_cache().map_err(|e| Error::Plan(e.to_string()))?.is_some() {
-        let env: Vec<(String, String)> = prog.facts.get("env").into_iter().flatten().filter_map(|r| match r.as_slice() {
-            [front::Value::Str(k), front::Value::Str(v)] => Some((k.clone(), v.clone())),
-            _ => None,
-        }).collect();
-        let key = library::key(programs, &loaded, &env)?;
-        let dir = out.join("library");
-        std::fs::create_dir_all(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))?;
-        let file = dir.join(library::FILE);
-        let stored = tape_cache().map_err(|e| Error::Plan(e.to_string()))?.and_then(|store| library::lookup(&store, &key));
-        let start = thread_usage();
-        let how = match stored {
-            Some(bytes) => {
-                std::fs::write(&file, bytes).map_err(|e| Error::Plan(format!("{}: {e}", file.display())))?;
-                "read from the store"
-            }
-            None => {
-                run_with_options(programs, root, None, &dir, modes, binding, chunk_nodes, typing, &world.options(options, prog, "library"))?;
-                let bytes = std::fs::read(&file).map_err(|e| Error::Plan(format!("{}: {e}", file.display())))?;
-                if let Some(store) = tape_cache().map_err(|e| Error::Plan(e.to_string()))? {
-                    library::record(&store, &key, &bytes, &loaded)?;
-                }
-                "made by a library stage and stored"
-            }
-        };
-        let now = thread_usage();
-        summary.push_str(&format!("; the library's cross-file rows {how} ({:.2} s CPU)", now.0 - start.0 + now.1 - start.1));
-        final_options[library::OPTION] = file.to_string_lossy().into_owned().into();
-    }
+    let summary = format!("{}; {:.2} s CPU on the main thread", world.summary(rounds), now.0 - start.0 + now.1 - start.1);
     final_options["worldSummary"] = summary.into();
     run_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &final_options)
 }
@@ -1679,94 +1554,22 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds, cutoff: Cutoff) -> Result<Outcome> {
+fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, k: usize, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
     // A program that declares `unconverged` (O41) gets one more round when round `k` ends unconverged, with the
     // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
     let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
     // Each round rebinds only the `__prev` inputs (and the pending round adds a fact): the other inputs stay loaded.
     let changing: BTreeSet<String> = hops.iter().map(|rel| format!("{rel}{}", cross_rounds::PREV)).chain([cross_rounds::UNCONVERGED.to_owned()]).collect();
     crate::code_rule_dsl::logic::native::keep_inputs(db, Some(changing));
-    let out = rounds_loop(db, modules, &mut round, hops, wanted, stats, modes, report, k, pending_round, cutoff);
+    let out = rounds_loop(db, modules, &mut round, hops, wanted, stats, modes, report, k, pending_round);
     crate::code_rule_dsl::logic::native::keep_inputs(db, None);
     crate::code_rule_dsl::logic::native::forget_inputs(db);
     out
 }
 
 #[allow(clippy::too_many_arguments)]
-/// The dependency relations of the rounds and the hop relations whose readers cannot be named (decision 0059).
-type Cutoff<'a> = (&'a [cross_rounds::Dep], &'a BTreeSet<String>);
-
-/// The units dirty in the next round (decision 0059): those of the readers with a dependency row on a key of a row
-/// that changed between `before` and `now`; every unit when a relation read by an unnamed reader changed (`None`).
-/// `unit` maps a node to its unit: its document (`n >> 32`), or the node itself.
-fn dirty_documents(now: &BTreeMap<String, Vec<Vec<i64>>>, before: &BTreeMap<String, Vec<Vec<i64>>>, deps: &BTreeMap<String, Vec<Vec<i64>>>, cutoff: Cutoff, unit: &dyn Fn(i64) -> i64) -> Option<BTreeSet<i64>> {
-    let changed = |rel: &str| -> Vec<&Vec<i64>> {
-        let (a, b) = (&now[rel], &before[rel]);
-        let (mut i, mut j, mut out) = (0, 0, Vec::new());
-        while i < a.len() || j < b.len() {
-            match (a.get(i), b.get(j)) {
-                (Some(x), Some(y)) if x == y => { i += 1; j += 1; }
-                (Some(x), Some(y)) if x < y => { out.push(x); i += 1; }
-                (Some(_), Some(y)) => { out.push(y); j += 1; }
-                (Some(x), None) => { out.push(x); i += 1; }
-                (None, Some(y)) => { out.push(y); j += 1; }
-                (None, None) => break,
-            }
-        }
-        out
-    };
-    if cutoff.1.iter().any(|rel| now.contains_key(rel) && !changed(rel).is_empty()) {
-        return None;
-    }
-    let mut dirty = BTreeSet::new();
-    for dep in cutoff.0.iter().filter(|d| !d.inround) {
-        if let Some(c) = dep.head {
-            dirty.extend(changed(&dep.rel).into_iter().map(|r| unit(r[c])));
-            continue;
-        }
-        let keys: BTreeSet<Vec<i64>> = changed(&dep.rel).into_iter().map(|r| dep.cols.iter().map(|&c| r[c]).collect()).collect();
-        if keys.is_empty() {
-            continue;
-        }
-        for row in deps.get(&dep.name).into_iter().flatten() {
-            if keys.contains(&row[1..]) {
-                dirty.insert(unit(row[0]));
-            }
-        }
-    }
-    Some(dirty)
-}
-
-/// `dirty` nodes closed over the same-document reads of the round's own rows (decision 0059, Measured): a reader of a
-/// dirty node's rows is dirty. A read keyed without the row's node makes its readers dirty when any node is.
-fn close_dirty(mut dirty: BTreeSet<i64>, deps: &BTreeMap<String, Vec<Vec<i64>>>, cutoff: Cutoff) -> BTreeSet<i64> {
-    let mut readers: HashMap<i64, Vec<i64>> = HashMap::new();
-    let mut unkeyed: Vec<i64> = Vec::new();
-    for dep in cutoff.0.iter().filter(|d| d.inround && d.head.is_none()) {
-        let at = dep.first.and_then(|f| dep.cols.iter().position(|&c| c == f));
-        for row in deps.get(&dep.name).into_iter().flatten() {
-            match at {
-                Some(k) => readers.entry(row[1 + k]).or_default().push(row[0]),
-                None => unkeyed.push(row[0]),
-            }
-        }
-    }
-    if !dirty.is_empty() {
-        dirty.extend(unkeyed);
-    }
-    let mut work: Vec<i64> = dirty.iter().copied().collect();
-    while let Some(n) = work.pop() {
-        for &r in readers.get(&n).into_iter().flatten() {
-            if dirty.insert(r) {
-                work.push(r);
-            }
-        }
-    }
-    dirty
-}
-
 #[allow(clippy::too_many_arguments)]
-fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds, k: usize, pending_round: bool, cutoff: Cutoff) -> Result<Outcome> {
+fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds, k: usize, pending_round: bool) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
     let mut prev_rows: BTreeMap<String, Vec<Vec<i64>>> = hops.iter().map(|rel| (rel.clone(), Vec::new())).collect();
@@ -1791,7 +1594,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
         let mut st = stats.clone();
         prev_totals.apply(&mut st);
         // A hop relation the program outputs is written to its table, to be decoded; the others are held.
-        let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().chain(cutoff.0.iter().filter(|d| d.head.is_none()).map(|d| d.name.clone())).collect();
+        let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().collect();
         let got = super::run_atoms_native_over(round, db, "main", st, held, modes)?;
         // This round's rows of the hop relations: from the engine, or their table.
         let measure = crate::code_rule_dsl::logic::profile::span(|| "hop rows: copy and measure".into());
@@ -1832,14 +1635,6 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
         }
         drop(sources);
         drop(measure);
-        // The dependency rows (decision 0059, step 1: measured, not yet used to cut a round).
-        let mut dep_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
-        for dep in cutoff.0.iter().filter(|d| d.head.is_none()) {
-            if !dep_rows.contains_key(&dep.name) {
-                let width = dep.cols.len() + 1;
-                dep_rows.insert(dep.name.clone(), held_rows(db, &got, &dep.name, width)?);
-            }
-        }
         let digest = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
         let digest = { let _d = digest; cross_rounds::digest_sorted(&rows) };
         report.run = r + 1;
@@ -1865,40 +1660,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
                 }
             }
             let docs: BTreeSet<i64> = rows.values().flatten().map(|r| r[0] >> 32).collect();
-            let dirty = if cutoff.0.is_empty() && cutoff.1.is_empty() {
-                String::new()
-            } else {
-                // Units (decision 0059, Measured): a document, and a node (the row's first node column).
-                let by_doc = |n: i64| n >> 32;
-                let share = |unit: &dyn Fn(i64) -> i64, label: &str| match dirty_documents(&rows, &prev_rows, &dep_rows, cutoff, unit) {
-                    Some(d) => {
-                        // The dirty units' share of the hop rows: what a cut round would derive again.
-                        let (mut part, mut all) = (0usize, 0usize);
-                        for v in rows.values() {
-                            all += v.len();
-                            part += v.iter().filter(|r| d.contains(&unit(r[0]))).count();
-                        }
-                        format!("; dirty {label} next round {} holding {part} of {all} hop rows", d.len())
-                    }
-                    None => "; dirty next round: all (a relation read by an unnamed reader changed)".to_owned(),
-                };
-                let mut out = share(&by_doc, "documents");
-                out.push_str(&share(&|n| n, "nodes"));
-                if let Some(d) = dirty_documents(&rows, &prev_rows, &dep_rows, cutoff, &|n| n) {
-                    let d = close_dirty(d, &dep_rows, cutoff);
-                    let (mut part, mut all) = (0usize, 0usize);
-                    for v in rows.values() {
-                        all += v.len();
-                        part += v.iter().filter(|r| d.contains(&r[0])).count();
-                    }
-                    out.push_str(&format!("; closed over same-document reads {} holding {part} of {all}", d.len()));
-                }
-                // Rows a round took back: none, and the rounds are monotone (each could continue the last).
-                let removed: usize = rows.iter().map(|(rel, v)| prev_rows[rel].iter().filter(|r| v.binary_search(r).is_err()).count()).sum();
-                out.push_str(&format!("; {removed} rows removed since the round before"));
-                format!("{out} ({} dependency rows)", dep_rows.values().map(Vec::len).sum::<usize>())
-            };
-            format!("{}; documents changed {} of {}{dirty}", rows.iter().map(|(rel, v)| format!("{rel} {}", v.len())).collect::<Vec<_>>().join(", "), changed.len(), docs.len())
+            format!("{}; documents changed {} of {}", rows.iter().map(|(rel, v)| format!("{rel} {}", v.len())).collect::<Vec<_>>().join(", "), changed.len(), docs.len())
         });
         if last == Some(digest) || r == k + 1 || (r == k && !pending_round) {
             report.converged = last == Some(digest);
