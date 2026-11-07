@@ -874,7 +874,7 @@ pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
         for l in &r.body {
             if let Some(a) = l.atom() {
                 used.insert(a.rel.clone());
-                if let Some(set) = a.rel.strip_prefix(front::AXIS) {
+                if let Some((set, _)) = front::axis(&a.rel) {
                     sets.insert(set.to_owned());
                 }
             }
@@ -977,7 +977,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
     if let Some(o) = authored.outputs.iter().find(|o| *o != "violation") {
         return err(format!(".output {o}: the only output is violation"));
     }
-    let axis = |rel: &str| rel.strip_prefix(front::AXIS).is_some_and(|set| authored.kindsets.contains_key(set));
+    let axis = |rel: &str| front::axis(rel).is_some_and(|(set, _)| authored.kindsets.contains_key(set));
     // Declarations: the base relations, `violation` and the scope as the converter declares them, and no name the
     // converter makes.
     for (name, columns) in &authored.decls {

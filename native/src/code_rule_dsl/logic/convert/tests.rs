@@ -1230,7 +1230,7 @@ fn converted_programs_hold_only_what_violation_reaches() {
         for rel in prog.decls.keys().chain(&prog.inputs) {
             assert!(reached.contains(rel), "{id}: {rel} is declared and not reached");
         }
-        let sets: BTreeSet<String> = reached.iter().filter_map(|r| r.strip_prefix(crate::code_rule_dsl::logic::front::AXIS)).map(str::to_owned).chain(prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| match l {
+        let sets: BTreeSet<String> = reached.iter().filter_map(|r| crate::code_rule_dsl::logic::front::axis(r).map(|(set, _)| set)).map(str::to_owned).chain(prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| match l {
             crate::code_rule_dsl::logic::front::Literal::Nearest { kindset, .. } => Some(kindset.clone()),
             _ => None,
         })).collect();
@@ -1588,7 +1588,7 @@ fn library_relations_through_an_overlay_report() {
         Err(e) => panic!("the closure does not lower: {e}"),
     };
     let rule = rule_file(TARGET).unwrap();
-    for (i, (rel, cols)) in closure.decls.iter().filter(|(rel, _)| !rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) && !closure.inputs.contains(rel)).enumerate() {
+    for (i, (rel, cols)) in closure.decls.iter().filter(|(rel, _)| !crate::code_rule_dsl::logic::front::is_axis(rel) && !closure.inputs.contains(rel)).enumerate() {
         let args = vec!["_"; cols.len()].join(", ");
         let authored = format!(
             "{includes}.decl in_scope(d: number)\n\
