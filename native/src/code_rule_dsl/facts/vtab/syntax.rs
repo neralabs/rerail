@@ -497,7 +497,7 @@ impl Batch {
             let withheld = error.is_some();
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld);
             if !rx_spans.is_empty() && !withheld {
-                c.matches(&mut p, &rx_spans, &mut string);
+                c.matches(&mut p, dialect, &rx_spans, &mut string);
             }
             let key = i64::from(d.key);
             // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both

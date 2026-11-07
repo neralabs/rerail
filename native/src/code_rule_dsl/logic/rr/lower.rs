@@ -917,10 +917,10 @@ impl Lowerer {
         let [STerm::Str(re), s] = args else { return Err(Error::Syntax(format!("{rel} takes a regex string and a text"))) };
         let gs = groups(re);
         let all = rel == "match_all";
-        // A span `match_all` reads through a derived relation (`t(d, sp) :- source(d, sp), …`) is a node-typed
-        // column here; `span_patterns` finds which spans it holds.
+        // A span `match_all` (or `match` with groups) reads through a derived relation (`t(d, sp) :- source(d, sp),
+        // …`, or `kind(c, "comment")`) is a node-typed column here; `span_patterns` finds which spans it holds.
         if let STerm::Var(v) = s
-            && (self.span_container(v).is_some() || all && self.node_typed(v))
+            && (self.span_container(v).is_some() || (all || !gs.is_empty()) && self.node_typed(v))
         {
             let pattern = if all { re.clone() } else { format!("^(?:{re})$") };
             self.rx_span_input();
@@ -961,7 +961,7 @@ impl Lowerer {
     }
 
     /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
-    /// the same body by `source` or `src_line`. Read off the rules, so a printed program (`rr::print`) has them too.
+    /// the same body by `source`, `src_line` or `kind(c, "comment")`. Read off the rules, so a printed program (`rr::print`) has them too.
     /// A derived relation's column holds `source` spans, or `src_line` spans, when every rule binds it so: directly,
     /// or through another such column (a fixpoint).
     fn span_patterns(&mut self) -> Result<(), Error> {
@@ -970,6 +970,7 @@ impl Lowerer {
             body.iter().filter_map(Literal::atom).filter(|b| !b.neg).find_map(|b| match (b.rel.as_str(), b.args.as_slice()) {
                 ("source", [_, Term::Var(y)]) if y == x => Some(SpanIn::Source),
                 ("src_line", [_, _, Term::Var(y)]) if y == x => Some(SpanIn::Line),
+                ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some(SpanIn::Comment),
                 _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).copied()).flatten()),
             })
         };
@@ -1002,7 +1003,7 @@ impl Lowerer {
                     return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
                 };
                 let Some(within) = binder(&rule.body, c, &columns) else {
-                    return not_yet(format!("{}: match_all over ${c}, a node or span not of `source` or `src_line` (O80: a node's matches as spans)", rule.head.rel));
+                    return not_yet(format!("{}: match_all over ${c}, a node or span not of `source`, `src_line` or a comment (O80: a node's matches as spans)", rule.head.rel));
                 };
                 self.prog.rx_spans.insert((within, p.clone()));
             }
@@ -1039,12 +1040,13 @@ impl Lowerer {
         }
     }
 
-    /// Whether a sibling binds `v` to a `source` or `src_line` span, the spans `rx_span` runs over.
+    /// Whether a sibling binds `v` to a `source` or `src_line` span or a comment, the spans `rx_span` runs over.
     fn span_container(&self, v: &str) -> Option<SpanIn> {
         self.siblings.iter().find_map(|l| match l {
             Lit::Atom { rel, args, neg: false } => match (rel.as_str(), args.as_slice()) {
                 ("source", [_, STerm::Var(x)]) if x == v => Some(SpanIn::Source),
                 ("src_line", [_, _, STerm::Var(x)]) if x == v => Some(SpanIn::Line),
+                ("kind", [STerm::Var(x), STerm::Str(k)]) if x == v && k == "comment" => Some(SpanIn::Comment),
                 _ => None,
             },
             _ => None,
