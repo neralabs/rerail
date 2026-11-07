@@ -547,14 +547,19 @@ thread_local! {
     /// searched.
     /// When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it with its own work and rows.
     static PLANS: std::cell::RefCell<Option<HashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
+    /// The last priced body's cheapest start: the least work of any one join literal read first, from no binding.
+    /// Every order costs at least this, so a kept order's work over it measures how far the order is from the best
+    /// any start allows.
+    static SEED: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
 }
 
 /// A kept plan's key: the rule as text, the delta and the component solved. Not the rule's address: each chunk's
 /// program is a new value (the demand split makes one per chunk), so no address is kept between chunks.
 type PlanKey = String;
 
-/// A kept plan: its order, its work per node when searched, and when profiling its EXPLAIN.
-type Kept = (std::rc::Rc<[Step]>, f64, Option<super::profile::RulePlan>);
+/// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, and its work over its body's
+/// cheapest start (`SEED`) when searched.
+type Kept = (std::rc::Rc<[Step]>, f64, Option<super::profile::RulePlan>, f64);
 
 /// Plans kept across chunks on this thread while held (a corpus run), none kept at the start.
 pub(in crate::code_rule_dsl) struct KeepPlans;
@@ -631,7 +636,7 @@ impl Model {
         let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.get(&key).cloned())) else {
             return self.plan_inner(prog, head, body, first, None, true);
         };
-        if let Some((order, per_node, searched)) = kept {
+        if let Some((order, per_node, searched, gap)) = kept {
             let priced = {
                 let _span = super::profile::span(|| "re-price".into());
                 // The search's EXPLAIN (its steps' rows as the search priced them), with this pricing's work, rows and
@@ -641,7 +646,12 @@ impl Model {
                     (got, x)
                 })
             };
+            // A start much cheaper than when the order was searched (a text test that matched thousands of strings
+            // there and dozens here): the kept order may now scan what that start would look up, and pricing the
+            // kept order alone never shows it.
+            let cheaper_start = |work: f64| work / SEED.with(|c| c.get()).max(1.0) > REPLAN * gap.max(1.0) && work > REPLAN_ROWS;
             match priced {
+                Ok(got) if cheaper_start(got.0.1) => super::profile::decision("plan cache (decision 0038)", || "replanned: a start much cheaper than when the kept order was searched".into()),
                 Ok(got) if got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS => {
                     super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
                     return Ok(got);
@@ -658,7 +668,8 @@ impl Model {
         };
         PLANS.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
-                p.insert(key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone()));
+                let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
+                p.insert(key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap));
             }
         });
         Ok(got)
@@ -882,6 +893,7 @@ impl Model {
             return Err(Error::Plan(format!("rule for {head}: no executor for {l} yet")));
         }
         let joins: Vec<usize> = (0..body.len()).filter(|&i| is_join(&body[i])).collect();
+        SEED.with(|c| c.set(joins.iter().filter_map(|&i| step(&body[i], 1.0, &BTreeSet::new()).map(|w| w.0)).fold(f64::INFINITY, f64::min).min(1e300)));
         if !joins.is_empty() && !joins.iter().any(|&i| matches!(body[i], Literal::Atom(_))) {
             return Err(Error::Plan(format!("rule for {head} has no positive atom")));
         }

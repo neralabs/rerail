@@ -30,9 +30,10 @@
 //!
 //! - every rule of it starts from every node (a `nearest_<set>`, `inside_<set>` or kind-free `node` atom on its key),
 //!   or
-//! - every rule of it is a scan: a base atom binds its key, and those atoms reach at least 1/32 of the chunk's nodes
-//!   together (by the measured counts of the base relations and of the program's constants, never by estimates of
-//!   derived relations). The rows not built must outweigh the strata the split adds, opened in every chunk.
+//! - its scans (rules where a base atom binds its key) reach at least 1/32 of the chunk's nodes together, by the
+//!   measured counts of the base relations and of the program's constants, never by estimates of derived relations.
+//!   Its other rules take the demand too. The rows not built must outweigh the strata the split adds, opened in
+//!   every chunk.
 //!
 //! A positive read is cut like a negation, with a guard of its own. A negation only filters, so the reader's body less
 //! it is no larger than the reader's work. A positive read can be what keeps the body small, so it is cut only where
@@ -101,9 +102,10 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
     // A scan is worth demanding when it reaches at least this many rows: the rows not built must outweigh the strata
     // the split adds (`pre_<i>` and `demand_<r>`, opened in every chunk).
     let large = model.stats.nodes / 32.0;
+    // Its scan rules reach `large` together; its other rules (a join of derived relations, `m132(n) :- pre(n), m131(n)`)
+    // take the demand too, which only narrows them.
     let demandable = |rules: &[&Rule]| -> bool {
-        rules.iter().all(|r| per_node(r))
-            || rules.iter().map(|r| scan(r)).collect::<Option<Vec<f64>>>().is_some_and(|rows| rows.iter().sum::<f64>() >= large)
+        rules.iter().all(|r| per_node(r)) || rules.iter().filter_map(|r| scan(r)).sum::<f64>() >= large
     };
     let recursive = |rel: &str, rules: &[&Rule]| rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Atom(a) | Literal::Agg { atom: a, .. } if a.rel == rel)));
     let mut candidates: BTreeSet<&str> = by_rel
