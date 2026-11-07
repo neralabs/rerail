@@ -15,6 +15,9 @@ spec.loader.exec_module(receipt)
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_binary_exception_arguments_keep_every_byte(self):
+        self.assertEqual({'kind': 'bytes', 'hex': '00fffe'}, canonical(bytes([0, 255, 254])))
+
     def test_enum_dto_keeps_the_class_name_member_and_value(self):
         class Category(Enum):
             POSITIVE = 'the source category'
