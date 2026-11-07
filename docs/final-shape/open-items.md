@@ -1834,16 +1834,26 @@ and 1.56 GB. Thirteen more rules now run, 62 in all:
 The 62 rules together on s50: 19.2 s CPU, 303.8e9 instructions, 637 violations (each rule's count equals its count
 alone), and a peak of 1.43 GB, **over the 1 GB budget**.
 
-Left out, by cause:
+**Later on 2026-11-07** (t10 §2l). schema-architecture and bootstrap-engine-invariants run too: 64 rules.
 
-- **schema-architecture**: over 60 s alone, not yet profiled.
-- **bootstrap-engine-invariants**: `no symbol 25416499766238680` (a node or span id read as a symbol). The flattened
-  program types correctly, so the column is likely one the engine makes at run time.
-- **lazy-architecture**: refused as an aggregate in recursion. `la_cls`'s `@cat` recursion goes through
-  `ast_parent(e, f) :- decorator(f, e)`, which is not a tree move, so the bound is not proved.
-- **plan-composition-architecture, test-budget**: revision and stamped-artifact readers are not written.
-- **versioned-table-names**: `n ~ `pattern`` (an AST pattern literal) has no lowering or executor. It needs the
-  matcher as an input relation (O103).
+| corpus | CPU | instructions | peak (the run's) | violations |
+|---|---|---|---|---|
+| s50 | 15–17 s | 302e9 | 913 MB (995 MB profiled) | 637 |
+| s200 | 43.0 s | | **2.39 GB** | 2,960 |
+
+s50 is within the 1 GB budget; s200 is not. On s200 the footprint is about 1.5 GB at the end of each chunk's
+file-local run, and binding the cross-file part's inputs adds 800 MB (the base relations held for it, and the
+exports read back from `x`).
+
+Left out, by cause (none of them is a quick fix):
+
+- **lazy-architecture**: refused as an unbounded value cycle. `la_cls`'s `@cat` recursion climbs `ast_parent`,
+  whose decorator rule (`ast_parent(e, f) :- decorator(f, e)`) moves to a *later* node in preorder (decorators
+  come before the definition), while its other rules move to earlier ones. It does move up in depth (two edges up,
+  one down), but `front::cycles` measures by preorder and has no depth count.
+- **plan-composition-architecture, test-budget**: they read CI artifacts (`artifact="plan_composition_probes"`,
+  `artifact="test_collection"`). Stamped-artifact readers are not written.
+- **versioned-table-names**: `n ~ `pattern`` (O103).
 
 **Closure:** the pack's rules run on the full corpus, within the budgets, with every rule left out named.
 
@@ -2027,6 +2037,13 @@ the repository's `.rr` files (`packs/rr/rr-input-outside-repository.rr`), and ev
 A run with a Python policy and an `rr` policy reports both from one store, and
 `a_rule_about_rules_runs_over_rule_files` holds with a Python file's finding beside the `.rr` ones.
 
+**Closed (2026-11-07).** A program's `.language` now chooses the files it reads (`python`, `rust` or `rr`), and
+`tools::run_policies` (`rerail-engine run-policies <root> <out> <policy.rr>...`) runs several policies over one
+repository, each over its own language's files with one content store, and merges their diagnostics.
+`python_and_rr_policies_run_over_one_repository` runs a Python policy and RR101 over one tree and reports both. One
+run still reads one language. A program naming two would be a run with documents of mixed dialects, which nothing
+needs yet.
+
 ## O106. A relation named like a SQL keyword breaks the SQL backend
 
 A program with `.decl values(…)` fails its run with `near "values": syntax error` on `DROP VIEW IF EXISTS
@@ -2035,3 +2052,20 @@ names its relation `vals` instead.
 
 **Closure:** every relation name the SQL backend writes is quoted, and a program with relations named `values`,
 `select` and `order` runs.
+
+**Closed (2026-11-07).** `logic::sql::ident` quotes a relation's name when it is a SQLite keyword or not a plain
+identifier, and `sql::table` does the same for each part of a qualified name (`x.values`). Every statement that
+names a relation goes through one of them: the plan's views, tables and indexes, the corpus's exports, and setfix's
+reads and writes. `relations_named_like_sql_keywords_run` runs `values`, `order`, `select` and `group`, and
+`rule_files_have_text_facts` names its relation `values` again.
+
+## O107. The rr parser still builds statements beside its tree
+
+Since decision 0062, lowering reads a rule file's statements off its tape (`rr::from_tape`). The parser still builds
+its own statements as it builds the tree, because its control flow reads them. Whether a term becomes an atom
+depends on it being a `call`, and a negated comparison is refused. Nothing outside the parity test
+`statements_from_the_tape_are_the_parsers` uses them, and they cost a second copy of every term during a parse.
+
+**Closure:** the parser builds only the tree, and decides from node kinds what it decided from statements. The
+parity test becomes a comparison of the tape-read statements with a recorded set, and the replay (3988 303 298 0)
+and the rr tests are unchanged.

@@ -694,6 +694,41 @@ run of the converted rules is unchanged: 627.4e9 instructions, 252 violations.
   about 4 s, 1.8 s of it in lowering. The test harness alone peaks at 778 MB after a run, with no rules, so `time
   -l` overstates; the run's own peak is the figure above.
 
+### 2l. The pack under 1 GB on 50 files, and two more rules running (2026-11-07)
+
+The 62 rules together peaked at 1.43 GB on s50. Measured per stratum (the registry's rows and indexes against the
+process footprint):
+
+- **A chunk's relations outlived it.** All 1,009 native relations of the file-local run (204 MB of rows, 327 MB
+  of indexes) stayed in the registry through the whole cross-file part. They are now dropped once the chunk's
+  exports are in `x`.
+- **Outputs kept their indexes.** An output (or kept relation) whose last reader has run keeps its rows only.
+- **Exports were held to the chunk's end** (215 MB of rows). Without the per-file memo, the local run hands each
+  export to the corpus loop as soon as no later stratum reads it: written to `x`, measured, dropped.
+
+s50, 62 rules: 1,433 → 975 MB profiled (913 MB unprofiled, 64 rules).
+
+On s200 the 64 rules peaked at 3.99 GB of footprint, in one cross-file stratum: eager-resolve's
+`er_wrapped(f, v, v) :- er_sym(f, _), !is_async(f), kind(v, "call")`, every def with every call (1,024 MB of rows,
+385 MB of indexes). Its reader binds f and v. A filter may now test derived relations on its head's bound
+variables, when it also looks up a base relation; an alias or an intersection of derived relations is not
+inlined. s200: 4.2 → 2.39 GB, 59.1 → 43.0 s CPU, 2,960 violations both.
+
+Two rules that O93 left out:
+
+- **schema-architecture** never finished planning. Guest hiding (decision 0058 §2) copies a relation read with a
+  guest variable as `rr_in_<g>_<c>_<rel>`. A copy read with another column scoped was copied from the copy's rules
+  with only the new column seeded, so its reader read it at the first column again: `rr_in_annotation_1_
+  rr_in_annotation_0_rr_agg36`, and on (1,451 rounds in 40 s). A copy is now of the original relation with every
+  seeded column. It runs in 1.8 s.
+- **bootstrap-engine-invariants** stopped with `no symbol <node id>`. `source(d, sp), (contains("Bootstrap", sp) ;
+  …)` was folded into one set test of `sp` itself. A single test on a node or span tests its text; the folded set
+  now does too. 2.3 s, 0 violations on s50 (its scope is a few named files).
+
+The cold full corpus of the converted rules: 646.0e9 instructions (618.8e9 before this round), 252 violations,
+429 MB, load about 19. The new filter rule is not the cause: on s1000 the converted rules took 101.3e9 and
+101.0e9 with it, 100.8e9 without. The rest is not traced.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:

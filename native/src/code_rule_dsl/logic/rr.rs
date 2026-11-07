@@ -11,6 +11,7 @@
 //! A file read with `parse_file` has `core.rr` before it, included or not.
 
 mod check;
+mod from_tape;
 mod lower;
 mod print;
 mod syntax;
@@ -49,7 +50,7 @@ pub(in crate::code_rule_dsl) fn library() -> PathBuf {
 
 /// A program's `.rr` text, which includes nothing.
 pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
-    let statements = syntax::Parser::new(src)?.statements()?;
+    let statements = from_tape::statements(src, &tape(src))?;
     lower::lower(statements)
 }
 
@@ -223,9 +224,28 @@ fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
         return Ok((statements.clone(), file));
     }
     let src = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    let statements = syntax::Parser::new(&src)?.statements().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let statements = stored_statements(path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     cache.lock().expect("the parsed files").insert(path.to_owned(), (digest, statements.clone()));
     Ok((statements, file))
+}
+
+/// A rule file's statements, read off its tape (decision 0062). The tape is the content store's, as any corpus
+/// file's is (`facts::core::build_cached`, keyed by the source's content and the grammar's version): a file read by an
+/// earlier run is not parsed again. Without a store (the browser build, `RERAIL_TAPE_CACHE=off`) the tape is made
+/// here.
+fn stored_statements(path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
+    let store = if cfg!(feature = "tape-cache") { super::plan::corpus::tape_cache().ok().flatten() } else { None };
+    if let Some(store) = store {
+        let src = std::sync::Arc::new(src);
+        let file = crate::code_rule_dsl::model::FileInput::new(path.display().to_string(), "rr".to_owned(), std::sync::Arc::clone(&src), None, None, "core")
+            .map_err(|e| Error::Syntax(format!("{e:?}")))?;
+        if let Ok(crate::code_rule_dsl::facts::core::Built::Facts(facts)) = crate::code_rule_dsl::facts::core::build_cached(&file, &store) {
+            crate::code_rule_dsl::prof::count("rr.statements_from_stored_tape", 1);
+            return from_tape::statements(&src, &from_tape::nodes_of_facts(&facts));
+        }
+        return from_tape::statements(&src, &tape(&src));
+    }
+    from_tape::statements(&src, &tape(&src))
 }
 
 type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;

@@ -227,15 +227,15 @@ fn rule_files_have_text_facts() {
 names(s) :- node(_, n, k, _, _), name(n, s), k != "string".
 .decl strs(k: symbol, v: symbol)
 strs(k, v) :- node(_, n, k, _, _), str(n, v).
-.decl vals(k: symbol, v: symbol)
-vals(k, v) :- node(_, n, k, _, _), value(n, v).
+.decl values(k: symbol, v: symbol)
+values(k, v) :- node(_, n, k, _, _), value(n, v).
 .decl ops(k: symbol, o: symbol)
 ops(k, o) :- node(_, n, k, _, _), op(n, o), k = "comparison".
 .decl comments(s: symbol)
 comments(s) :- node(_, n, "comment", _, _), comment(n, s).
 .decl errors(l: number, m: symbol)
 errors(l, m) :- syntax_error(_, l, m).
-.output names, strs, vals, ops, comments, errors
+.output names, strs, values, ops, comments, errors
 "#;
     let path = root.with_extension("rule.rr");
     std::fs::write(&path, rule).unwrap();
@@ -247,7 +247,7 @@ errors(l, m) :- syntax_error(_, l, m).
         rows.sort();
         rows
     };
-    let (names, strs, values, ops, comments, errors) = (rows("names"), rows("strs"), rows("vals"), rows("ops"), rows("comments"), rows("errors"));
+    let (names, strs, values, ops, comments, errors) = (rows("names"), rows("strs"), rows("values"), rows("ops"), rows("comments"), rows("errors"));
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&path);
     // `bad.rr` is withheld: a file that does not parse gives its `syntax_error` row only.
@@ -261,4 +261,63 @@ errors(l, m) :- syntax_error(_, l, m).
     assert_eq!(comments, ["note"]);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].starts_with("2\t"), "{errors:?}");
+}
+
+/// O105: a Python policy and an `rr` policy over one repository (`tools::run_policies`). Each reads its own
+/// language's documents through the one store, and the findings of both come back together.
+#[test]
+fn python_and_rr_policies_run_over_one_repository() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-and-py");
+    std::fs::create_dir_all(root.join("rules")).unwrap();
+    std::fs::write(root.join("rules/a.rr"), ".decl f(x: symbol)\n.input f(IO=file, filename=\"/etc/passwd\")\n").unwrap();
+    std::fs::write(root.join("x.py"), "eval(\"1\")\nprint(2)\n").unwrap();
+    let python = root.with_extension("py-policy.rr");
+    std::fs::write(
+        &python,
+        ".language python\n.violation eval_call(at: node) code \"PY1\" \"eval\"\neval_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"eval\").\n",
+    )
+    .unwrap();
+    let rr = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rr");
+    let report = crate::code_rule_dsl::tools::run_policies(&[python.clone(), rr], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&python);
+    let files: Vec<String> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["file"].as_str().or(d["path"].as_str()).unwrap_or("").to_owned()).collect();
+    assert_eq!(files.len(), 2, "{report:#}");
+    assert!(files[0].ends_with("x.py") && files[1].ends_with("a.rr"), "{files:?}");
+}
+
+/// Decision 0062: the statements lowering reads come off the tape. For every `.rr` file in the repository they are
+/// the parser's own, statement for statement, and a file that does not parse gives the parser's error.
+#[test]
+fn statements_from_the_tape_are_the_parsers() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let mut pending = vec![root];
+    let mut checked = 0;
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if !path.extension().is_some_and(|e| e == "rr") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).unwrap();
+            let parsed = syntax::Parser::new(&src).and_then(|mut p| p.statements());
+            let taped = from_tape::statements(&src, &tape(&src));
+            match (parsed, taped) {
+                (Ok(parsed), Ok(taped)) => {
+                    assert_eq!(parsed.len(), taped.len(), "{}", path.display());
+                    for (p, t) in parsed.iter().zip(&taped) {
+                        assert_eq!(p, t, "{}", path.display());
+                    }
+                }
+                (Err(p), Err(t)) => assert_eq!(format!("{p:?}"), format!("{t:?}"), "{}", path.display()),
+                (p, t) => panic!("{}: parser {:?}, tape {:?}", path.display(), p.map(|s| s.len()), t.map(|s| s.len())),
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 100);
 }

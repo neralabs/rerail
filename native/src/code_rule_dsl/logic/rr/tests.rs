@@ -436,6 +436,21 @@ fn a_context_leaves_out_the_clause_head() {
     assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
 }
 
+/// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
+/// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
+#[test]
+fn a_set_of_tests_on_a_span_tests_its_text() {
+    let p = parse(concat!(
+        ".decl source(d: number, sp: span)\n.decl text(n: loc, s: symbol)\n.input source, text\n",
+        ".decl hit(d: number)\n.output hit\n",
+        "hit(d) :- source(d, sp), (contains(\"a\", sp) ; contains(\"b\", sp)).\n",
+    ))
+    .unwrap();
+    let rule = p.rules.iter().find(|r| r.head.rel == "hit").unwrap().to_string();
+    assert!(rule.contains("text($sp, "), "{rule}");
+    assert!(!rule.contains("contains($sp") && !rule.contains("@contains($sp"), "{rule}");
+}
+
 /// What is not lowered yet says so by name.
 #[test]
 fn unlowered_constructs_are_named() {
@@ -1906,4 +1921,29 @@ lines(i) :- file_line("setup.cfg", i, _).
     for demand in ["rr_embed_req", "rr_parse_req", "rr_splice_req", "rr_file_req"] {
         assert!(once.decls.contains_key(demand), "{demand} is made");
     }
+}
+
+/// O106: a relation may be named like a SQL keyword. Every statement that names it quotes it (`sql::ident`), through
+/// recursion, negation and an aggregate.
+#[test]
+fn relations_named_like_sql_keywords_run() {
+    let rule = r#"
+.decl values(x: number)
+values(1).
+values(2).
+values(3).
+.decl order(x: number, y: number)
+order(x, y) :- values(x), values(y), y = x + 1.
+order(x, z) :- order(x, y), order(y, z).
+.decl select(x: number)
+select(x) :- values(x), !order(x, _).
+.decl group(n: number)
+group(n) :- n = count : { order(_, _) }.
+.output values, order, select, group
+"#;
+    let [values, order, select, group] = <[Vec<String>; 4]>::try_from(guests_run("sqlkeywords", &[("a.py", "x = 1\n")], rule, &["values", "order", "select", "group"])).unwrap();
+    assert_eq!(values, ["1", "2", "3"]);
+    assert_eq!(order, ["1\t2", "1\t3", "2\t3"]);
+    assert_eq!(select, ["3"]);
+    assert_eq!(group, ["3"]);
 }

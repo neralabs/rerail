@@ -333,7 +333,7 @@ impl Stats {
         );
         sql += &format!(" UNION ALL SELECT 'val', tbl, col, n, val, docs, sqd FROM {s}stat_val WHERE val IN ({holes})");
         for t in prog.inputs.iter().filter(|t| fingerprint && !inputs.batch.contains_key(*t)) {
-            sql += &format!(" UNION ALL SELECT 'rows', '{t}', NULL, count(*), NULL, NULL, NULL FROM {f}{t}");
+            sql += &format!(" UNION ALL SELECT 'rows', '{t}', NULL, count(*), NULL, NULL, NULL FROM {f}{}", crate::code_rule_dsl::logic::sql::ident(t));
         }
         let params: Vec<SqlValue> = consts
             .iter()
@@ -1953,6 +1953,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) nodes: BTreeMap<String, Vec<usize>>,
     /// The kept outputs (`Inputs::kept`) the native engine holds (`native::derived`); the others are in their tables.
     pub(in crate::code_rule_dsl) kept: BTreeSet<String>,
+    /// The kept relations handed to the caller during the run (`run_atoms_native_handing`), no longer held.
+    pub(in crate::code_rule_dsl) handed: BTreeSet<String>,
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -2101,8 +2103,9 @@ impl Run<'_> {
                 let served = self.model.stats.indexes.get(base).into_iter().flatten().any(|ix| ix.first().is_some_and(|c| probed.contains(c)));
                 if !probed.is_empty() && !served {
                     let r = &a.rel;
+                    let q = crate::code_rule_dsl::logic::sql::ident(r);
                     self.db.execute_batch(&format!(
-                        "CREATE TEMP TABLE {r}__m AS SELECT * FROM {r}; DROP VIEW {r}; ALTER TABLE {r}__m RENAME TO {r};"
+                        "CREATE TEMP TABLE {r}__m AS SELECT * FROM {q}; DROP VIEW {q}; ALTER TABLE {r}__m RENAME TO {q};"
                     ))?;
                     self.views.remove(r);
                     self.model.view_src.remove(r);
@@ -2164,7 +2167,7 @@ impl Run<'_> {
                 orders.len() - 1
             }
         };
-        self.db.execute_batch(&format!("DROP INDEX IF EXISTS {}; CREATE INDEX {} ON {rel}({})", name(i), name(i), on(&orders[i])))?;
+        self.db.execute_batch(&format!("DROP INDEX IF EXISTS {}; CREATE INDEX {} ON {}({})", name(i), name(i), crate::code_rule_dsl::logic::sql::ident(rel), on(&orders[i])))?;
         Ok(())
     }
 
@@ -2177,7 +2180,7 @@ impl Run<'_> {
         Ok(if self.prog.lattice.contains_key(&head.rel) {
             sql_kernel::merge(self, &head.rel, select)?
         } else {
-            let statement = format!("INSERT OR IGNORE INTO {} {select}", head.rel);
+            let statement = format!("INSERT OR IGNORE INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&head.rel));
             super::profile::plan(self.db, &statement);
             self.db.execute(&statement, [])?
         })
@@ -2200,9 +2203,9 @@ impl Run<'_> {
             Ok(rows.collect::<rusqlite::Result<_>>()?)
         };
         let e = cols(edge, 3);
-        let edges: Vec<(i64, i64, i64)> = read(&format!("SELECT DISTINCT {}, {}, {} FROM {edge}", e[0], e[1], e[2]), 3)?.into_iter().map(|r| (r[0], r[1], r[2])).collect();
+        let edges: Vec<(i64, i64, i64)> = read(&format!("SELECT DISTINCT {}, {}, {} FROM {}", e[0], e[1], e[2], crate::code_rule_dsl::logic::sql::ident(edge)), 3)?.into_iter().map(|r| (r[0], r[1], r[2])).collect();
         let t = cols(target, 1);
-        let targets: Vec<i64> = read(&format!("SELECT DISTINCT {} FROM {target}", t[0]), 1)?.into_iter().map(|r| r[0]).collect();
+        let targets: Vec<i64> = read(&format!("SELECT DISTINCT {} FROM {}", t[0], crate::code_rule_dsl::logic::sql::ident(target)), 1)?.into_iter().map(|r| r[0]).collect();
         // `dfs_first_memo`'s roots in increasing order of their second column: a number, or a symbol as text.
         let roots: Option<Vec<i64>> = match roots {
             Some(roots) => {
@@ -2210,14 +2213,14 @@ impl Run<'_> {
                 let symbol = self.prog.decls[roots.as_str()][1].1 == "sym" && self.model.inputs.atoms.is_some();
                 let key = if symbol { format!("sym_text({})", r[1]) } else { r[1].clone() };
                 let mut seen = BTreeSet::new();
-                let ordered = read(&format!("SELECT {}, {key} FROM {roots} ORDER BY 2, 1", r[0]), 1)?;
+                let ordered = read(&format!("SELECT {}, {key} FROM {} ORDER BY 2, 1", r[0], crate::code_rule_dsl::logic::sql::ident(roots)), 1)?;
                 Some(ordered.into_iter().map(|row| row[0]).filter(|r| seen.insert(*r)).collect())
             }
             None => None,
         };
         let rows = crate::code_rule_dsl::logic::native::dfs_first::dfs_first(&edges, &targets, roots.as_deref());
         let n = rows.len();
-        insert_many(self.db, &format!("INSERT OR IGNORE INTO {rel}"), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
         Ok(n)
     }
 
@@ -2229,7 +2232,7 @@ impl Run<'_> {
         let c = self.model.col(input, 0);
         let text = if atoms { format!("sym_text({c})") } else { c.clone() };
         let texts: Vec<(SqlValue, String)> = {
-            let mut st = self.db.prepare(&format!("SELECT DISTINCT {c}, {text} FROM {input}"))?;
+            let mut st = self.db.prepare(&format!("SELECT DISTINCT {c}, {text} FROM {}", crate::code_rule_dsl::logic::sql::ident(input)))?;
             let rows = st.query_map([], |row| Ok((row.get::<_, SqlValue>(0)?, row.get::<_, Option<String>>(1)?)))?;
             rows.filter_map(|r| r.map(|(v, t)| t.map(|t| (v, t))).transpose()).collect::<rusqlite::Result<_>>()?
         };
@@ -2252,12 +2255,12 @@ impl Run<'_> {
             })).chain(at.into_iter().flatten().map(SqlValue::Integer)).collect()
         }).collect();
         let before = self.db.total_changes();
-        insert_many(self.db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), rows)?;
         Ok((self.db.total_changes() - before) as usize)
     }
 
     fn refresh(&mut self, r: &str, at_least_one: bool) -> Result<()> {
-        let n = self.count(&format!("SELECT count(*) FROM {r}"))? as f64;
+        let n = self.count(&format!("SELECT count(*) FROM {}", crate::code_rule_dsl::logic::sql::ident(r)))? as f64;
         self.model.stats.card.insert(r.to_owned(), if at_least_one { n.max(1.0) } else { n });
         Ok(())
     }
@@ -3155,7 +3158,7 @@ impl Run<'_> {
             let (order, _, _) = self.model.plan_rule(prog, head, body, None)?;
             self.ensure_indexes(&order)?;
             let select = self.model.sql_select(prog, head, &order, None, None)?;
-            self.db.execute(&format!("INSERT INTO {} {select}", head.rel), [])?;
+            self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&head.rel)), [])?;
         }
         // Over atoms a transfer's operator is its name atom; `lattice_fixpoint` reads the operator's text.
         if let Some([plus, minus, times]) = self.model.inputs.atoms {
@@ -3168,14 +3171,14 @@ impl Run<'_> {
         if native.contains("vtab") {
             // Kept in memory; the relation becomes a virtual table over it (no rows written).
             self.db.query_row(&format!("SELECT lattice_fixpoint('lfx_{rel}', '@{rel}')"), [], |_| Ok(()))?;
-            self.db.execute_batch(&format!("DROP TABLE {rel}; CREATE VIRTUAL TABLE temp.{rel} USING lattice_result({rel});"))?;
+            self.db.execute_batch(&format!("DROP TABLE {q}; CREATE VIRTUAL TABLE temp.{q} USING lattice_result({rel});", q = crate::code_rule_dsl::logic::sql::ident(rel)))?;
             self.views.insert(rel.clone());
         } else if native.contains("direct") {
             // Written straight into the relation: no output table to copy back.
             self.db.query_row(&format!("SELECT lattice_fixpoint('lfx_{rel}', '{rel}')"), [], |_| Ok(()))?;
         } else {
             self.db.query_row(&format!("SELECT lattice_fixpoint('lfx_{rel}')"), [], |_| Ok(()))?;
-            self.db.execute(&format!("INSERT INTO {rel} SELECT c0, c1 FROM lfx_{rel}_out"), [])?;
+            self.db.execute(&format!("INSERT INTO {} SELECT c0, c1 FROM lfx_{rel}_out", crate::code_rule_dsl::logic::sql::ident(rel)), [])?;
         }
         Ok(true)
     }
@@ -3321,10 +3324,10 @@ impl Run<'_> {
         for (ehead, order) in &edges {
             self.ensure_indexes(order)?;
             let cols = (0..ehead.args.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-            self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", ehead.rel))?;
+            self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)))?;
             if !ehead.args.is_empty() {
                 let select = self.model.sql_select(prog, ehead, order, None, None)?;
-                self.db.execute(&format!("INSERT INTO {} {select}", ehead.rel), [])?;
+                self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)), [])?;
             }
         }
         let join = self.model.inputs.native.contains("join");
@@ -3405,7 +3408,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
     // (DISTINCT, sorts, materialized subqueries) in memory.
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
-    run(prog, &db, Inputs::file(), None)
+    run(prog, &db, Inputs::file(), None, None)
 }
 
 /// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
@@ -3420,7 +3423,7 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
     load(&db)?;
-    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None)
+    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, None)
 }
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
@@ -3439,7 +3442,7 @@ pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connect
         given: None,
         kept: BTreeSet::new(),
     };
-    let out = run(&lowered.program, db, inputs, Some(lowered));
+    let out = run(&lowered.program, db, inputs, Some(lowered), None);
     super::native::flush_symbols(db)?;
     out
 }
@@ -3453,7 +3456,7 @@ pub(in crate::code_rule_dsl) fn run_atoms_native(lowered: &lower::Lowered, db: &
     native.remove("nearest");
     native.remove("kseed");
     let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-    run_native_inputs(lowered, db, inputs)
+    run_native_inputs(lowered, db, inputs, None)
 }
 
 /// `run_atoms_native` over input relations in schema `facts` (the bound vtabs are `main`'s; a cross-file pass reads
@@ -3473,15 +3476,34 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_over(
     native.remove("kseed");
     // The statistics schema is still read for document ranges (`stat_docrange`).
     let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
-    run_native_inputs(lowered, db, inputs)
+    run_native_inputs(lowered, db, inputs, None)
 }
 
-fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) -> Result<Outcome> {
+/// `run_atoms_native_over`, handing each kept relation to `hand_off` once no later stratum reads it, and dropping
+/// it then (`Outcome::handed`): the caller writes it where it goes, and the run does not hold every kept relation
+/// to its end.
+pub(in crate::code_rule_dsl) fn run_atoms_native_handing(
+    lowered: &lower::Lowered,
+    db: &Connection,
+    facts: &str,
+    given: Stats,
+    kept: BTreeSet<String>,
+    modes: &str,
+    hand_off: &mut dyn FnMut(&str) -> Result<()>,
+) -> Result<Outcome> {
+    let mut native = native_modes(modes);
+    native.remove("nearest");
+    native.remove("kseed");
+    let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
+    run_native_inputs(lowered, db, inputs, Some(hand_off))
+}
+
+fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register(db)?;
     super::native::register_symbols(db)?;
     super::native::forget_inputs(db);
-    let out = run(&lowered.program, db, inputs, Some(lowered));
+    let out = run(&lowered.program, db, inputs, Some(lowered), hand_off);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
     let flush = super::profile::span(|| "flush symbols".into());
@@ -3513,7 +3535,7 @@ const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT 
 /// their statistics, input columns and document columns recorded in `model`.
 /// A view's statement.
 pub(in crate::code_rule_dsl) fn view_sql(rel: &str, query: &Query) -> String {
-    format!("CREATE TEMP VIEW {rel} AS {}", query.render())
+    format!("CREATE TEMP VIEW {} AS {}", crate::code_rule_dsl::logic::sql::ident(rel), query.render())
 }
 
 /// The views `run` makes of one-atom projections of an input, each as its query (`view_sql`).
@@ -3559,7 +3581,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     Ok(views)
 }
 
-fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
+fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>) -> Result<Outcome> {
     let (normalized,sentinels)=sql_kernel::normalize(prog)?;
     let prog=&normalized;
     let adjusted=lowered.map(|l|{
@@ -3581,7 +3603,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         if ty == "view" {
             old_views.insert(name, sql);
         } else if name != "rdl_int" {
-            db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{name}"))?;
+            db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}", crate::code_rule_dsl::logic::sql::ident(&name)))?;
         }
     }
     // Positions in a symbol, for splitting one at its dots (`$m = @cat($q, $x)` with only $m bound).
@@ -3642,13 +3664,13 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
         if old_views.remove(&rel).as_deref() != Some(&view.replacen("CREATE TEMP VIEW", "CREATE VIEW", 1)) {
-            db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{rel}"))?;
+            db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{}", crate::code_rule_dsl::logic::sql::ident(&rel)))?;
             db.execute(&view, [])?;
         }
         run.views.insert(rel);
     }
     for name in old_views.keys() {
-        db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{name}"))?;
+        db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{}", crate::code_rule_dsl::logic::sql::ident(&name)))?;
     }
     // Relations the program's rules or outputs name (a part of a split program declares the whole's).
     let named: HashSet<&str> = prog
@@ -3684,7 +3706,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             Some(l) => (0..l.keys).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
             None => (0..cols.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
         };
-        let create = format!("CREATE TEMP TABLE {rel}({names}, PRIMARY KEY ({key})) WITHOUT ROWID");
+        let create = format!("CREATE TEMP TABLE {}({names}, PRIMARY KEY ({key})) WITHOUT ROWID", crate::code_rule_dsl::logic::sql::ident(rel));
         // A rule's head is made when SQL first needs it; a relation of facts alone, or of neither, now.
         // (Over atoms: T's extension, over text, reads its relations' tables itself.)
         if atoms && rules_by.contains_key(rel.as_str()) && prog.facts.get(rel).is_none_or(|f| f.is_empty()) {
@@ -3713,19 +3735,40 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 _=>unreachable!(),
             }).collect::<Vec<_>>().join(","))).collect::<Vec<_>>().join(" UNION ALL ");
             sql_kernel::merge(&run,rel,&select)?;
-        }else{insert_many(db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;}
+        }else{insert_many(db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), rows)?;}
     }
     drop(tables);
     let mut outcome = Outcome::default();
     // Each native relation is dropped after the last stratum that reads it (an output, a relation kept for the caller
     // and a gate's relations stay to the end).
     let last = last_reads(prog, &sccs, &run.views);
-    let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps))).cloned().collect();
+    let gated: BTreeSet<String> = prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
+    let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
+    // Kept relations given to the caller (`hand_off`) and dropped once no later stratum reads them.
+    let mut handed: BTreeSet<String> = BTreeSet::new();
+    let mut unindexed: BTreeSet<String> = BTreeSet::new();
     for (at, scc) in sccs.iter().enumerate() {
         let done: Vec<String> = run.native_rels.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
         if !done.is_empty() {
             super::native::component::release(db, &done);
             done.iter().for_each(|r| { run.native_rels.remove(r); });
+        }
+        // One that stays but that no later stratum reads keeps its rows only; a kept one the caller takes is handed
+        // off and dropped.
+        let read_out: Vec<String> = run.native_rels.iter().filter(|r| stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at) && unindexed.insert((*r).clone())).cloned().collect();
+        if let Some(hand) = hand_off.as_deref_mut() {
+            let give: Vec<String> = read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r)).cloned().collect();
+            for r in &give {
+                hand(r)?;
+            }
+            if !give.is_empty() {
+                super::native::component::release(db, &give);
+                give.iter().for_each(|r| { run.native_rels.remove(r); });
+                handed.extend(give);
+            }
+        }
+        if !read_out.is_empty() {
+            super::native::component::unindex(db, &read_out);
         }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
@@ -3782,7 +3825,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             super::profile::note(format!("{rel} rows"), || n.to_string());
             run.refresh(rel, false)?;
             for c in 0..prog.decls[*rel].len() {
-                let d = run.count(&format!("SELECT count(DISTINCT c{c}) FROM {rel}"))?;
+                let d = run.count(&format!("SELECT count(DISTINCT c{c}) FROM {}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
                 run.model.ndv.insert(((*rel).clone(), c), if d == 0 { 1.0 } else { d as f64 });
             }
             continue;
@@ -3814,7 +3857,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && scc.contains(&a.rel)));
         let mut ran_native=false;
         if recursive {
-            for r in scc {db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {r} WHERE 0"),[])?;}
+            for r in scc {db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {} WHERE 0", crate::code_rule_dsl::logic::sql::ident(r)),[])?;}
             if native.contains("fixpoint") && run.native_fixpoint(scc,&rules)? {ran_native=true;outcome.native.insert(key.clone());}
             else if native.contains("setfix") && run.native_set_fixpoint(scc,&rules)? {ran_native=true;outcome.native.insert(key.clone());}
         }
@@ -3830,7 +3873,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         for r in scc {
             run.refresh(r, false)?;
             for c in 0..prog.decls[r].len() {
-                let d = run.count(&format!("SELECT count(DISTINCT c{c}) FROM {r}"))?;
+                let d = run.count(&format!("SELECT count(DISTINCT c{c}) FROM {}", crate::code_rule_dsl::logic::sql::ident(r)))?;
                 run.model.ndv.insert((r.clone(), c), if d == 0 { 1.0 } else { d as f64 });
             }
         }
@@ -3838,7 +3881,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let _outputs = super::profile::span(|| "outputs".into());
     let kept = run.model.inputs.kept.clone();
     outcome.kept = kept.iter().filter(|r| run.native_rels.contains(*r)).cloned().collect();
-    let written: Vec<String> = prog.outputs.iter().filter(|r| !outcome.kept.contains(*r)).cloned().collect();
+    let written: Vec<String> = prog.outputs.iter().filter(|r| !outcome.kept.contains(*r) && !handed.contains(*r)).cloned().collect();
     run.materialize(&written)?;
     let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept)?;
     let mut outputs=outputs;let mut nodes=nodes;
@@ -3848,6 +3891,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     outcome.outputs = outputs;
     outcome.nodes = nodes;
+    outcome.handed = handed;
     Ok(outcome)
 }
 
@@ -3900,9 +3944,9 @@ fn decoded_outputs(
                 .enumerate()
                 .map(|(i, d)| if *d == lower::Domain::Name { text(&format!("c{i}")) } else { format!("c{i}") })
                 .collect();
-            format!("SELECT {} FROM {rel}", cols.join(", "))
+            format!("SELECT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::ident(rel))
         } else {
-            format!("SELECT * FROM {rel}")
+            format!("SELECT * FROM {}", crate::code_rule_dsl::logic::sql::ident(rel))
         };
         let name = if rel == "finding" { "finding_at".to_owned() } else { rel.clone() };
         let kinds = lowered.map(|l| l.dialect.kinds());

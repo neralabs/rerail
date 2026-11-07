@@ -701,7 +701,8 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     out.push_str("        #[cfg(test)]\n        _ => None,\n    }\n}\n\n");
     out.push_str("impl GrammarDialect {\n    /// Whether this build parses the dialect: its language's `lang-<id>` feature is on. Files of a dialect\n    /// not built are routed to none, as a planned language's are.\n    pub(crate) const fn built(self) -> bool {\n        match self {\n");
     out.push_str(&built);
-    out.push_str("            #[cfg(test)]\n            _ => false,\n        }\n    }\n}\n\n");
+    // A test-only dialect is ast-grep's grammar (`support`), always linked: built in every test build.
+    out.push_str("            #[cfg(test)]\n            _ => true,\n        }\n    }\n}\n\n");
 
     out.push_str(
         "/// A code-rule language the registry marks supported: the `language` of a query, a define\n/// or a transform.\n",

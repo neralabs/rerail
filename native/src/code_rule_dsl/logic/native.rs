@@ -29,7 +29,7 @@ pub(in crate::code_rule_dsl) mod extension;
 pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
-    pub(in crate::code_rule_dsl) use super::setfix::{close, columns_source, derived, live, materialize, open, release, reprobe, run, step_counts, table_source};
+    pub(in crate::code_rule_dsl) use super::setfix::{close, columns_source, derived, forget_derived, live, materialize, open, release, reprobe, run, step_counts, table_source, unindex};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -287,7 +287,7 @@ fn finish(conn: &Connection, p: &str, target: Option<&str>, keys: Vec<i64>, val:
     };
     let mut rows = 0usize;
     {
-        let mut ins = conn.prepare(&format!("INSERT INTO {out_table} VALUES (?1, ?2)"))?;
+        let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES (?1, ?2)", crate::code_rule_dsl::logic::sql::table(&out_table)))?;
         for (&k, &v) in keys.iter().zip(&val) {
             if v != BOT { ins.execute((k, v))?; rows += 1; }
         }

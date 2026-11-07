@@ -166,8 +166,9 @@ impl Relation {
 
     pub(in crate::code_rule_dsl) fn render(&self) -> String {
         match self {
-            Self::Input { schema, rel } => format!("{schema}{rel}"),
-            Self::Derived { rel, delta } => format!("{}{rel}", if *delta { "delta_" } else { "" }),
+            Self::Input { schema, rel } => format!("{schema}{}", super::ident(rel)),
+            Self::Derived { rel, delta: false } => super::ident(rel).into_owned(),
+            Self::Derived { rel, delta: true } => format!("delta_{rel}"),
             Self::Batch { source, .. } => source.render(),
             Self::Bound { table, .. } => table.clone(),
             Self::DocRange { schema } => format!("{schema}stat_docrange"),

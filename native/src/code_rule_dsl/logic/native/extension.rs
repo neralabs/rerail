@@ -180,7 +180,7 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<
     };
     let mut rows = 0usize;
     {
-        let mut ins = conn.prepare(&format!("INSERT INTO {out_table} VALUES (?1, ?2)"))?;
+        let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES (?1, ?2)", crate::code_rule_dsl::logic::sql::table(&out_table)))?;
         for (k, &v) in val.iter().enumerate() {
             if v != BOT { ins.execute((k as i64, v))?; rows += 1; }
         }
