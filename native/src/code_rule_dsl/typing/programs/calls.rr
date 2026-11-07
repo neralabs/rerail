@@ -257,7 +257,10 @@ bv(f, x, "cls", s) :- method(f, c), param(f, x, 0), classmeth(f), sub(c, s).
 .decl pv(n: node, k: symbol, v: node)
 pv(n, k, v) :- look(n, x, s), bv(s, x, k, v).
 pv(n, k, v) :- qn(n, q), qv(q, k, v).
-pv(n, k, v) :- alook(n, c, a), found(c, a, at), bv(at, a, k, v).
+pv(n, k, v) :- alook(n, c, a), fv(c, a, k, v).
+// fv(c, a, k, v): attribute a of class c, where it is found (on c or a base), may hold a k v.
+.decl fv(c: node, a: symbol, k: symbol, v: node)
+fv(c, a, k, v) :- need_attr(c, a), found(c, a, at), bv(at, a, k, v).
 // alook(n, c, a): the attribute `o.a` at n is looked up on class c: o's class, o itself where o is a class, or each
 // base of the class `super()` is in. One join per attribute node, which the lookup above, `need_attr`, `vopen` and
 // the method resolution read, in place of each joining the object's values to the class's bindings itself.
@@ -606,9 +609,15 @@ tsub(t, x) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), builtin_ref(e, x).
 tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), base_open(b).
 tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), extb(e), !builtin_ref(e, "object").
 .decl type_miss(n: node, u: symbol)
-type_miss(n, u) :- type_of(n, t0), tsub(t0, u), type_of(n, t), !tsub(t, u).
+type_miss(n, u) :- type_first(n, t0), tsub(t0, u), type_of(n, t), !tsub(t, u).
+// type_first(n, t): n's first type in symbol order. Every type of a proven n is a subtype of u, its first among
+// them, so u's candidates are the first type's supertypes alone.
+.decl type_first(n: node, t: symbol)
+type_first(n, t) :- type_of(n, t), !type_later(n, t).
+.decl type_later(n: node, t: symbol)
+type_later(n, t) :- type_of(n, t), type_of(n, t2), t2 < t.
 .decl proven_type(n: node, u: symbol)
-proven_type(n, u) :- type_of(n, t), tsub(t, u), !type_open(n), !type_miss(n, u).
+proven_type(n, u) :- type_first(n, t), tsub(t, u), !type_open(n), !type_miss(n, u).
 .decl possible_type(n: node, u: symbol)
 possible_type(n, u) :- type_of(n, t), tsub(t, u).
 .decl possible_open(n: node)
