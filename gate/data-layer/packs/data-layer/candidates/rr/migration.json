@@ -1325,7 +1325,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "sha256": "a148c68b1788b30ac0eb4c518ea70efdbbd829ebbd5012a6901030374412ae8a",
+      "sha256": "d2dae34fce75007619421c14309bafe291e33466883f09d2b75644f903a98d2b",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_grammar_surface.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1418,7 +1418,7 @@
       "legacySha256": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "ruleSha256": "a148c68b1788b30ac0eb4c518ea70efdbbd829ebbd5012a6901030374412ae8a"
+      "ruleSha256": "d2dae34fce75007619421c14309bafe291e33466883f09d2b75644f903a98d2b"
     },
     {
       "check": "permission_error",

@@ -63,7 +63,10 @@ Surface(n, cat("SPG-", k), cat(p, name), k, name, depth, ordinal, witness) :-
 .violation ParseError(at: span, detail: symbol, filename: symbol, errorLine: number) code "SPG-SYNTAX"
     "syntax error while scanning: {detail} ({filename}, line {errorLine})"
 ParseError(@place(path, 1), detail, filename, l) :- doc(d, path, _), option("entryPoint", "scan_file"),
-    option("filename", filename), syntax_error(d, l, detail).
+    option("filename", filename), syntax_error(d, l, detail), detail != "source code string cannot contain null bytes".
+.violation NullSource(at: span) code "SPG-SYNTAX" "syntax error while scanning: source code string cannot contain null bytes"
+NullSource(@place(path, 1)) :- doc(d, path, _), option("entryPoint", "scan_file"),
+    syntax_error(d, _, "source code string cannot contain null bytes").
 .decl sgp_candidate(i: number, path: symbol)
 sgp_candidate(i, path) :- option_item("candidates", i, path), suffix(".py", path).
 .decl sgp_candidate_hidden(i: number)
@@ -72,4 +75,12 @@ sgp_candidate_hidden(i) :- sgp_candidate(i, path), sgp_name("skip", name),
 .violation Discovery(at: span, ordinal: number, result: symbol) code "SPG_DISCOVERY" "{result}"
 Discovery(@place("inventory", 1), i, path) :- sgp_candidate(i, path), !sgp_candidate_hidden(i),
     option("entryPoint", "iter_python_files").
+.decl sgp_framework_hidden(i: number)
+sgp_framework_hidden(i) :- sgp_candidate(i, path),
+    (contains("/.git/", cat("/", path, "/")) ; contains("/.venv/", cat("/", path, "/")) ;
+     contains("/venv/", cat("/", path, "/")) ; contains("/__pycache__/", cat("/", path, "/")) ;
+     contains("/tmp/", cat("/", path, "/"))), option("broad", "true").
+.violation FileSelection(at: span, ordinal: number, result: symbol) code "SPG_PATH" "{result}"
+FileSelection(@place("inventory", 1), i, path) :- sgp_candidate(i, path),
+    option_item("regularFiles", _, path), !sgp_framework_hidden(i), option("entryPoint", "collector_paths").
 '''

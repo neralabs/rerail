@@ -55,22 +55,29 @@ def install(suite, module):
         if tuple(required_facts) != (spec,):
             raise AssertionError('Untranslated ServerPlan fact demand')
         root = Path(root)
-        paths = files if files is not None else list(root.rglob('*'))
+        paths = list(files) if files is not None else list(root.rglob('*'))
+        candidates = [path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
+                      for path in paths]
+        selected = suite.native(CHECK, 'collector_paths', [], dict(candidates=candidates,
+            regularFiles=[name for path, name in zip(paths, candidates) if path.is_file()],
+            broad=str(files is None).lower()))
+        if any(row['code'] != 'SPG_PATH' for row in selected):
+            raise AssertionError('Unexpected ServerPlan file selection response')
         originals, sources = {}, []
-        for i, path in enumerate(paths):
-            path = Path(path)
-            if not path.is_file() or path.suffix != '.py':
-                continue
-            if files is None and any(p in {'.git', '.venv', 'venv', '__pycache__', 'tmp'}
-                                     for p in path.relative_to(root).parts):
-                continue
+        for row in sorted(selected, key=lambda row: row['parameters']['ordinal']):
+            i = row['parameters']['ordinal']
+            path = Path(paths[i])
             key = f'input-{i}.py'
             originals[key] = path
             sources.append(dict(path=key, source=path.read_text(encoding='utf-8')))
         rows = suite.native(CHECK, 'collector', sources)
         if any(row['clause'] not in {'Surface', 'Materialized'} for row in rows):
             raise AssertionError('Unexpected ServerPlan collector response')
-        bundles = {}
+        bundles, grouped = {}, {}
+        contents = {file['path']: file['source'] for file in sources}
+        for row in rows:
+            if row['clause'] == 'Surface':
+                grouped.setdefault(row['path'], []).append(row)
         for marker in rows:
             if marker['code'] != 'SPG_FILE':
                 continue
@@ -78,9 +85,9 @@ def install(suite, module):
             location = path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
             hits = tuple(shared.GrammarSurfaceHit(kind=row['parameters']['kind'], line=row['line'],
                          symbol=row['parameters']['name'], message=row['message'])
-                         for row in ordered([row for row in rows if row['path'] == marker['path'] and row['clause'] == 'Surface']))
+                         for row in ordered(grouped.get(marker['path'], [])))
             facts = shared.ServerPlanFileFacts(path=location, grammar_surface_hits=hits)
-            source = next(file['source'] for file in sources if file['path'] == marker['path'])
+            source = contents[marker['path']]
             bundles[path] = PerFileFactBundle(path, hashlib.sha256(source.encode()).hexdigest(),
                                              facts={spec.extractor_id: facts.model_dump(mode='json')})
         return ProjectFactView(root, bundles, required_facts)

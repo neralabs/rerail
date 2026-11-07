@@ -1,0 +1,2986 @@
+{
+  "format": "rerail.rr-fresh-contract-cases/v1",
+  "cases": [
+    {
+      "id": "sync-execute_grammar_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_direct\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_direct_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_direct_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchall_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchall_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchall_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchall_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchall_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchall_direct\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchall_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchall_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchall_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchall_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchall_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchall_direct_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchall_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchall_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchall_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchall_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchall_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchall_direct_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchall_with_params_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchall_with_params_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchall_with_params_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchall_with_params_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchall_with_params_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchall_with_params_direct\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchall_with_params_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchall_with_params_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchall_with_params_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchall_with_params_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchall_with_params_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchall_with_params_direct_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchall_with_params_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchall_with_params_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchall_with_params_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchall_with_params_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchall_with_params_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchall_with_params_direct_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchone_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchone_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchone_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchone_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchone_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchone_direct\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchone_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchone_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchone_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchone_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchone_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchone_direct_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchone_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchone_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchone_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchone_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchone_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchone_direct_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchone_with_params_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchone_with_params_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchone_with_params_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchone_with_params_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchone_with_params_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchone_with_params_direct\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchone_with_params_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchone_with_params_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchone_with_params_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchone_with_params_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchone_with_params_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchone_with_params_direct_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_fetchone_with_params_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_fetchone_with_params_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_fetchone_with_params_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_fetchone_with_params_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_fetchone_with_params_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_fetchone_with_params_direct_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_with_params_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_with_params_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_with_params_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_with_params_direct():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_with_params_direct",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_with_params_direct\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_with_params_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_with_params_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_with_params_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_with_params_direct_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_with_params_direct_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_with_params_direct_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-execute_grammar_with_params_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def execute_grammar_with_params_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-execute_grammar_with_params_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def execute_grammar_with_params_direct_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-execute_grammar_with_params_direct_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.execute_grammar_with_params_direct_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_execute",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_execute():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_execute",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_execute():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_execute",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_execute\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_execute_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_execute_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_execute_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_execute_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_execute_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_execute_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_execute_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_execute_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_execute_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_execute_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_execute_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_execute_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_exists",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_exists():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_exists",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_exists():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_exists",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_exists\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_exists_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_exists_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_exists_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_exists_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_exists_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_exists_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_exists_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_exists_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_exists_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_exists_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_exists_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_exists_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_fetchall",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_fetchall():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_fetchall",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_fetchall():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_fetchall",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_fetchall\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_fetchall_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_fetchall_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_fetchall_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_fetchall_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_fetchall_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_fetchall_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_fetchall_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_fetchall_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_fetchall_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_fetchall_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_fetchall_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_fetchall_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_fetchone",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_fetchone():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_fetchone",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_fetchone():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_fetchone",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_fetchone\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_fetchone_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_fetchone_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_fetchone_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_fetchone_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_fetchone_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_fetchone_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_fetchone_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_fetchone_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_fetchone_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_fetchone_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_fetchone_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_fetchone_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_scalar",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_scalar():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_scalar",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_scalar():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_scalar",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_scalar\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_scalar_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_scalar_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_scalar_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_scalar_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_scalar_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_scalar_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_scalar_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_scalar_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_scalar_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_scalar_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_scalar_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_scalar_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_validate",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_validate():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_validate",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_validate():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_validate",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_validate\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_validate_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_validate_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_validate_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_validate_async():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_validate_async",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_validate_async\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "sync-grammar_validate_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_validate_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-grammar_validate_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def grammar_validate_lazy():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-grammar_validate_lazy",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = conn.grammar_validate_lazy\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-load",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-store",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "SqlPreRenderedDdlFragment = 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-delete",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "del SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-annotation",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def f(x: SqlPreRenderedDdlFragment) -> SqlPreRenderedDdlFragment:\n    return x\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-string",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = \"SqlPreRenderedDdlFragment\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-comment",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "# SqlPreRenderedDdlFragment\nx = 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-parameter",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def f(SqlPreRenderedDdlFragment):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-global",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "global SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-nonlocal",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def outer():\n    SqlPreRenderedDdlFragment = 1\n    def inner():\n        nonlocal SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-plain-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "import SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-alias-only",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from module import allowed as SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-from-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from module import SqlPreRenderedDdlFragment as alias\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-duplicate-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from module import SqlPreRenderedDdlFragment, SqlPreRenderedDdlFragment as other\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-multiline-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from module import (\n    SqlPreRenderedDdlFragment,\n    SqlPreRenderedDdlFragment as other,\n)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-attribute-only",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = namespace.SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-walrus",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = (SqlPreRenderedDdlFragment := 1)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-capture",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "match x:\n    case SqlPreRenderedDdlFragment:\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-class-pattern",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "match x:\n    case SqlPreRenderedDdlFragment():\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPreRenderedDdlFragment-type-parameter",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "type T[SqlPreRenderedDdlFragment] = int\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-load",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "value = SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-store",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "SqlPrerenderedDdl = 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-delete",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "del SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-annotation",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def f(x: SqlPrerenderedDdl) -> SqlPrerenderedDdl:\n    return x\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-string",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = \"SqlPrerenderedDdl\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-comment",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "# SqlPrerenderedDdl\nx = 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-parameter",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def f(SqlPrerenderedDdl):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-global",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "global SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-nonlocal",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def outer():\n    SqlPrerenderedDdl = 1\n    def inner():\n        nonlocal SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-plain-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "import SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-alias-only",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from module import allowed as SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-from-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from module import SqlPrerenderedDdl as alias\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-duplicate-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from module import SqlPrerenderedDdl, SqlPrerenderedDdl as other\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-multiline-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from module import (\n    SqlPrerenderedDdl,\n    SqlPrerenderedDdl as other,\n)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-attribute-only",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = namespace.SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-walrus",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = (SqlPrerenderedDdl := 1)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-capture",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "match x:\n    case SqlPrerenderedDdl:\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-class-pattern",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "match x:\n    case SqlPrerenderedDdl():\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "SqlPrerenderedDdl-type-parameter",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "type T[SqlPrerenderedDdl] = int\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "ast-breadth-order",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def outer():\n    conn.grammar_fetchall()\ndef grammar_execute():\n    return SqlPrerenderedDdl\nx = conn.grammar_exists\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "same-line-duplicates",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = (conn.grammar_execute, conn.grammar_execute, SqlPrerenderedDdl, SqlPrerenderedDdl)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-chain",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = conn.grammar_execute.grammar_fetchall\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "parenthesized-receiver",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = (\n  conn\n).grammar_execute\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "decorated-function",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "@deco(SqlPrerenderedDdl)\ndef grammar_execute(x: SqlPrerenderedDdl = SqlPrerenderedDdl):\n    return x\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "nfkc-definition",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def \ud835\ude90rammar_execute():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "nfkc-name",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = \ud835\ude82qlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "nfkc-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from module import \ud835\ude82qlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "clean-step-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from impl.common.l2070_server_plan.steps.grammar_execute import GrammarEffectStep\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "clean-near-misses",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def grammar_execute_extra():\n    return conn.execute_grammar\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "logical-lines",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "# header\r\ndef grammar_execute():\r\n    return SqlPrerenderedDdl\r\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-parameter",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/parameter.py",
+          "source": "def broken(:\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/parameter.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-missing-colon",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/missing-colon.py",
+          "source": "def grammar_execute()\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/missing-colon.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-missing-body",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/missing-body.py",
+          "source": "def grammar_execute():\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/missing-body.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-unexpected-indent",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/unexpected-indent.py",
+          "source": "  SqlPrerenderedDdl = 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/unexpected-indent.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-unclosed-group",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/unclosed-group.py",
+          "source": "x = (SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/unclosed-group.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-unmatched-close",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/unmatched-close.py",
+          "source": "x = SqlPrerenderedDdl)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/unmatched-close.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-mismatched-close",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/mismatched-close.py",
+          "source": "x = [SqlPrerenderedDdl)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/mismatched-close.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-invalid-assignment",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/invalid-assignment.py",
+          "source": "1 = SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/invalid-assignment.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-missing-expression",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/missing-expression.py",
+          "source": "x = \n# grammar_execute\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/missing-expression.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-missing-comma",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/missing-comma.py",
+          "source": "x = [1 2]\n# grammar_execute\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/missing-comma.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-nondefault-parameter",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/nondefault-parameter.py",
+          "source": "def grammar_execute(a=1,b):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/nondefault-parameter.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-parameter-after-kwargs",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/parameter-after-kwargs.py",
+          "source": "def grammar_execute(**a,b):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/parameter-after-kwargs.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-string",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/string.py",
+          "source": "x = \"grammar_execute\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/string.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-triple-string",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/triple-string.py",
+          "source": "x = \"\"\"grammar_execute\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/triple-string.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-fstring",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/fstring.py",
+          "source": "x = f\"{grammar_execute\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/fstring.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-bad-conversion",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/bad-conversion.py",
+          "source": "x = f\"{grammar_execute!q}\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/bad-conversion.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-continuation",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/continuation.py",
+          "source": "x = 1 \\ z\n# grammar_execute\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/continuation.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-nul",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/nul.py",
+          "source": "x = 1\u0000\n# grammar_execute\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/nul.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-invalid-character",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/invalid-character.py",
+          "source": "x = $grammar_execute\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/invalid-character.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-bom",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/bom.py",
+          "source": "\ufeffSqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/bom.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-unindent",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "errors/unindent.py",
+          "source": "if True:\n    x = 1\n  SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "errors/unindent.py"
+        }
+      }
+    },
+    {
+      "id": "non-python-suffix",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "source.txt",
+          "source": "def grammar_execute():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "source.txt"
+        }
+      }
+    },
+    {
+      "id": "missing-file",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [],
+      "arguments": {
+        "path": {
+          "path": "missing.py"
+        }
+      }
+    },
+    {
+      "id": "invalid-utf8",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "bytesHex": "ff"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "relative-path",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "cwd": "fixture",
+      "files": [
+        {
+          "path": "relative.py",
+          "source": "x = SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "relative.py",
+          "relative": true
+        }
+      }
+    },
+    {
+      "id": "file-discovery",
+      "check": "serverplan_grammar_surface",
+      "entry": "iter_python_files",
+      "files": [
+        {
+          "path": "a.py",
+          "source": ""
+        },
+        {
+          "path": "tests/a.py",
+          "source": ""
+        },
+        {
+          "path": "venv/a.py",
+          "source": ""
+        },
+        {
+          "path": "__pycache__/a.py",
+          "source": ""
+        },
+        {
+          "path": ".git/a.py",
+          "source": ""
+        },
+        {
+          "path": ".mypy_cache/a.py",
+          "source": ""
+        },
+        {
+          "path": ".pytest_cache/a.py",
+          "source": ""
+        },
+        {
+          "path": ".ruff_cache/a.py",
+          "source": ""
+        },
+        {
+          "path": ".venv/a.py",
+          "source": ""
+        },
+        {
+          "path": "tmp/a.py",
+          "source": ""
+        },
+        {
+          "path": "nested/tmp/a.py",
+          "source": ""
+        },
+        {
+          "path": "tmpfile.py",
+          "source": ""
+        },
+        {
+          "path": "b.txt",
+          "source": ""
+        },
+        {
+          "path": "directory.py/a.txt",
+          "source": ""
+        },
+        {
+          "path": "nested/c.py",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "root": {
+          "path": "."
+        }
+      }
+    }
+  ]
+}

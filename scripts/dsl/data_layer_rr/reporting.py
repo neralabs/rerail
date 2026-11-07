@@ -11,6 +11,7 @@ import tempfile
 
 from migration import ROOT, PIN, git, sha, read_json, write_json, compare
 from replay import execute_native
+from fresh import selected_cases
 
 
 def reporter_file_groups(rows):
@@ -23,10 +24,14 @@ def run(args):
     harness_before = {p.resolve(): sha(p.read_bytes()) for p in harness_root.rglob('*.py')}
     corpus = read_json(args.cases)
     native = args.command == 'native'
+    if not native and (args.part, args.parts) != (0, 1):
+        raise ValueError('Record the complete reporter source oracle before native sharding')
+    selected = selected_cases(corpus['cases'], args.part, args.parts)
     oracle = read_json(args.oracle) if native else None
     report = dict(format='rerail.rr-plugin-report-contract/v1', fullMigrationAcceptance=False,
         originalPytestCases=0, execution='native-snapshot' if native else 'offline-source', sourcePin=PIN,
-        casesSha256=sha(args.cases.read_bytes()), results=[])
+        casesSha256=sha(args.cases.read_bytes()), results=[], part=args.part, parts=args.parts,
+        totalCases=len(corpus['cases']), selectedCaseIndices=[index for index, _ in selected])
     modules = {}
     if native:
         engine = args.engine.resolve()
@@ -46,7 +51,7 @@ def run(args):
         from scripts.lint_lib.fact_store import JsonFactStore
     paths = [Path(__file__), *[Path(__file__).with_name(n) for n in ['migration.py', 'replay.py']]]
     report['harnessFiles'] = {p.relative_to(ROOT).as_posix(): sha(p.read_bytes()) for p in paths}
-    for index, case in enumerate(corpus['cases']):
+    for index, case in selected:
         if native:
             rule = args.rule_root / (case['check'].replace('_', '-') + '.rr')
             result = execute_native(engine, rule, case['files'], {})
@@ -77,6 +82,8 @@ def run(args):
                     r['parameters']['pattern'], r['parameters']['occurrence']))
             if case['check'] == 'removed_compat_surfaces':
                 native_rows = sorted(native_rows, key=lambda r: (r['path'], r['parameters']['ordinal']))
+            if case['check'] == 'serverplan_grammar_surface':
+                native_rows = sorted(native_rows, key=lambda r: (r['path'], r['parameters']['ordinal'], r['parameters']['witness']))
             actual = [dict(linter_name=identity.removeprefix(prefix).replace('-', '_'), code=r['code'],
                 path=r['path'], line=r['line'], message=r['message'],
                 severity=severities.get(r['clause'], 'info' if modes == ['log'] else 'hard-fail')) for r in native_rows]
@@ -92,16 +99,23 @@ def run(args):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(file['source'])
                 module = modules[case['check']]
-                plugin = getattr(module, case['check'] + '_plugin')(root)
+                if case['check'] == 'serverplan_grammar_surface':
+                    from scripts.lint_lib.serverplan_facts import serverplan_fact_extractors
+                    module.ROOT = root
+                    plugin = module.serverplan_grammar_surface_plugin()
+                    extractors = serverplan_fact_extractors(root)
+                else:
+                    plugin = getattr(module, case['check'] + '_plugin')(root)
+                    extractors = getattr(module, case['check'] + '_fact_extractors')(root)
                 fact_engine = FactEngine(root=root, fact_store=JsonFactStore(root / 'tmp/lint_fact_store'),
-                    extractors=getattr(module, case['check'] + '_fact_extractors')(root))
+                    extractors=extractors)
                 view = fact_engine.materialize((plugin,))
                 actual = [dict(linter_name=v.linter_name, code=v.code,
                     path=v.path.relative_to(root).as_posix() if v.path.is_absolute() else v.path.as_posix(),
                     line=v.line, message=v.message, severity=v.severity) for v in plugin.reporter(view)]
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
-        if native and case['check'] != 'removed_compat_surfaces':
+        if native and case['check'] not in {'removed_compat_surfaces', 'serverplan_grammar_surface'}:
             last = {'backend_type_strings': 'code', 'error_handling': 'message', 'no_api_root_imports': 'message', 'connection_caches': 'message', 'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code'}[case['check']]
             actual.sort(key=lambda row: (row['path'], row['line'], row[last], *([row['message']] if case['check'] == 'hnsw_architecture' else [])))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)
@@ -155,6 +169,8 @@ def main():
     parser.add_argument('--rule-root', type=Path, default=ROOT / 'gate/data-layer/packs/data-layer/candidates/rr',
                         help='Policy directory; mutation controls supply disabled policies')
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--part', type=int, default=0)
+    parser.add_argument('--parts', type=int, default=1)
     args = parser.parse_args()
     args.out = args.out.resolve()
     args.rule_root = args.rule_root.resolve()
