@@ -128,6 +128,10 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "parsed" => &["s", "grammar", "root"],
         "sub_tape" => &["at", "grammar", "t"],
         "host_node" => &["n", "h"],
+        // Decision 0058's tape operations.
+        "parse_of" => &["x", "g", "t"],
+        "unparse_of" => &["t", "x"],
+        "splice_of" => &["t", "n", "t2", "t3"],
         // The repository inputs (`facts::repository`).
         "option" => &["name", "v"],
         "option_item" => &["name", "i", "v"],

@@ -1361,9 +1361,9 @@ fn guests_run(name: &str, files: &[(&str, &str)], rule: &str, outputs: &[&str]) 
     rows
 }
 
-/// A string annotation is parsed where it stands: its names have the file's lines and columns when the string is
-/// plain, and the string's place when it is escaped or concatenated; a string inside a parsed one is parsed in the
-/// next round. Bytes give no guest.
+/// A string annotation is parsed where it stands: its names have the file's lines and columns, through the escapes
+/// and the parts of a concatenation (the normalized text's map); a string inside a parsed one is parsed in the next
+/// round. Bytes give no guest.
 #[test]
 fn string_annotations_are_guests_at_their_host_lines() {
     let py = "x: \"List[int]\" = []\n\ndef f(y: 'Dict[str, Foo]') -> \"Bar\": ...\nz: \"A\\x42\" = 1\nw: (\"Li\" \"st\") = 2\nq: \"Opt['Baz']\" = 3\nb: b\"Nope\" = 4\n";
@@ -1381,11 +1381,11 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     assert!(names.contains(&"int\t1\t9".to_owned()), "{names:?}");
     assert!(names.contains(&"Foo\t3\t20".to_owned()), "{names:?}");
     assert!(names.contains(&"Bar\t3\t31".to_owned()), "{names:?}");
-    // "A\x42" is AB, at the string.
-    assert!(names.contains(&"AB\t4\t3".to_owned()), "{names:?}");
-    // ("Li" "st"): each part is a string of its own, and the concatenation is List, at the concatenation.
+    // "A\x42" is AB: its normalized text, mapped (decision 0058 §3), so AB starts at the A.
+    assert!(names.contains(&"AB\t4\t4".to_owned()), "{names:?}");
+    // ("Li" "st"): each part is a string of its own, and the concatenation is List, from its first part's text.
     assert!(names.contains(&"Li\t5\t5".to_owned()), "{names:?}");
-    assert_eq!(whole, ["List\t5\t4"]);
+    assert_eq!(whole, ["List\t5\t5"]);
     assert_eq!(roots, ["identifier", "subscript"]);
     // 'Baz' inside "Opt['Baz']": round 2.
     assert!(names.contains(&"Baz\t6\t9".to_owned()), "{names:?}");
@@ -1420,8 +1420,9 @@ kept(l) :- kind(s, "string"), guest(_, _, s, "annotation"), line(s, l).
     assert_eq!(roots, ["1", "2"], "the broken guest keeps its partial tree");
 }
 
-/// A library's `embed` and `embed_value` declare guests of a role; `.guests off` leaves them out. `sub_tape` gives
-/// a guest's tape: equal texts share one. A rule's own request is made either way.
+/// A library's `embed` and `embed_value` declare guests of a role. `sub_tape` gives a guest's tape: equal texts share
+/// one. Guests in the run's language are shown to rules that do not name them (`top`) unless `.guests off`; a rule
+/// that reaches them through a guest relation (`doc_role`) sees them either way (decision 0058 §1).
 #[test]
 fn embeds_declare_guests_and_guests_off_leaves_them_out() {
     let py = "a = \"import os\"\nb = \"import os\"\nc = 1\n";
@@ -1435,14 +1436,85 @@ embed_value(d, n, "python", "made", "import sys") :- kind(n, "integer"), docof(n
 imp(r, x, l) :- doc_role(g, r), node(g, i, "import_statement", _, _), text(i, x), line(i, l).
 .decl tapes(t: symbol)
 tapes(t) :- kind(s, "string"), sub_tape(s, "python", t).
-.output imp, tapes
+.decl top(x: symbol, l: number)
+top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
+.output imp, tapes, top
 "#
         )
     };
-    let [imp, tapes] = <[Vec<String>; 2]>::try_from(guests_run("embed", &[("a.py", py)], &rule(""), &["imp", "tapes"])).unwrap();
-    assert_eq!(imp, ["code\timport os\t1", "code\timport os\t2", "made\timport sys\t3"]);
+    let guests = ["code\timport os\t1", "code\timport os\t2", "made\timport sys\t3"];
+    let [imp, tapes, top] = <[Vec<String>; 3]>::try_from(guests_run("embed", &[("a.py", py)], &rule(""), &["imp", "tapes", "top"])).unwrap();
+    assert_eq!(imp, guests);
     assert_eq!(tapes.len(), 1, "{tapes:?}");
-    let [imp] = <[Vec<String>; 1]>::try_from(guests_run("embedoff", &[("a.py", py)], &rule(".guests off"), &["imp"])).unwrap();
-    // The rule's own `sub_tape` still asks for the strings, as fragments.
-    assert_eq!(imp, ["fragment\timport os\t1", "fragment\timport os\t2"]);
+    assert_eq!(top, ["import os\t1", "import os\t2", "import sys\t3"], "Python guests are shown in a Python run");
+    let [imp, top] = <[Vec<String>; 2]>::try_from(guests_run("embedoff", &[("a.py", py)], &rule(".guests off"), &["imp", "top"])).unwrap();
+    assert_eq!(imp, guests, "`.guests off` hides guests; it does not stop a library's embeds");
+    assert!(top.is_empty(), "{top:?}");
+}
+
+/// SQL in a Python string (decision 0058 §1–2): a library's `embed` makes an SQL guest on an SQL tape (tag 10). A
+/// rule that reaches it through `guest` names SQL kinds, and they print as SQL's; a rule that does not name a guest
+/// sees only the Python file, even for the qualified `"sql:…"` kind.
+#[test]
+fn sql_in_python_is_an_sql_tape_hidden_from_unscoped_rules() {
+    let py = "def f(db):\n    db.execute(\"SELECT name FROM users WHERE id = 1\")\n    db.execute(\"SELECT \\\"id\\\" FROM orders\")\n";
+    let rule = r#"
+embed(d, s, "sql", "query") :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), docof(s, d).
+.decl sqlkinds(k: symbol)
+sqlkinds(k) :- guest(g, _, _, "sql"), node(g, _, k, _, _).
+.decl docs(g: number)
+docs(g) :- guest(g, _, _, "sql").
+.decl objects(x: symbol, l: number, c: number)
+objects(x, l, c) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), text(n, x), line(n, l), col(n, c).
+.decl unscoped(k: symbol)
+unscoped(k) :- node(_, _, k, _, _).
+.decl qualified(x: symbol)
+qualified(x) :- kind(n, "sql:object_reference"), text(n, x).
+.decl counted(c: number)
+counted(c) :- c = count : { kind(_, "sql:object_reference") }.
+.output sqlkinds, docs, objects, unscoped, qualified, counted
+"#;
+    let [sqlkinds, docs, objects, unscoped, qualified, counted] =
+        <[Vec<String>; 6]>::try_from(guests_run("sqlguest", &[("a.py", py)], rule, &["sqlkinds", "docs", "objects", "unscoped", "qualified", "counted"])).unwrap();
+    assert!(sqlkinds.contains(&"object_reference".to_owned()), "{sqlkinds:?}");
+    assert!(!sqlkinds.contains(&"call".to_owned()), "SQL nodes are SQL's kinds: {sqlkinds:?}");
+    assert!(docs.len() == 2 && docs.iter().all(|g| g.parse::<i64>().unwrap() >= i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS)), "an SQL guest in a Python run is a hidden document: {docs:?}");
+    assert!(objects.contains(&"users\t2\t33".to_owned()), "{objects:?}");
+    // `"SELECT \"id\" FROM orders"` parses as its normalized text, and `orders` keeps its column past the escapes.
+    assert!(objects.contains(&"orders\t3\t35".to_owned()), "{objects:?}");
+    assert!(unscoped.contains(&"call".to_owned()), "{unscoped:?}");
+    assert!(!unscoped.contains(&"object_reference".to_owned()), "SQL nodes are hidden: {unscoped:?}");
+    assert!(qualified.is_empty(), "{qualified:?}");
+    // An aggregate's atom is bounded too.
+    assert!(counted.iter().all(|c| c == "0"), "{counted:?}");
+}
+
+/// Tape operations (decision 0058 §4): `@parse(g, x)` makes a value document from a text (here a string's
+/// normalized text, `str`), with its own lines; `@unparse(t)` gives a tape's text back; `@splice(t, n, t2)` is t with
+/// node n's text replaced by t2's, parsed again. A value document is hidden from rules that do not reach it.
+#[test]
+fn parse_splice_and_unparse_make_value_documents() {
+    let py = "def f(db):\n    db.execute(\"SELECT name \\\n FROM users\")\n";
+    let rule = r#"
+.decl q(s: node, x: symbol)
+q(s, x) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), str(s, x).
+.decl tables(x: symbol, l: number)
+tables(x, l) :- q(_, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), text(n, x), line(n, l).
+.decl back(x: symbol)
+back(x) :- q(_, x0), t = @parse("sql", x0), x = @unparse(t).
+.decl fixed(x: symbol)
+fixed(x) :- q(_, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), text(n, "users"), t2 = @parse("sql", "accounts"), t3 = @splice(t, n, t2), x = @unparse(t3).
+.decl seen(x: symbol)
+seen(x) :- kind(n, "object_reference"), text(n, x).
+.decl roles(r: symbol)
+roles(r) :- doc_role(_, r).
+.output tables, back, fixed, seen, roles
+"#;
+    let [tables, back, fixed, seen, roles] = <[Vec<String>; 5]>::try_from(guests_run("tapeops", &[("a.py", py)], rule, &["tables", "back", "fixed", "seen", "roles"])).unwrap();
+    // `"SELECT name \<newline> FROM users"`: the escaped newline is gone from the text that is parsed.
+    assert_eq!(back, ["SELECT name  FROM users"]);
+    assert_eq!(tables, ["users\t1"], "a value's places are its own text's");
+    assert_eq!(fixed, ["SELECT name  FROM accounts"]);
+    assert_eq!(roles, ["primary", "value"]);
+    assert!(seen.is_empty(), "{seen:?}");
 }

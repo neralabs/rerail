@@ -25,6 +25,8 @@ use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
 mod guests;
+mod hiding;
+pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod bridge;
 mod inputs;
@@ -232,10 +234,13 @@ fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
 /// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty.
 const NOT_MADE: [(&str, &str); 1] = [("string_annotation", "Ruff's table of the call positions that take a type as a string is not built")];
 
-/// The embed slice of a lowered file-local program (decision 0055): the rules its guest requests need (`embed`,
-/// `embed_value`, `rr_embed_req`), with those as its outputs; `None` when no rule makes a request.
+/// The embed slice of a lowered program (decisions 0055, 0058): the rules its requests need (`embed`, `embed_value`
+/// and the demands), with those as its outputs; `None` when no rule makes a request. It is cut from the whole
+/// program, not its file-local part, and runs over each chunk: a guest or a value is made from its chunk's
+/// documents, so a demand whose context the split would run cross-file (`q(_, x)`, a value's nodes) is still asked
+/// in the chunk.
 fn embed_slice(local: &front::Program) -> Option<front::Program> {
-    let wanted: Vec<&str> = guests::LIBRARY.iter().copied().chain([guests::DEMAND]).filter(|r| local.rules.iter().any(|x| x.head.rel == *r)).collect();
+    let wanted: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|r| local.rules.iter().any(|x| x.head.rel == *r)).collect();
     if wanted.is_empty() {
         return None;
     }
@@ -277,15 +282,23 @@ pub(crate) fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, b
 pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
     let parse = |text: &str| crate::code_rule_dsl::logic::rr::parse(&if extra.is_empty() { text.to_owned() } else { format!("{text}\n{extra}") });
-    if let [one] = programs {
-        return Ok(parse(one)?);
+    let mut parsed = programs.iter().map(|text| parse(text)).collect::<std::result::Result<Vec<_>, _>>()?;
+    // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that
+    // makes none is left as written.
+    if parsed.iter().any(|p| p.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str()))) {
+        for p in &mut parsed {
+            let bound = hiding::bound(p);
+            hiding::hide(p, bound);
+        }
+    }
+    if parsed.len() == 1 {
+        return Ok(parsed.pop().expect("one program"));
     }
     let axis = crate::code_rule_dsl::logic::front::AXIS;
     let mut all = Program::default();
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
-    for (i, text) in programs.iter().enumerate() {
-        let mut prog = parse(text)?;
+    for (i, mut prog) in parsed.into_iter().enumerate() {
         // Kind sets by their kinds: this program's name for each, and the shared one.
         let mut set_of: BTreeMap<String, String> = BTreeMap::new();
         for (name, kinds) in std::mem::take(&mut prog.kindsets) {
@@ -306,7 +319,7 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             .chain(prog.rules.iter().map(|r| &r.head.rel))
             // `core.rr`'s relations are the engine's, one per run however many programs include it (decision 0047);
             // a repository file a policy reads (`.input r(IO=…)`) is its own.
-            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r))
+            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !guests::SHARED.contains(&r.as_str()))
             .cloned()
             .collect();
         let rename = |rel: &str| -> String {
@@ -566,12 +579,11 @@ pub(crate) fn run_with_options(
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     external_inputs(&mut prog, root)?;
     // Guest requests (decision 0055) are outputs, so the file-local part keeps the rules that make them.
-    for rel in guests::LIBRARY.iter().copied().chain([guests::DEMAND]) {
+    for rel in guests::LIBRARY.iter().copied().chain(guests::DEMANDS) {
         if prog.rules.iter().any(|r| r.head.rel == rel) && !prog.outputs.iter().any(|o| o == rel) {
             prog.outputs.push(rel.to_owned());
         }
     }
-    let library_guests = !prog.facts.get(syntax::GUEST_POLICY).into_iter().flatten().any(|row| matches!(row.as_slice(), [front::Value::Str(k), front::Value::Str(v)] if k == "library" && v == "off"));
     let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
     let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
     if !dialect.built() {
@@ -659,10 +671,10 @@ pub(crate) fn run_with_options(
         format!("{} sets made by the transducer's file-local FIX, bound {binding:?}: {}", sets.len(), names.join(", "))
     });
     let (local, cross) = (part(split.local), part(split.cross));
-    let slice = embed_slice(&local.program).map(part);
+    let slice = embed_slice(&lowered.program).map(part);
     let slice_reads: BTreeSet<String> = slice.iter().flat_map(|s| &s.program.rules).flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect();
     crate::code_rule_dsl::logic::profile::decision("guests", || match &slice {
-        Some(s) => format!("an embed slice of {} rules runs per chunk, up to {} rounds, before the file-local part (decision 0055); library embeds {}", s.program.rules.len(), guests::DEPTH, if library_guests { "on" } else { "off (.guests off)" }),
+        Some(s) => format!("an embed slice of {} rules runs per chunk, up to {} rounds, before the file-local part (decision 0055)", s.program.rules.len(), guests::DEPTH),
         None => "no rule asks for a guest".into(),
     });
     // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
@@ -1020,7 +1032,7 @@ pub(crate) fn run_with_options(
         let sources = match &slice {
             Some(slice) if !documents.is_empty() => {
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
-                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::default());
+                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label));
                 for _ in 0..guests::DEPTH {
                     // The slice's planner statistics: what it reads, measured in this round's batch.
                     let mut round = stats.clone();
@@ -1032,7 +1044,7 @@ pub(crate) fn run_with_options(
                         modules.bind(&db, rel, Arc::clone(source))?;
                     }
                     let got = super::run_atoms_native_over(slice, &db, "main", round, BTreeSet::new(), modes)?;
-                    let new = made.make(guests::requests(&got.outputs, library_guests), &docs, tapes.as_ref()).map_err(Error::Plan)?;
+                    let new = made.make(guests::requests(&got.outputs), &docs, tapes.as_ref()).map_err(Error::Plan)?;
                     if new.is_empty() {
                         break;
                     }

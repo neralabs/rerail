@@ -1576,28 +1576,17 @@ default, or the tests move with P's stage.
 
 ## O85. Guests (decision 0055): what is not built yet
 
-Decision 0055's guests are built for `.py` and `.rs` corpus runs. These parts are not:
+Decision 0055's guests are built for `.py` and `.rs` corpus runs. Decision 0058 built hiding, kind names across
+grammars, normalized strings and the tape operations (`@parse`, `@splice`, `@unparse`). These parts are not built:
 
-- **Hiding guests from rules that do not ask for them.** Guests are documents of the batch, so
-  `kind(n, "call")` also matches a call inside a parsed string annotation. `.guests off` only stops
-  the libraries' `embed`s; a rule's own `parsed` or `sub_tape` still makes its guest. 0055 §5 wanted
-  `.guests off` to hide guests as documents and keep them as facts.
-- **Kind names across grammars.** Kinds resolve in the run's dialect. A SQL guest in a Python run
-  is parsed, but `kind(n, "select_statement")` names no Python kind.
 - **Hosts the corpus runner does not collect** (Markdown, HTML, Vue, Blade), and the matcher path's
   Vue and Blade guests as these documents (0055 step 1).
-- **Global embeds** (an `embed` reading another chunk's facts), **`@parse`** (§7), and the tape
-  operations **`@splice` and `@unparse`**.
+- **Global embeds** (an `embed` reading another chunk's facts).
 - **The memo and guests.** A memoised file's rows include its guests' rows. Guest keys depend only
   on the host's path, place and grammar, so they are stable. No test yet checks a memo hit against
-  a fresh run on a file with guests.
+  a fresh run on a file with guests. Value documents are O96.
 - **Cost on the 9,010-file repository** (guests made, distinct texts, parse CPU): not measured yet.
-- **The shared tape cache races.** `core::build_cached` writes to one SQLite file in the temp dir,
-  which every run on the machine shares. Under parallel tests, a write sometimes fails with
-  `FOREIGN KEY constraint failed`. Guests write equal small texts often, so they hit it. A guest
-  whose cache write fails is parsed without the cache (`guests.cache_failed`). Primary files use
-  the same call and can fail the same way; the cause (probably a collector removing a source between
-  `put_source` and `put_tape`) is not investigated.
+- **The shared tape cache races:** O95.
 
 To close: each part is built or decided against in a decision record.
 ## O88. `calls.rr` against Jedi over a real corpus
@@ -1759,3 +1748,48 @@ These are More-ergonomic's 56 rules in `docs/rule-syntax/data-layer`, measured w
   `no columns for <rel>`, and the measure leaves the rule out (O76).
 
 **Closure:** the hand-written rules run on the full corpus, within the budgets, with every rule left out named.
+
+## O95. The shared tape cache races
+
+`core::build_cached` writes tapes to one SQLite store in the temp directory, and every run on the machine shares it.
+Under parallel tests, a write sometimes fails with `FOREIGN KEY constraint failed`. Guests write many small, equal
+texts, so they hit it most. A guest whose cache write fails is parsed without the cache, and the run counts it
+(`guests.cache_failed`). Primary files use the same call and can fail the same way. The likely cause is a collector
+removing a source between `put_source` and `put_tape`; this is not investigated.
+
+**Closure:** the write is made atomic (source and tape in one transaction, or a collector that cannot remove a
+source a writer holds), with a test that runs parallel writers against one store; or the cache is made per run.
+
+## O96. Chunks that read value documents are not memoised
+
+Decision 0058's value documents (`@parse`, `@splice`) belong to no file. A chunk whose outputs hold a row that
+locates one cannot attribute it, so the chunk is not memoised (`memo_unattributed`). Attributing a value to the
+files whose rows asked for it needs the demand's provenance.
+
+**Closure:** value rows are attributed to the files that asked for them, with a test of a memo hit against a fresh
+run; or a measurement shows unmemoised value chunks cost too little to matter.
+
+## O97. A combined run's programs and their guest bounds
+
+Each program of a combined run is bounded by its own `.guests` setting (decision 0058 §1), but all programs share
+one batch. No test runs a program with `.guests off` beside one without.
+
+**Closure:** a combined-run test where the two programs see different guests.
+
+## O98. Kind sets across grammars
+
+`nearest`, `inside`, `has` and `within_stop` take kind sets resolved in the run's grammar. A scoped SQL node's
+`nearest(n, a, {"select_statement"})` names no SQL kind. The scalar kind and field constants are qualified (0058
+§2); the sets are not.
+
+**Closure:** a kind set over a scoped variable is resolved in its grammar, with a test over a SQL guest.
+
+## O99. Guests and hiding at scale
+
+Hiding (decision 0058) is a range test on columns the join already reads. Its cost, and the cost of the guests
+and values a policy makes, are not measured on the 9,010-file repository. Global embeds and the matcher path's
+guests are still not these documents (O85).
+
+**Closure:** a full-corpus run with guests on and off, in CPU time, with the guests made and the distinct texts
+parsed.
+

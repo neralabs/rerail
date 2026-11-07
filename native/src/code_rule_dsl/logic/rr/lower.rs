@@ -695,6 +695,25 @@ impl Lowerer {
                 let agg = std::mem::replace(t, v.clone());
                 out.push(Lit::Cmp { l: v, op: "=", r: agg });
             }
+            // A tape operation (decision 0058 §4) is a value the engine makes on demand: `t = @parse(g, x)` is
+            // `parse_of(x, g, t)`, `x = @unparse(t)` is `unparse_of(t, x)`, `t3 = @splice(t, n, t2)` is
+            // `splice_of(t, n, t2, t3)`.
+            STerm::Call { name, functor: true, args } if TAPE_OPS.iter().any(|(f, n, _, _)| f == name && *n == args.len()) => {
+                args.iter_mut().for_each(|a| self.hoist(a, out, true));
+                let &(_, _, rel, cols) = TAPE_OPS.iter().find(|(f, n, _, _)| f == name && *n == args.len()).expect("matched");
+                let v = STerm::Var(self.fresh("tape"));
+                let mut atom_args = match rel {
+                    "parse_of" => vec![args[1].clone(), args[0].clone()],
+                    _ => args.clone(),
+                };
+                atom_args.push(v.clone());
+                *t = v;
+                out.push(Lit::Atom { rel: rel.to_owned(), args: atom_args, neg: false });
+                if !self.prog.inputs.iter().any(|i| i == rel) {
+                    self.prog.inputs.push(rel.to_owned());
+                    self.prog.decls.insert(rel.to_owned(), cols.iter().map(|(c, ty)| ((*c).to_owned(), (*ty).to_owned())).collect());
+                }
+            }
             // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`.
             STerm::Call { name, functor: true, args } if name == "tree_digest" && args.len() == 1 => {
                 self.hoist(&mut args[0], out, true);
@@ -763,6 +782,9 @@ impl Lowerer {
                 if !*neg && matches!(rel.as_str(), "parsed" | "sub_tape") {
                     self.embed_demand(args)?;
                 }
+                if !*neg && matches!(rel.as_str(), "parse_of" | "splice_of") {
+                    self.value_demand(rel, args)?;
+                }
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
                 // variables (`front::finish`'s computed-term check).
                 let mut atom = self.atom(rel, args, *neg)?;
@@ -782,28 +804,51 @@ impl Lowerer {
         })
     }
 
-    /// `parsed(s, "g", r)` or `sub_tape(s, "g", t)` asks for the guest at s (decision 0055): `rr_embed_req(s, "g")`
-    /// over the rule's other literals that bind s, those that read no guest (not r or t, no `parsed` or `sub_tape`:
-    /// the guest is what they wait for). The corpus runner runs these rules first, parses the guests asked for and
-    /// rebinds the batch with them. A grammar that is not a constant, or an s nothing else binds, asks for nothing:
-    /// the atom reads the guests other rules or libraries asked for.
+    /// `parsed(s, "g", r)` or `sub_tape(s, "g", t)` asks for the guest at s (decision 0055): `rr_embed_req(s, "g")`.
+    /// A grammar that is not a constant asks for nothing: the atom reads the guests other rules or libraries asked for.
     fn embed_demand(&mut self, args: &[STerm]) -> Result<(), Error> {
-        let [STerm::Var(s), STerm::Str(g), out] = args else { return Ok(()) };
-        // What reads the guest: the literals joined to r (or t) by variables other than s, and the guest relations.
+        let [s @ STerm::Var(_), g @ STerm::Str(_), out] = args else { return Ok(()) };
+        self.demand("rr_embed_req", &[(s.clone(), "node"), (g.clone(), "sym")], out, true)
+    }
+
+    /// A value a rule computes from a tape operation (decision 0058 §4) asks for it: `parse_of(x, g, t)` is
+    /// `rr_parse_req(at, g, x)` (the text last, as it may hold a tab; `at` a location of the rule's context, so the
+    /// demand is its document's), `splice_of(t, n, t2, t3)` is `rr_splice_req(n, t2)` (n names its tape).
+    /// `unparse_of` asks for nothing: every guest and value has its text.
+    fn value_demand(&mut self, rel: &str, args: &[STerm]) -> Result<(), Error> {
+        match (rel, args) {
+            ("parse_of", [x, g, t]) => self.demand("rr_parse_req", &[(STerm::Var(LOCATED.to_owned()), "int"), (g.clone(), "sym"), (x.clone(), "sym")], t, false),
+            ("splice_of", [_, n, t2, t3]) => self.demand("rr_splice_req", &[(n.clone(), "node"), (t2.clone(), "sym")], t3, false),
+            _ => Ok(()),
+        }
+    }
+
+    /// A demand `req(given…)` over the rule's other literals that bind the given variables, those that do not read
+    /// what is asked for (not `out`; with `guests`, no guest relation either: a guest is what they wait for). A value
+    /// may be made from documents of earlier rounds (`@splice` of a node of a `@parse`), so its demand reads guests.
+    /// The corpus runner runs these rules first, makes what is asked for and rebinds the batch with it. A given
+    /// variable nothing else binds asks for nothing.
+    fn demand(&mut self, req: &str, given: &[(STerm, &str)], out: &STerm, guests: bool) -> Result<(), Error> {
+        let vars: Vec<String> = given.iter().filter_map(|(t, _)| if let STerm::Var(v) = t { Some(v.clone()) } else { None }).collect();
+        if given.iter().any(|(t, _)| !matches!(t, STerm::Var(_) | STerm::Str(_))) {
+            return Ok(());
+        }
+        // What reads the guest: the literals joined to `out` by variables other than the given ones, and the guest
+        // relations.
         let mut reads = body_vars(&[Lit::Cmp { l: out.clone(), op: "=", r: out.clone() }]);
-        reads.remove(s);
-        let guest_rel = |l: &Lit| matches!(l, Lit::Atom { rel, .. } if GUEST_RELATIONS.contains(&rel.as_str()));
+        reads.retain(|x| !vars.contains(x));
+        let guest_rel = |l: &Lit| guests && matches!(l, Lit::Atom { rel, .. } if GUEST_RELATIONS.contains(&rel.as_str()));
         let mut keep: Vec<bool> = self.siblings.iter().map(|l| !guest_rel(l)).collect();
         for l in self.siblings.iter().filter(|l| guest_rel(l)) {
-            reads.extend(body_vars(std::slice::from_ref(l)).into_iter().filter(|x| x != s));
+            reads.extend(body_vars(std::slice::from_ref(l)).into_iter().filter(|x| !vars.contains(x)));
         }
         loop {
             let mut grew = false;
             for (l, k) in self.siblings.iter().zip(keep.iter_mut()) {
-                let vars = body_vars(std::slice::from_ref(l));
-                if *k && vars.iter().any(|x| reads.contains(x)) {
+                let vs = body_vars(std::slice::from_ref(l));
+                if *k && vs.iter().any(|x| reads.contains(x)) {
                     *k = false;
-                    reads.extend(vars.into_iter().filter(|x| x != s));
+                    reads.extend(vs.into_iter().filter(|x| !vars.contains(x)));
                     grew = true;
                 }
             }
@@ -814,14 +859,94 @@ impl Lowerer {
         let saved = self.siblings.clone();
         let mut keep = keep.into_iter();
         self.siblings.retain(|_| keep.next().unwrap_or(false));
-        let binds = self.siblings.iter().any(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier") && body_vars(std::slice::from_ref(l)).contains(s));
-        let ctx = if binds { Some(self.context(std::slice::from_ref(s))) } else { None };
+        // A wildcard in the context is a variable nothing else reads: named, it gives the file-local split the
+        // context's location (`q(_, x)` reads q's rows of one document).
+        let mut siblings = std::mem::take(&mut self.siblings);
+        for l in &mut siblings {
+            if let Lit::Atom { args, neg: false, .. } = l {
+                for a in args.iter_mut().filter(|a| matches!(a, STerm::Wild)) {
+                    *a = STerm::Var(self.fresh("w"));
+                }
+            }
+        }
+        self.siblings = siblings;
+        // `LOCATED`: a location of the context, the document the demand is made in. A variable in a node column of a
+        // kept atom, or a document of the chunk when the rule has no context.
+        let located = given.iter().any(|(t, _)| matches!(t, STerm::Var(v) if v == LOCATED));
+        let mut given: Vec<(STerm, &str)> = given.to_vec();
+        let mut every_chunk_doc = false;
+        if located {
+            // A value's demand reads only what its inputs are joined to: a demand may ask for more than the rule
+            // reads, never less, and one connected context is one document's.
+            let mut inputs: BTreeSet<String> = given.iter().filter_map(|(t, _)| if let STerm::Var(v) = t { Some(v.clone()) } else { None }).filter(|v| v != LOCATED).collect();
+            let mut joined = vec![false; self.siblings.len()];
+            loop {
+                let mut grew = false;
+                for (l, j) in self.siblings.iter().zip(joined.iter_mut()) {
+                    let vs = body_vars(std::slice::from_ref(l));
+                    if !*j && vs.iter().any(|v| inputs.contains(v)) {
+                        *j = true;
+                        inputs.extend(vs);
+                        grew = true;
+                    }
+                }
+                if !grew {
+                    break;
+                }
+            }
+            let mut joined = joined.into_iter();
+            self.siblings.retain(|_| joined.next().unwrap_or(false));
+            let loc = self.siblings.iter().find_map(|l| match l {
+                Lit::Atom { rel, args, neg: false } => {
+                    let decl = self.prog.decls.get(rel);
+                    let doc = crate::code_rule_dsl::typing::file_local::document_column(rel);
+                    args.iter().enumerate().find_map(|(c, a)| match a {
+                        STerm::Var(v) if Some(c) == doc || decl.and_then(|d| d.get(c)).is_some_and(|(_, t)| t == "node") => Some(v.clone()),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            });
+            match loc {
+                Some(v) => given[0] = (STerm::Var(v), "int"),
+                None => {
+                    given[0] = (STerm::Var("rr_demand_doc".to_owned()), "int");
+                    every_chunk_doc = true;
+                }
+            }
+        }
+        let vars: Vec<String> = given.iter().filter_map(|(t, _)| if let STerm::Var(v) = t { Some(v.clone()) } else { None }).filter(|v| v != "rr_demand_doc").collect();
+        // Bound by a positive atom, or equal to a variable one binds (`t2 = rr_tape7`, a hoisted value).
+        let binds = |v: &String, siblings: &[Lit]| {
+            let by_atom = |v: &String| siblings.iter().any(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier") && body_vars(std::slice::from_ref(l)).contains(v));
+            by_atom(v)
+                || siblings.iter().any(|l| match l {
+                    Lit::Cmp { l: STerm::Var(a), op: "=", r: STerm::Var(b) } => (a == v && by_atom(b)) || (b == v && by_atom(a)),
+                    _ => false,
+                })
+        };
+        let all_bound = vars.iter().all(|v| binds(v, &self.siblings));
+        // A demand of constants (`@parse("sql", "SELECT 1")`) is made where the rest of the rule holds (a nullary
+        // context), or in every chunk when nothing else in the rule is independent of it.
+        let ctx = if all_bound && !(vars.is_empty() && self.siblings.is_empty()) { Some(self.context(&vars)) } else { None };
+        let every_chunk = every_chunk_doc || (all_bound && vars.is_empty() && ctx.is_none());
         self.siblings = saved;
-        let Some(ctx) = ctx.transpose()? else { return Ok(()) };
-        let demand = "rr_embed_req";
-        self.prog.decls.insert(demand.to_owned(), vec![("s".to_owned(), "node".to_owned()), ("g".to_owned(), "sym".to_owned())]);
-        let head = Atom { rel: demand.to_owned(), args: vec![Term::Var(s.clone()), Term::Str(g.clone())], neg: false, gated: false };
-        let rule = Rule { head, body: vec![Literal::Atom(ctx)] };
+        if !all_bound {
+            return Ok(());
+        }
+        let ctx = ctx.transpose()?;
+        self.prog.decls.insert(req.to_owned(), given.iter().enumerate().map(|(i, (_, ty))| (format!("c{i}"), (*ty).to_owned())).collect());
+        let args: Vec<Term> = given.iter().map(|(t, _)| match t {
+            STerm::Var(v) => Term::Var(v.clone()),
+            STerm::Str(s) => Term::Str(s.clone()),
+            _ => unreachable!("checked above"),
+        }).collect();
+        let head = Atom { rel: req.to_owned(), args, neg: false, gated: false };
+        let mut body: Vec<Literal> = ctx.into_iter().map(Literal::Atom).collect();
+        if every_chunk {
+            body.push(Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![Term::Var("rr_demand_doc".to_owned()), Term::Wild, Term::Wild], neg: false, gated: false }));
+        }
+        let rule = Rule { head, body };
         if !self.prog.rules.contains(&rule) {
             self.prog.rules.push(rule);
         }
@@ -1827,7 +1952,17 @@ fn groups(re: &str) -> Vec<String> {
 
 /// The variables of literals, the relations passed to built-ins (`nearest(n, a, scope)`'s `scope`) left out.
 /// The relations of decision 0055's guests: a rule's request for a guest cannot wait on them.
-const GUEST_RELATIONS: [&str; 7] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node"];
+/// The placeholder for a demand's location (`value_demand`).
+const LOCATED: &str = "rr_located";
+
+const GUEST_RELATIONS: [&str; 10] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "parse_of", "unparse_of", "splice_of"];
+
+/// The tape operations (decision 0058 §4): function, arity, the relation it reads, and that relation's columns.
+const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
+    ("parse", 2, "parse_of", &[("x", "sym"), ("g", "sym"), ("t", "sym")]),
+    ("unparse", 1, "unparse_of", &[("t", "sym"), ("x", "sym")]),
+    ("splice", 3, "splice_of", &[("t", "sym"), ("n", "node"), ("t2", "sym"), ("t3", "sym")]),
+];
 
 fn body_vars(lits: &[Lit]) -> BTreeSet<String> {
     let mut out = BTreeSet::new();

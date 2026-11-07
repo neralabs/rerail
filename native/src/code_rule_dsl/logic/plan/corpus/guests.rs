@@ -24,7 +24,7 @@
 //! keyed by its text, so equal texts in any file are parsed once.
 
 use crate::code_rule_dsl::facts::core::{self, Built};
-use crate::code_rule_dsl::facts::vtab::syntax::{self, Document, Guest, Placement};
+use crate::code_rule_dsl::facts::vtab::syntax::{self, Document, Guest, Made, Placement};
 use crate::code_rule_dsl::model::FileInput;
 use crate::content_store::ContentStore;
 use sha2::{Digest, Sha256};
@@ -37,44 +37,66 @@ pub(super) const DEPTH: usize = 4;
 /// The relations requests are read from.
 pub(super) const LIBRARY: [&str; 2] = ["embed", "embed_value"];
 pub(super) const DEMAND: &str = "rr_embed_req";
+/// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
+pub(super) const PARSE: &str = "rr_parse_req";
+pub(super) const SPLICE: &str = "rr_splice_req";
+/// The demands rules make.
+pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
+/// Every relation a request is read from: a run with a rule deriving one makes guests.
+pub(super) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
+/// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's).
+pub(super) const SHARED: [&str; 4] = [DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
 
-/// One guest asked for: the code at host node `at`, in `grammar`, with its text when it is a value.
+/// One document asked for.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) struct Request {
-    pub(super) at: i64,
-    pub(super) grammar: String,
-    pub(super) role: String,
-    pub(super) text: Option<String>,
+pub(super) enum Request {
+    /// The code at host node `at`, in `grammar`, with its text when it is a value (`embed_value`).
+    Guest { at: i64, grammar: String, role: String, text: Option<String> },
+    /// `@parse(grammar, text)`.
+    Parse { grammar: String, text: String },
+    /// `@splice(_, node, with)`: node's tape, with node's text replaced by tape `with`'s.
+    Splice { node: i64, with: String },
 }
 
-/// The requests of a slice run's outputs, in order; the library's only when `library` (`.guests on`).
-pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>, library: bool) -> Vec<Request> {
+/// The requests of a slice run's outputs, in order. A library's embeds are made whatever a program shows: `.guests
+/// off` hides them from its rules (decision 0058 §1), and `guest` still reaches them.
+pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> {
     let mut out = Vec::new();
     let int = |s: &str| s.parse::<i64>().ok();
-    if library {
-        for line in outputs.get("embed").into_iter().flatten() {
-            let c: Vec<&str> = line.splitn(4, '\t').collect();
-            if let [_, at, g, r] = c.as_slice()
-                && let Some(at) = int(at)
-            {
-                out.push(Request { at, grammar: (*g).to_owned(), role: (*r).to_owned(), text: None });
-            }
-        }
-        for line in outputs.get("embed_value").into_iter().flatten() {
-            let c: Vec<&str> = line.splitn(5, '\t').collect();
-            if let [_, at, g, r, t] = c.as_slice()
-                && let Some(at) = int(at)
-            {
-                out.push(Request { at, grammar: (*g).to_owned(), role: (*r).to_owned(), text: Some((*t).to_owned()) });
-            }
+    let rows = |rel: &str, n: usize| outputs.get(rel).into_iter().flatten().map(move |line| line.splitn(n, '\t').collect::<Vec<&str>>());
+    for c in rows("embed", 4) {
+        if let [_, at, g, r] = c.as_slice()
+            && let Some(at) = int(at)
+        {
+            out.push(Request::Guest { at, grammar: (*g).to_owned(), role: (*r).to_owned(), text: None });
         }
     }
-    for line in outputs.get(DEMAND).into_iter().flatten() {
-        let c: Vec<&str> = line.splitn(2, '\t').collect();
+    for c in rows("embed_value", 5) {
+        if let [_, at, g, r, t] = c.as_slice()
+            && let Some(at) = int(at)
+        {
+            out.push(Request::Guest { at, grammar: (*g).to_owned(), role: (*r).to_owned(), text: Some((*t).to_owned()) });
+        }
+    }
+    for c in rows(DEMAND, 2) {
         if let [at, g] = c.as_slice()
             && let Some(at) = int(at)
         {
-            out.push(Request { at, grammar: (*g).to_owned(), role: "fragment".to_owned(), text: None });
+            out.push(Request::Guest { at, grammar: (*g).to_owned(), role: "fragment".to_owned(), text: None });
+        }
+    }
+    // The text is last: it may hold a tab.
+    // `at`, the location that asked, is not part of what is made: equal texts are one value.
+    for c in rows(PARSE, 3) {
+        if let [_, g, x] = c.as_slice() {
+            out.push(Request::Parse { grammar: (*g).to_owned(), text: (*x).to_owned() });
+        }
+    }
+    for c in rows(SPLICE, 2) {
+        if let [n, t2] = c.as_slice()
+            && let Some(node) = int(n)
+        {
+            out.push(Request::Splice { node, with: (*t2).to_owned() });
         }
     }
     out.sort();
@@ -91,75 +113,91 @@ fn grammar(name: &str) -> Option<(&'static str, bool)> {
     crate::code_rule_dsl::language::label(dialect).map(|label| (label, false))
 }
 
-/// A guest's key: in `2^30..2^31`, past every file's (`memo::doc_keys` gives files keys below 2^30) and with
-/// `key << 32` positive, a function of its host's path, place and grammar, so a memoised row's guest nodes keep
-/// their ids.
-fn key(host: &str, at: i64, grammar: &str, taken: &mut HashSet<u32>) -> u32 {
-    const SPAN: u32 = 1 << 30;
+/// A document's key past every file's (`memo::doc_keys` gives files keys below `GUEST_KEYS`), with `key << 32`
+/// positive: a function of what it is (a guest's host path, place and grammar), so a memoised row's guest nodes keep
+/// their ids. A guest in the run's language takes `GUEST_KEYS..HIDDEN_KEYS`, which a policy shows; every other
+/// document `HIDDEN_KEYS..2^31` (decision 0058 §1).
+fn key(parts: &[&[u8]], shown: bool, taken: &mut HashSet<u32>) -> u32 {
+    use crate::code_rule_dsl::facts::vtab::syntax::{GUEST_KEYS, HIDDEN_KEYS};
+    let (base, span) = if shown { (GUEST_KEYS, HIDDEN_KEYS - GUEST_KEYS) } else { (HIDDEN_KEYS, (1u32 << 31) - HIDDEN_KEYS) };
     let mut h = Sha256::new();
-    h.update(host.as_bytes());
-    h.update(at.to_le_bytes());
-    h.update(grammar.as_bytes());
-    let hash: [u8; 32] = h.finalize().into();
-    let mut k = u32::from_le_bytes(hash[..4].try_into().expect("4 bytes")) % SPAN;
-    while !taken.insert(SPAN | k) {
-        k = (k + 1) % SPAN;
+    for p in parts {
+        h.update((p.len() as u64).to_le_bytes());
+        h.update(p);
     }
-    SPAN | k
+    let hash: [u8; 32] = h.finalize().into();
+    let mut k = u32::from_le_bytes(hash[..4].try_into().expect("4 bytes")) % span;
+    while !taken.insert(base + k) {
+        k = (k + 1) % span;
+    }
+    base + k
 }
 
-/// A Python-style string literal's parts: prefix letters, quote, and the contents' byte range in `text`.
-fn string_parts(text: &str) -> Option<(String, usize, usize)> {
-    let q = text.find(['\'', '"'])?;
-    let prefix = text[..q].to_ascii_lowercase();
-    let rest = &text[q..];
-    let quote = ["\"\"\"", "'''", "\"", "'"].into_iter().find(|quote| rest.starts_with(quote) && rest.len() >= 2 * quote.len() && rest.ends_with(quote))?;
-    Some((prefix, q + quote.len(), text.len() - quote.len()))
+/// A string's text as a placement: copied when its normalized text is a stretch of the host, mapped when it has
+/// escapes; `None` for what is not a constant string.
+fn string_text(label: &str, kind: &str, text: &str, start: u32, node: [u32; 2]) -> Option<(String, Placement)> {
+    let n = syntax::normalized::normalized(label, kind, text)?;
+    let place = match n.copied() {
+        Some(delta) => Placement::Copied { delta: i64::from(start) + delta, within: node },
+        None => {
+            let pieces = n.pieces.iter().map(|p| syntax::normalized::Piece { s: p.s + i64::from(start), ..*p }).collect();
+            Placement::Mapped { pieces, within: node }
+        }
+    };
+    Some((n.text, place))
 }
 
-/// The text of host node `local` to parse, and where it stands: a string's contents (copied when plain, decoded
-/// otherwise), any other node's text.
+/// The text of host node `local` to parse, and where it stands: a string's normalized text (decision 0058 §3; a
+/// concatenation's parts joined), any other node's text, copied.
 fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option<(String, Placement)> {
     let f = &*host.facts;
     let &(id, kind) = ids.get(local as usize)?;
     let (start, end) = (f.start[id as usize], f.end[id as usize]);
     let node = [start, end];
-    match kind {
-        "string" => {
-            let text = f.text(id);
-            let (prefix, a, b) = string_parts(text)?;
-            if prefix.contains(['b', 'f', 't']) {
-                return None;
-            }
-            let content = &text[a..b];
-            if !prefix.contains('r') && !content.contains('\\') {
-                return Some((content.to_owned(), Placement::Copied { delta: i64::from(start) + a as i64, within: node }));
-            }
-            Some((crate::code_rule_dsl::value::python::str_value(text)?, Placement::At(node)))
-        }
-        "concatenated_string" => {
-            let mut value = String::new();
-            for &c in f.children(id) {
-                if ids.iter().any(|&(i, k)| i == c && k == "string") {
-                    let text = f.text(c);
-                    let (prefix, _, _) = string_parts(text)?;
-                    if prefix.contains(['b', 'f', 't']) {
-                        return None;
-                    }
-                    value.push_str(&crate::code_rule_dsl::value::python::str_value(text)?);
-                }
-            }
-            Some((value, Placement::At(node)))
-        }
-        _ => Some((f.text(id).to_owned(), Placement::Copied { delta: i64::from(start), within: node })),
+    let tag = f.kind.first().map_or(0, |k| k / core::KIND_STRIDE);
+    let label = u8::try_from(tag).ok().and_then(crate::code_rule_dsl::language::from_tape_tag).and_then(crate::code_rule_dsl::language::label).unwrap_or("");
+    let is_string = |kind: &str| matches!(kind, "string" | "string_literal" | "raw_string_literal" | "interpreted_string_literal");
+    if is_string(kind) {
+        return string_text(label, kind, f.text(id), start, node);
     }
+    if kind == "concatenated_string" {
+        let mut value = String::new();
+        let mut pieces = Vec::new();
+        let mut tail = i64::from(end);
+        for &c in f.children(id) {
+            let Some(&(_, k)) = ids.iter().find(|&&(i, _)| i == c) else { continue };
+            if !is_string(k) {
+                continue;
+            }
+            let (text, place) = string_text(label, k, f.text(c), f.start[c as usize], node)?;
+            let at = value.len() as u32;
+            match place {
+                Placement::Copied { delta, .. } => {
+                    pieces.push(syntax::normalized::Piece { d: at, s: delta, escape: false });
+                    tail = delta + text.len() as i64;
+                }
+                Placement::Mapped { pieces: p, .. } => {
+                    pieces.extend(p[..p.len() - 1].iter().map(|p| syntax::normalized::Piece { d: p.d + at, ..*p }));
+                    tail = p.last().map_or(tail, |p| p.s);
+                }
+                Placement::At(_) => return None,
+            }
+            value.push_str(&text);
+        }
+        pieces.push(syntax::normalized::Piece { d: value.len() as u32, s: tail, escape: false });
+        return Some((value, Placement::Mapped { pieces: pieces.into(), within: node }));
+    }
+    Some((f.text(id).to_owned(), Placement::Copied { delta: i64::from(start), within: node }))
 }
 
-/// The guests' makers' state for one chunk: the hosts' numberings, the guests made, and the keys taken.
+/// The guests' makers' state for one chunk: the run's language, the hosts' numberings, the guests made, and the keys
+/// taken.
 #[derive(Default)]
 pub(super) struct Guests {
+    run: &'static str,
     numbering: HashMap<u32, Vec<(u32, &'static str)>>,
     made: HashSet<(i64, String)>,
+    asked: HashSet<Request>,
     taken: HashSet<u32>,
     /// Each guest's host file (`memo` attributes a guest's rows to it).
     pub(super) host_of: HashMap<i64, i64>,
@@ -168,84 +206,122 @@ pub(super) struct Guests {
 }
 
 impl Guests {
+    /// For a run over `run`'s files (a dialect label).
+    pub(super) fn new(run: &'static str) -> Self {
+        Self { run, ..Self::default() }
+    }
+
     /// The documents `requests` ask for that are not made yet; `docs` holds their hosts.
     pub(super) fn make(&mut self, requests: Vec<Request>, docs: &[Document], cache: Option<&ContentStore>) -> Result<Vec<Document>, String> {
         let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
         let mut out = Vec::new();
         for r in requests {
-            if !self.made.insert((r.at, r.grammar.clone())) {
+            // A guest is one per place and grammar, whatever its role.
+            let first = match &r {
+                Request::Guest { at, grammar, .. } => self.made.insert((*at, grammar.clone())),
+                _ => self.asked.insert(r.clone()),
+            };
+            if !first {
                 continue;
             }
-            let host_key = (r.at >> 32) as u32;
-            let Some(host) = by_key.get(&host_key) else {
-                self.refused += 1;
-                continue;
-            };
-            let Some((label, wrap)) = grammar(&r.grammar) else {
-                self.refused += 1;
-                continue;
-            };
-            let local = (r.at & 0xffff_ffff) as u32;
-            let placed = match &r.text {
-                Some(text) => {
-                    let ids = self.numbering(host)?;
-                    let &(id, _) = match ids.get(local as usize) {
-                        Some(x) => x,
-                        None => {
-                            self.refused += 1;
-                            continue;
-                        }
-                    };
-                    Some((text.clone(), Placement::At([host.facts.start[id as usize], host.facts.end[id as usize]])))
-                }
-                None => {
-                    let ids = self.numbering(host)?;
-                    host_text(host, ids, local)
+            let made = match r {
+                Request::Guest { at, grammar, role, text } => self.guest(&by_key, at, &grammar, &role, text, cache)?,
+                Request::Parse { grammar, text } => self.value(&grammar, text.clone(), Made::Parse { text }, "", cache)?,
+                Request::Splice { node, with } => {
+                    let spliced = self.splice(&by_key, docs, node, &with)?;
+                    match spliced {
+                        Some((grammar, text, tape, path)) => self.value(&grammar, text, Made::Splice { tape, node, with }, &path, cache)?,
+                        None => None,
+                    }
                 }
             };
-            let Some((text, place)) = placed else {
-                self.refused += 1;
-                continue;
-            };
-            let (text, place) = if wrap {
-                let place = match place {
-                    Placement::Copied { delta, within } => Placement::Copied { delta: delta - 1, within },
-                    at => at,
-                };
-                (format!("({text})"), place)
-            } else {
-                (text, place)
-            };
-            let file = FileInput::new(host.path.clone(), label.to_owned(), Arc::new(text), None, None, "guest").map_err(|e| format!("{}: {e:?}", host.path))?;
-            // The cache is shared by every run on the machine; a failed write there (O85) parses without it.
-            let built = match cache.map(|cache| core::build_cached(&file, cache)) {
-                Some(Ok(built)) => Ok(built),
-                Some(Err(_)) => {
-                    crate::code_rule_dsl::prof::count("guests.cache_failed", 1);
-                    core::build(&file)
-                }
-                None => core::build(&file),
+            match made {
+                Some(d) => out.push(d),
+                None => self.refused += 1,
             }
-            .map_err(|e| format!("{}: {e}", host.path))?;
-            let Built::Facts(facts) = built else {
-                self.refused += 1;
-                continue;
-            };
-            let root = if wrap { wrapped_root(&facts, label) } else { 0 };
-            let key = key(&host.path, r.at, &r.grammar, &mut self.taken);
-            self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
-            let digest = core::digest(&facts);
-            let in_file = host.guest.as_ref().map_or(place, |h| h.in_file.then(place));
-            out.push(Document {
-                key,
-                path: host.path.clone(),
-                core: format!("{}#guest:{}:{}", host.core, r.grammar, r.at),
-                digest,
-                facts: Arc::new(facts),
-                guest: Some(Arc::new(Guest { host: host_key, at: r.at, grammar: r.grammar.clone(), role: r.role.clone(), root, place, in_file })),
-            });
         }
         Ok(out)
+    }
+
+    /// The guest at host node `at`.
+    fn guest(&mut self, by_key: &HashMap<u32, &Document>, at: i64, grammar_name: &str, role: &str, text: Option<String>, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
+        let host_key = (at >> 32) as u32;
+        let Some(host) = by_key.get(&host_key).copied() else { return Ok(None) };
+        let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
+        let local = (at & 0xffff_ffff) as u32;
+        let ids = self.numbering(host)?;
+        let placed = match text {
+            Some(text) => {
+                let Some(&(id, _)) = ids.get(local as usize) else { return Ok(None) };
+                Some((text, Placement::At([host.facts.start[id as usize], host.facts.end[id as usize]])))
+            }
+            None => host_text(host, ids, local),
+        };
+        let Some((text, place)) = placed else { return Ok(None) };
+        let (text, place) = if wrap { wrapped(text, place) } else { (text, place) };
+        let Some((facts, root)) = parse(&host.path, label, wrap, text, cache)? else { return Ok(None) };
+        let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], label == self.run, &mut self.taken);
+        self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
+        let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
+        Ok(Some(Document {
+            key,
+            path: host.path.clone(),
+            core: format!("{}#guest:{grammar_name}:{at}", host.core),
+            digest: core::digest(&facts),
+            facts: Arc::new(facts),
+            guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+        }))
+    }
+
+    /// A value document (decision 0058 §4): `text` parsed as `grammar_name`, with no host, in the hidden documents.
+    /// Its places are its own text's; its rows belong to no file, so a chunk that reads one is not memoised.
+    fn value(&mut self, grammar_name: &str, text: String, made: Made, path: &str, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
+        let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
+        let identity = match &made {
+            Made::Splice { node, with, .. } => format!("splice:{node}:{with}"),
+            _ => format!("parse:{text}"),
+        };
+        let (text, _) = if wrap { wrapped(text, Placement::At([0, 0])) } else { (text, Placement::At([0, 0])) };
+        let Some((facts, root)) = parse(path, label, wrap, text, cache)? else { return Ok(None) };
+        let key = key(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], false, &mut self.taken);
+        Ok(Some(Document {
+            key,
+            path: path.to_owned(),
+            core: format!("#value:{grammar_name}:{key}"),
+            digest: core::digest(&facts),
+            facts: Arc::new(facts),
+            guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
+        }))
+    }
+
+    /// `@splice(_, node, with)`: the grammar, text, tape and path of node's document with node's text replaced by
+    /// the text of a document whose tape is `with`; `None` when either is not in the chunk.
+    fn splice(&mut self, by_key: &HashMap<u32, &Document>, docs: &[Document], node: i64, with: &str) -> Result<Option<(String, String, String, String)>, String> {
+        let Some(d) = by_key.get(&((node >> 32) as u32)).copied() else { return Ok(None) };
+        let Some(w) = docs.iter().find(|x| syntax::tape_hex(&x.digest) == with) else { return Ok(None) };
+        let ids = self.numbering(d)?;
+        let Some(&(id, _)) = ids.get((node & 0xffff_ffff) as usize) else { return Ok(None) };
+        let base = syntax::unparsed(d);
+        // The unparsed text's offset in the document's text (a wrapped fragment's root starts past the `(`).
+        let off = match d.guest.as_deref() {
+            Some(g) if g.root != 0 => d.facts.start[g.root as usize] as usize,
+            _ => 0,
+        };
+        let (a, b) = (d.facts.start[id as usize] as usize, d.facts.end[id as usize] as usize);
+        let (Some(a), Some(b)) = (a.checked_sub(off), b.checked_sub(off)) else { return Ok(None) };
+        if b > base.len() || !base.is_char_boundary(a) || !base.is_char_boundary(b) {
+            return Ok(None);
+        }
+        let text = format!("{}{}{}", &base[..a], syntax::unparsed(w), &base[b..]);
+        let grammar = match d.guest.as_deref() {
+            Some(g) => g.grammar.clone(),
+            None => {
+                let tag = d.facts.kind.first().map_or(0, |k| k / core::KIND_STRIDE);
+                let Some(label) = u8::try_from(tag).ok().and_then(crate::code_rule_dsl::language::from_tape_tag).and_then(crate::code_rule_dsl::language::label) else { return Ok(None) };
+                label.to_owned()
+            }
+        };
+        Ok(Some((grammar, text, syntax::tape_hex(&d.digest), d.path.clone())))
     }
 
     fn numbering(&mut self, host: &Document) -> Result<&Vec<(u32, &'static str)>, String> {
@@ -255,6 +331,35 @@ impl Guests {
         }
         Ok(&self.numbering[&host.key])
     }
+}
+
+/// A text in its wrapper `( … )`, and its placement one byte on.
+fn wrapped(text: String, place: Placement) -> (String, Placement) {
+    let place = match place {
+        Placement::Copied { delta, within } => Placement::Copied { delta: delta - 1, within },
+        Placement::Mapped { pieces, within } => Placement::Mapped { pieces: pieces.iter().map(|p| syntax::normalized::Piece { d: p.d + 1, ..*p }).collect(), within },
+        at => at,
+    };
+    (format!("({text})"), place)
+}
+
+/// `text` parsed as `label` through the tape cache, and its root (a wrapped expression's); `None` when the parser
+/// gives no facts.
+fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&ContentStore>) -> Result<Option<(core::Facts, u32)>, String> {
+    let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(text), None, None, "guest").map_err(|e| format!("{path}: {e:?}"))?;
+    // The cache is shared by every run on the machine; a failed write there (O95) parses without it.
+    let built = match cache.map(|cache| core::build_cached(&file, cache)) {
+        Some(Ok(built)) => Ok(built),
+        Some(Err(_)) => {
+            crate::code_rule_dsl::prof::count("guests.cache_failed", 1);
+            core::build(&file)
+        }
+        None => core::build(&file),
+    }
+    .map_err(|e| format!("{path}: {e}"))?;
+    let Built::Facts(facts) = built else { return Ok(None) };
+    let root = if wrap { wrapped_root(&facts, label) } else { 0 };
+    Ok(Some((facts, root)))
 }
 
 /// The root of a wrapped expression `( e )`: `e`, the one named child of the parenthesized expression the module's

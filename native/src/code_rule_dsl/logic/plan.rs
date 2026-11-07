@@ -3823,11 +3823,14 @@ fn decoded_outputs(
         };
         let name = if rel == "finding" { "finding_at".to_owned() } else { rel.clone() };
         let kinds = lowered.map(|l| l.dialect.kinds());
+        // A value names its grammar (its tape tag): a guest's kinds are its grammar's (decision 0058 §2).
+        let of_tag = |tag: i64| u8::try_from(tag).ok().and_then(crate::code_rule_dsl::language::from_tape_tag).map(|d| d.kinds());
         let decode = |i: usize, v: i64| -> Option<String> {
-            let kinds = kinds?;
+            let run = kinds?;
+            let stride = i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE);
             match domains.get(i)? {
-                lower::Domain::Kind => Some(kinds.kind_name((v % i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE)) as u16)?.to_owned()),
-                lower::Domain::Field => Some(kinds.field_name((v & 0xffff) as u16)?.to_owned()),
+                lower::Domain::Kind => Some(of_tag(v / stride).unwrap_or(run).kind_name((v % stride) as u16)?.to_owned()),
+                lower::Domain::Field => Some(of_tag(v >> 16).unwrap_or(run).field_name((v & 0xffff) as u16)?.to_owned()),
                 _ => None,
             }
         };
