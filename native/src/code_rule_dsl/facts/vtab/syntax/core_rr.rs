@@ -600,6 +600,7 @@ pub(super) struct CoreRows {
     source: Vec<[i64; 2]>,
     src_line: Vec<[i64; 3]>,
     split_line: Vec<[i64; 3]>,
+    lf_line: Vec<[i64; 3]>,
     line_count: Vec<[i64; 2]>,
     str_part: Vec<[i64; 5]>,
     first_token: Vec<[i64; 2]>,
@@ -696,7 +697,7 @@ impl CoreRows {
     }
 
     /// A document's rows: its first error, its source-text spans, and its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool) {
+    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
@@ -712,6 +713,11 @@ impl CoreRows {
         if wants_split_lines {
             for (i, line) in Lines::split_python(&f.source).enumerate() {
                 self.split_line.push([key, (i + 1) as i64, string(line) as i64]);
+            }
+        }
+        if wants_lf_lines {
+            for (i, line) in f.source.split('\n').enumerate() {
+                self.lf_line.push([key, (i + 1) as i64, string(line) as i64]);
             }
         }
         if wants_text {
@@ -794,6 +800,7 @@ impl CoreRows {
             ("source", pair(&["d", "sp"], &self.source)),
             ("src_line", make(&["d", "l", "sp"], &self.src_line, [false, false, false], atom)),
             ("split_line", make(&["d", "l", "t"], &self.split_line, [false, false, true], atom)),
+            ("lf_line", make(&["d", "l", "t"], &self.lf_line, [false, false, true], atom)),
             ("line_count", pair(&["d", "k"], &self.line_count)),
             ("str_part", make(&["lit", "i", "v", "at", "spec"], &self.str_part, [false, false, true, false, false], atom)),
             ("first_token", pair(&["n", "t"], &self.first_token)),

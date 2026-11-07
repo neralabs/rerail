@@ -1340,7 +1340,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
         "next_sibling" => &[&["a"], &["b"]],
-        "source" | "src_line" | "split_line" | "line_count" => &[&["d"]],
+        "source" | "src_line" | "split_line" | "lf_line" | "line_count" => &[&["d"]],
         "str_part" => &[&["lit"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).

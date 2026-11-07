@@ -457,6 +457,7 @@ impl Batch {
         let mut c = core_rr::CoreRows::default();
         let wants_text = core && projection.wants("text");
         let wants_split_lines = core && projection.wants("split_line");
+        let wants_lf_lines = core && projection.wants("lf_line");
         let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
@@ -559,7 +560,7 @@ impl Batch {
                 }
             }
             if core {
-                c.document(&p, dialect, &mut string, wants_text, wants_tokens, wants_split_lines);
+                c.document(&p, dialect, &mut string, wants_text, wants_tokens, wants_split_lines, wants_lf_lines);
             }
             docs.push(p);
         }
