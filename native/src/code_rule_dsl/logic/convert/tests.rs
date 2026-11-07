@@ -641,6 +641,18 @@ fn measure_all(corpus: &Path, rules: &str) {
             }
         }
     }
+    // A rule reading a repository file that exists (`.input r(IO=…, filename="…")`) or a directory (`dir="…"`) cannot
+    // run until files are read (O76): it is left out and named.
+    texts.retain(|t| {
+        let mut read: Vec<&str> = t.split("filename=\"").skip(1).filter_map(|f| f.split('"').next()).filter(|f| corpus.join(f).exists()).collect();
+        // A directory input (`dir="…"`) is not made at all yet.
+        read.extend(t.split("dir=\"").skip(1).filter_map(|f| f.split('"').next()));
+        if let Some(f) = read.first() {
+            let name = t.lines().find(|l| l.starts_with("// ")).unwrap_or("").chars().take(60).collect::<String>();
+            println!("SKIPPED (reads {f}, O76): {name}");
+        }
+        read.is_empty()
+    });
     let programs: Vec<&str> = texts.iter().map(String::as_str).collect();
     let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("measure-all");
     if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {

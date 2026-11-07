@@ -1692,3 +1692,15 @@ typing's file-local part. A join that scans an axis makes every node's rows on t
 
 **Closure:** a scan of an axis over a large batch is measured on both paths, and the device solves the whole set
 where it is faster (the rows then filled from its answer), or the device path is recorded as typing's only.
+
+## O93. The hand-written data-layer rules do not run on a corpus
+
+These are More-ergonomic's 56 rules in `docs/rule-syntax/data-layer`, measured with `RERAIL_MEASURE_HAND=only`.
+
+- **s200:** the run fails after 61 s of CPU with `content store database error: no such table: atom_segment`, raised
+  through a SQL user function. RSS is 7.6 GB, over the 1 GB budget.
+- **Full corpus:** the run takes more than 280 s.
+- **Directory inputs:** a `dir="…"` input (one row per line of each file) is not made at all. The runner stops with
+  `no columns for <rel>`, and the measure leaves the rule out (O76).
+
+**Closure:** the hand-written rules run on the full corpus, within the budgets, with every rule left out named.

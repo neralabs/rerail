@@ -507,6 +507,64 @@ and its instructions do not compare with the rows above.
   - the demand split (0.85 s per run). It is a pure function of the program and a few statistics, so it could be a
     derived value, once the runner gives the program an identity that is cheaper than its digest.
 
+### 2i. After merging data-layer, typing and final-rerail-shape, with waits named (2026-11-07)
+
+The merges took in final-rerail-shape (7f886d5d3) and Typing-support (90ad1c47d). They also copied in
+Data-layer-rule-expressivity's pack (`gate/data-layer`, 75 `.rr` ports) and More-ergonomic's `docs/rule-syntax`,
+which holds 56 hand-written data-layer rules and the new `python/types.rr`.
+
+The replay now gives 3988 events, 303 fully converted and 298 exact, with no errors. Before the merges it was
+295 converted and 290 exact.
+
+The full corpus, profiled cold, still gives 252 violations. It retires 681.2e9 instructions at load 10, against
+679.8e9 before the merges. Own CPU is 43.3 s: the worker's parse is 18.4 s, its batch 2.6 s, and the local part
+21.9 s. Peak RSS is 474 MB by the run's own count; `time -l` reports 1.02 GB for the whole test process.
+
+**Excess over the roof, by kind:**
+
+| kind | units | own s | excess s |
+|---|---|---|---|
+| join row | 131M | 10.16 | 9.30 |
+| source byte (tree-sitter, no roof) | 138M | 7.57 | 7.57 |
+| byte | 1.78G | 6.88 | 6.10 |
+| node | 75M | 6.44 | 5.99 |
+| value | 255M | 4.62 | 3.31 |
+| VM step | 104M | 2.29 | 1.87 |
+
+The byte work has five parts:
+
+- the tape store, 1.6 s;
+- the memo lookup, 1.5 s, at 11 ns a source byte against SHA-256's 0.43 ns;
+- the tape restore, 0.6 s;
+- reading the files, 0.6 s;
+- the tape parse, 0.5 s.
+
+**Waits, by what they waited on:**
+
+| waiter | waited on (and what that thread was doing) | wall | waits |
+|---|---|---|---|
+| main thread | the worker's next chunk (parse) | 3.16 s | 69 |
+| main thread | the worker's next chunk (batch) | 0.44 s | 27 |
+| worker | the main thread (local run) | 0.81 s | 37 |
+
+The pipeline is close to balanced, about 21 s on each side, and the worker's parse is the critical path. Only 3.2 s
+of own CPU has no counter. The largest piece is `wait/release freed pages`, at 0.22 s.
+
+**The hand-written rules (`RERAIL_MEASURE_HAND=only`)** now mostly lower. 45 have a converted counterpart, and the
+counts are:
+
+- 10 read `input_error` (O80);
+- 1 does not lower (`versioned_table_names`, the slice `$O[:-$K]`);
+- 4 read a repository file that exists on the corpus (O76), and 2 read a directory input (`dir="…"`, not made at
+  all). The measure now leaves all six out and names them.
+
+The rest do not yet run:
+
+- **Full corpus:** the run did not finish within 280 s.
+- **s200 (200 files):** the run stopped after 61 s of CPU with `no such table: atom_segment`, which a SQL function
+  over the content store raised (O93). It had used 7.6 GB of RSS and 793e9 instructions by then. On the same 200
+  files, the converted rules take about 2 s.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:
