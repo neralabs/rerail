@@ -424,6 +424,11 @@ pub(super) fn js_number(t: &str) -> Option<String> {
     Some(if f.fract() == 0.0 && f.abs() < 1e21 { format!("{}", f as i128) } else { format!("{f}") })
 }
 
+/// Decoded parts and their source byte offsets, relative to the part's literal token.
+pub(super) fn str_parts_with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
+    str_parts(parts).into_iter().map(|(value, node, spec)| (value, node, spec, 0)).collect()
+}
+
 /// `str_part(lit, i, v, at, spec)`: the str constants CPython builds from Python literal `lit` (a `string`, or a
 /// `concatenated_string`'s parts `parts`, each with its node): plain runs join across adjacent literals; an
 /// f-string's fields split them; a format spec's literal runs are pieces of their own (`spec` 1). Bytes and
@@ -897,6 +902,15 @@ mod tests {
         assert_eq!(name("member_expression", "a(b).c"), None);
         assert_eq!(comment_body("# noqa: E501 "), "noqa: E501");
         assert_eq!(comment_body("/* x */"), "x");
+    }
+
+    #[test]
+    fn decoded_string_constants_keep_precise_byte_starts() {
+        let parts = str_parts_with_offsets(&[(0, "f\"\"\"json\n{a}\njson\"\"\"")]);
+        assert_eq!(parts.iter().map(|p| p.3).collect::<Vec<_>>(), [4, 12]);
+        let parts = str_parts_with_offsets(&[(0, "f'λ{x}μ'")]);
+        assert_eq!(parts.iter().map(|p| p.3).collect::<Vec<_>>(), [2, 7]);
+        assert_eq!(str_parts_with_offsets(&[(0, "'plain'")])[0].3, 0);
     }
 
     #[test]
