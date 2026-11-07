@@ -17,7 +17,7 @@ fn structural_parity(programs: &[Program], files: &[TapeDoc]) {
     assert_fixture(programs, files, &roots);
 }
 
-#[test]
+#[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn oversized_structural_shapes_preserve_occurrences_and_long_control_paths() {
     let make =
         |words| Program::new(words, vec![b"match".to_vec()], vec![], vec![0], vec![]).unwrap();

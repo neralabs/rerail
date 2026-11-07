@@ -338,7 +338,7 @@ fn terminal_work_charges_empty_domains_and_preserves_segment_boundaries_across_w
             outputs[0][0].truncate(limit as usize);
             assert_eq!(actual.outputs, outputs);
             let trace = scope.snapshot();
-            assert!(trace.len() <= 600);
+            assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
             assert!(
                 trace
                     .iter()

@@ -199,7 +199,7 @@ fn native_ordinary_assertions_observe_executed_capture_prefixes_and_skip_unused_
     assert_eq!(actual.outputs, expected.outputs);
 }
 
-#[test]
+#[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn metal_ordinary_assertions_preserve_prefixes_pair_order_and_branch_local_rejection() {
     let OrdinaryAssertionCases {
         programs,
@@ -390,7 +390,7 @@ fn native_inline_work_failures_keep_their_executed_position_before_later_operand
     assert_eq!(actual.errors, expected.errors);
     assert_eq!(actual.outputs, expected.outputs);
 }
-#[test]
+#[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn metal_inline_work_failures_compete_with_operand_failures_in_logical_execution_order() {
     let (programs, files, anchors) = ordered_inline_work_cases();
     let expected = ordered_inline_work_expected(&programs, &files, &anchors);

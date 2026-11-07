@@ -413,9 +413,8 @@ impl MappedBuffer {
         if crate::code_rule_dsl::prof::on() && mapping.length >= 64 << 10 {
             crate::code_rule_dsl::prof::count_named(format!("alloc_kb.{}", std::panic::Location::caller()), mapping.length >> 10);
         }
-        let _allocation = METAL_ALLOCATION_LOCK
-            .lock()
-            .map_err(|_| Error::BackendFailure)?;
+        // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
+        let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if mapping.length as u64 > device.max_buffer_length()
             || device
                 .current_allocated_size()
@@ -467,9 +466,8 @@ impl MappedBuffer {
         reservation: Arc<BufferReservation>,
         storage: MTLResourceOptions,
     ) -> Result<Self, Error> {
-        let _allocation = METAL_ALLOCATION_LOCK
-            .lock()
-            .map_err(|_| Error::BackendFailure)?;
+        // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
+        let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if length as u64 > device.max_buffer_length()
             || device
                 .current_allocated_size()
@@ -668,9 +666,9 @@ pub(super) struct MetalExecutionGuard {
 }
 
 pub(super) fn metal_execution_guard() -> Result<MetalExecutionGuard, Error> {
-    let lock = METAL_EXECUTION_LOCK
-        .lock()
-        .map_err(|_| Error::BackendFailure)?;
+    // A lock over no data (it makes Metal executions serial): a caller that panicked while holding it, a failed
+    // test's assertion among them, leaves nothing to distrust, so the next execution goes ahead.
+    let lock = METAL_EXECUTION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     Ok(MetalExecutionGuard {
         _lock: lock,
         _launch_scope: launch::LaunchScope::enter(),

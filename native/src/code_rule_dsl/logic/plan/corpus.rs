@@ -413,7 +413,10 @@ pub(crate) fn run_with_options(
         }
         last = now;
     };
-    let profiling = crate::code_rule_dsl::logic::profile::on();
+    // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
+    // profiling on may have turned it off meanwhile.
+    let _profile = crate::code_rule_dsl::logic::profile::on().then(crate::code_rule_dsl::logic::profile::one_run);
+    let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }
