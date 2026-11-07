@@ -1,0 +1,18 @@
+.policy "ruff-pth105-os-replace" revision 2
+.description "Use Path.replace() instead of os.replace(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH105 (flake8-use-pathlib): a call of `os.replace`, however it is imported, with any arguments, unless
+// `src_dir_fd` or `dst_dir_fd` is passed and not None: pathlib has neither. Reported at the callee.
+//   os.replace("a", "b")                  ← PTH105: `Path("a").replace("b")`
+//   os.replace("a", "b", src_dir_fd=None) ← PTH105
+//   os.replace("a", "b", dst_dir_fd=3)    not reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
+
+.violation PTH105(at: node) code "PTH105"
+    "Use `Path(src).replace(dst)` instead of `os.replace(src, dst)`; leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`."
+    suppress ruff "PTH105"
+PTH105(f) :- pth_call(c, "os.replace", f), !kw_set(c, "src_dir_fd"), !kw_set(c, "dst_dir_fd").

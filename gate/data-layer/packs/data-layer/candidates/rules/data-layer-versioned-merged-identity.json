@@ -388,8 +388,27 @@
         },
         "stages": [
           {
+            "name": "constructor_calls",
+            "query": "SELECT c.* FROM raw_calls c WHERE name='SqlVersionedMergedCte' OR EXISTS(SELECT 1 FROM raw_aliases a WHERE a.__path=c.__path AND a.alias=c.name)",
+            "indexes": [
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "constructor_files",
+            "query": "SELECT DISTINCT __path FROM constructor_calls",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
             "name": "frames",
-            "query": "SELECT __path,__start,__end,coalesce(wrapper,__start) AS lexical_start,name,1 AS is_function FROM raw_functions UNION ALL SELECT __path,__start,__end,coalesce(wrapper,__start),name,0 FROM raw_classes",
+            "query": "SELECT __path,__start,__end,coalesce(wrapper,__start) AS lexical_start,name,1 AS is_function FROM raw_functions WHERE __path IN (SELECT __path FROM constructor_files) UNION ALL SELECT __path,__start,__end,coalesce(wrapper,__start),name,0 FROM raw_classes WHERE __path IN (SELECT __path FROM constructor_files)",
             "indexes": [
               [
                 "__path",
@@ -419,7 +438,7 @@
           },
           {
             "name": "call_owners",
-            "query": "SELECT c.*,(SELECT f.__start FROM frames f WHERE f.is_function AND f.__path=c.__path AND f.lexical_start<c.__start AND f.__end>=c.__end ORDER BY f.lexical_start DESC LIMIT 1) AS owner,\n          coalesce((SELECT x.qualname FROM frames f JOIN contexts x ON x.path=f.__path AND x.start=f.__start WHERE f.__path=c.__path AND f.lexical_start<c.__start AND f.__end>=c.__end ORDER BY f.lexical_start DESC LIMIT 1),'') AS qualname FROM raw_calls c",
+            "query": "SELECT c.*,(SELECT f.__start FROM frames f WHERE f.is_function AND f.__path=c.__path AND f.lexical_start<c.__start AND f.__end>=c.__end ORDER BY f.lexical_start DESC LIMIT 1) AS owner,\n          coalesce((SELECT x.qualname FROM frames f JOIN contexts x ON x.path=f.__path AND x.start=f.__start WHERE f.__path=c.__path AND f.lexical_start<c.__start AND f.__end>=c.__end ORDER BY f.lexical_start DESC LIMIT 1),'') AS qualname FROM constructor_calls c",
             "indexes": [
               [
                 "__path",
@@ -429,7 +448,7 @@
           },
           {
             "name": "constructors",
-            "query": "SELECT c.*,filename||':'||qualname AS caller FROM call_owners c WHERE name='SqlVersionedMergedCte' OR EXISTS(SELECT 1 FROM raw_aliases a WHERE a.__path=c.__path AND a.alias=c.name)",
+            "query": "SELECT c.*,filename||':'||qualname AS caller FROM call_owners c",
             "indexes": [
               [
                 "__path",
@@ -439,7 +458,7 @@
           },
           {
             "name": "assignments",
-            "query": "SELECT a.*,(SELECT f.__start FROM frames f WHERE f.is_function AND f.__path=a.__path AND f.lexical_start<a.__start AND f.__end>=a.__end ORDER BY f.lexical_start DESC LIMIT 1) AS owner FROM raw_assignments a",
+            "query": "SELECT a.*,(SELECT f.__start FROM frames f WHERE f.is_function AND f.__path=a.__path AND f.lexical_start<a.__start AND f.__end>=a.__end ORDER BY f.lexical_start DESC LIMIT 1) AS owner FROM raw_assignments a WHERE a.__path IN (SELECT __path FROM constructor_files)",
             "indexes": [
               [
                 "__path",

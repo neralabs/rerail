@@ -1,0 +1,30 @@
+.policy "react-hooks-purity" revision 2
+.description "Don't call Date.now, Math.random or performance.now while a component or hook renders; their results change from one render to the next."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/purity (React Compiler): a component or hook must render the same output for the same inputs, so
+// it may not call the three functions the compiler knows to be impure while it renders:
+//   function Clock() { const t = Date.now(); … }             reported: render code
+//   const get = () => Math.random(); return <b>{get}</b>;   reported: get may be called during render
+//   useEffect(() => { Date.now(); });  <b onClick={() => performance.now()}/>   not: they run later
+//   useState(() => Date.now())                                not: an initializer argument is not called here
+// The compiler also follows aliases (`const now = Date.now; now()`); this rule does not (NOTES).
+#include "tsx/react-compiler.rr"
+
+.violation purity(at: node, msg: symbol)
+    code "react-hooks/purity"
+    "{msg}"
+    suppress eslint "react-hooks/purity"
+    suppress oxlint "purity"
+purity(c, "Move this call out of render: into an effect or event handler, or into a lazy useState initializer when the value should be read once per mount.") :-
+    impure_call(c), rc_own(c, h), rc_render_fn(h, _).
+purity(c, "This function runs during render, so this call runs there too; move the call into an effect or event handler, or read the value once in a lazy useState initializer.") :-
+    impure_call(c), rc_own(c, h), rc_live_fn(h, _).
+
+// impure_call(c): Date.now(), Math.random() or performance.now() on the global object (not a local `Math`).
+.decl impure_call(c: node)
+impure_call(c) :- kind(c, "call_expression"), field(c, "function", m), kind(m, "member_expression"),
+    field(m, "object", o), kind(o, "identifier"), !ref_site(o, _), field(m, "property", p),
+    (text(o, "Date"), text(p, "now") ; text(o, "Math"), text(p, "random") ; text(o, "performance"), text(p, "now")).

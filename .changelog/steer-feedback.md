@@ -1,0 +1,1 @@
+When a coding agent declines a steer, it now records its one-line reason with `rerail feedback <rule-id> '<reason>'`, kept on your computer and sent nowhere. `rerail feedback list [--rule <rule-id>]` prints the notes to attach to a Rule misfire issue, and `rerail reset` deletes them with the repository's history.

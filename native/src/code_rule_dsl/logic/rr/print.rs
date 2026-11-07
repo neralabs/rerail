@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use super::syntax::quote;
 use super::translate::{relation, var};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, Atom, Error, Literal, Program, Term, Value};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, Atom, Error, Literal, Native, Program, Term, Value};
 use crate::code_rule_dsl::logic::strings::{SET, is_test};
 
 fn ty(t: &str) -> &str {
@@ -52,6 +52,11 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
     let one = |p: &Term| -> Result<String, Error> {
         let Term::Str(p) = p else {
             let p = term(p)?;
+            // These internal functors search. Printing `rx(p, s)` would turn one into an
+            // undeclared relation; printing `match(p, s)` would instead require the whole string.
+            if op == "rx" || op == "irx" {
+                return Ok(format!("@{op}({s}, {p}) = {}", if neg { 0 } else { 1 }));
+            }
             return Ok(if op == "equals" { format!("{s} {} {p}", if neg { "!=" } else { "=" }) } else { format!("{bang}{op}({p}, {s})") });
         };
         Ok(match op {
@@ -112,6 +117,26 @@ fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
                 write!(out, ", {name}: {}", var(v)).expect("a string");
             }
             out + ")"
+        }
+    })
+}
+
+/// A natively made relation's rule as the construct it lowers from: `dfs_first(…)`, `dfs_first_memo(…)`, or
+/// `match_all(re, s)` over its input, the groups bound to the head's columns by name.
+fn native_rule(head: &Atom, native: &Native, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
+    Ok(match native {
+        Native::DfsFirst { edge, target, roots } => {
+            let args = terms(&head.args)?;
+            let call = match roots {
+                Some(roots) => format!("dfs_first_memo({args}, {}, {}, {})", relation(edge), relation(target), relation(roots)),
+                None => format!("dfs_first({args}, {}, {})", relation(edge), relation(target)),
+            };
+            format!("{} :- {call}.", atom(head, kindsets)?)
+        }
+        Native::MatchAll { input, pattern, groups } => {
+            let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
+            let args = std::iter::once(var(&s)).chain(groups.iter().map(|g| var(g))).collect::<Vec<_>>().join(", ");
+            format!("{}({args}) :- {}({}), match_all({}, {}).", relation(&head.rel), relation(input), var(&s), quote(pattern), var(&s))
         }
     })
 }
@@ -186,6 +211,11 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
         }
     }
     for rule in &prog.rules {
+        // A relation made natively is printed as what made it: its rule only orders it after its inputs.
+        if let Some(native) = prog.natives.get(&rule.head.rel) {
+            writeln!(out, "{}", native_rule(&rule.head, native, &kindsets)?).expect("a string");
+            continue;
+        }
         let body = rule.body.iter().map(|l| literal(l, &kindsets)).collect::<Result<Vec<_>, _>>()?;
         let head = atom(&rule.head, &kindsets)?;
         if body.is_empty() {

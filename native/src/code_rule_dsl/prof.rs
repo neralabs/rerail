@@ -30,7 +30,22 @@ pub(in crate::code_rule_dsl) fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T
     out
 }
 
+/// CPU time on wasm32 (the browser build): the engine runs on one thread of one Web Worker, which holds no
+/// CPU clock, so the time since the first read stands in for user + sys CPU.
+#[cfg(target_family = "wasm")]
+pub(crate) fn single_thread_cpu() -> Duration {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed()
+}
+
 /// The process's CPU time so far (user + sys).
+#[cfg(target_family = "wasm")]
+fn process_cpu() -> Duration {
+    single_thread_cpu()
+}
+
+/// The process's CPU time so far (user + sys).
+#[cfg(not(target_family = "wasm"))]
 fn process_cpu() -> Duration {
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
@@ -114,10 +129,16 @@ pub(in crate::code_rule_dsl) fn release() {
 
 pub(in crate::code_rule_dsl) fn peak(stage: &str) {
     if *ON {
-        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-        // macOS reports bytes; Linux, kilobytes.
-        let mb = if cfg!(target_os = "macos") { usage.ru_maxrss as usize >> 20 } else { usage.ru_maxrss as usize >> 10 };
+        // No resident-set counter on wasm32: its peak reads 0.
+        #[cfg(target_family = "wasm")]
+        let mb = 0;
+        #[cfg(not(target_family = "wasm"))]
+        let mb = {
+            let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+            // macOS reports bytes; Linux, kilobytes.
+            if cfg!(target_os = "macos") { usage.ru_maxrss as usize >> 20 } else { usage.ru_maxrss as usize >> 10 }
+        };
         let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let entry = stages.entry(format!("peak_mb.{stage}")).or_default();
         entry.1 = entry.1.max(mb);
@@ -186,7 +207,7 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
             entry.1 = entry.1.max(statistics.size_allocated >> 20);
         }
         // What the heap holds live (jemalloc's allocated bytes), against what it keeps mapped.
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_family = "wasm")))]
         {
             let _ = tikv_jemalloc_ctl::epoch::advance();
             let entry = stages.entry(format!("live_mb.{stage}")).or_default();
@@ -196,6 +217,17 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
 }
 
 /// The process's physical footprint now, in MB (macOS; 0 elsewhere).
+/// What the heap holds live, in MB (jemalloc's allocated bytes); 0 where the system allocator runs (Windows, wasm).
+pub(in crate::code_rule_dsl) fn live_heap_mb() -> usize {
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    {
+        let _ = tikv_jemalloc_ctl::epoch::advance();
+        tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
+    }
+    #[cfg(any(windows, target_family = "wasm"))]
+    0
+}
+
 pub(in crate::code_rule_dsl) fn footprint_mb() -> usize {
     #[cfg(target_os = "macos")]
     {

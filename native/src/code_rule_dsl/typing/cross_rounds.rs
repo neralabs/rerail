@@ -32,8 +32,9 @@
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The number of rounds after round 0 (I11 adopted k = 2; 4 since 2026-11-06, decision 0047: the CPython runtime
-/// oracle's package re-export needs a third file crossing, and its rounds converge after round 4).
+/// The number of rounds after round 0 the typing programs declare (I11 adopted k = 2; 4 since 2026-11-06, decision
+/// 0047: the CPython runtime oracle's package re-export needs a third file crossing, and its rounds converge after
+/// round 4). Since decision 0056 a program states it (`PRAGMA`); this is the value they state.
 pub(crate) const K: usize = 4;
 
 /// A program's flag for the pending round (O41, decision 0047): a program that declares the fact `unconverged(0)`
@@ -41,14 +42,36 @@ pub(crate) const K: usize = 4;
 /// that read `unconverged(1)` make unknown what a missing row would otherwise decide.
 pub(crate) const UNCONVERGED: &str = "unconverged";
 
-/// The rounds bound: `K`, or `RERAIL_CROSS_ROUNDS` (a diagnostic: how many rounds a corpus needs), or a test's
-/// `with_k` on this thread.
-pub(crate) fn k() -> usize {
+/// The pragma by which a program asks for bounded rounds (decision 0056): `.pragma "cross-rounds" "4"`. A typing
+/// program declares it: its cross-file recursion is over interface summaries, cut at `k` file crossings, with the
+/// pending round when it also declares `unconverged`. A program that does not declare it (a rule) has its
+/// cross-file part run as one fixpoint, which no chain length cuts.
+pub(crate) const PRAGMA: &str = "cross-rounds";
+
+/// The rounds `prog` declares (`PRAGMA`), if it declares them.
+/// The program setting `.pragma "cross-rounds" "k"` lowers to (from `.rr`, or the `.rdl` copies' same line).
+pub(crate) fn setting(k: &str) -> (String, String) {
+    ("pragma".to_owned(), format!("\"{PRAGMA}\" \"{k}\""))
+}
+
+pub(crate) fn declared(prog: &Program) -> Option<usize> {
+    prog.settings.iter().filter(|(key, _)| key == "pragma").find_map(|(_, text)| {
+        let words: Vec<&str> = text.split('"').map(str::trim).filter(|w| !w.is_empty()).collect();
+        match words.as_slice() {
+            [key, k] if *key == PRAGMA => k.parse().ok(),
+            _ => None,
+        }
+    })
+}
+
+/// The rounds bound of a program that declares `declared` rounds: that, or `RERAIL_CROSS_ROUNDS` (a diagnostic: how
+/// many rounds a corpus needs), or a test's `with_k` on this thread.
+pub(crate) fn k(declared: usize) -> usize {
     #[cfg(test)]
     if let Some(k) = TEST_K.with(std::cell::Cell::get) {
         return k;
     }
-    std::env::var("RERAIL_CROSS_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(K)
+    std::env::var("RERAIL_CROSS_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(declared)
 }
 
 #[cfg(test)]

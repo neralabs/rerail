@@ -1,0 +1,50 @@
+.policy "ruff-n806-non-lowercase-variable-in-function" revision 2
+.description "Name local variables inside functions in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N806 (pep8-naming): a name stored in a function's own scope (assignment, loop, `with`, walrus or match
+// capture target) that has an uppercase letter. Exempt: a name the function declares `global`; assignments that
+// make a type (namedtuple, NamedTuple, TypedDict, TypeVar, NewType, `X: TypeAlias = …`, `type X = …`); Django's
+// `X = apps.get_model(…, "X")` and `X = import_string("….X")`; names matching `pep8-naming.ignore-names`.
+//   def f():
+//       Camel = 0                     ← N806
+//       T = TypeVar("T")              not reported
+//       Stream = apps.get_model("app", "Stream")    not reported
+#include "python/naming.rr"
+
+.violation N806(at: node, x: symbol) code "N806"
+    "Rename `{x}` to lowercase snake_case and update its uses; keep the name if it holds a class."
+    suppress ruff "N806"
+N806(n, x) :- store_name(n, x, f), kind(f, "function_definition"), !lower_name(x), !global_name(f, x),
+    !type_store(n), !model_import(n, x), !naming_ignored(x).
+.decl global_name(f: node, x: symbol)  // `global x` in f (not `nonlocal x`)
+global_name(f, x) :- decl(f, x, m), kind(m, "module").
+.decl type_store(n: node)
+type_store(n) :- store_makes(n, _).
+type_store(n) :- store_name(n, _, _), inside(n, _, "type_alias_statement").
+// model_import(n, x): Django loads model x by name. get_model's model name is its `model_name` keyword or its
+// last positional argument; a non-literal name may be anything, so it exempts too. import_string's path is its
+// `dotted_path` keyword or its first positional argument.
+.decl model_import(n: node, x: symbol)
+model_import(n, x) :- model_call(n, x, c), field(c, "function", g), dotted_expr(g, s),
+    (s = "get_model" ; suffix(".get_model", s)), model_arg(c, "model_name", v), (value(v, x) ; !kind(v, "string")).
+model_import(n, x) :- model_call(n, x, c), field(c, "function", g), sym_of(g, "django.utils.module_loading.import_string"),
+    model_arg(c, "dotted_path", v), value(v, p), suffix(cat(".", x), p).
+.decl model_call(n: node, x: symbol, c: node)
+model_call(n, x, c) :- store_name(n, x, _), store_stmt(n, a), assign_value(a, c), kind(c, "call").
+// model_arg(c, k, v): Ruff's find_argument_value: keyword k, else the last (get_model) or first (import_string)
+// positional argument.
+.decl model_arg(c: node, k: symbol, v: node)
+model_arg(c, k, v) :- model_call(_, _, c), (k = "model_name" ; k = "dotted_path"), model_kwarg(c, k, v).
+model_arg(c, "model_name", v) :- model_pos(c, v, i), !model_kwarg(c, "model_name", _),
+    count : { model_pos(c, _, j), j > i } = 0.
+model_arg(c, "dotted_path", v) :- model_pos(c, v, i), !model_kwarg(c, "dotted_path", _),
+    count : { model_pos(c, _, j), j < i } = 0.
+.decl model_kwarg(c: node, k: symbol, v: node)
+model_kwarg(c, k, v) :- model_call(_, _, c), field(c, "arguments", al), child(al, a, _), kind(a, "keyword_argument"),
+    field(a, "name", kn), text(kn, k), field(a, "value", v).
+.decl model_pos(c: node, v: node, i: number)
+model_pos(c, v, i) :- model_call(_, _, c), field(c, "arguments", al), child(al, v, i), !kind(v, "keyword_argument"),
+    !kind(v, "comment").

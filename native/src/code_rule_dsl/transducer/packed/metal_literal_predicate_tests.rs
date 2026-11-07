@@ -115,7 +115,7 @@ fn finite_literals_filter_before_witness_limits_across_register_and_dynamic_bran
                 "length={length}, accepted limit={limit}"
             );
             let trace = scope.snapshot();
-            assert!(trace.len() <= 600);
+            assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
             assert!(
                 trace
                     .iter()

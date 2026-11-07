@@ -1,0 +1,23 @@
+.policy "ruff-f541-f-string-missing-placeholders" revision 3
+.description "Remove the f prefix from Python f-strings that have no placeholders; it suggests interpolation that never happens."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F541 (pyflakes): an f-string with no placeholder; the `f` does nothing. Adjacent literals are one string:
+// if any f-string piece of it has a placeholder, none is reported; else every f-string piece is.
+//   f"done"                  ← F541
+//   f"a" "b" F"c"            ← F541 twice, at f"a" and F"c"
+//   f"{n} items" " total"    not reported
+//   f"{v:{f'.2f'}}"          ← F541 at the inner f'.2f', which is a string of its own
+#include "python/pyflakes.rr"
+//   fstring(n)  n is an f-string, or adjacent literals one of which is (python/ast)
+
+.violation F541(at: node) code "F541"
+    "Remove the `f` prefix and unescape doubled braces to keep this string's runtime value unchanged."
+    suppress ruff "F541"
+F541(s) :- kind(s, "string"), fstring(s), !placeholder(s), !concatenated_with_placeholder(s).
+.decl placeholder(s: node)  // an f-string piece with an interpolation of its own, `{x}`
+placeholder(s) :- kind(s, "string"), child(s, i, _), kind(i, "interpolation").
+.decl concatenated_with_placeholder(s: node)
+concatenated_with_placeholder(s) :- child(c, s, _), kind(c, "concatenated_string"), child(c, o, _), placeholder(o).

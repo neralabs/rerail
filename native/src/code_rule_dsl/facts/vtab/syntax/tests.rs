@@ -33,7 +33,7 @@ pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
         .enumerate()
         .map(|(d, (path, source))| {
             let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts }
+            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None }
         })
         .collect()
 }
@@ -236,7 +236,7 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
     let Built::Facts(facts) = core::build(&file).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
-    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts }
+    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, guest: None }
 }
 
 /// `core.rr`'s relations of `docs`, each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself.
@@ -391,11 +391,223 @@ said(s) :- comment(_, s).
     );
     let out = dir.join("out");
     let options = serde_json::json!({"name": "ÀB", "list": ["x", "y"]});
-    corpus::run_with_options(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+    corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(read("dotted"), "a.b\nb\n");
     assert_eq!(read("low"), "àb\n");
     assert_eq!(read("item"), "0\tx\n1\ty\n");
     assert_eq!(read("said"), "hello\n");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `within` and `span_within` (decision 0050) hold exactly the pairs that comparing every pair of one document's
+/// nodes gives (preorder intervals for the tree, spans for the other): looked up by either column, and scanned.
+/// The documents with errors and empty bodies bring nodes of zero width.
+#[test]
+fn within_holds_exactly_the_contained_pairs() {
+    let store = ContentStore::open(&temp("within")).unwrap();
+    let mut docs: Vec<Document> = documents().into_iter().take(3).collect();
+    for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
+        let path = format!("broken{at}.py");
+        let facts = facts(&path, source);
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None });
+    }
+    let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
+    let nodes = *batch.nodes.last().unwrap();
+    let id = |r: usize| batch.id(r);
+    // (document, local, size, depth, start, end) of node row r.
+    let at = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let core = p.core[local] as usize;
+        (p.key, local, p.size[local] as usize, p.depth[local] as usize, p.facts.start[core], p.facts.end[core])
+    };
+    let zero = (0..nodes).filter(|&r| at(r).4 == at(r).5).count();
+    assert!(zero > 0, "the broken documents have nodes of zero width");
+    for mode in [within::Mode::Tree, within::Mode::Span] {
+        let within = within::Within::new(Arc::clone(&batch), mode);
+        let mut expected = BTreeSet::new();
+        for a in 0..nodes {
+            for b in 0..nodes {
+                let ((da, la, _, _, sa, ea), (db, lb, zb, _, sb, eb)) = (at(a), at(b));
+                let holds = da == db
+                    && match mode {
+                        within::Mode::Tree => lb < la && la <= lb + zb,
+                        within::Mode::Span => sb <= sa && ea <= eb,
+                        within::Mode::Axis(_) => unreachable!("the axes have their own test"),
+                    };
+                if holds {
+                    expected.insert((id(a), id(b)));
+                }
+            }
+        }
+        let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
+        let ids: Vec<i64> = (0..nodes).map(id).collect();
+        // By outer first (half the nodes), then by inner, then the scan: rows made by one lookup serve the others.
+        let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
+        assert_eq!(rows(within.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, b)| half.contains(b)).copied().collect());
+        assert_eq!(rows(within.lookup(0, &ids).unwrap()), expected);
+        assert_eq!(rows(within.lookup(1, &ids).unwrap()), expected);
+        assert_eq!(rows((0..within.len()).collect()), expected);
+        // Each node's containers are made once: the inner side's rows are exactly the pairs.
+        assert_eq!(within.lookup(0, &ids).unwrap().len(), expected.len());
+        let own = usize::from(mode == within::Mode::Span);
+        assert_eq!(within.estimated_len(), (0..nodes).map(|r| at(r).3 + own).sum::<usize>());
+        if mode == within::Mode::Tree {
+            assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
+        }
+    }
+}
+
+/// The kind-set axes (`within::Axis`: `nearest`, `inside`, `has`) hold exactly the pairs a brute-force walk of each
+/// node's strict ancestors gives, looked up by either column and scanned, and their statistics count the rows.
+#[test]
+fn the_kind_set_axes_hold_exactly_their_pairs() {
+    use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_atom};
+    let store = ContentStore::open(&temp("axes")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
+    let nodes = *batch.nodes.last().unwrap();
+    let id = |r: usize| batch.id(r);
+    // (document, local, size) and kind atom of node row r.
+    let at = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        (p.key, local, p.size[local] as usize)
+    };
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = (p.facts.kind[p.core[local] as usize] % KIND_STRIDE) as usize;
+        i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16)))
+    };
+    // Nested kinds: the root's, and two from inside the documents.
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let member = |r: usize| set.contains(&kind(r));
+    let below = |n: usize, a: usize| {
+        let ((dn, ln, _), (da, la, za)) = (at(n), at(a));
+        dn == da && la < ln && ln <= la + za
+    };
+    for axis in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has] {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set);
+        let mut expected = BTreeSet::new();
+        for n in 0..nodes {
+            for a in 0..nodes {
+                let holds = below(n, a)
+                    && match axis {
+                        within::Axis::Inside => member(a),
+                        within::Axis::Has => member(n),
+                        within::Axis::Nearest => member(a) && !(0..nodes).any(|c| c != a && member(c) && below(n, c) && below(c, a)),
+                    };
+                if holds {
+                    expected.insert((id(n), id(a)));
+                }
+            }
+        }
+        assert!(!expected.is_empty());
+        let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect() };
+        let ids: Vec<i64> = (0..nodes).map(id).collect();
+        let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
+        assert_eq!(rows(source.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, a)| half.contains(a)).copied().collect());
+        assert_eq!(rows(source.lookup(0, &ids).unwrap()), expected);
+        assert_eq!(rows(source.lookup(1, &ids).unwrap()), expected);
+        assert_eq!(rows((0..source.len()).collect()), expected);
+        assert_eq!(source.len(), expected.len());
+        assert_eq!(source.estimated_len(), expected.len(), "an axis's rows are counted from the tree");
+        let stats = source.statistics().unwrap();
+        assert!(stats.iter().all(|(_, rows, ndv, _, _)| *rows == expected.len() as i64 && *ndv <= *rows));
+    }
+}
+
+/// A lookup by kind (or tape node) where the document is bound too stays in that document: over 128 copies of a
+/// file, `node WHERE d = ? AND kind = ?` reads one copy's calls, not every copy's (rechecked against `d`).
+#[test]
+fn lookups_with_a_bound_document_read_that_document_only() {
+    let store = ContentStore::open(&temp("doc-lookups")).unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let modules = Modules::default();
+    let source = "f(1)\ng(2)\nh(f(3))\n";
+    let docs: Vec<Document> = (1..=128).map(|k| document(k, &format!("m{k}.py"), "python", source)).collect();
+    for (name, source) in sources(&store, docs).unwrap() {
+        modules.bind(&db, name, source).unwrap();
+    }
+    let python: GrammarDialect = dialect_by_label("python").unwrap();
+    let call = core::kind_atom(tape_tag(python).unwrap(), python.kinds().kind_id("call"));
+    let count = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    let node = modules.get("node").unwrap();
+    let before = node.counters().candidates.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(count(&format!("SELECT count(*) FROM node WHERE d = 7 AND kind = {call}")), 4);
+    let read = node.counters().candidates.load(std::sync::atomic::Ordering::Relaxed) - before;
+    assert_eq!(read, 4, "one document's calls, not 128 documents'");
+    // The same answer with the document only rechecked.
+    assert_eq!(count(&format!("SELECT count(*) FROM node WHERE +d = 7 AND kind = {call}")), 4);
+    assert_eq!(count(&format!("SELECT count(*) FROM node WHERE d = 999 AND kind = {call}")), 0);
+    let core = modules.get("core_node").unwrap();
+    let t: i64 = count("SELECT t FROM core_node WHERE d = 3 LIMIT 1 OFFSET 2");
+    let before = core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(count(&format!("SELECT count(*) FROM core_node WHERE d = 3 AND t = {t}")), 1);
+    assert_eq!(core.counters().candidates.load(std::sync::atomic::Ordering::Relaxed) - before, 1);
+}
+
+
+#[test]
+fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
+    let store = ContentStore::open(&temp("python-verdict")).unwrap();
+    let doc = document(0, "a.py", "python", "print \"legacy\"\n");
+    let source_only = Projection { reads: Some(["source".into(), "text".into()].into()), ..Projection::core() };
+    shaped(&store, vec![doc.clone()], &source_only).unwrap();
+    assert!(doc.facts.python_syntax.get().is_none(), "raw text must not request grammar validation");
+    let ast = Projection { reads: Some(["syntax_error".into()].into()), ..Projection::core() };
+    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    let verdict = doc.facts.python_syntax.get().expect("demanded verdict");
+    assert!(verdict.is_some());
+    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    assert!(std::ptr::eq(verdict, doc.facts.python_syntax.get().unwrap()), "the tape owns one shared verdict");
+}
+
+/// Literal values and positions are one demanded producer; a names-only rule must not build either table.
+#[test]
+fn unread_python_literal_columns_are_not_materialized() {
+    let store = ContentStore::open(&temp("literal-demand")).unwrap();
+    let doc = document(0, "a.py", "python", "x = 'plain'\ny = f'left{x}right'\n");
+    let names = Projection { reads: Some(["name".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc.clone()], &names).unwrap();
+    for rel in ["str_part", "str_part_start", "str_part_word"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
+    }
+    let literals = Projection { reads: Some(["str_part".into(), "str_part_start".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc.clone()], &literals).unwrap();
+    for rel in ["str_part", "str_part_start"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 3, "{rel}");
+    }
+    assert_eq!(rows.iter().find(|(name, _)| *name == "str_part_word").unwrap().1.len(), 0);
+    let words = Projection { reads: Some(["str_part_word".into()].into()), ..Projection::core() };
+    let rows = shaped(&store, vec![doc], &words).unwrap();
+    assert_eq!(rows.iter().find(|(name, _)| *name == "str_part_word").unwrap().1.len(), 3);
+    for rel in ["str_part", "str_part_start"] {
+        assert_eq!(rows.iter().find(|(name, _)| *name == rel).unwrap().1.len(), 0, "{rel}");
+    }
+}
+
+
+#[test]
+fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
+    let store = ContentStore::open(&temp("container-text-demand")).unwrap();
+    let source = format!("items = [{}]\n", "1,".repeat(1000));
+    let doc = document(0, "a.py", "python", &source);
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    for (body, source_needed, line_needed) in [
+        ("out(t) :- source(_, sp), kind(n, \"identifier\"), text(n, t).", false, false),
+        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\nout(t) :- copied(s), alias = s, text(alias, t).", true, false),
+        (".decl copied(sp: span)\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", false, true),
+        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", true, true),
+        ("out(\"missing\") :- source(_, sp), !text(sp, _).", true, false),
+        ("out(t) :- source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let projection = Projection::of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
+        let rows = shaped(&store, vec![doc.clone()], &projection).unwrap();
+        let relation = |name| &rows.iter().find(|(n, _)| *n == name).unwrap().1;
+        let text = relation("text");
+        let has_text = |loc| (0..text.len()).any(|row| text.value(row, 0) == loc);
+        assert_eq!(has_text(relation("source").value(0, 1)), source_needed, "source: {body}");
+        assert_eq!(has_text(relation("src_line").value(0, 2)), line_needed, "line: {body}");
+    }
 }

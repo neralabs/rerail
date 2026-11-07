@@ -1,0 +1,3412 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "admin_async_purity",
+    "async_executor",
+    "async_patterns",
+    "async_sync_boundary",
+    "classvar_check",
+    "conn_or_txn_union",
+    "dynamic_module_loading",
+    "forwardref",
+    "type_safety_patterns",
+    "unresolved_forward_refs"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "provenance": "Additional source probes evaluated by the pinned original analyzers and real FactEngine plugin reporters. Not original pytest cases.",
+  "events": [
+    {
+      "test": "probe:dynamic_module_loading:positive:analyzer",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = __import__(\"os\")\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "DML001",
+          "message": "__import__() -- inline dynamic import",
+          "tag": "pattern-2",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:dynamic_module_loading:positive:plugin",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = __import__(\"os\")\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "DML001",
+          "message": "__import__() -- inline dynamic import",
+          "tag": "pattern-2"
+        }
+      ]
+    },
+    {
+      "test": "probe:dynamic_module_loading:clean:analyzer",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "import os\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:dynamic_module_loading:clean:plugin",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "import os\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:dynamic_module_loading:trigger-is-literal:analyzer",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = __import__ (\"os\")\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:dynamic_module_loading:trigger-is-literal:plugin",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = __import__ (\"os\")\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:dynamic_module_loading:two-imports:analyzer",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "import_module(\"a\")\nimportlib.import_module(\"b\")\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "DML001",
+          "message": "import_module(...) -- use static import or function-scoped import",
+          "tag": "pattern-4",
+          "severity": null,
+          "is_fallback": false
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "DML001",
+          "message": "importlib.import_module(...) -- use static import or function-scoped import",
+          "tag": "pattern-3",
+          "severity": null,
+          "is_fallback": false
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "DML001",
+          "message": "import_module(...) -- use static import or function-scoped import",
+          "tag": "pattern-4",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:dynamic_module_loading:two-imports:plugin",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "import_module(\"a\")\nimportlib.import_module(\"b\")\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "DML001",
+          "message": "import_module(...) -- use static import or function-scoped import",
+          "tag": "pattern-4"
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "DML001",
+          "message": "import_module(...) -- use static import or function-scoped import",
+          "tag": "pattern-4"
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "DML001",
+          "message": "importlib.import_module(...) -- use static import or function-scoped import",
+          "tag": "pattern-3"
+        }
+      ]
+    },
+    {
+      "test": "probe:dynamic_module_loading:mixed-delimiters:analyzer",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "\"\"\"\n'''\n__import__(\"hidden\")\n\"\"\"\n__import__(\"shown\")\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "DML001",
+          "message": "__import__() -- inline dynamic import",
+          "tag": "pattern-2",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:dynamic_module_loading:mixed-delimiters:plugin",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "\"\"\"\n'''\n__import__(\"hidden\")\n\"\"\"\n__import__(\"shown\")\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "DML001",
+          "message": "__import__() -- inline dynamic import",
+          "tag": "pattern-2"
+        }
+      ]
+    },
+    {
+      "test": "probe:dynamic_module_loading:indentation-reset:analyzer",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "if TYPE_CHECKING:\n  import_module(\"hidden\")\nelse:\n  import_module(\"shown\")\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "DML001",
+          "message": "import_module(...) -- use static import or function-scoped import",
+          "tag": "pattern-4",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:dynamic_module_loading:indentation-reset:plugin",
+      "call": 1,
+      "check": "dynamic_module_loading",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "if TYPE_CHECKING:\n  import_module(\"hidden\")\nelse:\n  import_module(\"shown\")\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "DML001",
+          "message": "import_module(...) -- use static import or function-scoped import",
+          "tag": "pattern-4"
+        }
+      ]
+    },
+    {
+      "test": "probe:forwardref:positive-callable:analyzer",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field_info):\n annotation = field_info.annotation\n return callable(annotation)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 8,
+          "code": "FWDREF003",
+          "message": "callable(annotation) without ForwardRef handling. ForwardRef is callable but calling it produces wrong results. Consider checking for ForwardRef first.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:forwardref:positive-callable:plugin",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field_info):\n annotation = field_info.annotation\n return callable(annotation)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "FWDREF003",
+          "message": "callable(annotation) without ForwardRef handling. ForwardRef is callable but calling it produces wrong results. Consider checking for ForwardRef first.",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:forwardref:guard-before-check:analyzer",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(info):\n annotation = info.annotation\n isinstance(annotation, (str, ForwardRef))\n return isinstance(annotation, type)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:forwardref:guard-before-check:plugin",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(info):\n annotation = info.annotation\n isinstance(annotation, (str, ForwardRef))\n return isinstance(annotation, type)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:forwardref:guard-after-check:analyzer",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(info):\n annotation = info.annotation\n result = issubclass(annotation, object)\n isinstance(annotation, ForwardRef)\n return result\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 10,
+          "code": "FWDREF002",
+          "message": "issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:forwardref:guard-after-check:plugin",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(info):\n annotation = info.annotation\n result = issubclass(annotation, object)\n isinstance(annotation, ForwardRef)\n return result\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "FWDREF002",
+          "message": "issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:forwardref:guard-reset:analyzer",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(info):\n annotation = info.annotation\n isinstance(annotation, ForwardRef)\n annotation = info.annotation\n return callable(annotation)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 5,
+          "column": 8,
+          "code": "FWDREF003",
+          "message": "callable(annotation) without ForwardRef handling. ForwardRef is callable but calling it produces wrong results. Consider checking for ForwardRef first.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:forwardref:guard-reset:plugin",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(info):\n annotation = info.annotation\n isinstance(annotation, ForwardRef)\n annotation = info.annotation\n return callable(annotation)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "FWDREF003",
+          "message": "callable(annotation) without ForwardRef handling. ForwardRef is callable but calling it produces wrong results. Consider checking for ForwardRef first.",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:forwardref:nested-state:analyzer",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(info):\n annotation = info.annotation\n def inner():\n  annotation = info.annotation\n  isinstance(annotation, ForwardRef)\n return issubclass(annotation, object)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 6,
+          "column": 8,
+          "code": "FWDREF002",
+          "message": "issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:forwardref:nested-state:plugin",
+      "call": 1,
+      "check": "forwardref",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(info):\n annotation = info.annotation\n def inner():\n  annotation = info.annotation\n  isinstance(annotation, ForwardRef)\n return issubclass(annotation, object)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 6,
+          "column": null,
+          "code": "FWDREF002",
+          "message": "issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:unresolved_forward_refs:positive:analyzer",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field_info):\n return get_origin(field_info.annotation)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "unresolved_forward_ref",
+          "message": "passed to get_origin() without resolving ForwardRef",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:unresolved_forward_refs:positive:plugin",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field_info):\n return get_origin(field_info.annotation)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "unresolved_forward_ref",
+          "message": "f(): passed to get_origin() without resolving ForwardRef",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:unresolved_forward_refs:resolved-later:analyzer",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field_info):\n result = aliases.get(\"x\", get_origin(field_info.annotation))\n aliases = get_type_hints(Model)\n return result\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:unresolved_forward_refs:resolved-later:plugin",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field_info):\n result = aliases.get(\"x\", get_origin(field_info.annotation))\n aliases = get_type_hints(Model)\n return result\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:unresolved_forward_refs:second-safe-only:analyzer",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field_info):\n return isinstance(field_info.annotation, type, str)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "unresolved_forward_ref",
+          "message": "passed to isinstance() without resolving ForwardRef",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:unresolved_forward_refs:second-safe-only:plugin",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field_info):\n return isinstance(field_info.annotation, type, str)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "unresolved_forward_ref",
+          "message": "f(): passed to isinstance() without resolving ForwardRef",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:unresolved_forward_refs:custom-field:analyzer",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field):\n return get_origin(field.annotation)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:unresolved_forward_refs:custom-field:plugin",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(field):\n return get_origin(field.annotation)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:unresolved_forward_refs:model-fields:analyzer",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = get_args(Model.model_fields[\"id\"].annotation)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "unresolved_forward_ref",
+          "message": "passed to get_args() without resolving ForwardRef",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:unresolved_forward_refs:model-fields:plugin",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = get_args(Model.model_fields[\"id\"].annotation)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "unresolved_forward_ref",
+          "message": "<module>(): passed to get_args() without resolving ForwardRef",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:unresolved_forward_refs:reversed-equality:analyzer",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "Model == field_info.annotation\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:unresolved_forward_refs:reversed-equality:plugin",
+      "call": 1,
+      "check": "unresolved_forward_refs",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "Model == field_info.annotation\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:classvar_check:positive:analyzer",
+      "call": 1,
+      "check": "classvar_check",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "get_origin(x) is typing.ClassVar\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "CLASSVAR001",
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:classvar_check:positive:plugin",
+      "call": 1,
+      "check": "classvar_check",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "get_origin(x) is typing.ClassVar\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "CLASSVAR001",
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:classvar_check:clean-helper:analyzer",
+      "call": 1,
+      "check": "classvar_check",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def is_classvar_annotation(x):\n return get_origin(x) is ClassVar\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:classvar_check:clean-helper:plugin",
+      "call": 1,
+      "check": "classvar_check",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def is_classvar_annotation(x):\n return get_origin(x) is ClassVar\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:classvar_check:chain:analyzer",
+      "call": 1,
+      "check": "classvar_check",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "get_origin(x) is ClassVar == ClassVar\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "CLASSVAR001",
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "CLASSVAR001",
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:classvar_check:chain:plugin",
+      "call": 1,
+      "check": "classvar_check",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "get_origin(x) is ClassVar == ClassVar\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "CLASSVAR001",
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "tag": null
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "CLASSVAR001",
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:classvar_check:chain-other-operator:analyzer",
+      "call": 1,
+      "check": "classvar_check",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "get_origin(x) < ClassVar == object\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:classvar_check:chain-other-operator:plugin",
+      "call": 1,
+      "check": "classvar_check",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "get_origin(x) < ClassVar == object\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:type_safety_patterns:positive:analyzer",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def where(expression: str):\n pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "TSP001",
+          "message": "str in where signature: where should accept Expression or Field, not str",
+          "tag": "signature-where",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:type_safety_patterns:positive:plugin",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def where(expression: str):\n pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "TSP001",
+          "message": "str in where signature: where should accept Expression or Field, not str",
+          "tag": "signature-where"
+        }
+      ]
+    },
+    {
+      "test": "probe:type_safety_patterns:clean:analyzer",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def select(*columns: Field):\n pass\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:type_safety_patterns:clean:plugin",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def select(*columns: Field):\n pass\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:type_safety_patterns:category-collision:analyzer",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "value: str | Expression | Field = Expression[Any, Any]\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "TSP001",
+          "message": "str | Expression pattern: Remove 'str' from union; use Expression or Field only",
+          "tag": "text-str_union_expression",
+          "severity": null,
+          "is_fallback": false
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "TSP001",
+          "message": "Expression[Any, Any] usage: Use Expression[Any, T] or Expression[V, T] with specific types",
+          "tag": "text-expression_any_any",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:type_safety_patterns:category-collision:plugin",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "value: str | Expression | Field = Expression[Any, Any]\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "TSP001",
+          "message": "Expression[Any, Any] usage: Use Expression[Any, T] or Expression[V, T] with specific types",
+          "tag": "text-expression_any_any"
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "TSP001",
+          "message": "str | Expression pattern: Remove 'str' from union; use Expression or Field only",
+          "tag": "text-str_union_expression"
+        }
+      ]
+    },
+    {
+      "test": "probe:type_safety_patterns:body-is-not-order-by-signature:analyzer",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def order_by(column: Field):\n  column: str = \"body\"\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:type_safety_patterns:body-is-not-order-by-signature:plugin",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def order_by(column: Field):\n  column: str = \"body\"\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:type_safety_patterns:same-line-multiple:analyzer",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = str | Expression; y = str | Expression\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "TSP001",
+          "message": "str | Expression pattern: Remove 'str' from union; use Expression or Field only",
+          "tag": "text-str_union_expression",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:type_safety_patterns:same-line-multiple:plugin",
+      "call": 1,
+      "check": "type_safety_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = str | Expression; y = str | Expression\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "TSP001",
+          "message": "str | Expression pattern: Remove 'str' from union; use Expression or Field only",
+          "tag": "text-str_union_expression"
+        }
+      ]
+    },
+    {
+      "test": "probe:conn_or_txn_union:positive:analyzer",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(txn: Transaction | Connection):\n pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "UNION",
+          "message": "Parameter 'txn' accepts both: Transaction | Connection",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:conn_or_txn_union:positive:plugin",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(txn: Transaction | Connection):\n pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "UNION",
+          "message": "f: Parameter 'txn' accepts both: Transaction | Connection",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:conn_or_txn_union:clean:analyzer",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(txn: Transaction):\n pass\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:conn_or_txn_union:clean:plugin",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(txn: Transaction):\n pass\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:conn_or_txn_union:qualified:analyzer",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(txn: api.Transaction | api.Connection):\n pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "UNION",
+          "message": "Parameter 'txn' accepts both: api.Transaction | api.Connection",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:conn_or_txn_union:qualified:plugin",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(txn: api.Transaction | api.Connection):\n pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "UNION",
+          "message": "f: Parameter 'txn' accepts both: api.Transaction | api.Connection",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:conn_or_txn_union:string-wrapper-is-opaque:analyzer",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(txn: \"Connection | Transaction\"):\n pass\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:conn_or_txn_union:string-wrapper-is-opaque:plugin",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(txn: \"Connection | Transaction\"):\n pass\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:conn_or_txn_union:first-union-only:analyzer",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(a: Connection | Transaction, b: Connection | Transaction):\n pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "UNION",
+          "message": "Parameter 'a' accepts both: Connection | Transaction",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:conn_or_txn_union:first-union-only:plugin",
+      "call": 1,
+      "check": "conn_or_txn_union",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(a: Connection | Transaction, b: Connection | Transaction):\n pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "UNION",
+          "message": "f: Parameter 'a' accepts both: Connection | Transaction",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_executor:positive:analyzer",
+      "call": 1,
+      "check": "async_executor",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/postgres/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "run_in_executor",
+          "message": "loop.run_in_executor(None, run)",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_executor:positive:plugin",
+      "call": 1,
+      "check": "async_executor",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/postgres/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "run_in_executor",
+          "message": "run_in_executor in backend implementation: loop.run_in_executor(None, run)",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_executor:clean:analyzer",
+      "call": 1,
+      "check": "async_executor",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "loop.run_in_executor(None, run) # noqa: async-executor\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_executor:clean:plugin",
+      "call": 1,
+      "check": "async_executor",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "loop.run_in_executor(None, run) # noqa: async-executor\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_executor:allowed-source:analyzer",
+      "call": 1,
+      "check": "async_executor",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/sqlite/native_async_wrapper.py",
+          "source": "loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/sqlite/native_async_wrapper.py",
+          "line": 1,
+          "column": null,
+          "code": "run_in_executor",
+          "message": "loop.run_in_executor(None, run)",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_executor:allowed-source:plugin",
+      "call": 1,
+      "check": "async_executor",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/sqlite/native_async_wrapper.py",
+          "source": "loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_executor:LF-only:analyzer",
+      "call": 1,
+      "check": "async_executor",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "run_in_executor\u000b(None, fn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/postgres/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "run_in_executor",
+          "message": "run_in_executor\u000b(None, fn)",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_executor:LF-only:plugin",
+      "call": 1,
+      "check": "async_executor",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "run_in_executor\u000b(None, fn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/postgres/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "run_in_executor",
+          "message": "run_in_executor in backend implementation: run_in_executor\u000b(None, fn)",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:positive:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(transaction: ReadTransaction):\n return transaction.select_one(User, key)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'transaction.select_one()' in async function - use select_one_async()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:positive:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(transaction: ReadTransaction):\n return transaction.select_one(User, key)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'transaction.select_one()' in async function - use select_one_async()",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:clean:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n return await txn.select_one_async(User, key)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_patterns:clean:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n return await txn.select_one_async(User, key)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_patterns:write-decorator:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "@session.write_async()\nasync def f(txn):\n txn.insert(User)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC004",
+          "message": "Use insert_async() instead of insert() in async transaction",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:write-decorator:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "@session.write_async()\nasync def f(txn):\n txn.insert(User)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC004",
+          "message": "Use insert_async() instead of insert() in async transaction",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:internal-io:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "async def f(self):\n return self._fetchall()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/postgres/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "ASYNC005",
+          "message": "Sync I/O '_fetchall()' in async function 'f' - use _fetchall_async()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:internal-io:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "async def f(self):\n return self._fetchall()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/postgres/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "ASYNC005",
+          "message": "Sync I/O '_fetchall()' in async function 'f' - use _fetchall_async()",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:thread-fallback:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "async def f(fn):\n # ASYNC_FALLBACK: compatibility\n return asyncio.to_thread(fn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/postgres/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC001",
+          "message": "Use native async instead of to_thread() in impl/",
+          "tag": null,
+          "severity": null,
+          "is_fallback": true
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:thread-fallback:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/postgres/probe.py",
+          "source": "async def f(fn):\n # ASYNC_FALLBACK: compatibility\n return asyncio.to_thread(fn)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_patterns:executor-wrapper:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(fn):\n wrapped = _wrap_for_executor(fn)\n return loop.run_in_executor(None, wrapped)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC002",
+          "message": "Use native async instead of run_in_executor() in impl/",
+          "tag": null,
+          "severity": null,
+          "is_fallback": true
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:executor-wrapper:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(fn):\n wrapped = _wrap_for_executor(fn)\n return loop.run_in_executor(None, wrapped)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_patterns:abstract-fallback:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "class Connection(ABC):\n async def f(self):\n  return asyncio.to_thread(run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC001",
+          "message": "Use native async instead of to_thread() in impl/",
+          "tag": null,
+          "severity": null,
+          "is_fallback": true
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:abstract-fallback:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "class Connection(ABC):\n async def f(self):\n  return asyncio.to_thread(run)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_patterns:sticky-query:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n query = txn.query(User)\n query = None\n return query.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'query.execute()' in async function - use execute_async()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:sticky-query:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n query = txn.query(User)\n query = None\n return query.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'query.execute()' in async function - use execute_async()",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:sticky-session:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(conn):\n session = conn.session(key)\n session = None\n return session.read(fn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "ASYNC007",
+          "message": "Sync 'session.read()' in async function - use await session.read_async()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:sticky-session:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(conn):\n session = conn.session(key)\n session = None\n return session.read(fn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "ASYNC007",
+          "message": "Sync 'session.read()' in async function - use await session.read_async()",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:sticky-transaction:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n txn = None\n return txn.select_one(User, key)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'txn.select_one()' in async function - use select_one_async()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:sticky-transaction:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n txn = None\n return txn.select_one(User, key)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'txn.select_one()' in async function - use select_one_async()",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:chained-alias:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n q = txn.query(User)\n alias = q\n return alias.filter(active=True).execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'alias.filter(active=True).execute()' in async function - use execute_async()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:chained-alias:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n q = txn.query(User)\n alias = q\n return alias.filter(active=True).execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'alias.filter(active=True).execute()' in async function - use execute_async()",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:multiple-targets:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n a = b = txn.query(User)\n return a.execute(), b.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'a.execute()' in async function - use execute_async()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        },
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'b.execute()' in async function - use execute_async()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:multiple-targets:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n a = b = txn.query(User)\n return a.execute(), b.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'a.execute()' in async function - use execute_async()",
+          "tag": null
+        },
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "ASYNC006",
+          "message": "Sync method 'b.execute()' in async function - use execute_async()",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_patterns:alias-order:analyzer",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n q = later\n later = txn.query(User)\n return q.execute()\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_patterns:alias-order:plugin",
+      "call": 1,
+      "check": "async_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "async def f(txn: ReadTransaction):\n q = later\n later = txn.query(User)\n return q.execute()\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_sync_boundary:positive:analyzer",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f():\n return asyncio.run(run())\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": 8,
+          "code": "SYNC_WRAPS_ASYNC",
+          "message": "asyncio.run()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_sync_boundary:positive:plugin",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f():\n return asyncio.run(run())\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "SYNC_WRAPS_ASYNC",
+          "message": "sync wraps async (asyncio.run): f: asyncio.run()",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:async_sync_boundary:clean:analyzer",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "async def f():\n return await run()\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_sync_boundary:clean:plugin",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "async def f():\n return await run()\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_sync_boundary:nearest-function:analyzer",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "async def f():\n def nested():\n  return asyncio.to_thread(run)\n return nested()\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_sync_boundary:nearest-function:plugin",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "async def f():\n def nested():\n  return asyncio.to_thread(run)\n return nested()\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_sync_boundary:allowed-source:analyzer",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/sqlite/native_async_wrapper.py",
+          "source": "async def f():\n return loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/sqlite/native_async_wrapper.py",
+          "line": 2,
+          "column": 8,
+          "code": "EXECUTOR_ESCAPE",
+          "message": "loop.run_in_executor()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_sync_boundary:allowed-source:plugin",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/sqlite/native_async_wrapper.py",
+          "source": "async def f():\n return loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_sync_boundary:allowed-function:analyzer",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/mariadb/connection.py",
+          "source": "async def _common_close_resources():\n return loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/mariadb/connection.py",
+          "line": 2,
+          "column": 8,
+          "code": "EXECUTOR_ESCAPE",
+          "message": "loop.run_in_executor()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_sync_boundary:allowed-function:plugin",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/mariadb/connection.py",
+          "source": "async def _common_close_resources():\n return loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:async_sync_boundary:allowed-file-other-function:analyzer",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/mariadb/connection.py",
+          "source": "async def unrelated():\n return loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/mariadb/connection.py",
+          "line": 2,
+          "column": 8,
+          "code": "EXECUTOR_ESCAPE",
+          "message": "loop.run_in_executor()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:async_sync_boundary:allowed-file-other-function:plugin",
+      "call": 1,
+      "check": "async_sync_boundary",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/mariadb/connection.py",
+          "source": "async def unrelated():\n return loop.run_in_executor(None, run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/mariadb/connection.py",
+          "line": 2,
+          "column": null,
+          "code": "EXECUTOR_ESCAPE",
+          "message": "async wraps sync (run_in_executor): unrelated: loop.run_in_executor()",
+          "tag": null
+        }
+      ]
+    },
+    {
+      "test": "probe:admin_async_purity:positive:analyzer",
+      "call": 1,
+      "check": "admin_async_purity",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "source": "asyncio.to_thread(run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "AAP001",
+          "message": "asyncio.to_thread(): asyncio.to_thread(run)",
+          "tag": "pattern-0",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:admin_async_purity:positive:plugin",
+      "call": 1,
+      "check": "admin_async_purity",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "source": "asyncio.to_thread(run)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "AAP001",
+          "message": "asyncio.to_thread(): asyncio.to_thread(run)",
+          "tag": "pattern-0"
+        }
+      ]
+    },
+    {
+      "test": "probe:admin_async_purity:clean:analyzer",
+      "call": 1,
+      "check": "admin_async_purity",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "source": "\"\"\"\nasyncio.to_thread(run)\n\"\"\"\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:admin_async_purity:clean:plugin",
+      "call": 1,
+      "check": "admin_async_purity",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "source": "\"\"\"\nasyncio.to_thread(run)\n\"\"\"\n"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "test": "probe:admin_async_purity:odd-quote-count:analyzer",
+      "call": 1,
+      "check": "admin_async_purity",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "source": "\"\"\" x \"\"\" y \"\"\"\nasyncio.to_thread(hidden)\n\"\"\"\nrun_in_executor(shown)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "AAP001",
+          "message": "run_in_executor(): run_in_executor(shown)",
+          "tag": "pattern-1",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:admin_async_purity:odd-quote-count:plugin",
+      "call": 1,
+      "check": "admin_async_purity",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "source": "\"\"\" x \"\"\" y \"\"\"\nasyncio.to_thread(hidden)\n\"\"\"\nrun_in_executor(shown)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "AAP001",
+          "message": "run_in_executor(): run_in_executor(shown)",
+          "tag": "pattern-1"
+        }
+      ]
+    },
+    {
+      "test": "probe:admin_async_purity:quotes-in-comment:analyzer",
+      "call": 1,
+      "check": "admin_async_purity",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "source": "# \"\"\"\nasyncio.to_thread(hidden)\n# \"\"\"\nrun_in_executor(shown)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "AAP001",
+          "message": "run_in_executor(): run_in_executor(shown)",
+          "tag": "pattern-1",
+          "severity": null,
+          "is_fallback": false
+        }
+      ]
+    },
+    {
+      "test": "probe:admin_async_purity:quotes-in-comment:plugin",
+      "call": 1,
+      "check": "admin_async_purity",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "compare_clause": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "source": "# \"\"\"\nasyncio.to_thread(hidden)\n# \"\"\"\nrun_in_executor(shown)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l8000_admin/tools/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "AAP001",
+          "message": "run_in_executor(): run_in_executor(shown)",
+          "tag": "pattern-1"
+        }
+      ]
+    }
+  ],
+  "loaded_source_files_checked": 125
+}

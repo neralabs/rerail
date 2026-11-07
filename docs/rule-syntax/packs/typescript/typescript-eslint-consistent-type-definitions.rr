@@ -1,0 +1,64 @@
+.policy "typescript-eslint-consistent-type-definitions" revision 6
+.description "Use an interface instead of a type alias to define TypeScript object types."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   type_child(x, c), type_literal(b)
+
+// typescript-eslint's consistent-type-definitions: object types are declared one way. The option is
+// "interface" (the default) or "type".
+//   "interface":  type T = { a: string };          → Use an `interface` instead of a `type`.  (at T)
+//   "type":       interface I { a: string }        → Use a `type` instead of an `interface`.  (at I)
+//   type T = string | { a: 1 };   fine: only an alias of a plain object type
+// Both fixes are applied: `interface T { a: string }`, and `type I = { a: string } & A` for `extends A`. An
+// interface inside `declare global { … }` gets no fix (it may be merged with the global one), and an
+// `export default interface I` becomes `type I = …` plus `export default I`.
+.violation consistent_type_definitions(at: node, id: symbol, msg: symbol)
+    code "@typescript-eslint/consistent-type-definitions" "{msg}"
+    suppress eslint "@typescript-eslint/consistent-type-definitions"
+    suppress oxlint "consistent-type-definitions"
+    suppress biome "lint/style/useConsistentTypeDefinitions"
+    fix safe to_interface "Use an interface"
+    fix safe to_type "Use a type alias"
+consistent_type_definitions(n, "interfaceOverType", "Use an `interface` instead of a `type`.") :-
+    !option("option", "type"), object_alias(a, n, _).
+consistent_type_definitions(n, "typeOverInterface", "Use a `type` instead of an `interface`.") :-
+    option("option", "type"), kind(i, "interface_declaration"), field(i, "name", n).
+
+// object_alias(a, n, b): `type n = b`, b an object type literal (parentheses aside, as TSESTree has none),
+// not a mapped type: `type M = { [K in X]: T }` stays.
+.decl object_alias(a: node, n: node, b: node)
+object_alias(a, n, b) :- kind(a, "type_alias_declaration"), field(a, "name", n), field(a, "value", v), type_child(v, b),
+    type_literal(b).
+
+// type T<X> = { a: X };  →  interface T<X> { a: X }: the keyword changes, the `=` and a final `;` go.
+to_interface(n, _, _) :- object_alias(a, n, _), first_token(a, t), field(a, "value", v), token_before(v, e)
+    => replace(t, `interface`), delete(e).
+to_interface(n, _, _) :- object_alias(a, n, _), last_token(a, s), text(s, ";") => delete(s).
+// interface I<X> extends A, B { c: 1 }  →  type I<X> = { c: 1 } & A & B. The body is rewritten once (edits on
+// one node must not overlap): `= `, the body, its heritage, and for `export default interface` the export moved
+// after it.
+to_type(n, _, _) :- interface_fix(i, n, b), first_token(i, t), text(b, x), heritage_tail(i, h), default_tail(i, d),
+    z = cat("= ", cat(x, cat(h, d))) => replace(t, `type`), replace(b, `$z`).
+to_type(n, _, _) :- interface_fix(i, n, _), child(i, x, _), kind(x, "extends_type_clause") => delete(x).
+to_type(n, _, _) :- interface_fix(i, n, _), field(e, "declaration", i), op(e, "default"), first_token(e, x),
+    token_after(x, y) => delete(x), delete(y).
+.decl heritage_tail(i: node, h: symbol)
+heritage_tail(i, h) :- interface_fix(i, _, _), extended(i, _), h = join y by c sep "" : { extended(i, c), text(c, w),
+    y = cat(" & ", w) }.
+heritage_tail(i, "") :- interface_fix(i, _, _), !extended(i, _).
+.decl extended(i: node, c: node)
+extended(i, c) :- child(i, x, _), kind(x, "extends_type_clause"), child(x, c, _), !kind(c, "comment").
+.decl default_tail(i: node, d: symbol)
+default_tail(i, cat("\nexport default ", x)) :- interface_fix(i, n, _), field(e, "declaration", i), op(e, "default"),
+    text(n, x).
+default_tail(i, "") :- interface_fix(i, _, _), !default_iface(i).
+.decl default_iface(i: node)
+default_iface(i) :- field(e, "declaration", i), op(e, "default").
+.decl interface_fix(i: node, n: node, b: node)  // interface i named n with body b, outside `declare global`
+interface_fix(i, n, b) :- kind(i, "interface_declaration"), field(i, "name", n), field(i, "body", b),
+    !in_global(i).
+.decl in_global(i: node)
+in_global(i) :- kind(i, "interface_declaration"), inside(i, g, "ambient_declaration"), op(g, "global").

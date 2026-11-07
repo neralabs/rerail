@@ -11,6 +11,9 @@
 // classes and inheritance (method lookup through bases, constructors to `__init__`, instances to `__call__`),
 // late-bound `self`/`cls` (the class and every workspace subclass), `super()`, and function values flowing through
 // assignments, returns and a function's returned parameter.
+// A typing program: its cross-file recursion runs in bounded rounds over the previous round's rows (decision 0056).
+.pragma "cross-rounds" "4"
+
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -18,7 +21,7 @@
 .decl text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl pkg(d: number, p: symbol)
-.input doc, node, child, field, text, op, pkg
+.input doc, node, child, field, text, op, pkg, kind, docof
 
 .decl scope(kind: symbol)
 scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
@@ -29,9 +32,7 @@ fscope("module"). fscope("function_definition"). fscope("lambda").
 fdef("function_definition").
 
 .decl kind(n: node, k: symbol)
-kind(n, k) :- node(_, n, k, _, _).
 .decl docof(n: node, d: number)
-docof(n, d) :- node(d, n, _, _, _).
 .decl modnode(d: number, m: node)
 modnode(d, m) :- node(d, m, "module", _, _).
 .decl modname(m: node, q: symbol)

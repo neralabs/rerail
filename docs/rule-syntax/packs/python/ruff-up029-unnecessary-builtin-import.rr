@@ -1,0 +1,41 @@
+.policy "ruff-up029-unnecessary-builtin-import" revision 2
+.description "Remove imports of Python 3 builtins from compatibility shims such as builtins, six and io; the names are already available without importing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP029 (pyupgrade): a `from m import x` of a name Python 3 has as a builtin, where m is `builtins` or one
+// of the Python 2 compatibility modules that re-export it (six, six.moves, six.moves.builtins, io). The
+// statement is reported once. Not reported: a relative import, a name imported `as` another, and an import
+// that rebinds a name already bound above it in the same scope (it restores the builtin on purpose).
+//   from builtins import ascii, bytes        ← UP029
+//   from six.moves import filter, zip_longest ← UP029 (filter)
+//   from math import pow
+//   from builtins import pow                 not reported: shadows math's pow
+#include "python/ast.rr"
+//   import_alias(i, a, m, x, local), from_module_raw(i, m), binding(s, x, site, form), scope_node(n, s)
+
+.violation UP029(at: node) code "UP029"
+    "Remove the names Python 3 already provides as builtins from this import, and the whole statement if nothing else remains. Keep it only if the code must still run on Python 2."
+    suppress ruff "UP029"
+UP029(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"),
+    from_module_raw(i, m), builtin_from(m, x), field(i, "name", a), kind(a, "dotted_name"), text(a, x),
+    scope_node(i, s), !restores(s, x, a).
+UP029(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"),
+    from_module_raw(i, m), builtin_from(m, "*"), child(i, w, _), kind(w, "wildcard_import").
+.decl restores(s: node, x: symbol, a: node)  // an earlier binding of x in s, which the import shadows
+restores(s, x, a) :- binding(s, x, site, _), site != a, earlier(site, a).
+
+// builtin_from(m, x): Ruff's table of the builtins each module re-exports.
+.decl builtin_from(m: symbol, x: symbol)
+builtin_from(m, x) :- (m = "builtins" ; m = "six.moves.builtins"), py3_builtin(x).
+builtin_from("io", "open").
+builtin_from("six", "callable"). builtin_from("six", "next").
+builtin_from("six.moves", "filter"). builtin_from("six.moves", "input"). builtin_from("six.moves", "map").
+builtin_from("six.moves", "range"). builtin_from("six.moves", "zip").
+.decl py3_builtin(x: symbol)
+py3_builtin("*"). py3_builtin("ascii"). py3_builtin("bytes"). py3_builtin("chr"). py3_builtin("dict").
+py3_builtin("filter"). py3_builtin("hex"). py3_builtin("input"). py3_builtin("int"). py3_builtin("isinstance").
+py3_builtin("list"). py3_builtin("map"). py3_builtin("max"). py3_builtin("min"). py3_builtin("next").
+py3_builtin("object"). py3_builtin("oct"). py3_builtin("open"). py3_builtin("pow"). py3_builtin("range").
+py3_builtin("round"). py3_builtin("str"). py3_builtin("super"). py3_builtin("zip").

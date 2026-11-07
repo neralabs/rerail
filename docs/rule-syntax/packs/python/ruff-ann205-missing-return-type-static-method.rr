@@ -1,0 +1,18 @@
+.policy "ruff-ann205-missing-return-type-static-method" revision 2
+.description "Annotate the return type of static methods; the annotation documents what they return and lets a type checker verify it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ANN205 (flake8-annotations): a method decorated with the builtin @staticmethod with no return
+// annotation. A def outside a class is not a method, decorated or not. The implementation after an @overload
+// is not checked.
+//   class C:
+//       @staticmethod
+//       def make(a: int): ...        ← ANN205
+#include "python/annotations.rr"
+
+.violation ANN205(at: node, name: symbol) code "ANN205"
+    "Add a return type annotation to static method `{name}`, such as `-> int`, naming the type it returns."
+    suppress ruff "ANN205"
+ANN205(nm, x) :- ann_missing_return(f, "ANN205"), field(f, "name", nm), text(nm, x).

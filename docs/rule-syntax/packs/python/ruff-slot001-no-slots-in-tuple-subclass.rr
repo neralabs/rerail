@@ -1,0 +1,23 @@
+.policy "ruff-slot001-no-slots-in-tuple-subclass" revision 2
+.description "Define __slots__ in subclasses of tuple; without it every instance carries its own attribute dict and uses more memory."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SLOT001 (flake8-slots): a class with `tuple` or `typing.Tuple` (bare or subscripted) among its bases
+// and no `__slots__` in its body. Stub files are exempt.
+//   class Bad(tuple):            ← SLOT001
+//       pass
+//   class Bad(Tuple[str, int]):  ← SLOT001
+//       pass
+//   class Good(tuple):           not reported
+//       __slots__ = ()
+#include "python/misc2-slots.rr"
+
+.violation SLOT001(at: node) code "SLOT001"
+    "Add `__slots__ = ()` to this `tuple` subclass so instances skip the per-instance `__dict__`; leave it if the class assigns instance attributes, which an empty `__slots__` forbids."
+    suppress ruff "SLOT001"
+SLOT001(nm) :- slots_missing(c, nm), slots_base(c, b), slot001_tuple(b).
+.decl slot001_tuple(b: node)
+slot001_tuple(b) :- (sym_of(b, "builtins.tuple") ; sym_of(b, "typing.Tuple") ; sym_of(b, "typing_extensions.Tuple")).
+slot001_tuple(b) :- kind(b, "subscript"), field(b, "value", v), slot001_tuple(v).

@@ -11,80 +11,32 @@
 k0("function_definition").
 .decl k1(kind: symbol)
 k1("function_definition"). k1("lambda").
-.decl blocked109(low: node, high: node)
-.decl blocked116(low: node, high: node)
-.decl blocked123(low: node, high: node)
-.decl blocked130(low: node, high: node)
-.decl blocked137(low: node, high: node)
-.decl blocked144(low: node, high: node)
-.decl blocked151(low: node, high: node)
-.decl blocked154(low: node, high: node)
-.decl blocked169(low: node, high: node)
-.decl blocked198(low: node, high: node)
-.decl blocked201(low: node, high: node)
-.decl blocked216(low: node, high: node)
-.decl blocked245(low: node, high: node)
-.decl blocked248(low: node, high: node)
-.decl blocked263(low: node, high: node)
-.decl blocked292(low: node, high: node)
-.decl blocked302(low: node, high: node)
-.decl blocked31(low: node, high: node)
-.decl blocked312(low: node, high: node)
-.decl blocked44(low: node, high: node)
-.decl blocked57(low: node, high: node)
-.decl blocked70(low: node, high: node)
-.decl blocked83(low: node, high: node)
-.decl blocked96(low: node, high: node)
 .decl in_scope(d: number)
-.decl m108(n: node)
-.decl m115(n: node)
-.decl m122(n: node)
-.decl m129(n: node)
-.decl m136(n: node)
-.decl m143(n: node)
-.decl m150(n: node)
-.decl m153(n: node)
+.decl m133(n: node)
+.decl m146(n: node)
+.decl m160(n: node)
 .decl m161(n: node)
-.decl m168(n: node)
-.decl m176(n: node)
-.decl m190(n: node)
-.decl m191(n: node)
-.decl m197(n: node)
-.decl m200(n: node)
-.decl m208(n: node)
+.decl m174(n: node)
+.decl m187(n: node)
+.decl m201(n: node)
+.decl m202(n: node)
 .decl m215(n: node)
-.decl m223(n: node)
-.decl m237(n: node)
-.decl m238(n: node)
-.decl m244(n: node)
-.decl m247(n: node)
-.decl m255(n: node)
-.decl m262(n: node)
-.decl m270(n: node)
-.decl m284(n: node)
-.decl m285(n: node)
-.decl m291(n: node)
-.decl m30(n: node)
-.decl m301(n: node)
-.decl m311(n: node)
-.decl m43(n: node)
-.decl m56(n: node)
-.decl m69(n: node)
-.decl m82(n: node)
-.decl m95(n: node)
+.decl m228(n: node)
+.decl m242(n: node)
+.decl m243(n: node)
 .decl out_scope(d: number)
-.decl u165(n: node)
-.decl u166(n: node)
-.decl u186(n: node)
-.decl u212(n: node)
-.decl u213(n: node)
-.decl u233(n: node)
+.decl u137(n: node)
+.decl u138(n: node)
+.decl u156(n: node)
+.decl u178(n: node)
+.decl u179(n: node)
+.decl u197(n: node)
+.decl u219(n: node)
+.decl u220(n: node)
+.decl u238(n: node)
+.decl u251(n: node)
 .decl u259(n: node)
-.decl u260(n: node)
-.decl u280(n: node)
-.decl u295(n: node)
-.decl u305(n: node)
-.decl u315(n: node)
+.decl u267(n: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 in_scope(d) :- doc(d, p, _), glob("impl/sqlite/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/postgres/**/*.py", p).
@@ -103,106 +55,34 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/*test_*", p).
-m30(n) :- node(_, n, "function_definition", _, _).
-m30(n) :- node(_, n, "lambda", _, _).
-blocked31(low, high) :- inside(low, s, k1), m30(s), inside(s, high, k0).
-violation("data-layer-async-patterns", "decorated-write-impl", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v25), node(_, v25, "attribute", _, _), field(v25, "attribute", v26), node(_, v26, "identifier", _, _), text(v26, v27), (v27 = "commit" ; v27 = "delete_by_id" ; v27 = "delete_by_key_many" ; v27 = "delete_many" ; v27 = "delete_many_returning" ; v27 = "delete_returning" ; v27 = "insert" ; v27 = "insert_many" ; v27 = "rollback" ; v27 = "update" ; v27 = "update_many" ; v27 = "upsert" ; v27 = "upsert_many"), field(v25, "object", v28), inside(n, v29, k0), !blocked31(n, v29), node(_, v29, "function_definition", _, _), op(v29, "async"), child(v32, v29, _), node(_, v32, "decorated_definition", _, _), child(v32, v33, _), node(_, v33, "decorator", _, _), child(v33, v34, _), node(_, v34, "call", _, _), field(v34, "function", v35), node(_, v35, "attribute", _, _), field(v35, "attribute", v36), node(_, v36, "identifier", _, _), text(v36, v37), v37 = "write_async", doc(d, p, m), prefix("impl/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m43(n) :- node(_, n, "function_definition", _, _).
-m43(n) :- node(_, n, "lambda", _, _).
-blocked44(low, high) :- inside(low, s, k1), m43(s), inside(s, high, k0).
-violation("data-layer-async-patterns", "decorated-write-api", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v38), node(_, v38, "attribute", _, _), field(v38, "attribute", v39), node(_, v39, "identifier", _, _), text(v39, v40), (v40 = "commit" ; v40 = "delete_by_id" ; v40 = "delete_by_key_many" ; v40 = "delete_many" ; v40 = "delete_many_returning" ; v40 = "delete_returning" ; v40 = "insert" ; v40 = "insert_many" ; v40 = "rollback" ; v40 = "update" ; v40 = "update_many" ; v40 = "upsert" ; v40 = "upsert_many"), field(v38, "object", v41), inside(n, v42, k0), !blocked44(n, v42), node(_, v42, "function_definition", _, _), op(v42, "async"), child(v45, v42, _), node(_, v45, "decorated_definition", _, _), child(v45, v46, _), node(_, v46, "decorator", _, _), child(v46, v47, _), node(_, v47, "call", _, _), field(v47, "function", v48), node(_, v48, "attribute", _, _), field(v48, "attribute", v49), node(_, v49, "identifier", _, _), text(v49, v50), v50 = "write_async", doc(d, p, m), prefix("api/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m56(n) :- node(_, n, "function_definition", _, _).
-m56(n) :- node(_, n, "lambda", _, _).
-blocked57(low, high) :- inside(low, s, k1), m56(s), inside(s, high, k0).
-violation("data-layer-async-patterns", "decorated-write-conform", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v51), node(_, v51, "attribute", _, _), field(v51, "attribute", v52), node(_, v52, "identifier", _, _), text(v52, v53), (v53 = "commit" ; v53 = "delete_by_id" ; v53 = "delete_by_key_many" ; v53 = "delete_many" ; v53 = "delete_many_returning" ; v53 = "delete_returning" ; v53 = "insert" ; v53 = "insert_many" ; v53 = "rollback" ; v53 = "update" ; v53 = "update_many" ; v53 = "upsert" ; v53 = "upsert_many"), field(v51, "object", v54), inside(n, v55, k0), !blocked57(n, v55), node(_, v55, "function_definition", _, _), op(v55, "async"), child(v58, v55, _), node(_, v58, "decorated_definition", _, _), child(v58, v59, _), node(_, v59, "decorator", _, _), child(v59, v60, _), node(_, v60, "call", _, _), field(v60, "function", v61), node(_, v61, "attribute", _, _), field(v61, "attribute", v62), node(_, v62, "identifier", _, _), text(v62, v63), v63 = "write_async", doc(d, p, m), prefix("conform/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m69(n) :- node(_, n, "function_definition", _, _).
-m69(n) :- node(_, n, "lambda", _, _).
-blocked70(low, high) :- inside(low, s, k1), m69(s), inside(s, high, k0).
-violation("data-layer-async-patterns", "decorated-read-impl", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v64), node(_, v64, "attribute", _, _), field(v64, "attribute", v65), node(_, v65, "identifier", _, _), text(v65, v66), (v66 = "count" ; v66 = "execute" ; v66 = "execute_one" ; v66 = "exists" ; v66 = "first" ; v66 = "select_one"), field(v64, "object", v67), inside(n, v68, k0), !blocked70(n, v68), node(_, v68, "function_definition", _, _), op(v68, "async"), child(v71, v68, _), node(_, v71, "decorated_definition", _, _), child(v71, v72, _), node(_, v72, "decorator", _, _), child(v72, v73, _), node(_, v73, "call", _, _), field(v73, "function", v74), node(_, v74, "attribute", _, _), field(v74, "attribute", v75), node(_, v75, "identifier", _, _), text(v75, v76), (v76 = "read_async" ; v76 = "write_async"), doc(d, p, m), prefix("impl/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m82(n) :- node(_, n, "function_definition", _, _).
-m82(n) :- node(_, n, "lambda", _, _).
-blocked83(low, high) :- inside(low, s, k1), m82(s), inside(s, high, k0).
-violation("data-layer-async-patterns", "decorated-read-api", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v77), node(_, v77, "attribute", _, _), field(v77, "attribute", v78), node(_, v78, "identifier", _, _), text(v78, v79), (v79 = "count" ; v79 = "execute" ; v79 = "execute_one" ; v79 = "exists" ; v79 = "first" ; v79 = "select_one"), field(v77, "object", v80), inside(n, v81, k0), !blocked83(n, v81), node(_, v81, "function_definition", _, _), op(v81, "async"), child(v84, v81, _), node(_, v84, "decorated_definition", _, _), child(v84, v85, _), node(_, v85, "decorator", _, _), child(v85, v86, _), node(_, v86, "call", _, _), field(v86, "function", v87), node(_, v87, "attribute", _, _), field(v87, "attribute", v88), node(_, v88, "identifier", _, _), text(v88, v89), (v89 = "read_async" ; v89 = "write_async"), doc(d, p, m), prefix("api/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m95(n) :- node(_, n, "function_definition", _, _).
-m95(n) :- node(_, n, "lambda", _, _).
-blocked96(low, high) :- inside(low, s, k1), m95(s), inside(s, high, k0).
-violation("data-layer-async-patterns", "decorated-read-conform", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v90), node(_, v90, "attribute", _, _), field(v90, "attribute", v91), node(_, v91, "identifier", _, _), text(v91, v92), (v92 = "count" ; v92 = "execute" ; v92 = "execute_one" ; v92 = "exists" ; v92 = "first" ; v92 = "select_one"), field(v90, "object", v93), inside(n, v94, k0), !blocked96(n, v94), node(_, v94, "function_definition", _, _), op(v94, "async"), child(v97, v94, _), node(_, v97, "decorated_definition", _, _), child(v97, v98, _), node(_, v98, "decorator", _, _), child(v98, v99, _), node(_, v99, "call", _, _), field(v99, "function", v100), node(_, v100, "attribute", _, _), field(v100, "attribute", v101), node(_, v101, "identifier", _, _), text(v101, v102), (v102 = "read_async" ; v102 = "write_async"), doc(d, p, m), prefix("conform/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m108(n) :- node(_, n, "function_definition", _, _).
-m108(n) :- node(_, n, "lambda", _, _).
-blocked109(low, high) :- inside(low, s, k1), m108(s), inside(s, high, k0).
-m115(n) :- node(_, n, "function_definition", _, _).
-m115(n) :- node(_, n, "lambda", _, _).
-blocked116(low, high) :- inside(low, s, k1), m115(s), inside(s, high, k0).
-m122(n) :- node(_, n, "function_definition", _, _).
-m122(n) :- node(_, n, "lambda", _, _).
-blocked123(low, high) :- inside(low, s, k1), m122(s), inside(s, high, k0).
-m129(n) :- node(_, n, "function_definition", _, _).
-m129(n) :- node(_, n, "lambda", _, _).
-blocked130(low, high) :- inside(low, s, k1), m129(s), inside(s, high, k0).
-violation("data-layer-async-patterns", "polymorphic-impl", "ASYNC008", p, l) :- node(_, n, "call", _, _), field(n, "function", v124), node(_, v124, "attribute", _, _), field(v124, "attribute", v125), node(_, v125, "identifier", _, _), text(v125, v126), (v126 = "ensure_dynamic_polymorphic_metadata" ; v126 = "register_polymorphic_metadata_for_schema_update"), field(v124, "object", v127), inside(n, v128, k0), !blocked130(n, v128), node(_, v128, "function_definition", _, _), op(v128, "async"), doc(d, p, m), prefix("impl/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m136(n) :- node(_, n, "function_definition", _, _).
-m136(n) :- node(_, n, "lambda", _, _).
-blocked137(low, high) :- inside(low, s, k1), m136(s), inside(s, high, k0).
-violation("data-layer-async-patterns", "polymorphic-api", "ASYNC008", p, l) :- node(_, n, "call", _, _), field(n, "function", v131), node(_, v131, "attribute", _, _), field(v131, "attribute", v132), node(_, v132, "identifier", _, _), text(v132, v133), (v133 = "ensure_dynamic_polymorphic_metadata" ; v133 = "register_polymorphic_metadata_for_schema_update"), field(v131, "object", v134), inside(n, v135, k0), !blocked137(n, v135), node(_, v135, "function_definition", _, _), op(v135, "async"), doc(d, p, m), prefix("api/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m143(n) :- node(_, n, "function_definition", _, _).
-m143(n) :- node(_, n, "lambda", _, _).
-blocked144(low, high) :- inside(low, s, k1), m143(s), inside(s, high, k0).
-violation("data-layer-async-patterns", "polymorphic-conform", "ASYNC008", p, l) :- node(_, n, "call", _, _), field(n, "function", v138), node(_, v138, "attribute", _, _), field(v138, "attribute", v139), node(_, v139, "identifier", _, _), text(v139, v140), (v140 = "ensure_dynamic_polymorphic_metadata" ; v140 = "register_polymorphic_metadata_for_schema_update"), field(v138, "object", v141), inside(n, v142, k0), !blocked144(n, v142), node(_, v142, "function_definition", _, _), op(v142, "async"), doc(d, p, m), prefix("conform/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m150(n) :- node(_, n, "function_definition", _, _).
-m150(n) :- node(_, n, "lambda", _, _).
-blocked151(low, high) :- inside(low, s, k1), m150(s), inside(s, high, k0).
-m153(n) :- node(_, n, "function_definition", _, _).
-m153(n) :- node(_, n, "lambda", _, _).
-blocked154(low, high) :- inside(low, s, k1), m153(s), inside(s, high, k0).
-m161(n) :- inside(n, v152, k0), !blocked154(n, v152), node(_, v152, "function_definition", _, _), op(v152, "async"), child(v155, v152, _), node(_, v155, "decorated_definition", _, _), child(v155, v156, _), node(_, v156, "decorator", _, _), child(v156, v157, _), node(_, v157, "call", _, _), field(v157, "function", v158), node(_, v158, "attribute", _, _), field(v158, "attribute", v159), node(_, v159, "identifier", _, _), text(v159, v160), (v160 = "read_async" ; v160 = "write_async").
-m168(n) :- node(_, n, "function_definition", _, _).
-m168(n) :- node(_, n, "lambda", _, _).
-blocked169(low, high) :- inside(low, s, k1), m168(s), inside(s, high, k0).
-m176(n) :- node(_, n, "typed_parameter", _, _).
-m176(n) :- node(_, n, "typed_default_parameter", _, _).
-m190(n) :- node(_, n, "identifier", _, _), text(n, v187), (v187 = "LazyVersionedReadTransaction" ; v187 = "LazyVersionedWriteTransaction" ; v187 = "ReadTransaction" ; v187 = "WriteTransaction").
-m190(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v188), node(_, v188, "identifier", _, _), text(v188, v189), (v189 = "LazyVersionedReadTransaction" ; v189 = "LazyVersionedWriteTransaction" ; v189 = "ReadTransaction" ; v189 = "WriteTransaction").
-m191(n) :- node(_, n, "string", _, _).
-m191(n) :- node(_, n, "concatenated_string", _, _).
-m197(n) :- node(_, n, "function_definition", _, _).
-m197(n) :- node(_, n, "lambda", _, _).
-blocked198(low, high) :- inside(low, s, k1), m197(s), inside(s, high, k0).
-m200(n) :- node(_, n, "function_definition", _, _).
-m200(n) :- node(_, n, "lambda", _, _).
-blocked201(low, high) :- inside(low, s, k1), m200(s), inside(s, high, k0).
-m208(n) :- inside(n, v199, k0), !blocked201(n, v199), node(_, v199, "function_definition", _, _), op(v199, "async"), child(v202, v199, _), node(_, v202, "decorated_definition", _, _), child(v202, v203, _), node(_, v203, "decorator", _, _), child(v203, v204, _), node(_, v204, "call", _, _), field(v204, "function", v205), node(_, v205, "attribute", _, _), field(v205, "attribute", v206), node(_, v206, "identifier", _, _), text(v206, v207), (v207 = "read_async" ; v207 = "write_async").
-m215(n) :- node(_, n, "function_definition", _, _).
-m215(n) :- node(_, n, "lambda", _, _).
-blocked216(low, high) :- inside(low, s, k1), m215(s), inside(s, high, k0).
-m223(n) :- node(_, n, "typed_parameter", _, _).
-m223(n) :- node(_, n, "typed_default_parameter", _, _).
-m237(n) :- node(_, n, "identifier", _, _), text(n, v234), (v234 = "LazyVersionedReadTransaction" ; v234 = "LazyVersionedWriteTransaction" ; v234 = "ReadTransaction" ; v234 = "WriteTransaction").
-m237(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v235), node(_, v235, "identifier", _, _), text(v235, v236), (v236 = "LazyVersionedReadTransaction" ; v236 = "LazyVersionedWriteTransaction" ; v236 = "ReadTransaction" ; v236 = "WriteTransaction").
-m238(n) :- node(_, n, "string", _, _).
-m238(n) :- node(_, n, "concatenated_string", _, _).
-m244(n) :- node(_, n, "function_definition", _, _).
-m244(n) :- node(_, n, "lambda", _, _).
-blocked245(low, high) :- inside(low, s, k1), m244(s), inside(s, high, k0).
-m247(n) :- node(_, n, "function_definition", _, _).
-m247(n) :- node(_, n, "lambda", _, _).
-blocked248(low, high) :- inside(low, s, k1), m247(s), inside(s, high, k0).
-m255(n) :- inside(n, v246, k0), !blocked248(n, v246), node(_, v246, "function_definition", _, _), op(v246, "async"), child(v249, v246, _), node(_, v249, "decorated_definition", _, _), child(v249, v250, _), node(_, v250, "decorator", _, _), child(v250, v251, _), node(_, v251, "call", _, _), field(v251, "function", v252), node(_, v252, "attribute", _, _), field(v252, "attribute", v253), node(_, v253, "identifier", _, _), text(v253, v254), (v254 = "read_async" ; v254 = "write_async").
-m262(n) :- node(_, n, "function_definition", _, _).
-m262(n) :- node(_, n, "lambda", _, _).
-blocked263(low, high) :- inside(low, s, k1), m262(s), inside(s, high, k0).
-m270(n) :- node(_, n, "typed_parameter", _, _).
-m270(n) :- node(_, n, "typed_default_parameter", _, _).
-m284(n) :- node(_, n, "identifier", _, _), text(n, v281), (v281 = "LazyVersionedReadTransaction" ; v281 = "LazyVersionedWriteTransaction" ; v281 = "ReadTransaction" ; v281 = "WriteTransaction").
-m284(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v282), node(_, v282, "identifier", _, _), text(v282, v283), (v283 = "LazyVersionedReadTransaction" ; v283 = "LazyVersionedWriteTransaction" ; v283 = "ReadTransaction" ; v283 = "WriteTransaction").
-m285(n) :- node(_, n, "string", _, _).
-m285(n) :- node(_, n, "concatenated_string", _, _).
-m291(n) :- node(_, n, "function_definition", _, _).
-m291(n) :- node(_, n, "lambda", _, _).
-blocked292(low, high) :- inside(low, s, k1), m291(s), inside(s, high, k0).
-m301(n) :- node(_, n, "function_definition", _, _).
-m301(n) :- node(_, n, "lambda", _, _).
-blocked302(low, high) :- inside(low, s, k1), m301(s), inside(s, high, k0).
-m311(n) :- node(_, n, "function_definition", _, _).
-m311(n) :- node(_, n, "lambda", _, _).
-blocked312(low, high) :- inside(low, s, k1), m311(s), inside(s, high, k0).
+violation("data-layer-async-patterns", "decorated-write-impl", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v25), node(_, v25, "attribute", _, _), field(v25, "attribute", v26), node(_, v26, "identifier", _, _), text(v26, v27), (v27 = "commit" ; v27 = "delete_by_id" ; v27 = "delete_by_key_many" ; v27 = "delete_many" ; v27 = "delete_many_returning" ; v27 = "delete_returning" ; v27 = "insert" ; v27 = "insert_many" ; v27 = "rollback" ; v27 = "update" ; v27 = "update_many" ; v27 = "upsert" ; v27 = "upsert_many"), field(v25, "object", v28), nearest(n, v29, k1), node(_, v29, "function_definition", _, _), op(v29, "async"), child(v30, v29, _), node(_, v30, "decorated_definition", _, _), child(v30, v31, _), node(_, v31, "decorator", _, _), child(v31, v32, _), node(_, v32, "call", _, _), field(v32, "function", v33), node(_, v33, "attribute", _, _), field(v33, "attribute", v34), node(_, v34, "identifier", _, _), text(v34, v35), v35 = "write_async", doc(d, p, m), prefix("impl/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-async-patterns", "decorated-write-api", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v36), node(_, v36, "attribute", _, _), field(v36, "attribute", v37), node(_, v37, "identifier", _, _), text(v37, v38), (v38 = "commit" ; v38 = "delete_by_id" ; v38 = "delete_by_key_many" ; v38 = "delete_many" ; v38 = "delete_many_returning" ; v38 = "delete_returning" ; v38 = "insert" ; v38 = "insert_many" ; v38 = "rollback" ; v38 = "update" ; v38 = "update_many" ; v38 = "upsert" ; v38 = "upsert_many"), field(v36, "object", v39), nearest(n, v40, k1), node(_, v40, "function_definition", _, _), op(v40, "async"), child(v41, v40, _), node(_, v41, "decorated_definition", _, _), child(v41, v42, _), node(_, v42, "decorator", _, _), child(v42, v43, _), node(_, v43, "call", _, _), field(v43, "function", v44), node(_, v44, "attribute", _, _), field(v44, "attribute", v45), node(_, v45, "identifier", _, _), text(v45, v46), v46 = "write_async", doc(d, p, m), prefix("api/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-async-patterns", "decorated-write-conform", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v47), node(_, v47, "attribute", _, _), field(v47, "attribute", v48), node(_, v48, "identifier", _, _), text(v48, v49), (v49 = "commit" ; v49 = "delete_by_id" ; v49 = "delete_by_key_many" ; v49 = "delete_many" ; v49 = "delete_many_returning" ; v49 = "delete_returning" ; v49 = "insert" ; v49 = "insert_many" ; v49 = "rollback" ; v49 = "update" ; v49 = "update_many" ; v49 = "upsert" ; v49 = "upsert_many"), field(v47, "object", v50), nearest(n, v51, k1), node(_, v51, "function_definition", _, _), op(v51, "async"), child(v52, v51, _), node(_, v52, "decorated_definition", _, _), child(v52, v53, _), node(_, v53, "decorator", _, _), child(v53, v54, _), node(_, v54, "call", _, _), field(v54, "function", v55), node(_, v55, "attribute", _, _), field(v55, "attribute", v56), node(_, v56, "identifier", _, _), text(v56, v57), v57 = "write_async", doc(d, p, m), prefix("conform/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-async-patterns", "decorated-read-impl", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v58), node(_, v58, "attribute", _, _), field(v58, "attribute", v59), node(_, v59, "identifier", _, _), text(v59, v60), (v60 = "count" ; v60 = "execute" ; v60 = "execute_one" ; v60 = "exists" ; v60 = "first" ; v60 = "select_one"), field(v58, "object", v61), nearest(n, v62, k1), node(_, v62, "function_definition", _, _), op(v62, "async"), child(v63, v62, _), node(_, v63, "decorated_definition", _, _), child(v63, v64, _), node(_, v64, "decorator", _, _), child(v64, v65, _), node(_, v65, "call", _, _), field(v65, "function", v66), node(_, v66, "attribute", _, _), field(v66, "attribute", v67), node(_, v67, "identifier", _, _), text(v67, v68), (v68 = "read_async" ; v68 = "write_async"), doc(d, p, m), prefix("impl/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-async-patterns", "decorated-read-api", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v69), node(_, v69, "attribute", _, _), field(v69, "attribute", v70), node(_, v70, "identifier", _, _), text(v70, v71), (v71 = "count" ; v71 = "execute" ; v71 = "execute_one" ; v71 = "exists" ; v71 = "first" ; v71 = "select_one"), field(v69, "object", v72), nearest(n, v73, k1), node(_, v73, "function_definition", _, _), op(v73, "async"), child(v74, v73, _), node(_, v74, "decorated_definition", _, _), child(v74, v75, _), node(_, v75, "decorator", _, _), child(v75, v76, _), node(_, v76, "call", _, _), field(v76, "function", v77), node(_, v77, "attribute", _, _), field(v77, "attribute", v78), node(_, v78, "identifier", _, _), text(v78, v79), (v79 = "read_async" ; v79 = "write_async"), doc(d, p, m), prefix("api/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-async-patterns", "decorated-read-conform", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v80), node(_, v80, "attribute", _, _), field(v80, "attribute", v81), node(_, v81, "identifier", _, _), text(v81, v82), (v82 = "count" ; v82 = "execute" ; v82 = "execute_one" ; v82 = "exists" ; v82 = "first" ; v82 = "select_one"), field(v80, "object", v83), nearest(n, v84, k1), node(_, v84, "function_definition", _, _), op(v84, "async"), child(v85, v84, _), node(_, v85, "decorated_definition", _, _), child(v85, v86, _), node(_, v86, "decorator", _, _), child(v86, v87, _), node(_, v87, "call", _, _), field(v87, "function", v88), node(_, v88, "attribute", _, _), field(v88, "attribute", v89), node(_, v89, "identifier", _, _), text(v89, v90), (v90 = "read_async" ; v90 = "write_async"), doc(d, p, m), prefix("conform/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-async-patterns", "polymorphic-impl", "ASYNC008", p, l) :- node(_, n, "call", _, _), field(n, "function", v106), node(_, v106, "attribute", _, _), field(v106, "attribute", v107), node(_, v107, "identifier", _, _), text(v107, v108), (v108 = "ensure_dynamic_polymorphic_metadata" ; v108 = "register_polymorphic_metadata_for_schema_update"), field(v106, "object", v109), nearest(n, v110, k1), node(_, v110, "function_definition", _, _), op(v110, "async"), doc(d, p, m), prefix("impl/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-async-patterns", "polymorphic-api", "ASYNC008", p, l) :- node(_, n, "call", _, _), field(n, "function", v111), node(_, v111, "attribute", _, _), field(v111, "attribute", v112), node(_, v112, "identifier", _, _), text(v112, v113), (v113 = "ensure_dynamic_polymorphic_metadata" ; v113 = "register_polymorphic_metadata_for_schema_update"), field(v111, "object", v114), nearest(n, v115, k1), node(_, v115, "function_definition", _, _), op(v115, "async"), doc(d, p, m), prefix("api/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-async-patterns", "polymorphic-conform", "ASYNC008", p, l) :- node(_, n, "call", _, _), field(n, "function", v116), node(_, v116, "attribute", _, _), field(v116, "attribute", v117), node(_, v117, "identifier", _, _), text(v117, v118), (v118 = "ensure_dynamic_polymorphic_metadata" ; v118 = "register_polymorphic_metadata_for_schema_update"), field(v116, "object", v119), nearest(n, v120, k1), node(_, v120, "function_definition", _, _), op(v120, "async"), doc(d, p, m), prefix("conform/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m133(n) :- nearest(n, v126, k1), node(_, v126, "function_definition", _, _), op(v126, "async"), child(v127, v126, _), node(_, v127, "decorated_definition", _, _), child(v127, v128, _), node(_, v128, "decorator", _, _), child(v128, v129, _), node(_, v129, "call", _, _), field(v129, "function", v130), node(_, v130, "attribute", _, _), field(v130, "attribute", v131), node(_, v131, "identifier", _, _), text(v131, v132), (v132 = "read_async" ; v132 = "write_async").
+m146(n) :- node(_, n, "typed_parameter", _, _).
+m146(n) :- node(_, n, "typed_default_parameter", _, _).
+m160(n) :- node(_, n, "identifier", _, _), text(n, v157), (v157 = "LazyVersionedReadTransaction" ; v157 = "LazyVersionedWriteTransaction" ; v157 = "ReadTransaction" ; v157 = "WriteTransaction").
+m160(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v158), node(_, v158, "identifier", _, _), text(v158, v159), (v159 = "LazyVersionedReadTransaction" ; v159 = "LazyVersionedWriteTransaction" ; v159 = "ReadTransaction" ; v159 = "WriteTransaction").
+m161(n) :- node(_, n, "string", _, _).
+m161(n) :- node(_, n, "concatenated_string", _, _).
+m174(n) :- nearest(n, v167, k1), node(_, v167, "function_definition", _, _), op(v167, "async"), child(v168, v167, _), node(_, v168, "decorated_definition", _, _), child(v168, v169, _), node(_, v169, "decorator", _, _), child(v169, v170, _), node(_, v170, "call", _, _), field(v170, "function", v171), node(_, v171, "attribute", _, _), field(v171, "attribute", v172), node(_, v172, "identifier", _, _), text(v172, v173), (v173 = "read_async" ; v173 = "write_async").
+m187(n) :- node(_, n, "typed_parameter", _, _).
+m187(n) :- node(_, n, "typed_default_parameter", _, _).
+m201(n) :- node(_, n, "identifier", _, _), text(n, v198), (v198 = "LazyVersionedReadTransaction" ; v198 = "LazyVersionedWriteTransaction" ; v198 = "ReadTransaction" ; v198 = "WriteTransaction").
+m201(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v199), node(_, v199, "identifier", _, _), text(v199, v200), (v200 = "LazyVersionedReadTransaction" ; v200 = "LazyVersionedWriteTransaction" ; v200 = "ReadTransaction" ; v200 = "WriteTransaction").
+m202(n) :- node(_, n, "string", _, _).
+m202(n) :- node(_, n, "concatenated_string", _, _).
+m215(n) :- nearest(n, v208, k1), node(_, v208, "function_definition", _, _), op(v208, "async"), child(v209, v208, _), node(_, v209, "decorated_definition", _, _), child(v209, v210, _), node(_, v210, "decorator", _, _), child(v210, v211, _), node(_, v211, "call", _, _), field(v211, "function", v212), node(_, v212, "attribute", _, _), field(v212, "attribute", v213), node(_, v213, "identifier", _, _), text(v213, v214), (v214 = "read_async" ; v214 = "write_async").
+m228(n) :- node(_, n, "typed_parameter", _, _).
+m228(n) :- node(_, n, "typed_default_parameter", _, _).
+m242(n) :- node(_, n, "identifier", _, _), text(n, v239), (v239 = "LazyVersionedReadTransaction" ; v239 = "LazyVersionedWriteTransaction" ; v239 = "ReadTransaction" ; v239 = "WriteTransaction").
+m242(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v240), node(_, v240, "identifier", _, _), text(v240, v241), (v241 = "LazyVersionedReadTransaction" ; v241 = "LazyVersionedWriteTransaction" ; v241 = "ReadTransaction" ; v241 = "WriteTransaction").
+m243(n) :- node(_, n, "string", _, _).
+m243(n) :- node(_, n, "concatenated_string", _, _).
 .output violation

@@ -1,0 +1,32 @@
+.policy "ruff-sim118-in-dict-keys" revision 2
+.description "Test membership in or iterate over a dict directly instead of calling .keys() on it; the keys view adds nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM118 (flake8-simplify): `k in d.keys()` or `k not in d.keys()` (a single comparison), and the
+// iterable of a `for` loop or a comprehension's `for`: `for k in d.keys()`. `.keys()` takes no
+// arguments, and the receiver is anything but the name `self`. The finding starts at the key or target.
+// Ruff's fix is safe when the receiver is a name with one binding in its scope, a dict (typing::is_dict):
+// then it is offered here.
+//   key in d.keys()      for k in d.keys(): …      ← SIM118: key in d, for k in d
+//   key in self.keys()   key in d.keys(1)          not reported
+#include "python/simplify.rr"
+//   dict_ref(n) from python/comprehensions; cmp(c, op, l, r), site_only(site) from python/names
+
+.violation SIM118(at: node, op: symbol, call: node) code "SIM118"
+    "Use `key {op} dict` instead of `key {op} dict.keys()`"
+    suppress ruff "SIM118"
+    fix safe drop_keys "Remove `.keys()`"
+SIM118(l, o, k) :- cmp(c, o, l, r), (o = "in" ; o = "not in"), keys_call(r, k, _).
+SIM118(t, "in", k) :- (kind(f, "for_statement") ; kind(f, "for_in_clause")), field(f, "left", t), field(f, "right", r),
+    keys_call(r, k, _).
+// keys_call(r, k, o): r, parentheses off, is the call k, `o.keys()`, o not the name self.
+.decl keys_call(r: node, k: node, o: node)
+keys_call(r, k, o) :- unparen(r, k), kind(k, "call"), call_nargs(k, 0), call_nkwargs(k, 0), field(k, "function", f),
+    attr_of(f, o, "keys"), !self_name(o).
+.decl self_name(o: node)
+self_name(o) :- unparen(o, m), kind(m, "identifier"), text(m, "self").
+// The receiver as written: `(d).keys()` becomes `(d)`, as in Ruff.
+drop_keys(_, _, k) :- keys_call(_, k, o), unparen(o, m), kind(m, "identifier"), dict_ref(m), ast_name(m, x),
+    look(m, x, s), count : { binding(s, x, _, _) } = 1 => replace(k, `$o`).

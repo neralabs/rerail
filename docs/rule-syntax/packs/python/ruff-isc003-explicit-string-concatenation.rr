@@ -1,0 +1,32 @@
+.policy "ruff-isc003-explicit-string-concatenation" revision 2
+.description "Join string literals split across lines by implicit concatenation inside parentheses instead of the + operator, which adds noise without changing the result."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ISC003 (flake8-implicit-str-concat): `"a" + "b"` with a line break between the operands, where implicit
+// concatenation inside parentheses would do. Both operands must be literals of one family: str or f-strings,
+// bytes, or t-strings; parentheses around an operand do not matter. In a chain `"a" + "b" + "c"` only the
+// innermost `+` has two literals. A single-line `+` is fine. Off when option
+// `flake8-implicit-str-concat.allow-multiline` is "false". Reported at the operation.
+//   _ = ("abc" +
+//        "def")                     ← ISC003
+//   _ = "abc" + "def"               not reported: one line
+//   _ = ("start" +
+//        variable)                  not reported
+#include "python/ast.rr"
+
+.violation ISC003(at: node) code "ISC003"
+    "Drop the `+` so the string literals concatenate implicitly inside parentheses; unwrap parenthesized operands first, and keep `+` if the result would become a docstring."
+    suppress ruff "ISC003"
+ISC003(e) :- kind(e, "binary_operator"), op(e, "+"), field(e, "left", l), unparen(l, a), field(e, "right", r),
+    unparen(r, b), str_family(a, k), str_family(b, k2), concat_ok(k, k2), end_line(a, la), line(b, lb), la != lb,
+    !option("flake8-implicit-str-concat.allow-multiline", "false").
+// str_family(s, k): s is a literal of family k: "str" (str and f-strings), "bytes" or "tstr".
+.decl str_family(s: node, k: symbol)
+str_family(s, k) :- kind(s, "string"), string_form(s, f), str_family_of(f, k).
+str_family(s, k) :- kind(s, "concatenated_string"), child(s, p, 0), string_form(p, f), str_family_of(f, k).
+.decl str_family_of(f: symbol, k: symbol)
+str_family_of("str", "str"). str_family_of("fstr", "str"). str_family_of("bytes", "bytes"). str_family_of("tstr", "tstr").
+.decl concat_ok(k: symbol, k2: symbol)
+concat_ok(k, k) :- str_family_of(_, k).

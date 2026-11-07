@@ -1,0 +1,17 @@
+.policy "ruff-f406-undefined-local-with-nested-import-star-usage" revision 2
+.description "Don't use from module import * inside a function or class; star imports are only allowed at module level."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F406 (pyflakes): `from m import *` in a def or class body. CPython only allows star imports at module
+// level (in a def it is a SyntaxError).
+//   def f():
+//       from os.path import *      ← F406 (and F403)
+#include "python/pyflakes.rr"
+//   star_import(i, m)  i is `from m import *`; m as written
+
+.violation F406(at: node, m: symbol) code "F406"
+    "Import the needed names from `{m}` explicitly; a star import is only allowed at module level."
+    suppress ruff "F406"
+F406(i, m) :- star_import(i, m), nearest(i, s, scope), !kind(s, "module").

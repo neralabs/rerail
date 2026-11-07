@@ -1,0 +1,21 @@
+.policy "ruff-f601-multi-value-repeated-key-literal" revision 2
+.description "Avoid repeating a literal key (or an equal one, like 1 and 1.0) in a Python dict literal; the later value silently overwrites the earlier one."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F601 (pyflakes): a dict display repeats a literal key; the later entry silently replaces the earlier one.
+// Keys compare as Python compares them: `1`, `1.0`, `True` and `1 + 0j` are one key, so are "a" and "\x61".
+// Every repeat after the first is reported, at the key, whatever the values.
+//   {"a": 1, "a": 2}          ← F601 at the second "a"
+//   {1: "x", True: "y"}       ← F601 at True
+//   {"a": 1, a: 2}            not reported: a is a variable (F602 compares those)
+#include "python/pyflakes.rr"
+//   literal_key(e, k)  literal e has dict-key value k
+
+.violation F601(at: node, t: symbol) code "F601" "Dictionary key literal `{t}` repeated"
+    suppress ruff "F601"
+F601(e, t) :- dict_key(d, i, e), literal_key(e, k), dict_key(d, j, e0), j < i, literal_key(e0, k), text(e, t).
+// dict_key(d, i, e): the key of dict display d's i-th entry, without parentheses (Ruff's tree has none).
+.decl dict_key(d: node, i: number, e: node)
+dict_key(d, i, e) :- kind(d, "dictionary"), child(d, p, i), kind(p, "pair"), field(p, "key", k), unparen(k, e).

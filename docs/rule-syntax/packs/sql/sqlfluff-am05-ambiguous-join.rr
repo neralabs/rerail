@@ -1,0 +1,15 @@
+.policy "sqlfluff-am05-ambiguous-join" revision 2
+.description "Write INNER JOIN instead of a bare JOIN in SQL so the join type is explicit."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's AM05 (ambiguous.join), default fully_qualify_join_types = inner. A JOIN with no join type:
+//   SELECT * FROM foo JOIN bar USING (id)            reported at JOIN
+//   SELECT * FROM t JOIN LATERAL (SELECT 1) s ON TRUE  reported
+//   SELECT * FROM foo INNER JOIN bar USING (id)      fine
+
+#include "sql/syntax.rr"
+
+.violation AM05(at: node) code "AM05" "Join clauses should be fully qualified."
+    suppress sqlfluff "AM05", "L051", "all", "ambiguous", "ambiguous.join"
+AM05(j) :- (kind(j, "join") ; kind(j, "lateral_join")), child(j, k, 0), kind(k, "keyword_join").

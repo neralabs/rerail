@@ -1,0 +1,25 @@
+.policy "eslint-plugin-vue-no-use-v-if-with-v-for" revision 2
+.description "Don't put v-if on the same element as v-for; filter the list in a computed property or move the condition to a wrapper element."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/code.rr"
+//   vdir(e, a, d, arg), vfor(e, a, f, src), tvar(e, x, id, k), tref(r, x, a)
+
+// eslint-plugin-vue's no-use-v-if-with-v-for: a v-if on an element that also has v-for. When the condition reads one
+// of that v-for's own variables, the list should be filtered by a computed property instead (shouldUseComputed;
+// option allowUsingIterationVar: true allows it); otherwise the v-if belongs on a wrapper (movedToWrapper).
+//   <li v-for="u in users" v-if="u.active">      reported: replace 'users' with a computed property
+//   <li v-for="u in users" v-if="shown">         reported: move the v-if to a wrapper element
+.violation v_if_with_v_for(at: node, msg: symbol) code "vue/no-use-v-if-with-v-for" "{msg}"
+    suppress eslint "vue/no-use-v-if-with-v-for"
+v_if_with_v_for(a, "This 'v-if' should be moved to the wrapper element.") :- v_if(e, a), !uses_alias(a, e).
+v_if_with_v_for(a, cat("Replace '", t, "' in this v-for with a computed property that returns the filtered list, and drop the v-if.")) :-
+    uses_alias(a, e), !option("allowUsingIterationVar", "true"), vfor(e, _, _, src), kind(src, "identifier"), text(src, t).
+v_if_with_v_for(a, cat("Replace the '", t, "' expression in this v-for with a computed property that returns the filtered list, and drop the v-if.")) :-
+    uses_alias(a, e), !option("allowUsingIterationVar", "true"), vfor(e, _, _, src), !kind(src, "identifier"), text(src, t).
+.decl v_if(e: node, a: node)
+v_if(e, a) :- vdir(e, a, "if", _), vdir(e, _, "for", _).
+// uses_alias(a, e): v-if a reads a variable e's own v-for declares.
+.decl uses_alias(a: node, e: node)
+uses_alias(a, e) :- v_if(e, a), tref(_, x, a), tvar(e, x, _, "v-for").

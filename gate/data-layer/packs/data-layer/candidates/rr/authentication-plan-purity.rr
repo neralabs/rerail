@@ -1,0 +1,95 @@
+.policy "data-layer:authentication-plan-purity" revision 1
+.description "Executor-owned authentication and remote transport state: plan steps hold no transports or results, transaction entry is lazy."
+.language python
+.mode block
+.scope dirs "impl/remote", "impl/read_through"
+.scope tests false
+.on syntax_error report APP000
+// Python linter: scripts/lint_authentication_plan_purity.py. By spelling, file-local; nothing is resolved.
+//   APP001  in a method of a semantic plan step, `self.x = …` keeps a transport: the annotation, the annotation of
+//           the parameter assigned, or the name of the call assigned has a token ending in Client, Connection,
+//           Transaction, Callback, Registry or Transport; or x is client, connection, callback or registry (or _x)
+//   APP002  … keeps a runtime result: a token ending in Response or RuntimeResult, or x contains batched_value,
+//           response or runtime_result
+//   APP003  in a class whose name contains ReadThroughWriteTransaction, __enter__ / __aenter__ reaches, through
+//           calls of the class's own methods (not the two _establish_*_write_authority helpers), a call to
+//           bind_cache_to_current_authority, adopt_authenticated_remote_session, or a name with "resolve" and
+//           auth / credential / admission in it. Reported at the entry method.
+//   APP004  a def named *_sync / *_async with auth, credential or admission in its name (any case) that is not a
+//           legacy forwarder: decorated legacy_sync / legacy_async, or direct_legacy_* and calling some *_lazy
+//   APP000  the file does not parse
+// A semantic plan step is a class named *PlanStep, or one with a base (by last name) among the five step bases
+// or another semantic class of the same file. Annotations are compared as written, where the linter reads
+// ast.unparse: they differ only on parentheses and comments inside an annotation.
+
+#include "data-layer/purity-ast.rr"
+
+// ---- APP001, APP002 ---------------------------------------------------------------------------------------------
+.decl app_step_base(x: symbol)
+app_step_base("ServerPlanStep"). app_step_base("NonPublishingStep"). app_step_base("SqlProducingStep").
+app_step_base("SqlRelationPublisherStep"). app_step_base("SqlScalarPublisherStep").
+// app_semantic(x): x names a semantic class. Every class of that name is one (the linter matches by name).
+.decl app_semantic(x: symbol)
+app_semantic(x) :- kind(c, "class_definition"), def_name(c, x), suffix("PlanStep", x).
+app_semantic(x) :- kind(c, "class_definition"), def_name(c, x), field(c, "superclasses", al), child(al, e, _),
+    short_name(e, b),
+    (app_step_base(b) ; app_semantic(b)).
+
+// app_assign(m, a, x): in method m of a semantic class, assignment a (`=` or annotated) stores `self.x`: the
+// first of its targets that is an attribute of the bare name self.
+.decl app_assign(m: node, a: node, x: symbol)
+app_assign(m, a, x) :- app_semantic(cx), def_name(c, cx), body_def(c, m, _), ast_walk(m, a), app_self(a, t, x),
+    count : { app_self(a, t2, _), earlier(t2, t) } = 0.
+.decl app_self(a: node, t: node, x: symbol)
+app_self(a, t, x) :- assign_target(a, t), attr_of(t, o, x), kind(o, "identifier"), text(o, "self").
+
+// app_type(m, a, s): a piece of text whose tokens say what assignment a stores: its annotation, the annotation of
+// m's parameter it assigns (`self.c = c`), or the name of the call it assigns (`self.c = make_client()`).
+.decl app_type(m: node, a: node, s: symbol)
+app_type(m, a, s) :- app_assign(m, a, _), assign_ann(a, t), text(t, s).
+app_type(m, a, s) :- app_assign(m, a, _), assign_value(a, v), kind(v, "identifier"), text(v, x),
+    sig_param(m, _, nm, _, k, ann, _), text(nm, x), k != "vararg", k != "kwarg", text(ann, s).
+app_type(m, a, s) :- app_assign(m, a, _), assign_value(a, v), kind(v, "call"), short_name(v, s).
+// A token is a run between `[`, `]`, `|`, `,` and spaces; it "ends with" a suffix when one follows it directly.
+.decl app_transport(a: node)
+app_transport(a) :- app_type(_, a, s),
+    match("(?s).*(Client|Connection|Transaction|Callback|Registry|Transport)([\\[\\]|,\\s].*)?", s).
+.decl app_result(a: node)
+app_result(a) :- app_type(_, a, s), match("(?s).*(Response|RuntimeResult)([\\[\\]|,\\s].*)?", s).
+
+.violation APP001(at: node) "Semantic plan steps must not retain transport objects"
+APP001(a) :- app_assign(_, a, _), app_transport(a).
+APP001(a) :- app_assign(_, a, x), glob("{_,}{client,connection,callback,registry}", x).
+
+.violation APP002(at: node) "Semantic plan steps must not retain mutable runtime results"
+APP002(a) :- app_assign(_, a, _), app_result(a).
+APP002(a) :- app_assign(_, a, x), glob("*{batched_value,response,runtime_result}*", x).
+
+// ---- APP003 -----------------------------------------------------------------------------------------------------
+// app_reach(c, e, m): from entry method e of transaction class c, method m runs: a call `….m(…)` or `m(…)` names
+// one of c's methods (the last def of that name), and m is not a legacy authority helper.
+.decl app_reach(c: node, e: node, m: node)
+app_reach(c, e, e) :- kind(c, "class_definition"), def_name(c, cx), contains("ReadThroughWriteTransaction", cx),
+    last_body_def(c, e, x), (x = "__enter__" ; x = "__aenter__").
+app_reach(c, e, m) :- app_reach(c, e, p), app_call(p, x), last_body_def(c, m, x),
+    x != "_establish_legacy_write_authority", x != "_establish_native_write_authority".
+.decl app_call(f: node, x: symbol)  // def f calls x somewhere in its ast.walk
+app_call(f, x) :- ast_walk(f, k), kind(k, "call"), short_name(k, x).
+.decl app_eager(x: symbol)
+app_eager(x) :- app_call(_, x), contains("bind_cache_to_current_authority", x).
+app_eager(x) :- app_call(_, x), contains("adopt_authenticated_remote_session", x).
+app_eager(x) :- app_call(_, x), contains("resolve", x),
+    (contains("auth", x) ; contains("credential", x) ; contains("admission", x)).
+
+.violation APP003(at: node) "Transaction entry must not authenticate or bind authority eagerly"
+APP003(e) :- app_reach(_, e, m), app_call(m, x), app_eager(x).
+
+// ---- APP004 -----------------------------------------------------------------------------------------------------
+.violation APP004(at: node) "Authentication compatibility methods must delegate to a pure lazy method"
+APP004(f) :- kind(f, "function_definition"), def_name(f, x), glob("*{_sync,_async}", x),
+    (icontains("auth", x) ; icontains("credential", x) ; icontains("admission", x)), !app_forwarder(f).
+.decl app_legacy(f: node, x: symbol)  // f has a legacy decorator x, by its last name
+app_legacy(f, x) :- decorator(f, e), short_name(e, x), glob("{direct_,}legacy_{sync,async}", x).
+.decl app_forwarder(f: node)
+app_forwarder(f) :- app_legacy(f, x), glob("legacy_{sync,async}", x).
+app_forwarder(f) :- app_legacy(f, _), app_call(f, y), suffix("_lazy", y).

@@ -25,18 +25,46 @@ pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
 pub(in crate::code_rule_dsl) use print::print;
 pub(in crate::code_rule_dsl) use syntax::quote;
-#[cfg(test)]
 pub(in crate::code_rule_dsl) use translate::translate;
+
+/// The relations `core.rr` declares: the engine's names (decision 0047). Empty when `core.rr` does not read.
+pub(in crate::code_rule_dsl) fn core_names() -> &'static std::collections::BTreeSet<String> {
+    static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
+    CORE.get_or_init(|| {
+        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
+    })
+}
 
 /// The library `#include` reads from.
 pub(in crate::code_rule_dsl) fn library() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib")
+    // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
+    std::env::var_os("RERAIL_RR_LIB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib"))
 }
 
 /// A program's `.rr` text, which includes nothing.
 pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
     let statements = syntax::Parser::new(src)?.statements()?;
     lower::lower(statements)
+}
+
+/// The compiler's named policy headers and settings, without reparsing rule source in a host adapter.
+pub(in crate::code_rule_dsl) fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
+    use syntax::Tok;
+    let mut policies = program.policies.clone();
+    for (_, text) in program.settings.iter().filter(|(key, _)| key == "policy") {
+        let tokens = syntax::tokens(text)?;
+        let Some((Tok::Str(id), _, _)) = tokens.first() else {
+            return Err(Error::Syntax("policy metadata requires a quoted identifier".to_owned()));
+        };
+        let revision = tokens.windows(2).find_map(|pair| match (&pair[0].0, &pair[1].0) {
+            (Tok::Id(key), Tok::Num(n)) if key == "revision" => Some(*n),
+            _ => None,
+        });
+        policies.push(serde_json::json!({"id": id, "revision": revision}));
+    }
+    Ok(serde_json::json!({"policies": policies, "settings": program.settings}))
 }
 
 /// A program's `.rr` file, with what it includes.
@@ -75,6 +103,9 @@ impl LibraryFile {
 /// The lowered program is a derivation of those files (0044 §4): it is kept for the process and
 /// reused while every file it read hashes the same, so only an edit to a file it read (or a
 /// file appearing where an include looked) reads and lowers it again.
+/// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
+const LIBRARY_DERIVED: [&str; 2] = ["embed", "embed_value"];
+
 pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
@@ -88,6 +119,27 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
         return Ok((program.clone(), files.clone()));
     }
     let (statements, files) = program(path)?;
+    // `core.rr`'s relations are the engine's (decision 0047): no other file declares or derives one.
+    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let engine: std::collections::BTreeSet<&String> = statements
+        .iter()
+        .filter(|(file, _)| *file == core)
+        .flat_map(|(_, statements)| statements)
+        .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name) } else { None })
+        .filter(|name| !LIBRARY_DERIVED.contains(&name.as_str()))
+        .collect();
+    for (file, statements) in statements.iter().filter(|(file, _)| *file != core) {
+        for (item, line) in statements {
+            let names: Vec<&String> = match item {
+                syntax::Item::Decl { name, .. } => vec![name],
+                syntax::Item::Clause { heads, .. } => heads.iter().map(|h| &h.rel).collect(),
+                _ => Vec::new(),
+            };
+            if let Some(name) = names.into_iter().find(|n| engine.contains(n)) {
+                return Err(Error::Syntax(format!("{}:{line}: {name} is core.rr's: a program reads it and cannot declare or derive it", file.display())));
+            }
+        }
+    }
     // Names starting `rr_` are the engine's (`front::RESERVED`): its helpers, axes and places.
     for (file, statements) in &statements {
         for (item, line) in statements {

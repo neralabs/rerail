@@ -1,0 +1,23 @@
+.policy "ruff-pyi007-unrecognized-platform-check" revision 2
+.description "Compare sys.platform only by equality or inequality with a plain string literal in stub files; type checkers cannot evaluate other checks."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI007 (flake8-pyi), stubs only: an `if` test comparing sys.platform in a way type checkers cannot
+// evaluate: with an operator other than `==`/`!=`, or against anything but a plain string literal. The `if`
+// test is checked, or each operand of its top-level `and`/`or`, with sys.platform on the left.
+//   if sys.platform > "linux":        ← PYI007: other operator
+//   if sys.platform == f"linux":      ← PYI007: not a plain string
+//   if sys.platform == "linux":       fine
+#include "python/typing.rr"
+
+.violation PYI007(at: node, msg: symbol) code "PYI007" "{msg}"
+    suppress ruff "PYI007"
+PYI007(c, "Compare `sys.platform` to a string with `==` or `!=`, e.g. `sys.platform == \"linux\"` (use `or` for several platforms); type checkers can't evaluate other operators.") :-
+    platform_test(c, o, _), o != "==", o != "!=".
+PYI007(c, "Compare `sys.platform` to a plain string literal such as `\"linux\"`; type checkers can't evaluate any other value.") :-
+    platform_test(c, o, r), (o = "==" ; o = "!="), !plain_str(r, _).
+// platform_test(c, op, r): the stub `if` test c (or an operand of its and/or) is `sys.platform op r`.
+.decl platform_test(c: node, o: symbol, r: node)
+platform_test(c, o, r) :- stub_test(c), cmp(c, o, l0, r0), unparen(l0, l), sys_attr(l, "platform"), unparen(r0, r).

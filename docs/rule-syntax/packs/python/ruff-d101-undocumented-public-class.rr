@@ -1,0 +1,18 @@
+.policy "ruff-d101-undocumented-public-class" revision 2
+.description "Give each public Python class a docstring that explains what it represents and how to use it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D101 (pydocstyle): a public module-level class with no docstring. Public: the module is (no `_x` segment
+// in its name), the class is listed in `__all__` when there is one, and its name does not start with `_`.
+// `.pyi` stubs are not checked.
+//   class Widget:              ← D101 at `Widget`
+//       x = 1
+//   class _Private: ...        not reported
+#include "python/docstrings.rr"
+
+.violation D101(at: node, x: symbol) code "D101"
+    "Add a docstring as the first statement of class `{x}`, explaining what it represents and how to use it."
+    suppress ruff "D101"
+D101(nm, x) :- doc_missing(_, "class", nm, x).

@@ -1,0 +1,18 @@
+.policy "ruff-d402-signature-in-docstring" revision 2
+.description "Describe what a function does in its docstring's first line instead of repeating its signature."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D402 (pydocstyle): a function's docstring whose first line spells the function's call, `name(`, with the
+// name at the start or after a space, tab, `;` or `,`.
+//   def foo(x):
+//       """foo(x) -> int"""      ← D402
+//       """Return foo."""        not reported
+#include "python/docstrings.rr"
+
+.violation D402(at: node, x: symbol) code "D402"
+    "Reword this docstring's first line so it no longer spells `{x}(...)`; say what the function does, since the signature already shows its parameters."
+    suppress ruff "D402"
+D402(s, x) :- doc_of(f, s), kind(f, "function_definition"), doc_checked(s), doc_summary(s, t), doc_name(f, _, x),
+    match(cat("([\\s\\S]*[ \\t;,])?", x, "\\([\\s\\S]*"), t).

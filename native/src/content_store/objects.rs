@@ -7,7 +7,6 @@ use super::{
     StoreError, StoreResult, StoredDocument, StoredPathObjects, StoredSourceObjects, TapeId,
     TapePayload, compress,
 };
-#[cfg(test)]
 use rusqlite::Connection;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeSet, HashMap};
@@ -84,8 +83,13 @@ impl ContentStore {
         Ok(out)
     }
     pub fn put_source(&self, source: &[u8], aliases: &[HashKey]) -> StoreResult<SourceId> {
+        self.put_source_hashed(source, HashKey::sha256(source), aliases)
+    }
+
+    /// [`Self::put_source`] for a caller that already holds the source's SHA-256 (`canonical`): the bytes are not
+    /// hashed again.
+    pub fn put_source_hashed(&self, source: &[u8], canonical: HashKey, aliases: &[HashKey]) -> StoreResult<SourceId> {
         self.require_write_capacity()?;
-        let canonical = HashKey::sha256(source);
         let frame = compress(source, self.compression_level)?;
         let raw_length = i64::try_from(source.len())
             .map_err(|_| StoreError::Invalid("source length exceeds i64".to_owned()))?;
@@ -128,7 +132,6 @@ impl ContentStore {
         })
     }
 
-    #[cfg(test)]
     pub fn source_by_hash(&self, hash: HashKey) -> StoreResult<Option<SourceId>> {
         let connection = self
             .connection
@@ -1112,7 +1115,6 @@ fn put_tape_prepared_tx(
     Ok(TapeId(tape_id))
 }
 
-#[cfg(test)]
 fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreResult<Option<SourceId>> {
     connection
         .query_row(

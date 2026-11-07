@@ -14,9 +14,13 @@ k1("identifier").
 .decl k2(kind: symbol)
 k2("call").
 .decl k3(kind: symbol)
-k3("case_clause").
+k3("conditional_expression"). k3("elif_clause"). k3("if_statement").
 .decl k4(kind: symbol)
-k4("if_clause").
+k4("match_statement").
+.decl k5(kind: symbol)
+k5("case_clause").
+.decl k6(kind: symbol)
+k6("if_clause").
 .decl in_scope(d: number)
 .decl m104(n: node)
 .decl m111(n: node)
@@ -92,8 +96,8 @@ m28(n) :- field(v27, "name", n), node(_, v27, "keyword_argument", _, _).
 m32(n) :- field(v31, "attribute", n), node(_, v31, "attribute", _, _).
 m34(n) :- field(v33, "name", n), node(_, v33, "keyword_argument", _, _).
 m36(n) :- node(_, n, "identifier", _, _), !m26(n), !m28(n), text(n, v29), v29 = "ServerPlanStep".
-m36(n) :- inside(v30, n, k1), node(_, v30, "identifier", _, _), !m32(v30), !m34(v30), text(v30, v35), v35 = "ServerPlanStep".
-violation("data-layer-serverplan-target-architecture", "executor-parameters", "SPTA006", p, l) :- node(v14, n, _, _, _), doc(v14, v15, _), node(_, n, "function_definition", _, _), node(v16, n, _, _, _), doc(v16, v17, _), v17 = "l2070_batching/executor.py", field(n, "parameters", v18), inside(v19, v18, k0), m20(v19), !m23(v19), field(v19, "type", v24), m36(v24), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m36(n) :- within(v30, n), node(_, v30, "identifier", _, _), !m32(v30), !m34(v30), text(v30, v35), v35 = "ServerPlanStep".
+violation("data-layer-serverplan-target-architecture", "executor-parameters", "SPTA006", p, l) :- node(v14, n, _, _, _), doc(v14, v15, _), node(_, n, "function_definition", _, _), node(v16, n, _, _, _), doc(v16, v17, _), v17 = "l2070_batching/executor.py", field(n, "parameters", v18), within(v19, v18), m20(v19), !m23(v19), field(v19, "type", v24), m36(v24), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 t43(s) :- name(_, s), contains(".steps.", s).
 t43(s) :- name(_, s), suffix(".steps", s).
 m46(n) :- node(_, n, "dotted_name", _, _).
@@ -106,22 +110,22 @@ m55(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v53), node(_, v53
 m61(n) :- node(_, n, "identifier", _, _), text(n, v58), v58 = "step_tags".
 m61(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v59), node(_, v59, "identifier", _, _), text(v59, v60), v60 = "step_tags".
 m62(n) :- node(_, n, "call", _, _), field(n, "function", v51), m55(v51).
-m62(n) :- inside(v56, n, k2), node(_, v56, "call", _, _), field(v56, "function", v57), m61(v57).
+m62(n) :- inside(v56, n, k3), node(_, v56, "call", _, _), field(v56, "function", v57), m61(v57).
 violation("data-layer-serverplan-target-architecture", "tag-conditions", "SPTA007", p, l) :- node(v47, n, _, _, _), doc(v47, v48, _), m49(n), field(n, "condition", v50), m62(v50), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m70(n) :- node(_, n, "identifier", _, _), text(n, v67), v67 = "step_tags".
 m70(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v68), node(_, v68, "identifier", _, _), text(v68, v69), v69 = "step_tags".
 m76(n) :- node(_, n, "identifier", _, _), text(n, v73), v73 = "step_tags".
 m76(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v74), node(_, v74, "identifier", _, _), text(v74, v75), v75 = "step_tags".
 m77(n) :- node(_, n, "call", _, _), field(n, "function", v66), m70(v66).
-m77(n) :- inside(v71, n, k2), node(_, v71, "call", _, _), field(v71, "function", v72), m76(v72).
+m77(n) :- inside(v71, n, k4), node(_, v71, "call", _, _), field(v71, "function", v72), m76(v72).
 m84(n) :- node(_, n, "identifier", _, _), text(n, v81), v81 = "step_tags".
 m84(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v82), node(_, v82, "identifier", _, _), text(v82, v83), v83 = "step_tags".
 m90(n) :- node(_, n, "identifier", _, _), text(n, v87), v87 = "step_tags".
 m90(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v88), node(_, v88, "identifier", _, _), text(v88, v89), v89 = "step_tags".
 m91(n) :- node(_, n, "call", _, _), field(n, "function", v80), m84(v80).
-m91(n) :- inside(v85, n, k2), node(_, v85, "call", _, _), field(v85, "function", v86), m90(v86).
+m91(n) :- within(v85, n), node(_, v85, "call", _, _), field(v85, "function", v86), m90(v86).
 m92(n) :- field(n, "subject", v65), m77(v65).
-m92(n) :- inside(v78, n, k3), node(_, v78, "case_clause", _, _), inside(v79, v78, k4), node(_, v79, "if_clause", _, _), m91(v79).
+m92(n) :- inside(v78, n, k4), node(_, v78, "case_clause", _, _), inside(v79, v78, k5), node(_, v79, "if_clause", _, _), m91(v79).
 violation("data-layer-serverplan-target-architecture", "tag-matches", "SPTA007", p, l) :- node(v63, n, _, _, _), doc(v63, v64, _), node(_, n, "match_statement", _, _), m92(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m99(n) :- node(_, n, "identifier", _, _), text(n, v96), v96 = "getattr".
 m99(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v97), node(_, v97, "identifier", _, _), text(v97, v98), v98 = "getattr".
@@ -138,7 +142,7 @@ m126(n) :- field(v125, "name", n), node(_, v125, "keyword_argument", _, _).
 t128(s) :- text(_, s), prefix("Sql", s).
 t128(s) :- text(_, s), (suffix("Grammar", s) ; suffix("Stmt", s)).
 m129(n) :- node(_, n, "identifier", _, _), !m117(n), !m119(n), text(n, v120), t121(v120).
-m129(n) :- inside(v122, n, k1), node(_, v122, "identifier", _, _), !m124(v122), !m126(v122), text(v122, v127), t128(v127).
+m129(n) :- inside(v122, n, k2), node(_, v122, "identifier", _, _), !m124(v122), !m126(v122), text(v122, v127), t128(v127).
 violation("data-layer-serverplan-target-architecture", "imports-l2070_batching-physical_program.py-from", "SPTA012", p, l) :- node(v130, n, _, _, _), doc(v130, v131, _), node(_, n, "import_from_statement", _, _), node(v132, n, _, _, _), doc(v132, v133, _), v133 = "l2070_batching/physical_program.py", field(n, "module_name", v134), name(v134, v136), (prefix("impl.mariadb", v136) ; prefix("impl.postgres", v136) ; prefix("impl.sqlite", v136) ; prefix("l2000_connection", v136) ; prefix("l2050_transaction", v136)), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m146(n) :- node(_, n, "dotted_name", _, _), text(n, v142), (prefix("impl.mariadb", v142) ; prefix("impl.postgres", v142) ; prefix("impl.sqlite", v142) ; prefix("l2000_connection", v142) ; prefix("l2050_transaction", v142)).
 m146(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v143), name(v143, v145), (prefix("impl.mariadb", v145) ; prefix("impl.postgres", v145) ; prefix("impl.sqlite", v145) ; prefix("l2000_connection", v145) ; prefix("l2050_transaction", v145)).

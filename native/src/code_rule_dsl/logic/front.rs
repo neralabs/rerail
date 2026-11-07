@@ -133,7 +133,12 @@ pub(in crate::code_rule_dsl) struct Atom {
 
 impl Atom {
     pub(in crate::code_rule_dsl) fn vars(&self) -> BTreeSet<String> {
-        self.args.iter().filter_map(|a| if let Term::Var(v) = a { Some(v.clone()) } else { None }).collect()
+        // A head's `@dot(p, s)` names p and s too.
+        let mut out = BTreeSet::new();
+        for a in &self.args {
+            a.vars(&mut out);
+        }
+        out
     }
 }
 
@@ -329,6 +334,40 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) policies: Vec<serde_json::Value>,
     /// `.rr` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
     pub(in crate::code_rule_dsl) settings: Vec<(String, String)>,
+    /// Relations the evaluator makes from their inputs' rows rather than from rules (`dfs_first`), by name. Each
+    /// has one rule over its inputs, which orders it after them; its rows are the native operator's.
+    pub(in crate::code_rule_dsl) natives: BTreeMap<String, Native>,
+    /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
+    /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
+    pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
+}
+
+/// The spans a `rx_span` pattern runs over: a document's whole text (`source`), or each line (`src_line`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(in crate::code_rule_dsl) enum SpanIn {
+    Source,
+    Line,
+}
+
+/// A relation made natively from relations of the program (`Program::natives`).
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::code_rule_dsl) enum Native {
+    /// `dfs_first(r, hit, first, edge, target)`; with `roots`, `dfs_first_memo` (roots in the order of their
+    /// second column, one memo shared).
+    DfsFirst { edge: String, target: String, roots: Option<String> },
+    /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
+    /// `input`'s one column whose `groups` all take part, each group's text (`logic::native::match_all`).
+    MatchAll { input: String, pattern: String, groups: Vec<String> },
+}
+
+impl Native {
+    /// The relations it reads.
+    pub(in crate::code_rule_dsl) fn reads(&self) -> Vec<&str> {
+        match self {
+            Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
+            Native::MatchAll { input, .. } => vec![input.as_str()],
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -648,6 +687,17 @@ impl Parser<'_> {
                     let names = self.list(Self::id)?;
                     prog.demand.extend(names);
                 }
+            }
+            // `.pragma "cross-rounds" "k"`, as `.rr` writes it (decision 0056).
+            "pragma" => {
+                let (Tok::Str(key), Tok::Str(k)) = (self.peek().clone(), self.peek_at(1).clone()) else {
+                    return self.fail("a pragma's two strings");
+                };
+                if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
+                    return self.fail("`.pragma \"cross-rounds\" \"k\"`");
+                }
+                self.i += 2;
+                prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
             }
             "kindset" => {
                 let name = self.id()?;

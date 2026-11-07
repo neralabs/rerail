@@ -1,5 +1,26 @@
 use super::*;
 
+/// Source spans are locations but are not tree nodes. Their explicit document column must
+/// survive the local split, so locating their rows never adds `node(d, span, ...)`.
+#[test]
+fn source_relations_keep_their_document_location() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    for (relation, columns, arguments) in [
+        ("source", "d: number, sp: loc", "d, sp"),
+        ("src_line", "d: number, l: number, sp: loc", "d, l, sp"),
+        ("line_count", "d: number, k: number", "d, k"),
+        ("docof", "sp: loc, d: number", "sp, d"),
+    ] {
+        let text = format!(".decl {relation}({columns})\n.input {relation}\n.decl selected(d: number)\nselected(d) :- {relation}({arguments}).\n.output selected\n");
+        let program = parse(&text).unwrap();
+        let (_, locations, _) = split_located(&program);
+        assert_eq!(locations["selected"], [0], "{relation}: {locations:?}");
+        let mut located = program;
+        locate(&mut located).unwrap();
+        assert!(!located.rules.iter().any(|rule| rule.body.iter().filter_map(|lit| lit.atom()).any(|atom| atom.rel == "node")), "{relation}: a span acquired a tree-node constraint");
+    }
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text
@@ -176,4 +197,73 @@ fn nearest_costs(cap: usize) {
         );
         assert_eq!(solved.values, cpu);
     }
+}
+
+/// A cross-file rule's file-local part is made per chunk: the rule reads one exported join, not its base relations.
+#[test]
+fn a_cross_file_rules_local_join_is_pushed_into_the_chunks() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.input doc, node, field, text, op
+// Any file's names: no location column, so cross-file.
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text(c, s).
+.decl finding(n: node, s: symbol)
+.output finding
+finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), !op(n, "await"), s != "print", !defined(s).
+"#;
+    let mut prog = parse(text).unwrap();
+    assert!(!split(&prog).contains("finding"), "finding negates a cross-file relation");
+    let made = push_local_joins(&mut prog);
+    assert_eq!(made.len(), 1, "{made:?}");
+    let local = split(&prog);
+    assert!(local.contains(&made[0]), "the made join is file-local");
+    let finding: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "finding").collect();
+    assert_eq!(finding.len(), 1);
+    // What is left of the rule: the join and the cross-file negation.
+    let reads: Vec<&str> = finding[0].body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
+    assert_eq!(reads, [made[0].as_str(), "defined"]);
+    let split = programs(&prog);
+    assert!(split.exports.contains(&made[0]));
+    assert!(!split.base.iter().any(|b| b == "field" || b == "text" || b == "op"), "{:?}", split.base);
+    // The join takes the comparison and the negated base read along.
+    let join = prog.rules.iter().find(|r| r.head.rel == made[0]).unwrap();
+    assert_eq!(join.body.len(), 5, "{join:?}");
+    assert_eq!(join.head.args.len(), 2);
+    // Its rows are attributable to their file: the node column is a location.
+    let (_, locations, _) = split_located(&prog);
+    assert_eq!(locations[&made[0]], [0], "{locations:?}");
+}
+
+/// Position comparisons must retain the semantic candidate filters. Document equality alone
+/// does not make their Cartesian product a bounded per-file producer.
+#[test]
+fn cross_file_filters_keep_independent_node_positions_out_of_local_products() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.decl visit_index(n: node, i: number)
+.input node, field, text, docof, visit_index
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text(c, s).
+.decl chosen(n: node)
+chosen(n) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), !defined(s).
+.decl triangle(a: node, b: node, c: node)
+triangle(a, b, c) :- chosen(a), chosen(b), chosen(c),
+    docof(a, d), docof(b, d), docof(c, d), visit_index(a, ai), visit_index(b, bi), visit_index(c, ci), ai < bi, bi < ci.
+.output triangle
+"#;
+    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    assert!(!split(&program).contains("chosen"));
+    let original = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap().clone();
+    push_local_joins(&mut program);
+    let actual = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap();
+    assert_eq!(actual, &original, "do not materialize all document-local node triples before chosen() filters them");
 }

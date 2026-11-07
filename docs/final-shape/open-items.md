@@ -8,7 +8,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
 | O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | closed for the observers (2026-11-01): the slice's napi `CodeRuleSlice` pushes a directory snapshot with editor buffers over it, or a Git `HEAD` (W's `git_workspace` discovery); the anchor lab's corpus capture moves to Phase 3's check |
-| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open |
+| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | closed (2026-11-06): decision 0049, atoms are arena segments written with the rows that name them; 3 appends per full-corpus run instead of 104 commits |
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
@@ -46,7 +46,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
 | O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
-| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open |
+| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open, narrowed (2026-11-06): `.rr`'s `within(n, a)` is the engine's tree relation, read off the tape per looked-up node (decision 0050 §4); the `@within`/`@depth` programs and the two kind-filtered walks remain |
 | O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
 | O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
 
@@ -170,6 +170,33 @@ A new name is interned into `atoms` with one SQLite transaction per batch, under
 Warm edits rebind existing names; a cold scan pays one write per batch. Closure: measure on a cold
 scan of the gate corpus; if it is visible in CPU time, intern ahead in the overlay with a reserved
 range and write the atoms with the first layer that uses them.
+
+**Measured (2026-11-06, notes T10 §1b):** it is visible. On the 9,010-file corpus, 104 chunks
+intern 640k new names, one transaction each. The batch worker spent 77% of its samples there
+(about 6–7 s CPU), mostly in SQLite's page cache and WAL. SQLite's own counters per run:
+
+| Setting | Misses | Spills | Pages written |
+|---|---|---|---|
+| 1 MB cache | 158,806 | 168,121 | 261,856 |
+| 32 MB for the transaction | 107,432 | 0 | 202,009 |
+
+**Done:**
+- A bulk append (more than 1,024 new names) gets a 32 MB cache and a 16k-page checkpoint
+  interval for its transaction only. Both return to the store's settings after it.
+- Per run, interning went from 77% to 44% of the batch phase, and sys from about 6 s to 3.5 s.
+
+**Still open:** about 200k pages, roughly 800 MB, are written per run. Each commit rewrites
+about 1,900 leaf pages of `atoms_by_value`, so the volume scales with the number of commits, not
+the number of names. The fix is fewer commits: allocate ids in memory and write the rows later.
+That needs:
+
+- one in-process mirror per database, shared by the store and the planner's symbols
+  (`logic::native::setfix::Interner`). Today each catches up from the table.
+- every store write transaction appending the pending atoms first, so no durable row refers to an
+  unwritten atom.
+- an in-process reader of `atoms` by value (vocabulary SQL) flushing first.
+
+**Closed (2026-11-06):** decision 0049. On the full corpus: 3 appends of 29.6 MB instead of 104 commits and about 800 MB. Atoms are stored as segments of the arena with no value index, SQL reads them through a virtual table, a lease covers other processes, and the decision sets out recovery after a crash.
 
 ## O4. Spill files after a crash
 
@@ -1262,6 +1289,11 @@ new literal would change `logic/plan`'s exhaustive matches. Two walks through ch
 steps `payload_values`) remain Datalog recursion over tree edges, against §7. **Closure:** `within` and a
 kind-filtered climb/descent (the matcher's `inside`/`has` with `stopBy`) as tree built-ins.
 
+2026-11-06: the `.rr` built-in `within(n, a)` is no longer lowered to an id range or a recursive `below` relation
+over `child`. The engine serves it from a relation read off the tree (decision 0050 §4): n's ancestors for a bound
+n, a's subtree for a bound a. The converter writes it. The `.rdl` programs' `@within`/`@depth` and the two walks
+are unchanged.
+
 ## O64. The data-layer's regex forbid clauses
 
 109 forbid clauses regex the file's text (108 with line options, 8 with a line state machine) and 4 its path, in
@@ -1341,9 +1373,9 @@ Lowered now (decision 0046, reader section): `.violation` at a node, a span or a
 terms, and compared with each other); `.input` with parameters; `within`, `within_stop`, `nearest` (a named
 ancestor negated too), `inside` and `has` over kind sets and over node-valued sets; `precedes_stop`; negated
 conjunctions (a helper relation); `must, may`; `unset`; recursion that makes values bounded by the tree, a
-count, a shrinking text or a function between rows (`front::cycles`). Still refused by name (census of
+count, a shrinking text or a function between rows (`front::cycles`); `dfs_first` and `dfs_first_memo`, computed natively over the edge relation (`logic::native::dfs_first`), so `data-layer/lazy-architecture.rr` lowers (944 rules). Still refused by name (census of
 2026-11-06, clauses alone): `ordered by` (37 clauses: eslint-one-var, the owner-code sketch), `@place` as a
-value outside a `.violation`'s head (3 clauses, 12 files), `dfs_first`/`dfs_first_memo` (2), `~` patterns
+value outside a `.violation`'s head (3 clauses, 12 files), `~` patterns
 (1), `mean`, `=> edits`. `UnboundedValueCycle` still stops 15 library clauses (73 files) whose bound is not
 one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`).
 **Closure:** list step 30.
@@ -1369,12 +1401,14 @@ Hand-written rules read relations the engine does not make yet: `parsed` and `st
 parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
 (`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
 since reading it is not written. **Closure:** these relations are built natively and the files are read. (`option`, `option_item`, `file` and
-`package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.)
+`package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.) 2026-11-07: `parsed` is
+made (decision 0055); `string_annotation` is still empty.
 
 ## O77. Lowering shortcuts in `.rr`
 
 - A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
-  text test; captures on a node or a span are symbols, not spans; `match_all` is not made (O80).
+  text test. Over a `source` or `src_line` span, captures are spans (`rx_span`, decision 0054); on a node they
+  are still symbols (O80).
 - `unset(x)` is the id -1. Its text is "" (`text(x, t)` of it lowers to `t = ""`), and `!unset(x)` is
   `x != -1` (decision 0046). Inside an aggregate, `nearest` or `ast` it is still refused.
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
@@ -1428,35 +1462,37 @@ tokens have no field.
 ## O80. `core.rr` base relations not made yet, or made with a bound (decision 0046)
 
 - `parsed` and `string_annotation` (O76) are still read as empty. A string parsed as code needs its tree grafted
-  into the batch's node space, on demand (rrlab answers requests in rounds); not built.
-- `match_all`, and `match` with captures on a node or span, need the lowering to call the text layer on the
-  bytes (0042 §3). (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
+  into the batch's node space, on demand (rrlab answers requests in rounds); not built. 2026-11-07: `parsed`
+  is made, as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` is not.
+- `match_all`, and `match` captures as spans, are made over `source` and `src_line` spans (`rx_span`, one scan
+  per file and pattern) and over symbols (a native relation): decision 0054. Over a node's own text, `match_all`
+  is refused by name and `match` captures are symbols; a scan per node is what 0041/0042 forbid.
+  (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
-- `syntax_error` for Python is tree-sitter's ERROR/MISSING, not a CPython-grammar verdict.
+- `syntax_error` for Python is CPython's grammar's verdict, from Ruff's parser (`ruff_python_parser` 0.0.10, the
+  last on the pinned toolchain; 2026-11-07), not tree-sitter's; compile-time errors CPython's compiler raises after
+  parsing (`return` outside a function) are not checked, and its cost on the full corpus is not measured yet. A
+  document with one is withheld in `core.rr`'s shape (no facts but `doc`, its path and `syntax_error`), and `.on syntax_error report CODE
+  [at line 1]` and `.on input_error report CODE` report (2026-11-07); T's shape keeps every document.
 - `static_value` is `value`: file-local constants are not followed.
-- `tsconfig*`, `package_export`, `git_*`, `signed_list`, `input_error` and `list_len` are not read.
+- `tsconfig*`, `package_export`, `git_*`, `signed_list` and `list_len` are not read. `input_error` has its
+  `missing` rows (a `.input` file that is absent, decision 0054); the other kinds wait on reading files (O76).
 - `earlier` and `visit_index` are preorder, not CPython's ast order (as O77).
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
 
 
-## O81. A program that derives a relation `core.rr` makes an input
+## O81. A program that derives a relation `core.rr` makes an input: closed (decision 0047)
 
 - Decision 0046 made `docof` a `core.rr` input, and `sql::select::input_columns` names its columns `n, d`.
   T's programs (`typing/programs/workload*.rr`, `calls`) still derive their own `docof(n, d) :- node(d, n, …)`.
   `plan::sql_col` names columns by `input_columns` for any relation of that name, so the SQL reads `t4.d` from
   a derived table whose columns are `c0, c1`: "names no column in scope".
 - Nine `logic::plan::tests` are ignored with this item (they fail the same way on final-rerail-shape-rr-align).
-**Closure:** either the planner names columns by `input_columns` only for relations the program reads as
-inputs (a derived relation keeps `c0, c1`), or a program deriving an input relation is refused at reading and
-the T programs' copies read `core.rr`'s `docof`; the nine tests run again.
-
-**Closed (2026-11-06), the first closure, by renaming.** `plan::private_derived_inputs` runs where a program
-enters the planner (`plan::run`, `plan::lower::lower`). A relation the program derives under a base relation's
-name, and does not read as an input, is planned as `<rel>_rr_derived`, whose columns are positional like any
-derived table's. The suffix sorts where the name did, so components and plans keep T's order, and the reported
-plans and components give the name back (`public_names`). An output under such a name is refused. Eight of the
-nine tests run again. The ninth (`t_programs_with_the_transducers_nearest_derive_t_outputs`) now gets past O81
-and stops at O82.
+**Closed by 0047:** both. The planner names a column by `input_columns` only for an input
+(`plan::Model::col`); the reader refuses a file that declares or derives a `core.rr` relation; T's programs
+read `kind` and `docof` as inputs. The nine tests run again.
+Typing-support first closed it by renaming (`plan::private_derived_inputs`: a derived relation under a base
+relation's name planned as `<rel>_rr_derived`); the merge into final-rerail-shape keeps 0047's mechanism, not both.
 
 ## O82. Metal runs abort in a debug test build
 
@@ -1469,7 +1505,102 @@ device tests. It was not checked whether this predates O81's change; nothing in 
 buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
 zero-length contents pointer), and both tests pass in a debug build.
 
-## O83. `calls.rr` against Jedi over a real corpus
+## O83. Metal `transducer::packed` suites fail when run together; `explain` fails now and then: closed (2026-11-06)
+
+Found (2026-11-06). Of the 750 `transducer::packed` tests with `--features metal-tests`, about 440 failed in
+one run. There were five causes:
+
+1. **Poisoned locks.** `METAL_EXECUTION_LOCK` and `METAL_ALLOCATION_LOCK` guard no data, but one panicking
+   test poisoned them, and every later test failed with `BackendFailure` (443 failures down to 43).
+   Fixed: both locks recover from poisoning (`PoisonError::into_inner`).
+2. **Tests written for the old 600-launch limit.** The launch budget is per thread and per evaluation
+   (`thread_local! EVALUATION`), so it is not carried from test to test, as this item first guessed.
+   Copied tests wrote the limit as the literal 600 (or 599), and three launch-guard tests as 11 x 9 = 99.
+   Fixed: they use `KERNEL_LAUNCH_LIMIT`. The source scan for bypassing encoders skips `*_tests.rs`
+   test modules. 7 tests pass again.
+3. **G's grid executor over the bounds since list step 13.** 35 tests of the grid executor (superseded,
+   decision 0028, O33) need more than 200 launches per evaluation, or more than the 256 MiB device pool
+   (was 2 GB). 22 of them pass when the limit is set back to 600. They are ignored with this item, and they
+   go with the executor at list step 31.
+4. **A real bug: the label sweep did not compile.** `metal_label_sweep.metal`'s `SWEEP_NODE(local)` declared
+   `uint local=(local)` inside `for(uint local...)`, a redefinition and a read of itself (since b995b972e,
+   11-04). The sweep runs only under `RERAIL_HOST_SWEEPS`, but `MetalBackground`, which napi's `"metal"` uses,
+   compiles it before the JIT. So the background compile always failed, and `"metal"` ran the interpreter
+   and never swapped to the compiled kernel. Fixed by renaming the variable. The replay gives the same
+   findings.
+5. **A process-wide device pool.** `METAL_BUFFER_BYTES` (256 MiB) is shared by every thread, which is right
+   for production, but parallel tests then fill it for each other. About 16 tests fail only in a batch
+   (`BackendCapacity`, or a peak-bytes assertion). With `--test-threads=1` all of them pass.
+   Fixed (user decision: a resource lock on memory, so that small tests still run together):
+   `metal_test_pool.rs`. In a test build each thread has its own pool ledger and peak, and the driver's
+   process-wide figure is left out, so a test sees the pool as it would alone. A weighted lock over bytes
+   bounds what all tests hold at once at 1 GiB (the RAM budget). A reservation that would pass it waits for
+   others to release, for at most 30 s, then goes ahead: the bound is on memory, never on results.
+   Production is unchanged.
+- The admission spike's oracle snapshot (`execute_roots_from` as at f5de8998d) is ignored. The interpreter
+  has since gained set mode, lazy cursors and `Reach` pruning.
+- `explain` (`logic::profile::tests`): a concurrent corpus run's `profile::reset()` raced it. Profiled runs
+  and the profile tests now hold `profile::one_run()`. `logic::` passed twice at load 50 or more.
+
+**Closed:** `transducer::packed` passes in one parallel run: 689 passed, 0 failed, 63 ignored (the grid
+executor's, and the admission spike), 104 s at load 40-73.
+
+## O84. The Pulling-it-all-together merge (41f1c88e5): what was checked, and P's tests that need P's addon
+
+**Native code.** Every native file P changed since the merge base (`5cf4246e`) was checked hunk by
+hunk against this tree. All but 59 hunks are here. 35 of the 59 are in `matcher/anchors*`: P's
+version of that module is `matcher::p_anchors`, identical to P's but for this branch's edits, and
+W's `matcher::anchors` stays. The other 24 are one choice, O18's and O20's: P's relational clause
+and SQL anchor engine are production in P and test-only here (`CLAUSE_KINDS` and
+`ClauseKind::Relational` under `cfg(test)`, `TapeDoc`'s P accessors `#[cfg(test)]`, W's
+`select`/store-restore path in `workspace/evaluate.rs`, W's profile fields kept). None was lost.
+
+**TS and scripts.** Taken from P as they were (the schema's `filePath`, `pythonFString`,
+`calls.graph`, `query.regex.lines`, `layout.line`, which this native compiles; the `data-layer`
+pack in the catalog, whose `rules` list is empty). Checked against this branch's addon (a
+`--profile profiling` build) and against P's own (`Pulling-it-all-together/native/*.node`, built
+after P's last native commit):
+- Tests that compile a `relational` clause fail here with "unknown field `relational`" and pass on
+  P's addon. `vitest.config.ts` leaves them out unless `RERAIL_RELATIONAL_TESTS=1`.
+- `test/conformance/data-layer/ports.test.ts` fails the same way on both addons (batch 01: 1 false
+  positive and 2 false negatives; batch 02: 1 and 1; batch 02 probes: 6 and 0; batch 04: 6 and 2).
+  It is P's open parity, and is left out the same way.
+- `execution-owner.test.ts` calls `native.CodeRuleDslExecution`, which neither addon has.
+- Not the merge's: `audit-cli.test.ts` has 1 failure before and after it.
+  `checkout-code-rule-router.test.ts` had 17 failures before and has 1 after it (a 5 s timeout
+  under load). The `gate/data-layer/test/conformance` copies fail to load before and after it
+  (imports relative to `gate/`).
+
+To close: when O18 is decided, either the relational clause becomes production and these run by
+default, or the tests move with P's stage.
+
+## O85. Guests (decision 0055): what is not built yet
+
+Decision 0055's guests are built for `.py` and `.rs` corpus runs. These parts are not:
+
+- **Hiding guests from rules that do not ask for them.** Guests are documents of the batch, so
+  `kind(n, "call")` also matches a call inside a parsed string annotation. `.guests off` only stops
+  the libraries' `embed`s; a rule's own `parsed` or `sub_tape` still makes its guest. 0055 §5 wanted
+  `.guests off` to hide guests as documents and keep them as facts.
+- **Kind names across grammars.** Kinds resolve in the run's dialect. A SQL guest in a Python run
+  is parsed, but `kind(n, "select_statement")` names no Python kind.
+- **Hosts the corpus runner does not collect** (Markdown, HTML, Vue, Blade), and the matcher path's
+  Vue and Blade guests as these documents (0055 step 1).
+- **Global embeds** (an `embed` reading another chunk's facts), **`@parse`** (§7), and the tape
+  operations **`@splice` and `@unparse`**.
+- **The memo and guests.** A memoised file's rows include its guests' rows. Guest keys depend only
+  on the host's path, place and grammar, so they are stable. No test yet checks a memo hit against
+  a fresh run on a file with guests.
+- **Cost on the 9,010-file repository** (guests made, distinct texts, parse CPU): not measured yet.
+- **The shared tape cache races.** `core::build_cached` writes to one SQLite file in the temp dir,
+  which every run on the machine shares. Under parallel tests, a write sometimes fails with
+  `FOREIGN KEY constraint failed`. Guests write equal small texts often, so they hit it. A guest
+  whose cache write fails is parsed without the cache (`guests.cache_failed`). Primary files use
+  the same call and can fail the same way; the cause (probably a collector removing a source between
+  `put_source` and `put_tape`) is not investigated.
+
+To close: each part is built or decided against in a decision record.
+## O88. `calls.rr` against Jedi over a real corpus
 
 Decision 0047's condition for moving `calls:` is the runtime oracle, which `calls.rr` meets. A Jedi comparison over
 a real corpus (the Python pack's django, `fd91518f`) is a broader accuracy check beside it, not a gate.
@@ -1483,7 +1614,7 @@ a real corpus (the Python pack's django, `fd91518f`) is a broader accuracy check
 through decorators. Making the 7,286 calls the program leaves open, which Jedi decides, is the accuracy work
 left.
 
-## O84. The type relations' first draft: what they leave out
+## O89. The type relations' first draft: what they leave out
 
 `calls.rr`'s type relations (decision 0047, point 3; t20) answer at the positions whose value the program models
 (`vpos`), from its points-to values. Left out, each giving `type_open`, never a wrong class:
@@ -1510,13 +1641,14 @@ trusted as a type checker trusts them:
 
 A closed declaration closes the parameter, the function's calls and the attribute. A decorator declared
 `(fn: F) -> F`, with F a type variable, keeps the decorated function. Still open, as a lower bound:
-- **Quoted annotations** (`-> "LazySeq[int]"`). The facts hold no parse of a string's contents. The data layer
+- **Quoted annotations** (`-> "LazySeq[int]"`). The facts held no parse of a string's contents; since
+  decision 0055 `parsed(s, "annotation", r)` has rows, and `calls.rr` does not read it yet. The data layer
   has 146 quoted returns against about 118,000 annotated ones.
 - **External classes** (`p: Path`). They get no type name, so a pathlib receiver is unknown rather than "not
   lazy". This needs the classes' supertypes, from stdlib summaries (t20 gap 6).
 - Type variables, `Any`, `Protocol`s, generic arguments, and variables annotated in a function or module body.
 
-## O86. `calls.rr` over the data layer's l1–l20 packages: cost and convergence
+## O94. `calls.rr` over the data layer's l1–l20 packages: cost and convergence
 
 On the data layer's l1–l20 packages (489 files, debug build), `calls.rr` takes 101.6 s of CPU with a peak RSS
 of 835 MB. Its rounds do not converge by k = 4: hop rows 498,860 → … → 753,630, so the pending round runs. On 84
@@ -1541,7 +1673,7 @@ constants, `child`, the three `rr_nearest_*`); they now take one sort per column
 that changed in round r, and keeps the others' rows. Statistics sampled rather than exact. Then the full
 l1–l20 Jedi score and the LEG-083 files.
 
-## O85. Cross-file costs `calls.rr` works around
+## O90. Cross-file costs `calls.rr` works around
 
 Profiling `calls.rr` on django (t20, "Cost of `calls.rr` on django") found engine costs. The program avoids them by
 how its rules are written; another program would meet them again. Measured on django utils + db (172 files),
@@ -1612,3 +1744,33 @@ debug build, load about 7.
 
 **Closure:** 1–5 done; left: `calls.rr`'s rewrites (`alook`, `pass`, `fv`, `fret`) checked against the
 plain rules on the same slices.
+
+## O91. Bridged typing answers are recomputed every run
+
+A rule that reads `typing_<program>__<output>` runs the program in full before the rule (decision 0056). The rows
+are a derivation of the program's digest and the run's sources (its manifest, 0053), but they are not recorded as
+one. An unchanged corpus therefore reruns the typing program's rounds.
+
+**Closure:** the rows are kept as a derivation (03 §14, `content_store::derivation`), valid while the program and
+the files its rounds read are unchanged, and a run with a valid derivation reads them instead.
+
+## O92. The device's nearest is off the corpus path
+
+Since decision 0057, the corpus runner's kind-set axes are made per looked-up node on the host (`within::Axis`).
+The file-local FIX on Metal (pointer jumping, `typing::file_local::nearest` with `Binding::Metal`) now runs only for
+typing's file-local part. A join that scans an axis makes every node's rows on the host, one climb each.
+
+**Closure:** a scan of an axis over a large batch is measured on both paths, and the device solves the whole set
+where it is faster (the rows then filled from its answer), or the device path is recorded as typing's only.
+
+## O93. The hand-written data-layer rules do not run on a corpus
+
+These are More-ergonomic's 56 rules in `docs/rule-syntax/data-layer`, measured with `RERAIL_MEASURE_HAND=only`.
+
+- **s200:** the run fails after 61 s of CPU with `content store database error: no such table: atom_segment`, raised
+  through a SQL user function. RSS is 7.6 GB, over the 1 GB budget.
+- **Full corpus:** the run takes more than 280 s.
+- **Directory inputs:** a `dir="…"` input (one row per line of each file) is not made at all. The runner stops with
+  `no columns for <rel>`, and the measure leaves the rule out (O76).
+
+**Closure:** the hand-written rules run on the full corpus, within the budgets, with every rule left out named.

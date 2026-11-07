@@ -41,7 +41,7 @@ violation("data-layer-grammar-fragment-usage", "forbidden-class", "sqlfragment_u
 m9(n) :- field(n, "name", v7), node(_, v7, "identifier", _, _), text(v7, v8), (v8 = "SqlDeferredRenderable" ; v8 = "SqlFragment" ; v8 = "SqlPreRenderedFragment").
 m20(n) :- node(_, n, "function_definition", _, _), field(n, "name", v15), node(_, v15, "identifier", _, _), text(v15, v16), v16 = "render".
 m20(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v17), node(_, v17, "function_definition", _, _), field(v17, "name", v18), node(_, v18, "identifier", _, _), text(v18, v19), v19 = "render".
-u29(n) :- inside(v30, n, k2), node(_, v30, "import_from_statement", _, _), child(v30, v31, _), node(_, v31, "aliased_import", _, _), field(v31, "name", v32), name(v32, v33), (glob("*.SqlFragment", v33) ; glob("SqlFragment", v33)).
+u29(n) :- within(v30, n), node(_, v30, "import_from_statement", _, _), child(v30, v31, _), node(_, v31, "aliased_import", _, _), field(v31, "name", v32), name(v32, v33), (glob("*.SqlFragment", v33) ; glob("SqlFragment", v33)).
 m41(n) :- strprefix(n, v40), contains("f", v40).
 m44(n) :- child(n, v42, _), node(_, v42, "string", _, _), strprefix(v42, v43), contains("f", v43).
 m45(n) :- node(_, n, "string", _, _), !m41(n).

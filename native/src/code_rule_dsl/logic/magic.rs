@@ -112,6 +112,117 @@ fn binds(l: &Literal, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
     }
 }
 
+/// Demand for the tests a rule negates (decision 0038's corpus path): a relation whose rules each start from every
+/// node (`nearest($n, $a, set)`, `inside_<set>($n, $a)` on its key) and that some rule negates is computed for every
+/// node of a chunk, though its readers ask about the nodes they have bound (`!m($n)`). Demanded, it is computed for
+/// the keys `demand_<r>` holds only: each reader's tests of the key alone (its kind, say). Not `magic_sets`, whose
+/// demand is a reader's whole positive prefix: without the reader's negations that can be far more than the test. A relation qualifies when it is derived and not kept (an output, input, lattice,
+/// relation with facts, gate or already demanded), not recursive, negated somewhere, read only by atoms with a
+/// variable key, and every rule reads its key from such an atom. Returns the program and the relations demanded; a
+/// relation some reader gives no test of the key alone stays whole.
+pub(in crate::code_rule_dsl) fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
+    let kept = |rel: &str| {
+        prog.outputs.iter().any(|o| o == rel)
+            || prog.inputs.iter().any(|i| i == rel)
+            || prog.lattice.contains_key(rel)
+            || prog.natives.contains_key(rel)
+            || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
+            || prog.demand.iter().any(|d| d == rel)
+            || prog.gates.iter().any(|(g, _)| g == rel)
+    };
+    let mut by_rel: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+    for rule in &prog.rules {
+        by_rel.entry(rule.head.rel.as_str()).or_default().push(rule);
+    }
+    let mut negated: BTreeSet<&str> = BTreeSet::new();
+    let mut refused: BTreeSet<&str> = BTreeSet::new();
+    for rule in &prog.rules {
+        for l in &rule.body {
+            match l {
+                Literal::Atom(a) if matches!(a.args.first(), Some(Term::Var(_))) => {
+                    if a.neg {
+                        negated.insert(a.rel.as_str());
+                    }
+                    if a.rel == rule.head.rel {
+                        refused.insert(a.rel.as_str());
+                    }
+                }
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                    refused.insert(a.rel.as_str());
+                }
+                _ => {}
+            }
+        }
+    }
+    let per_node = |rule: &Rule| -> bool {
+        let Some(Term::Var(key)) = rule.head.args.first() else { return false };
+        rule.body.iter().any(|l| match l {
+            Literal::Nearest { n, .. } => n == key,
+            Literal::Atom(a) => !a.neg && a.rel.starts_with(super::front::AXIS) && a.args.first() == Some(&Term::Var(key.clone())),
+            _ => false,
+        })
+    };
+    let mut demand: Vec<String> = by_rel
+        .iter()
+        .filter(|(rel, rules)| negated.contains(*rel) && !refused.contains(*rel) && !kept(rel) && rules.iter().all(|r| per_node(r)))
+        .map(|(rel, _)| (*rel).to_owned())
+        .collect();
+    // Each reader's demand: its positive atoms of input relations over the key alone (`node(_, $n, "call", _, _)`),
+    // a superset of the keys it asks about, cheap to read. A relation one reader gives no such atom stays whole.
+    let mut wanted: BTreeMap<String, Vec<Vec<Literal>>> = BTreeMap::new();
+    let mut unbounded: BTreeSet<String> = BTreeSet::new();
+    for rule in &prog.rules {
+        for l in &rule.body {
+            let Literal::Atom(a) = l else { continue };
+            if !demand.contains(&a.rel) {
+                continue;
+            }
+            let Some(Term::Var(key)) = a.args.first() else { continue };
+            let only_key = |b: &Atom| !b.neg && prog.inputs.contains(&b.rel) && b.vars().iter().all(|v| v == key) && b.vars().contains(key);
+            let atoms: Vec<Literal> = rule
+                .body
+                .iter()
+                .filter_map(|m| match m {
+                    Literal::Atom(b) if only_key(b) => Some(Literal::Atom(rename_atom(b, key, "k"))),
+                    _ => None,
+                })
+                .collect();
+            if atoms.is_empty() {
+                unbounded.insert(a.rel.clone());
+            } else {
+                wanted.entry(a.rel.clone()).or_default().push(atoms);
+            }
+        }
+    }
+    demand.retain(|d| !unbounded.contains(d) && wanted.contains_key(d));
+    if demand.is_empty() {
+        return (prog, Vec::new());
+    }
+    let mut prog = prog;
+    for rel in &demand {
+        let name = format!("demand_{rel}");
+        let ty = prog.decls[rel][0].1.clone();
+        prog.decls.insert(name.clone(), vec![("k".to_owned(), ty)]);
+        let mut bodies = wanted.remove(rel).unwrap_or_default();
+        bodies.sort_by_key(|b| format!("{b:?}"));
+        bodies.dedup();
+        for body in bodies {
+            prog.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".to_owned())]), body });
+        }
+        for rule in prog.rules.iter_mut().filter(|r| &r.head.rel == rel) {
+            let key = rule.head.args[0].clone();
+            rule.body.insert(0, Literal::Atom(atom(name.clone(), vec![key])));
+        }
+    }
+    (prog, demand)
+}
+
+/// `a` with the variable `from` renamed `to`.
+fn rename_atom(a: &Atom, from: &str, to: &str) -> Atom {
+    let args = a.args.iter().map(|t| if matches!(t, Term::Var(v) if v == from) { Term::Var(to.to_owned()) } else { t.clone() }).collect();
+    Atom { args, ..a.clone() }
+}
+
 /// `.demand r, …`: applies demand, dropping a demanded relation whose negated use would close a negative cycle
 /// through its own demand; that relation is computed in full (`demand_dropped` says why).
 pub(in crate::code_rule_dsl) fn magic_sets(prog: Program, options: &Options) -> Result<Program, Error> {

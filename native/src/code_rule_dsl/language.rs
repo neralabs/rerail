@@ -95,8 +95,12 @@ impl LanguageExt for GrammarDialect {
 }
 
 impl GrammarDialect {
-    /// The dialect's tree-sitter grammar; `None` for one Rerail parses itself (Blade).
+    /// The dialect's tree-sitter grammar; `None` for one Rerail parses itself (Blade), or one left out of this
+    /// build (its `lang-*` feature off: `corpus` refuses to run it, so its kinds are never read).
     fn ts_language(self) -> Option<TSLanguage> {
+        if !self.built() {
+            return None;
+        }
         registry_grammar(self).or_else(|| self.support().map(|lang| lang.get_ts_language()))
     }
 }
@@ -420,7 +424,8 @@ pub(crate) fn label(lang: GrammarDialect) -> Option<&'static str> {
 }
 
 /// The file label a path's suffix selects, as the host's table does for dialect files: the
-/// longest matching suffix.
+/// longest matching suffix. A dialect this build leaves out (`GrammarDialect::built`) selects none: its files are
+/// not read, as a planned language's are not.
 pub(crate) fn label_of_path(path: &str) -> Option<&'static str> {
     let path = path.to_ascii_lowercase();
     DIALECTS
@@ -428,6 +433,7 @@ pub(crate) fn label_of_path(path: &str) -> Option<&'static str> {
         .flat_map(|dialect| dialect.suffixes.iter().map(move |suffix| (suffix, dialect)))
         .filter(|(suffix, _)| path.ends_with(**suffix))
         .max_by_key(|(suffix, _)| suffix.len())
+        .filter(|(_, dialect)| dialect.lang.built())
         .map(|(_, dialect)| dialect.label)
 }
 

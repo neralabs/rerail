@@ -185,6 +185,9 @@ fn hand_written(check: &str) -> Option<String> {
         return None;
     }
     let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    if !path.exists() {
+        return None;
+    }
     // A rule that does not lower falls back to the converted JSON; say why, so a broken rule is not silent.
     let program = match crate::code_rule_dsl::logic::rr::parse_file(&path) {
         Ok(p) => p,
@@ -478,9 +481,11 @@ fn converted_rules_give_the_recorded_findings() {
             Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
             Err(_) => program,
         };
-        let mut got: Vec<String> = match super::super::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18) {
-            Ok(_) => std::fs::read_to_string(out.join("violation.csv"))
-                .unwrap_or_default()
+        let ran = super::super::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18)
+            // Every output has its file, empty or not: no `violation.csv` is a program without violations.
+            .and_then(|_| std::fs::read_to_string(out.join("violation.csv")).map_err(|e| super::super::plan::Error::Plan(format!("violation.csv: {e}"))));
+        let mut got: Vec<String> = match ran {
+            Ok(csv) => csv
                 .lines()
                 .map(|l| {
                     let f: Vec<&str> = l.split('\t').collect();
@@ -534,6 +539,145 @@ fn converted_rules_give_the_recorded_findings() {
     for m in misses.iter().take(40) {
         println!("{m}");
     }
+    check_baseline(&per_check, only.as_deref());
+}
+
+/// The replay's recorded result per check (`replay_baseline.txt`): `<group> | <check> | events converted exact
+/// errors`. A check may not convert fewer events, give fewer exact, or more errors than recorded; a better result
+/// is printed, and `RERAIL_REPLAY_BLESS=1` records it. With `RERAIL_REPLAY_CHECK`, only those checks compare.
+fn check_baseline(per_check: &BTreeMap<(String, String), [usize; 4]>, only: Option<&[String]>) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt");
+    let row = |line: &str| -> Option<((String, String), [usize; 4])> {
+        let mut parts = line.split(" | ");
+        let (group, check, numbers) = (parts.next()?, parts.next()?, parts.next()?);
+        let n: Vec<usize> = numbers.split_whitespace().map(|n| n.parse().ok()).collect::<Option<_>>()?;
+        Some(((group.to_owned(), check.to_owned()), n.try_into().ok()?))
+    };
+    let recorded: BTreeMap<_, _> = std::fs::read_to_string(&path).unwrap_or_default().lines().filter(|l| !l.starts_with('#')).filter_map(row).collect();
+    if std::env::var_os("RERAIL_REPLAY_BLESS").is_some() {
+        assert!(only.is_none() && std::env::var_os("RERAIL_REPLAY_EVENT").is_none(), "bless the whole replay only");
+        let mut text = String::from("# converted_rules_give_the_recorded_findings, per check: events converted exact errors\n");
+        for ((group, check), r) in per_check {
+            text.push_str(&format!("{group} | {check} | {} {} {} {}\n", r[0], r[1], r[2], r[3]));
+        }
+        std::fs::write(&path, text).unwrap();
+        return;
+    }
+    let mut worse = Vec::new();
+    for (key, want) in &recorded {
+        if only.is_some_and(|o| !o.contains(&key.1)) {
+            continue;
+        }
+        let got = per_check.get(key).copied().unwrap_or_default();
+        if got[1] < want[1] || got[2] < want[2] || got[3] > want[3] {
+            worse.push(format!("{} {}: {:?} (recorded {want:?})", key.0, key.1, got));
+        } else if got != *want {
+            println!("better than recorded: {} {}: {got:?} (recorded {want:?}); RERAIL_REPLAY_BLESS=1 records it", key.0, key.1);
+        }
+    }
+    for (key, got) in per_check {
+        if !recorded.contains_key(key) {
+            println!("not recorded: {} {}: {got:?}", key.0, key.1);
+        }
+    }
+    assert!(!recorded.is_empty(), "no replay baseline at {}", path.display());
+    assert!(worse.is_empty(), "worse than the replay baseline:\n{}", worse.join("\n"));
+}
+
+/// The rules `rules` (comma-separated ids, or `*`) in one corpus run: each file parsed and batched once, every rule
+/// over each chunk. Prints the run as `measure_converted_rules` does, and the violations per rule.
+fn measure_all(corpus: &Path, rules: &str) {
+    let ids: Vec<String> = if rules == "*" {
+        let mut ids: Vec<String> = std::fs::read_dir(pack().join("datalog")).unwrap().filter_map(|e| {
+            let p = e.unwrap().path();
+            (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
+        }).collect();
+        ids.sort();
+        ids
+    } else {
+        rules.split(',').map(str::to_owned).collect()
+    };
+    // A check's hand-written rule (`docs/rule-syntax/data-layer`), where it lowers, replaces its converted one, as in
+    // the replay (`RERAIL_MEASURE_HAND=off`: the converted rules only).
+    // `RERAIL_MEASURE_HAND=only`: the hand-written rules alone, including the checks the pack has no rule for; `skip`: the
+    // converted rules of the other checks. A run binds one shape of base relations (`core.rr`'s, or T's), so the two
+    // sets are two runs.
+    let mode = std::env::var("RERAIL_MEASURE_HAND").unwrap_or_default();
+    let hand = mode != "off";
+    let texts: Vec<String> = ids
+        .iter()
+        .map(|id| {
+            let written = id.strip_prefix("data-layer-").filter(|_| hand).and_then(|c| hand_written(&c.replace('-', "_")));
+            if written.is_some() {
+                println!("HAND {id}");
+            }
+            match (mode.as_str(), written) {
+                ("only", w) => w,
+                ("skip", Some(_)) => None,
+                (_, Some(w)) => Some(w),
+                _ => Some(std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap()),
+            }
+        })
+        .flatten()
+        .collect();
+    let mut texts = texts;
+    // The hand-written rules of checks the pack has no rule for.
+    if hand && mode != "skip" && rules == "*" {
+        let dir = crate::code_rule_dsl::logic::rr::library().join("../data-layer");
+        let mut extra: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| {
+            let p = e.unwrap().path();
+            (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
+        }).filter(|c| !ids.contains(&format!("data-layer-{c}"))).collect();
+        extra.sort();
+        for c in extra {
+            // A rule reading a repository input the engine does not make yet (`input_error`, O80) cannot run.
+            match hand_written(&c.replace('-', "_")) {
+                Some(t) if t.contains("input_error") => println!("HAND {c} (no converted rule): skipped, reads input_error (O80)"),
+                Some(t) => {
+                    println!("HAND {c} (no converted rule)");
+                    texts.push(t);
+                }
+                None => {}
+            }
+        }
+    }
+    // A rule reading a repository file that exists (`.input r(IO=…, filename="…")`) or a directory (`dir="…"`) cannot
+    // run until files are read (O76): it is left out and named.
+    texts.retain(|t| {
+        let mut read: Vec<&str> = t.split("filename=\"").skip(1).filter_map(|f| f.split('"').next()).filter(|f| corpus.join(f).exists()).collect();
+        // A directory input (`dir="…"`) is not made at all yet.
+        read.extend(t.split("dir=\"").skip(1).filter_map(|f| f.split('"').next()));
+        if let Some(f) = read.first() {
+            let name = t.lines().find(|l| l.starts_with("// ")).unwrap_or("").chars().take(60).collect::<String>();
+            println!("SKIPPED (reads {f}, O76): {name}");
+        }
+        read.is_empty()
+    });
+    let programs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("measure-all");
+    if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
+        crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join("all"));
+    }
+    let r = super::super::plan::corpus::run_all(&programs, corpus, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
+    let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
+    println!(
+        "MEASURE all {} rules: {} files, {} nodes, {} chunks, violations {}, CPU {cpu:.2} s, peak RSS {rss:.0} MB; text tests {} relations, {} strings, {:.3} s CPU",
+        programs.len(), r.files, r.nodes, r.chunks, r.rows.get("violation").copied().unwrap_or(0), r.text.0, r.text.1, r.text.2
+    );
+    for (name, user, sys, rss, statements) in &r.phases {
+        println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
+    }
+    // Violations per rule: the first column of `violation.csv` is the rule's id.
+    let mut per: BTreeMap<String, usize> = BTreeMap::new();
+    for line in std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines() {
+        let id = line.split('\t').next().unwrap_or("").trim_matches('"').to_owned();
+        *per.entry(id).or_default() += 1;
+    }
+    for (id, n) in &per {
+        println!("VIOLATIONS {id} {n}");
+    }
+    let _ = std::fs::remove_dir_all(&out);
 }
 
 /// A measurement, not a check: converted rules (`RERAIL_MEASURE_RULES`, comma-separated rule ids) run over a corpus
@@ -544,6 +688,10 @@ fn converted_rules_give_the_recorded_findings() {
 fn measure_converted_rules() {
     let corpus = PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
     let rules = std::env::var("RERAIL_MEASURE_RULES").expect("RERAIL_MEASURE_RULES");
+    // `RERAIL_MEASURE_ALL=1`: the rules in one run (`corpus::run_all`), `*` for every rule of the pack.
+    if std::env::var_os("RERAIL_MEASURE_ALL").is_some() {
+        return measure_all(&corpus, &rules);
+    }
     for id in rules.split(',') {
         let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap();
         // The relations the cross-file part derives, and the base relations it reads.

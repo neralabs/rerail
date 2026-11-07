@@ -51,6 +51,32 @@ pub(super) struct Lines {
 }
 
 impl Lines {
+    /// Python str.splitlines: all eleven Unicode line boundaries; CRLF is one.
+    /// This is a text view, not the coordinate system of parser spans.
+    fn split_python(src: &str) -> impl Iterator<Item = &str> {
+        let mut chars = src.char_indices().peekable();
+        let mut start = 0;
+        std::iter::from_fn(move || {
+            while let Some((at, c)) = chars.next() {
+                if matches!(c, '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}') {
+                    let line = &src[start..at];
+                    start = at + c.len_utf8();
+                    if c == '\r' && chars.peek().is_some_and(|(_, c)| *c == '\n') {
+                        let (at, _) = chars.next().unwrap();
+                        start = at + 1;
+                    }
+                    return Some(line);
+                }
+            }
+            if start < src.len() {
+                let line = &src[start..];
+                start = src.len();
+                Some(line)
+            } else {
+                None
+            }
+        })
+    }
     /// Python ends a line at `\n`, `\r\n` or a lone `\r`; the others at `\n`, a `\r` before it left out of the
     /// line's text. A last line without a terminator counts when it is not empty (Python) or always (the others,
     /// so an empty file has one empty line, as `split('\n')` gives).
@@ -398,149 +424,31 @@ pub(super) fn js_number(t: &str) -> Option<String> {
     Some(if f.fract() == 0.0 && f.abs() < 1e21 { format!("{}", f as i128) } else { format!("{f}") })
 }
 
+/// Decoded parts and their source byte offsets, relative to the part's literal token.
+#[cfg(test)]
+pub(super) fn str_parts_with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
+    super::python_parts::with_offsets(parts)
+}
+
 /// `str_part(lit, i, v, at, spec)`: the str constants CPython builds from Python literal `lit` (a `string`, or a
 /// `concatenated_string`'s parts `parts`, each with its node): plain runs join across adjacent literals; an
 /// f-string's fields split them; a format spec's literal runs are pieces of their own (`spec` 1). Bytes and
 /// t-strings give none. Returns (v, at, spec) per piece, in order.
+#[cfg(test)]
 pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
-    let mut pieces: Vec<(String, N, u8)> = Vec::new();
-    let mut cur: Option<(String, N)> = None;
-    let mut any_f = false;
-    for &(sid, t) in parts {
-        let pre: String = t.chars().take_while(char::is_ascii_alphabetic).collect::<String>().to_lowercase();
-        if pre.contains('b') || pre.contains('t') {
-            return Vec::new();
-        }
-        let rest = &t[pre.len()..];
-        let Some(q) = ["\"\"\"", "'''", "\"", "'"].into_iter().find(|q| rest.len() >= 2 * q.len() && rest.starts_with(q) && rest.ends_with(q)) else {
-            return Vec::new();
-        };
-        let body = &rest[q.len()..rest.len() - q.len()];
-        let raw = pre.contains('r');
-        let dec = |x: &str| if raw { x.to_owned() } else { py_unescape(x) };
-        let push = |cur: &mut Option<(String, N)>, v: &str| match cur {
-            Some((s, _)) => s.push_str(v),
-            None => *cur = Some((v.to_owned(), sid)),
-        };
-        if !pre.contains('f') {
-            push(&mut cur, &dec(body));
-            continue;
-        }
-        any_f = true;
-        let b: Vec<char> = body.chars().collect();
-        let mut i = 0;
-        let mut run = String::new();
-        while i < b.len() {
-            let c = b[i];
-            if c == '\\' && !raw && i + 1 < b.len() {
-                // An escape, kept whole for `py_unescape`: `\N{…}` holds braces that are not a field.
-                let mut j = i + 2;
-                if b[i + 1] == 'N' && b.get(i + 2) == Some(&'{') {
-                    while j < b.len() && b[j - 1] != '}' {
-                        j += 1;
-                    }
-                }
-                run.extend(&b[i..j.min(b.len())]);
-                i = j;
-            } else if (c == '{' || c == '}') && b.get(i + 1) == Some(&c) {
-                run.push_str(if c == '{' { "{{" } else { "}}" });
-                i += 2;
-            } else if c == '{' {
-                let lit = dec(&run).replace("{{", "{").replace("}}", "}");
-                run.clear();
-                // The field: an expression up to a depth-0 `!`, `:` or `}`.
-                let mut j = i + 1;
-                let mut depth = 0i32;
-                let mut quote: Option<char> = None;
-                while j < b.len() {
-                    let d = b[j];
-                    if let Some(qc) = quote {
-                        if d == qc {
-                            quote = None;
-                        }
-                    } else if d == '\'' || d == '"' {
-                        quote = Some(d);
-                    } else if "([{".contains(d) {
-                        depth += 1;
-                    } else if ")]}".contains(d) {
-                        if depth == 0 {
-                            break;
-                        }
-                        depth -= 1;
-                    } else if depth == 0 && (d == ':' || d == '!' && b.get(j + 1) != Some(&'=')) {
-                        break;
-                    }
-                    j += 1;
-                }
-                let expr: String = b[i + 1..j.min(b.len())].iter().collect();
-                let te = expr.trim_end();
-                // `f"{x=}"`: the expression's text is part of the constant.
-                let debug = te.ends_with('=') && !["==", "!=", "<=", ">="].iter().any(|o| te.ends_with(o));
-                let mut text = lit;
-                if debug {
-                    text.push_str(&expr);
-                }
-                if !text.is_empty() {
-                    push(&mut cur, &text);
-                }
-                if let Some((v, at)) = cur.take()
-                    && !v.is_empty()
-                {
-                    pieces.push((v, at, 0));
-                }
-                // A conversion, then a format spec up to the field's closing brace.
-                if j < b.len() && b[j] == '!' {
-                    while j < b.len() && b[j] != ':' && b[j] != '}' {
-                        j += 1;
-                    }
-                }
-                if j < b.len() && b[j] == ':' {
-                    j += 1;
-                    let mut spec = String::new();
-                    let mut depth = 0i32;
-                    while j < b.len() {
-                        let d = b[j];
-                        if d == '{' {
-                            if depth == 0 && !spec.is_empty() {
-                                pieces.push((dec(&spec), sid, 1));
-                                spec.clear();
-                            }
-                            depth += 1;
-                        } else if d == '}' {
-                            if depth == 0 {
-                                break;
-                            }
-                            depth -= 1;
-                        } else if depth == 0 {
-                            spec.push(d);
-                        }
-                        j += 1;
-                    }
-                    if !spec.is_empty() {
-                        pieces.push((dec(&spec), sid, 1));
-                    }
-                }
-                i = j + 1;
-            } else {
-                run.push(c);
-                i += 1;
-            }
-        }
-        if !run.is_empty() {
-            let lit = dec(&run).replace("{{", "{").replace("}}", "}");
-            push(&mut cur, &lit);
-        }
+    super::python_parts::with_offsets(parts).into_iter().map(|(v, n, spec, _)| (v, n, spec)).collect()
+}
+
+/// A shared native grammar verdict. Raw text projections do not request it.
+pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
+    if dialect.family == Family::Python {
+        return f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone();
     }
-    if let Some((v, at)) = cur.take()
-        && (!any_f || !v.is_empty())
-    {
-        pieces.push((v, at, 0));
-    }
-    pieces
+    first_error(f, &Lines::new(&f.source, false), &|id| dialect.name(f, id))
 }
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
-/// MISSING nodes; a Python verdict from a parser that follows CPython's grammar is not built yet (O80).
+/// MISSING nodes. Python uses its demanded, cached native grammar verdict instead.
 pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
     if !f.syntax_errors {
         return None;
@@ -573,17 +481,23 @@ pub(super) struct CoreRows {
     syntax_error: Vec<[i64; 3]>,
     source: Vec<[i64; 2]>,
     src_line: Vec<[i64; 3]>,
+    split_line: Vec<[i64; 3]>,
+    lf_line: Vec<[i64; 3]>,
     line_count: Vec<[i64; 2]>,
     str_part: Vec<[i64; 5]>,
+    str_part_start: Vec<[i64; 4]>,
+    str_part_word: Vec<[i64; 5]>,
     first_token: Vec<[i64; 2]>,
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
+    tree_digest: Vec<[i64; 2]>,
+    rx_span: Vec<[i64; 5]>,
 }
 
 impl CoreRows {
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
-    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, string: &mut dyn FnMut(&str) -> usize, wants_text: bool) {
+    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
         let f = &*p.facts;
         let id = p.core[local as usize];
         let n = p.global(local);
@@ -651,15 +565,29 @@ impl CoreRows {
                 self.value_type.insert([v, string(ty) as i64]);
             }
             if dialect.family == Family::Python
+                && (wants_parts || wants_part_starts || wants_words)
                 && (kind == "concatenated_string" || kind == "string" && f.parent(id).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
             {
-                let parts: Vec<(i64, &str)> = if kind == "string" {
-                    vec![(n, text)]
-                } else {
-                    p.children(local).filter(|&c| dialect.name(f, p.core[c as usize]) == "string").map(|c| (p.global(c), f.text(p.core[c as usize]))).collect()
-                };
-                for (i, (v, at, spec)) in str_parts(&parts).into_iter().enumerate() {
-                    self.str_part.push([n, i as i64, string(&v) as i64, at, i64::from(spec)]);
+                // A word-only reader also gets coordinates from this pass. It never interns full values.
+                let word_parts = if wants_words { super::python_parts::from_tape(p, dialect, local, true) } else { Vec::new() };
+                if wants_words {
+                    for (i, (v, at, spec, _)) in word_parts.iter().enumerate() {
+                        for word in v.split(|c: char| !crate::code_rule_dsl::value::python::words::is_word(u32::from(c))).filter(|s| !s.is_empty()) {
+                            self.str_part_word.push([n, i as i64, string(word) as i64, *at, i64::from(*spec)]);
+                        }
+                    }
+                }
+                let position_parts = if wants_parts || wants_part_starts && !wants_words { super::python_parts::from_tape(p, dialect, local, false) }
+                    else if wants_part_starts { word_parts } else { Vec::new() };
+                for (i, (v, at, spec, offset)) in position_parts.into_iter().enumerate() {
+                    if wants_parts {
+                        self.str_part.push([n, i as i64, string(&v) as i64, at, i64::from(spec)]);
+                    }
+                    if wants_part_starts {
+                        let absolute = f.start[p.core[at as u32 as usize] as usize] + offset as u32;
+                        let (line, _, col) = p.extra.as_ref().expect("core spans").lines.place([absolute, absolute]);
+                        self.str_part_start.push([n, i as i64, i64::from(line), i64::from(col)]);
+                    }
                 }
             }
         }
@@ -668,23 +596,40 @@ impl CoreRows {
         }
     }
 
-    /// A document's rows: its first error, its source-text spans, and its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool) {
+    /// A withheld document's one row: its first error (`verdict`).
+    pub(super) fn withheld(&mut self, p: &Projected, (l, msg): &(u32, String), string: &mut dyn FnMut(&str) -> usize) {
+        self.syntax_error.push([i64::from(p.key), i64::from(*l), string(msg) as i64]);
+    }
+
+    /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
+    /// its tokens.
+    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
-        if let Some((l, msg)) = first_error(f, &x.lines, &|id| dialect.name(f, id)) {
-            self.syntax_error.push([key, i64::from(l), string(&msg) as i64]);
+        if own_text {
+            let source = p.len() + x.tokens;
+            self.source.push([key, p.global(source)]);
+            for l in 1..=x.lines.count() {
+                self.src_line.push([key, l as i64, p.global(source + l as u32)]);
+            }
+            self.line_count.push([key, x.lines.count() as i64]);
+            if wants_split_lines {
+                for (i, line) in Lines::split_python(&f.source).enumerate() {
+                    self.split_line.push([key, (i + 1) as i64, string(line) as i64]);
+                }
+            }
+            if wants_lf_lines {
+                for (i, line) in f.source.split('\n').enumerate() {
+                    self.lf_line.push([key, (i + 1) as i64, string(line) as i64]);
+                }
+            }
         }
-        let source = p.len() + x.tokens;
-        self.source.push([key, p.global(source)]);
-        for l in 1..=x.lines.count() {
-            self.src_line.push([key, l as i64, p.global(source + l as u32)]);
-        }
-        self.line_count.push([key, x.lines.count() as i64]);
         if wants_text {
             for (i, &[a, b]) in x.spans.iter().enumerate() {
-                if i < x.tokens as usize || (b - a) as usize <= TEXT_INLINE {
+                let requested_container = (wants_source_text && i == x.tokens as usize)
+                    || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
+                if requested_container || i < x.tokens as usize || i >= x.matched as usize || (b - a) as usize <= TEXT_INLINE {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }
@@ -727,6 +672,99 @@ impl CoreRows {
         }
     }
 
+    /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c`, a document's `source` or
+    /// one of its lines (`src_line`), is span `m`, made here past the lines (`Extra::matched`). Group "" is the whole
+    /// match; a group that takes no part in a match has no row. Matches do not overlap, as `match_all` says; a
+    /// `match` pattern is anchored (`rr::lower`), so it has one. Each regex scans the file once (decision 0042 §3).
+    pub(super) fn matches(&mut self, p: &mut Projected, patterns: &[(crate::code_rule_dsl::logic::front::SpanIn, &str, regex::Regex)], string: &mut dyn FnMut(&str) -> usize) {
+        use crate::code_rule_dsl::logic::front::SpanIn;
+        let facts = std::sync::Arc::clone(&p.facts);
+        let src = facts.source.as_str();
+        let base = p.len();
+        let x = p.extra.as_mut().expect("core.rr's spans");
+        let source = x.tokens;
+        for &(within, pattern, ref re) in patterns {
+            let pat = string(pattern) as i64;
+            let containers: Vec<u32> = match within {
+                SpanIn::Source => vec![source],
+                SpanIn::Line => (1..=x.lines.count() as u32).map(|l| source + l).collect(),
+            };
+            for c in containers {
+                let [a, b] = x.spans[c as usize];
+                let cid = i64::from(p.key) << 32 | i64::from(base + c);
+                for (j, caps) in re.captures_iter(&src[a as usize..b as usize]).enumerate() {
+                    for (g, name) in re.capture_names().enumerate() {
+                        let name = match (g, name) {
+                            (0, _) => "",
+                            (_, Some(name)) => name,
+                            (_, None) => continue,
+                        };
+                        let Some(m) = caps.get(g) else { continue };
+                        let id = base + x.spans.len() as u32;
+                        x.spans.push([a + m.start() as u32, a + m.end() as u32]);
+                        self.rx_span.push([pat, cid, j as i64, string(name) as i64, i64::from(p.key) << 32 | i64::from(id)]);
+                    }
+                }
+            }
+        }
+    }
+
+    /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
+    /// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
+    /// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
+    /// the expression inside, so `(a)` and `a`, `'x'` and `"x"`, or `0x10` and `16`, hash the same. Made when a
+    /// program reads it: every node's hash is a 64-character symbol.
+    pub(super) fn digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
+        use sha2::{Digest, Sha256};
+        let f = &*p.facts;
+        // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
+        let mut hash: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+        for id in (0..f.len() as u32).rev() {
+            let kind = dialect.name(f, id);
+            let kept: Vec<u32> = f
+                .children(id)
+                .iter()
+                .copied()
+                .filter(|&c| {
+                    let k = dialect.name(f, c);
+                    !is_comment(k) && (f.named(c) || !is_punct(k))
+                })
+                .collect();
+            if kind == "parenthesized_expression" && kept.len() == 1 {
+                hash[id as usize] = hash[kept[0] as usize];
+                continue;
+            }
+            let interpolated = dialect.family == Family::Python
+                && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
+            let mut h = Sha256::new();
+            h.update(kind.as_bytes());
+            h.update([0]);
+            match literal(dialect.family, kind, f.text(id), interpolated).value {
+                Some((value, ty)) => {
+                    h.update(b"=");
+                    h.update(ty.as_bytes());
+                    h.update([0]);
+                    h.update(value.as_bytes());
+                }
+                None if kept.is_empty() => {
+                    h.update(b"'");
+                    h.update(f.text(id).as_bytes());
+                }
+                None => {
+                    for &c in &kept {
+                        h.update(f.field[c as usize].to_le_bytes());
+                        h.update(hash[c as usize]);
+                    }
+                }
+            }
+            hash[id as usize] = h.finalize().into();
+        }
+        for local in 0..p.len() {
+            let digest: String = hash[p.core[local as usize] as usize].iter().map(|b| format!("{b:02x}")).collect();
+            self.tree_digest.push([p.global(local), string(&digest) as i64]);
+        }
+    }
+
     /// The relations, the strings' indexes made atoms by `atom`.
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         fn make<const N: usize>(columns: &[&str], rows: &[[i64; N]], sym: [bool; N], atom: &dyn Fn(i64) -> i64) -> Relation {
@@ -761,12 +799,18 @@ impl CoreRows {
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
             ("source", pair(&["d", "sp"], &self.source)),
             ("src_line", make(&["d", "l", "sp"], &self.src_line, [false, false, false], atom)),
+            ("split_line", make(&["d", "l", "t"], &self.split_line, [false, false, true], atom)),
+            ("lf_line", make(&["d", "l", "t"], &self.lf_line, [false, false, true], atom)),
             ("line_count", pair(&["d", "k"], &self.line_count)),
             ("str_part", make(&["lit", "i", "v", "at", "spec"], &self.str_part, [false, false, true, false, false], atom)),
+            ("str_part_word", make(&["lit", "i", "w", "at", "spec"], &self.str_part_word, [false, false, true, false, false], atom)),
+            ("str_part_start", make(&["lit", "i", "l", "c"], &self.str_part_start, [false; 4], atom)),
             ("first_token", pair(&["n", "t"], &self.first_token)),
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
+            ("tree_digest", node_sym(&self.tree_digest)),
+            ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
         ]
     }
 }
@@ -774,6 +818,17 @@ impl CoreRows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
+    /// `match` statement is not; the line is the first error's.
+    #[test]
+    fn python_syntax_errors_follow_cpythons_grammar() {
+        use super::super::python_syntax::error as python_error;
+        assert_eq!(python_error("x = 1\n"), None);
+        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), None);
+        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.0), Some(2));
+        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.0), Some(3), "lines as src_line counts them");
+    }
 
     #[test]
     fn lines_follow_each_languages_terminators() {
@@ -811,6 +866,15 @@ mod tests {
         assert_eq!(name("member_expression", "a(b).c"), None);
         assert_eq!(comment_body("# noqa: E501 "), "noqa: E501");
         assert_eq!(comment_body("/* x */"), "x");
+    }
+
+    #[test]
+    fn decoded_string_constants_keep_precise_byte_starts() {
+        let parts = str_parts_with_offsets(&[(0, "f\"\"\"json\n{a}\njson\"\"\"")]);
+        assert_eq!(parts.iter().map(|p| p.3).collect::<Vec<_>>(), [4, 12]);
+        let parts = str_parts_with_offsets(&[(0, "f'λ{x}μ'")]);
+        assert_eq!(parts.iter().map(|p| p.3).collect::<Vec<_>>(), [2, 7]);
+        assert_eq!(str_parts_with_offsets(&[(0, "'plain'")])[0].3, 0);
     }
 
     #[test]

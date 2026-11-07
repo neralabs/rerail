@@ -56,7 +56,7 @@ pub(in crate::code_rule_dsl) const RELATION: &str = "strtest_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 15] = [
+pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 17] = [
     ("value", &[1]),
     ("text", &[1]),
     ("name", &[1]),
@@ -72,6 +72,8 @@ pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 15] = [
     ("static_value", &[1]),
     ("str_part", &[2]),
     ("value_type", &[0, 1]),
+    ("split_line", &[2]),
+    ("lf_line", &[2]),
 ];
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
@@ -256,7 +258,52 @@ impl Vocabulary {
 /// Turns each text test whose string a text relation of the same rule gives (`TEXT_COLUMNS`) into an atom over
 /// the input relation `strtest_<k>(s)`, negated where the test is: rules then join on symbols, and the run fills
 /// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
+fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
+    let mut columns: HashMap<String, HashSet<usize>> = TEXT_COLUMNS.iter()
+        .map(|(name, columns)| ((*name).to_owned(), columns.iter().copied().collect()))
+        .collect();
+    loop {
+        let mut found = Vec::new();
+        for (relation, declaration) in &prog.decls {
+            // Facts and unknown external inputs can introduce symbols not in this batch's vocabulary.
+            if prog.facts.get(relation).is_some_and(|rows| !rows.is_empty())
+                || (prog.inputs.contains(relation) && !columns.contains_key(relation)) {
+                continue;
+            }
+            let writers: Vec<_> = prog.rules.iter().filter(|r| &r.head.rel == relation).collect();
+            if writers.is_empty() {
+                continue;
+            }
+            for (column, (_, ty)) in declaration.iter().enumerate() {
+                if ty != "sym" || columns.get(relation).is_some_and(|cols| cols.contains(&column)) {
+                    continue;
+                }
+                // Every producer must copy a prepared symbol. One computed or constant arm is enough
+                // to make the rewrite unsafe: that arm's new values do not have strtest rows yet.
+                let copied = writers.iter().all(|rule| {
+                    let Some(Term::Var(value)) = rule.head.args.get(column) else { return false };
+                    rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).any(|atom| {
+                        columns.get(&atom.rel).is_some_and(|cols| cols.iter().any(|&col| {
+                            matches!(atom.args.get(col), Some(Term::Var(other)) if other == value)
+                        }))
+                    })
+                });
+                if copied {
+                    found.push((relation.clone(), column));
+                }
+            }
+        }
+        if found.is_empty() {
+            return columns;
+        }
+        for (relation, column) in found {
+            columns.entry(relation).or_default().insert(column);
+        }
+    }
+}
+
 pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
+    let vocabulary_columns = vocabulary_columns(prog);
     let mut ids: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();
     let mut tests = Vec::new();
     for rule in &mut prog.rules {
@@ -268,8 +315,8 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
                 _ => None,
             })
             .flat_map(|a| {
-                let cols = TEXT_COLUMNS.iter().find(|(r, _)| *r == a.rel).map_or(&[][..], |(_, c)| *c);
-                cols.iter().filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None })
+                vocabulary_columns.get(&a.rel).into_iter().flatten()
+                    .filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None })
             })
             .collect();
         for literal in &mut rule.body {
@@ -308,6 +355,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
 }
 
 pub(in crate::code_rule_dsl) mod functions;
+mod signatures;
 
 #[cfg(test)]
 mod tests;

@@ -3,7 +3,6 @@ use crate::code_rule_dsl::logic::front::prune;
 use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
 use crate::content_store::ContentStore;
-use crate::code_rule_dsl::typing::cross_rounds;
 
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
@@ -299,7 +298,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
 /// O12 (option a): `nearest` made by the transducer's file-local FIX (`typing::file_local`) and read as the input
 /// `nearest_<set>(n, a)`, on the CPU and on the device work queue: T's programs derive T's outputs.
 #[test]
-#[ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)"]
+#[cfg_attr(debug_assertions, ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)")]
 fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
@@ -513,12 +512,12 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let cache = dir.join("cache");
 
     let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
-    let r = run_typed(&src, &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
+    let r = run_typed(&[&src], &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
     assert_eq!(r.typing.summaries, 2, "{:?}", r.typing);
     assert_eq!(r.typing.conflicts, vec![("vendor.core.make".to_owned(), "int".to_owned(), "str".to_owned())]);
 
     let app = Typing { declarations: vec![dir.join("decl/other.pyi")], site: Some((dir.join("site"), cache.clone())), ..Default::default() };
-    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
+    let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
     println!("{:?}", r.typing);
     assert!(r.typing.pending.is_empty(), "{:?}", r.typing);
     assert_eq!(r.typing.declared, 4, "version: str, make: int, thing: bytes | None");
@@ -534,7 +533,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     assert_eq!(unions, vec![2, 2]);
 
     let cold = Typing { site: Some((dir.join("site"), dir.join("empty-cache"))), ..Default::default() };
-    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
+    let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
     assert_eq!(r.typing.pending, vec!["vendor".to_owned(), "vendor.core".to_owned()]);
     assert_eq!(std::fs::read_to_string(dir.join("out-cold/type_of.csv")).unwrap(), "");
     let _ = std::fs::remove_dir_all(&dir);
@@ -660,4 +659,34 @@ fn("function_definition").
         println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
     }
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A demanded symbol with many captures must not submit one SQLite statement per match.
+#[test]
+fn repeated_symbol_captures_use_bulk_sql() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    unsafe extern "C" fn trace(_: u32, state: *mut std::ffi::c_void, _: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+        // SAFETY: the counter outlives the callback, which is removed before it drops.
+        unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let db = Connection::open_in_memory().unwrap();
+    let source = (0..1000).map(|i| format!("k={i} ")).collect::<String>();
+    let p = parse(&format!(r#"
+.decl capture_input(s: symbol)
+capture_input({}).
+.decl captured(v: symbol)
+captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
+.output captured
+"#, serde_json::to_string(&source).unwrap())).unwrap();
+    let count = AtomicUsize::new(0);
+    unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), rusqlite::ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::from_ref(&count).cast_mut().cast()); }
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let result = run(&p, &db, inputs, None);
+    unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), 0, None, std::ptr::null_mut()); }
+    let result = result.unwrap();
+    assert_eq!(result.outputs["captured"].len(), 1000);
+    assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
 }

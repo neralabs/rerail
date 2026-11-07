@@ -1,0 +1,30 @@
+.policy "ruff-f633-invalid-print-syntax" revision 2
+.description "Use print()'s file argument instead of Python 2's >> redirection, which raises TypeError with the print function."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F633 (pyflakes): Python 2's `print >> f, x`. In Python 3 it shifts the print function right, which raises
+// TypeError. Reported at `print`, when print is the builtin where it is read.
+//   print >> sys.stderr, "Hello"      ← F633
+//   print("Hello", file=sys.stderr)   not reported
+#include "python/pyflakes.rr"
+
+.violation F633(at: loc) code "F633"
+    "Replace `>>` with print()'s `file=` argument, as in `print(msg, file=sys.stderr)`."
+    suppress ruff "F633"
+// tree-sitter still parses the Python 2 statement: a print_statement with a `>>` chevron. Its `print` is a
+// keyword token, not a name, so the lookup is done here.
+F633(kw) :- kind(p, "print_statement"), child(p, ch, _), kind(ch, "chevron"), first_token(p, kw), !print_bound(p).
+// Elsewhere it is an expression: `print >> f` as an operand, `(print) >> f`.
+F633(n) :- kind(b, "binary_operator"), op(b, ">>"), field(b, "left", l), unparen(l, n), kind(n, "identifier"),
+    text(n, "print"), !print_bound(n).
+// print_bound(n): print is bound where n reads it. Ruff resolves names in visit order: in n's own scope only an
+// earlier binding counts (`print = log` after the statement does not); an enclosing scope's counts wherever it is,
+// as Ruff visits function bodies last.
+.decl print_bound(n: node)
+print_bound(n) :- print_read(n), nearest(n, s, scope), binding(s, "print", site, _), site < n.
+print_bound(n) :- print_read(n), nearest(n, s0, scope), inside(s0, s, fscope), bound_in(s, "print").
+.decl print_read(n: node)
+print_read(p) :- kind(p, "print_statement").
+print_read(n) :- kind(b, "binary_operator"), op(b, ">>"), field(b, "left", l), unparen(l, n), text(n, "print").

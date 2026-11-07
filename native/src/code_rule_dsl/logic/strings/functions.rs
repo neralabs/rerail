@@ -33,6 +33,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("slice", &[Text, Number, Number], Text),
     ("count_matches", &[Text, Text], Number),
     ("sha256", &[Text], Text),
+    ("ed25519_ok", &[Text, Text, Text], Number),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
@@ -147,6 +148,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "convert" => Some(convert(t(0), t(1), t(2))),
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
+        "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
         "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),

@@ -1,0 +1,35 @@
+.policy "sqlfluff-rf05-references-special-chars" revision 2
+.description "Use only letters, digits and underscores in SQL identifiers, quoted or not; other characters make names hard to use."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's RF05 (references.special_chars), defaults. An identifier with a character other than a letter, a
+// digit or _, inside its quotes if it has any:
+//   CREATE TABLE t ("Internal Space" INT)       reported
+//   SELECT a AS alias$ FROM t                    reported
+//   SELECT "a.b" FROM t                          reported
+// Not checked: names in CREATE/DROP EXTENSION, function arguments, and the parts of a SELECT item that has an
+// alias (only the alias is checked there).
+
+#include "sql/syntax.rr"
+
+.violation RF05(at: node) code "RF05" "Special characters should not be used in identifiers."
+    suppress sqlfluff "RF05", "L057", "all", "references", "references.special_chars"
+RF05(n) :- name_text(n, x), special(x), !exempt(n).
+// name_text(n, x): identifiers, and a column name tree-sitter-sql reads as a literal ("…" in CREATE TABLE and
+// in an INSERT column list).
+.decl name_text(n: node, x: symbol)
+name_text(n, x) :- kind(n, "identifier"), text(n, x).
+name_text(n, x) :- kind(n, "literal"), field(c, "name", n), kind(c, "column_definition"), text(n, x).
+name_text(n, x) :- kind(n, "literal"), child(c, n, 0), kind(c, "column"), text(n, x).   // INSERT INTO t ("a b")
+// special(x): unquoted with some special character (a quote mark of another kind, ' or #, counts), or quoted with
+// one inside the quotes (a doubled quote counts too).
+.decl special(x: symbol)
+special(x) :- name_text(_, x),
+    match("[^\"`\\[][^\"`\\[]*[^\\p{L}\\p{N}_\"`\\[][^\"`\\[]*|\".*[^\\p{L}\\p{N}_].*\"|`.*[^\\p{L}\\p{N}_].*`|\\[.*[^\\p{L}\\p{N}_].*\\]", x).
+.decl exempt(n: node)
+exempt(n) :- child(p, n, _), (kind(p, "create_extension") ; kind(p, "drop_extension")).
+exempt(n) :- kind(n, "identifier"), child(p, n, _), kind(p, "function_argument").
+exempt(n) :- nearest(n, t, select_item), field(t, "alias", _), !field(t, "alias", n).
+.decl select_item(t: node)  // an item of a SELECT list
+select_item(t) :- select_term(_, t, _).

@@ -92,7 +92,16 @@ unsafe extern "C" {
 }
 
 /// Reads the abstract symbols on the current cursor path from the pinned Tree-sitter runtime.
+#[cfg(test)]
 fn cursor_supertypes(cursor: &TreeCursor<'_>) -> ([u16; MAX_NODE_SUPERTYPES], usize) {
+    let (supertypes, count, _) = cursor_status(cursor);
+    (supertypes, count)
+}
+
+/// The abstract symbols on the current cursor path and the node's field, in one call. The field
+/// is `ts_tree_cursor_current_field_id`'s except that that one stops at an extra node and this one
+/// walks past it, so an extra node's field is taken as none.
+fn cursor_status(cursor: &TreeCursor<'_>) -> ([u16; MAX_NODE_SUPERTYPES], usize, u16) {
     let mut field = 0;
     let mut later = false;
     let mut later_named = false;
@@ -112,7 +121,7 @@ fn cursor_supertypes(cursor: &TreeCursor<'_>) -> ([u16; MAX_NODE_SUPERTYPES], us
             &mut count,
         );
     }
-    (supertypes, count as usize)
+    (supertypes, count as usize, field)
 }
 
 #[cfg(test)]
@@ -776,9 +785,10 @@ fn encode_tree(
             None
         } else {
             // The cursor's root is `root` itself, which has no field.
-            let field = cursor.field_id().map_or(0, |id| id.get());
+            // One status call gives the field and the supertypes (the field alone walks the stack again).
+            let (classes, count, field) = cursor_status(&cursor);
+            let field = if node.is_extra() { 0 } else { field };
             let index = encode_node(nodes, node, parent, field, language, &mut catalog)?;
-            let (classes, count) = cursor_supertypes(&cursor);
             for class in classes.into_iter().take(count) {
                 if usize::from(class) >= KIND_LIMIT {
                     return Err("supertype symbol exceeds tape limit".into());
@@ -1188,11 +1198,18 @@ impl TapeImage {
                 std::ops::ControlFlow::Continue(())
             }
         };
+        let parse = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter parse".into());
         let tree = parser.parse_with_options(
             &mut input,
             None,
             Some(tree_sitter::ParseOptions::new().progress_callback(&mut progress)),
         )?;
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, bytes.len() as u64);
+        drop(parse);
+        let _encode = crate::code_rule_dsl::logic::profile::span(|| "tape encode".into());
+        if crate::code_rule_dsl::logic::profile::on() {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, tree.root_node().descendant_count() as u64);
+        }
         Some(Self::encode(tree.root_node(), grammar, source, budget))
     }
 
@@ -1333,7 +1350,8 @@ impl TapeImage {
         let mut memberships = supertypes.iter().peekable();
         let mut kind_aliases = Vec::<(String, bool)>::new();
         let mut codes = Vec::<Code>::new();
-        let mut code_ids = std::collections::HashMap::<Code, u16>::new();
+        // One lookup per node: FxHash, not SipHash (4% of a parse).
+        let mut code_ids = rustc_hash::FxHashMap::<Code, u16>::default();
         let mut code = Vec::with_capacity(count * 2);
         for (index, node) in nodes.iter().enumerate() {
             if index % 256 == 0 {

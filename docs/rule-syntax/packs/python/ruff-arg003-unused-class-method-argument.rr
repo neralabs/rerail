@@ -1,0 +1,20 @@
+.policy "ruff-arg003-unused-class-method-argument" revision 2
+.description "Remove class method parameters the body never reads, or prefix them with an underscore when the signature must stay and no caller passes them by keyword."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ARG003 (flake8-unused-arguments): a class method's parameter that the body never reads. `cls` is left
+// out, and so are names matching dummy-variable-rgx. A class method is decorated @classmethod (or
+// abc.abstractclassmethod); `__init_subclass__` and `__class_getitem__` are implicit ones, but as dunders they
+// are not checked. Stubs, @abstractmethod, @override, @overload and defs that call `locals()` are skipped.
+//   class C:
+//       @classmethod
+//       def f(cls, x): print(1)         ← ARG003 at x
+#include "python/misc2-args.rr"
+//   options: dummy-variable-rgx, flake8-unused-arguments.ignore-variadic-names (see the library)
+
+.violation ARG003(at: node, name: symbol) code "ARG003"
+    "Remove `{name}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
+    suppress ruff "ARG003"
+ARG003(nm, x) :- arg_unused(_, nm, x, "ARG003").

@@ -145,6 +145,8 @@ pub(super) struct NativeModule {
     pub longs: Vec<u64>,
     pub strings: Vec<Vec<u8>>,
     pub value_programs: Vec<ValueProgram>,
+    /// The block programs, lowered (`BlockNative`).
+    pub block_programs: Vec<BlockNative>,
     pub capture_programs: Vec<CaptureProgram>,
     pub output_program: super::output::OutputProgram,
     pub output: FunctionRef,
@@ -366,11 +368,235 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
         longs: program.longs.clone(),
         strings: program.strings.clone(),
         value_programs: program.value_programs.clone(),
+        block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         capture_programs: program.capture_programs.clone(),
         output_program: program.output_program.clone(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,
     })
+}
+
+/// A block program lowered for the code generators: the ephemeral native IR that Cranelift
+/// (`native_cpu_block`) and MSL (`metal_block_program`) both emit, one straight-line body per
+/// 64-byte block. Each instruction is one value, a mask word, built only from bit operations;
+/// there is no branch and no loop inside a body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct BlockNative {
+    pub tables: Vec<super::block::ClassTable>,
+    pub insts: Vec<BlockInst>,
+    pub outputs: Vec<u16>,
+}
+
+/// An instruction of a block body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum BlockInst {
+    /// The block's bytes compared with a byte, as a mask: on the CPU four 16-byte compares and a
+    /// bitmask; on Metal SWAR over the lane's `uint4`s.
+    EqByte(u8),
+    /// The block's bytes in any class of `bits` of table `table`: on the CPU two table lookups
+    /// per 16 bytes (`tbl`); on Metal, see `metal_block_program::ClassStrategy`.
+    Class { table: u16, bits: u8 },
+    /// Bit `k` of every byte of the block: one bit-plane (`BlockNative::planes_form`).
+    Plane(u8),
+    /// A 64-bit pattern repeated over the stream.
+    Const(u64),
+    Not(u16),
+    And(u16, u16),
+    Or(u16, u16),
+    Xor(u16, u16),
+    AndNot(u16, u16),
+    /// The carried operations (`block::carry`): on the CPU the carry passes in a register from
+    /// block to block; on Metal by a scan of lane summaries (`metal_block_program`).
+    Prev(u16, u8),
+    Toggle(u16),
+    AfterOddRun(u16),
+}
+
+impl BlockInst {
+    /// Whether the instruction carries across blocks.
+    pub(super) fn carried(&self) -> bool {
+        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_))
+    }
+}
+
+impl BlockNative {
+    pub(super) fn lower(program: &super::block::BlockProgram) -> Self {
+        use super::block::BlockOp;
+        let insts = program
+            .ops
+            .iter()
+            .map(|op| match *op {
+                BlockOp::Eq(byte) => BlockInst::EqByte(byte),
+                BlockOp::Class { table, bits } => BlockInst::Class { table, bits },
+                BlockOp::Const(c) => BlockInst::Const(c),
+                BlockOp::Not(a) => BlockInst::Not(a),
+                BlockOp::And(a, b) => BlockInst::And(a, b),
+                BlockOp::Or(a, b) => BlockInst::Or(a, b),
+                BlockOp::Xor(a, b) => BlockInst::Xor(a, b),
+                BlockOp::AndNot(a, b) => BlockInst::AndNot(a, b),
+                BlockOp::Prev(a, k) => BlockInst::Prev(a, k),
+                BlockOp::Toggle(a) => BlockInst::Toggle(a),
+                BlockOp::AfterOddRun(a) => BlockInst::AfterOddRun(a),
+            })
+            .collect();
+        Self { tables: program.tables.clone(), insts, outputs: program.outputs.clone() }
+    }
+
+    /// The same program with every `class` written as a boolean formula of the eight bit-planes
+    /// (`Plane`): an OR over the selected class bits of a function of the low four planes and one
+    /// of the high four, each by Shannon expansion on its highest plane, constants folded and
+    /// common terms shared. Metal runs this form (it measured faster than table lookups); the
+    /// CPU keeps `class`, which is two `tbl`s per 16 bytes there.
+    pub(super) fn planes_form(&self) -> BlockNative {
+        let mut f = PlaneFormulas::default();
+        let mut at: Vec<u16> = Vec::with_capacity(self.insts.len());
+        for inst in &self.insts {
+            let m = |x: u16| at[usize::from(x)];
+            let index = match *inst {
+                BlockInst::Class { table, bits } => {
+                    let t = self.tables[usize::from(table)];
+                    let mut word = Term::Zero;
+                    for c in (0..8).filter(|c| bits >> c & 1 == 1) {
+                        let lo = (0..16).fold(0u16, |a, n| a | (u16::from(t.lo[n] >> c & 1) << n));
+                        let hi = (0..16).fold(0u16, |a, n| a | (u16::from(t.hi[n] >> c & 1) << n));
+                        let l = f.function(0, 4, lo);
+                        let h = f.function(4, 4, hi);
+                        let both = f.and(l, h);
+                        word = f.or(word, both);
+                    }
+                    f.index(word)
+                }
+                BlockInst::Not(a) => f.push(BlockInst::Not(m(a))),
+                BlockInst::And(a, b) => f.push(BlockInst::And(m(a), m(b))),
+                BlockInst::Or(a, b) => f.push(BlockInst::Or(m(a), m(b))),
+                BlockInst::Xor(a, b) => f.push(BlockInst::Xor(m(a), m(b))),
+                BlockInst::AndNot(a, b) => f.push(BlockInst::AndNot(m(a), m(b))),
+                BlockInst::Prev(a, k) => f.push(BlockInst::Prev(m(a), k)),
+                BlockInst::Toggle(a) => f.push(BlockInst::Toggle(m(a))),
+                BlockInst::AfterOddRun(a) => f.push(BlockInst::AfterOddRun(m(a))),
+                other => f.push(other),
+            };
+            at.push(index);
+        }
+        BlockNative {
+            tables: self.tables.clone(),
+            insts: f.insts,
+            outputs: self.outputs.iter().map(|&v| at[usize::from(v)]).collect(),
+        }
+    }
+}
+
+/// A formula's value: a constant, or an instruction's.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Term {
+    Zero,
+    Ones,
+    At(u16),
+}
+
+/// The instructions of `planes_form`, with formulas shared.
+#[derive(Default)]
+struct PlaneFormulas {
+    insts: Vec<BlockInst>,
+    planes: [Option<u16>; 8],
+    functions: std::collections::HashMap<(usize, usize, u16), Term>,
+    shared: std::collections::HashMap<BlockInst, u16>,
+}
+
+impl PlaneFormulas {
+    /// An instruction's index, shared with an earlier identical one.
+    fn push(&mut self, inst: BlockInst) -> u16 {
+        let pure = !matches!(inst, BlockInst::Class { .. });
+        if pure {
+            if let Some(&i) = self.shared.get(&inst) {
+                return i;
+            }
+        }
+        let i = self.insts.len() as u16;
+        self.insts.push(inst);
+        if pure {
+            self.shared.insert(inst, i);
+        }
+        i
+    }
+
+    fn index(&mut self, t: Term) -> u16 {
+        match t {
+            Term::Zero => self.push(BlockInst::Const(0)),
+            Term::Ones => self.push(BlockInst::Const(u64::MAX)),
+            Term::At(i) => i,
+        }
+    }
+
+    fn plane(&mut self, k: usize) -> u16 {
+        if let Some(i) = self.planes[k] {
+            return i;
+        }
+        let i = self.push(BlockInst::Plane(k as u8));
+        self.planes[k] = Some(i);
+        i
+    }
+
+    /// The function of planes `base..base + vars` whose truth table, indexed by those planes'
+    /// bits, is the low `2^vars` bits of `tt`.
+    fn function(&mut self, base: usize, vars: usize, tt: u16) -> Term {
+        let size = 1u32 << vars;
+        let full = if size == 16 { u16::MAX } else { (1u16 << size) - 1 };
+        let tt = tt & full;
+        if tt == 0 {
+            return Term::Zero;
+        }
+        if tt == full {
+            return Term::Ones;
+        }
+        if let Some(&t) = self.functions.get(&(base, vars, tt)) {
+            return t;
+        }
+        let half = size / 2;
+        let low = (1u16 << half) - 1;
+        let (t0, t1) = (tt & low, (tt >> half) & low);
+        let f0 = self.function(base, vars - 1, t0);
+        let f1 = self.function(base, vars - 1, t1);
+        let x = self.plane(base + vars - 1);
+        let term = match (f0, f1) {
+            _ if f0 == f1 => f0,
+            (Term::Zero, Term::Ones) => Term::At(x),
+            (Term::Ones, Term::Zero) => Term::At(self.push(BlockInst::Not(x))),
+            (Term::Zero, Term::At(b)) => Term::At(self.push(BlockInst::And(x, b))),
+            (Term::At(a), Term::Zero) => Term::At(self.push(BlockInst::AndNot(a, x))),
+            (Term::At(a), Term::Ones) => Term::At(self.push(BlockInst::Or(x, a))),
+            (Term::Ones, Term::At(b)) => {
+                let n = self.push(BlockInst::Not(x));
+                Term::At(self.push(BlockInst::Or(b, n)))
+            }
+            (Term::At(a), Term::At(_)) if t1 == !t0 & low => Term::At(self.push(BlockInst::Xor(x, a))),
+            (Term::At(a), Term::At(b)) => {
+                // f0 ^ ((f0 ^ f1) & x)
+                let d = self.push(BlockInst::Xor(a, b));
+                let s = self.push(BlockInst::And(d, x));
+                Term::At(self.push(BlockInst::Xor(a, s)))
+            }
+            _ => unreachable!("constants are handled first"),
+        };
+        self.functions.insert((base, vars, tt), term);
+        term
+    }
+
+    fn and(&mut self, a: Term, b: Term) -> Term {
+        match (a, b) {
+            (Term::Zero, _) | (_, Term::Zero) => Term::Zero,
+            (Term::Ones, t) | (t, Term::Ones) => t,
+            (Term::At(a), Term::At(b)) => Term::At(self.push(BlockInst::And(a, b))),
+        }
+    }
+
+    fn or(&mut self, a: Term, b: Term) -> Term {
+        match (a, b) {
+            (Term::Ones, _) | (_, Term::Ones) => Term::Ones,
+            (Term::Zero, t) | (t, Term::Zero) => t,
+            (Term::At(a), Term::At(b)) => Term::At(self.push(BlockInst::Or(a, b))),
+        }
+    }
 }
 
 #[cfg(test)]

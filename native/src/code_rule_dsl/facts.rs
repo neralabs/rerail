@@ -38,6 +38,8 @@ pub(crate) mod vtab;
 pub(crate) mod repository;
 /// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).
 #[allow(dead_code, unused_imports, clippy::all)]
+// Not in the browser build: it forks and reads macOS process counters.
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod ygraph;
 
 /// The derivation graph as the push path reads and writes it: the store itself (every write a

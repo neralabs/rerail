@@ -1,0 +1,65 @@
+.policy "eslint-no-duplicate-imports" revision 6
+.description "Merge imports from the same module into a single import declaration; scattered duplicates are harder to read and maintain."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's no-duplicate-imports: a second import declaration from a module already imported.
+//   import { a } from "m";  import { b } from "m";        → the second is reported
+//   import * as ns from "m";  import { a } from "m";      not reported: a namespace and names cannot merge
+// includeExports (default false): `export … from "m"` declarations count too, against imports and exports.
+// allowSeparateTypeImports (default false): `import type` and plain imports of one module may both exist.
+// Declarations that cannot be written as one are not duplicates: a namespace and named specifiers; `export *`
+// and anything but another `export *` or a bare import; `import type D` and `import type { N }`.
+.violation duplicate(at: node, msg: symbol) code "no-duplicate-imports" "{msg}"
+    suppress eslint "no-duplicate-imports"
+    suppress oxlint "no-duplicate-imports"
+duplicate(x, cat("Merge this import into the earlier import from '", m, "' (line ", to_string(l), ").")) :-
+    dup(x, "import", p, "import", m), line(p, l).
+duplicate(x, cat("Combine this import with the re-export from '", m, "': import once, then export the imported names.")) :-
+    dup(x, "import", _, "export", m).
+duplicate(x, cat("Merge this re-export into the earlier re-export from '", m, "' (line ", to_string(l), ").")) :-
+    dup(x, "export", p, "export", m), line(p, l).
+duplicate(x, cat("Replace this re-export from '", m, "' by exporting the names already imported from it.")) :-
+    dup(x, "export", _, "import", m).
+
+// dup(x, a, p, b, m): declaration x (an a) repeats the earlier declaration p (a b) of module m.
+.decl dup(x: node, a: symbol, p: node, b: symbol, m: symbol)
+dup(x, a, p, b, m) :- decl(x, a, m), decl(p, b, m), docof(x, d), docof(p, d), earlier(p, x), mergeable(x, p),
+    (!option("allowSeparateTypeImports", "true") ; typed(x), typed(p) ; !typed(x), !typed(p)).
+
+// decl(x, "import" | "export", m): an import, or with includeExports a re-export, of module m (trimmed; "" is no
+// module). shape(x, s): what ESLint sees first in it: "named", "namespace", "default", "all" or "bare".
+.decl decl(x: node, a: symbol, m: symbol)
+decl(x, "import", m) :- kind(x, "import_statement"), field(x, "source", s), str(s, v), m = @replace_all(v, "^\\s+|\\s+$", ""), m != "".
+decl(x, "export", m) :- kind(x, "export_statement"), field(x, "source", s), str(s, v), option("includeExports", "true"),
+    m = @replace_all(v, "^\\s+|\\s+$", ""), m != "".
+.decl shape(x: node, s: symbol)
+shape(x, s) :- part(x, s), (s = "named" ; s = "namespace").
+shape(x, "default") :- part(x, "default"), !part(x, "named"), !part(x, "namespace").
+shape(x, "all") :- part(x, "all"), !part(x, "namespace").
+shape(x, "bare") :- decl(x, _, _), !part(x, _).
+.decl part(x: node, s: symbol)  // x has a specifier of this kind; `export *` is "all"
+part(x, "named") :- decl(x, _, _), clause(x, c), child(c, l, _), kind(l, "named_imports"), child(l, i, _),
+    kind(i, "import_specifier").
+part(x, "named") :- decl(x, _, _), clause(x, c), kind(c, "export_clause"), child(c, i, _), kind(i, "export_specifier").
+part(x, "namespace") :- decl(x, _, _), clause(x, c), child(c, i, _), kind(i, "namespace_import").
+part(x, "namespace") :- decl(x, _, _), clause(x, c), kind(c, "namespace_export").
+part(x, "default") :- decl(x, _, _), clause(x, c), kind(c, "import_clause"), child(c, i, _), kind(i, "identifier").
+part(x, "all") :- kind(x, "export_statement"), decl(x, _, _), op(x, "*").
+.decl clause(x: node, c: node)  // what x imports or exports: import_clause, export_clause, namespace_export
+clause(x, c) :- decl(x, _, _), child(x, c, _), (kind(c, "import_clause") ; kind(c, "export_clause") ;
+    kind(c, "namespace_export")).
+.decl typed(x: node)  // import type …, export type …
+typed(x) :- decl(x, _, _), op(x, "type").
+
+// mergeable(x, p): ESLint's isImportExportCanBeMerged.
+.decl mergeable(x: node, p: node)
+mergeable(x, p) :- decl(x, _, m), decl(p, _, m), shape(x, s), shape(p, t), x != p, !apart(s, t),
+    !types_apart(x, p).
+.decl types_apart(x: node, p: node)  // import type D from "m" and import type { N } from "m"
+types_apart(x, p) :- typed(x), typed(p), shape(x, s), shape(p, t), (s = "default", t = "named" ; s = "named", t = "default").
+.decl apart(s: symbol, t: symbol)  // these shapes never merge, in either order
+apart("all", t) :- shape(_, t), t != "all", t != "bare".
+apart(t, "all") :- shape(_, t), t != "all", t != "bare".
+apart("namespace", "named"). apart("named", "namespace").

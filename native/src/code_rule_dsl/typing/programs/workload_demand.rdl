@@ -2,6 +2,9 @@
 // The spike workload (../souffle/workload.dl) in Rerail's Datalog dialect.
 // Tree structure comes from the tape: `nearest($n, $s, set)` is $n's nearest strict ancestor whose kind is in `set`.
 // No relation materializes it; the planner chooses a climb from $n or a descent from $s by cost.
+// A typing program: its cross-file recursion runs in bounded rounds over the previous round's rows (decision 0056).
+.pragma "cross-rounds" "4"
+
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
 .decl child(p: node, c: node, i: int)
@@ -9,14 +12,12 @@
 .decl text(n: node, s: sym)
 .decl intval(n: node, v: int)
 .decl op(n: node, s: sym)
-.input doc, node, child, field, text, intval, op
+.input doc, node, child, field, text, intval, op, kind, docof
 
 .kindset scope = "module" | "function_definition" | "class_definition" | "lambda"
 
 .decl kind(n: node, k: sym)
-kind($n, $k) :- node(_, $n, $k, _, _).
 .decl docof(n: node, d: int)
-docof($n, $d) :- node($d, $n, _, _, _).
 .decl modnode(d: int, m: node)
 modnode($d, $m) :- node($d, $m, "module", _, _).
 .decl finding(rule: sym, n: node)

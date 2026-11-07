@@ -1,0 +1,17 @@
+.policy "bandit-b702-use-of-mako-templates" revision 2
+.description "Avoid Mako templates or escape every variable with Mako filters; Mako has no environment-wide escaping, so output is open to XSS."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B702 (use_of_mako_templates): a call whose qualified name ends in Template and has a segment mako.
+//   from mako.template import Template
+//   Template("<b>${name}</b>")             B702: mako.template.Template
+//   mako.template.Template(text)           B702
+//   jinja2.Template(text)                  not reported (Jinja2 is B701)
+
+#include "python/security.rr"   // qual_call
+
+.violation B702(at: node) code "B702"
+    "Mako templates do not provide environment-wide escaping; sanitize variables with the n, h, or x filters."
+    suppress nosec "B702"
+B702(c) :- qual_call(c, q), match("(.*\\.)?mako\\.(.*\\.)?Template", q).

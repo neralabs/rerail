@@ -28,6 +28,13 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 const PREFIX: &str = "typing_";
 const SEP: &str = "__";
 
+/// Whether `rel` is a bridged relation's name (`typing_<program>__<output>`). Such a relation is one fact family
+/// shared by every program of a run (`corpus::combine` does not prefix it), as `core.rr`'s are: the program's answers
+/// are the same whichever rule reads them.
+pub(crate) fn is_bridged(rel: &str) -> bool {
+    rel.strip_prefix(PREFIX).is_some_and(|rest| rest.split_once(SEP).is_some_and(|(p, o)| !p.is_empty() && !o.is_empty()))
+}
+
 /// A bridged relation: the program, its output, and the output's node columns.
 struct Bridged {
     rel: String,
@@ -110,7 +117,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let out = scratch.join(format!("typing-{name}"));
         // The program's language is its name's: `calls_rust` reads the `.rs` files, the others the `.py` files.
         let typing = Typing { rust: Some(name.ends_with("_rust")), ..typing.clone() };
-        let report = super::run_typed(&format!("{src}\n{spans}"), root, None, &out, modes, binding, chunk_nodes, &typing)?;
+        let report = super::run_typed(&[&format!("{src}\n{spans}")], root, None, &out, modes, binding, chunk_nodes, &typing)?;
         let rows = |rel: &str| -> Result<Vec<Vec<String>>> {
             let text = std::fs::read_to_string(out.join(format!("{rel}.csv"))).map_err(|e| Error::Plan(format!("{name}: {rel}: {e}")))?;
             Ok(text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect())
@@ -131,7 +138,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
                     if node {
                         let [p, k, s, e] = at.get(v).ok_or_else(|| Error::Plan(format!("{name}: no span for {v}")))?;
                         args.extend([Value::Str(p.clone()), Value::Str(k.clone()), int(s)?, int(e)?]);
-                    } else if *ty == "sym" {
+                    } else if *ty == "sym" || *ty == "symbol" {
                         args.push(Value::Str(v.clone()));
                     } else {
                         args.push(int(v)?);

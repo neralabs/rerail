@@ -1,0 +1,503 @@
+// lib/data-layer/lazy-analyzer.rr: the function model of the data layer's lint_lazy_architecture
+// (FunctionAnalyzer, scripts/lint_lazy_architecture.py:808-2174). The check's rules (data-layer/
+// lazy-architecture.rr) are predicates over what this file derives: which functions are "facts", which nodes of
+// a function are scanned, the alias state at each node, and the callee strings that key the call graph.
+// Everything is spelling: nothing is resolved beyond the file's own module-level names and imports.
+//
+// Interface
+//   la_fact(F, d, sym, q, x)  F is a fact of document d: symbol sym ("pkg.mod.Class.name"), qualname q, name x
+//   la_canon(F) / la_canon_of(F, G)   G is the fact the script's symbol tables hold for F's symbol (the last one)
+//   la_cls_of(F, k) / la_pure(F) / la_legacy(F) / la_lazy(F) / la_exec_ctx(F)   facts about a fact
+//   la_call(F, c)       call c is scanned for fact F
+//   la_scan(F, n)       node n is scanned for fact F (calls, strings)
+//   la_stmt(F, b, s)    statement s is directly in body b, which the script walks for F
+//   la_callee(c, s)     the script's callee string for call c (_resolve_call_callee_string)
+//   la_cleaf(c, x)      its part after the last dot
+//   la_local(F, e, s)   the symbol call target e names (_local_callee_name): the call graph's key
+//   la_pl(n, e) / la_lz(n, e) / la_cb(n, e) / la_dyn(n, e) / la_ri(n, e)   the name heuristics, for expression e
+//                       evaluated with the alias state at site n (a call or an assignment statement); each is
+//                       asked for through la_ask_*(n, e)
+//   la_arg(c, i, a) / la_kw(c, k, v) / la_argc(c, k) / la_sarg(c, i, v)   call arguments as `ast` has them
+//   la_ename(e, s) / la_ext(e) / la_conn(e)   _expr_name, _expr_is_external_state, _expr_uses_conn_handle
+//   la_func(c, g) / la_kwv(c, v)   a call's function (parentheses dropped); its keyword and `**` values
+//   la_last(s, x)       the part of s after its last dot, for s asked for by la_lastq(s)
+//
+// How the script walks a function (_walk_body_for_analysis), and what this file mirrors:
+//   - It visits the statements of the body in order. Of each it scans some expressions (an assignment's value, an
+//     `if`'s test, a `for`'s iterable, a `with`'s context expressions, an `except`'s types, a `match`'s subject and
+//     guards), and walks the nested bodies (branches, loops, `with`, `try`, `case`, nested defs). Any other
+//     statement (raise, assert, `async with`, a class, …) is scanned whole.
+//   - Scanning visits every node of the expression except what is inside a class.
+//   - Each nested body gets a copy of the state; nothing assigned inside it flows out. So the state at node n is
+//     made by the assignments that come before n in the bodies that hold n (la_vis): the latest assignment of a
+//     name gives its value (la_rhs), and any earlier one that looked like a plan or a lazy value makes the name an
+//     alias (aliases are only ever added). No ordered recursion is needed: "latest" is a max over syntax.
+//   - Route handlers (`@router.get(…)` nested defs) are skipped, body and all.
+
+#include "python/ast.rr"      // ast_parent, assign_target, assign_value, path_module, unparen, plain_str
+#include "python/names.rr"    // def_name, decorator, attr_of
+
+// ---- documents and facts -------------------------------------------------------------------------------------------
+// A module's name is path_module's: the path with `/` as `.`, `__init__` kept (_module_name_for_file).
+
+// la_cls(k, d, q): class k is collected: at module level, or directly in a collected class. q is "Outer.Inner".
+.decl la_cls(k: node, d: number, q: symbol)
+la_cls(k, d, x) :- kind(k, "class_definition"), ast_parent(k, m), kind(m, "module"), def_name(k, x), docof(k, d).
+la_cls(k, d, @dot(p, x)) :- kind(k, "class_definition"), ast_parent(k, o), la_cls(o, d, p), def_name(k, x).
+
+// la_fact(F, d, sym, q, x): a function the script collects (module level or directly in a collected class), or a
+// side-queue field declared in a collected class body (la_field, a "pseudo fact" the script makes lazy and
+// @pure_lazy, with one bootstrap mutation at its own line).
+.decl la_fact(f: node, d: number, sym: symbol, q: symbol, x: symbol)
+la_fact(f, d, @dot(m, x), x, x) :- kind(f, "function_definition"), ast_parent(f, p), kind(p, "module"),
+    def_name(f, x), docof(f, d), path_module(d, m).
+la_fact(f, d, @dot(m, q), q, x) :- kind(f, "function_definition"), ast_parent(f, k), la_cls(k, d, p),
+    def_name(f, x), path_module(d, m), q = @dot(p, x).
+la_fact(s, d, @dot(m, q), q, x) :- la_field(s, k, x), la_cls(k, d, p), path_module(d, m), q = @dot(p, x).
+.decl la_fn(f: node)
+la_fn(f) :- la_fact(f, _, _, _, _), kind(f, "function_definition").
+// la_cls_of(F, k): the class F is collected in.
+.decl la_cls_of(f: node, k: node)
+la_cls_of(f, k) :- la_fn(f), ast_parent(f, k), kind(k, "class_definition").
+la_cls_of(s, k) :- la_field(s, k, _).
+// la_field(s, k, x): `x: T` or `x = …` (one target) in class k's body, x one of the side-queue attributes.
+.decl la_field(s: node, k: node, x: symbol)
+la_field(s, k, x) :- kind(k, "class_definition"), field(k, "body", b), child(b, s, _), asgstmt(a, s),
+    !field(a, "right", _), field(a, "left", t), kind(t, "identifier"), text(t, x), la_side_queue(x).
+la_field(s, k, x) :- kind(k, "class_definition"), field(k, "body", b), child(b, s, _), asgstmt(a, s),
+    field(a, "right", v), !kind(v, "assignment"), field(a, "left", t), kind(t, "identifier"), text(t, x),
+    la_side_queue(x).
+// The symbol tables (facts_by_symbol, callable_targets) keep the last fact of each symbol: an @overload stack is
+// one symbol, answered by its implementation.
+.decl la_canon(f: node)
+la_canon(f) :- la_fact(f, _, s, _, _), count : { la_fact(g, _, s, _, _), g > f } = 0.
+.decl la_canon_of(f: node, g: node)
+la_canon_of(f, g) :- la_fact(f, _, s, _, _), la_fact(g, _, s, _, _), la_canon(g).
+.decl la_sym(f: node, s: symbol)
+la_sym(f, s) :- la_fact(f, _, s, _, _).
+
+// ---- decorators and kinds of fact ----------------------------------------------------------------------------------
+// la_rid(e, s): _decorator_resolved_id: a name through module-level aliases and imports, `a.b` as written.
+.decl la_rid(e: node, s: symbol)
+la_rid(e, s) :- la_dec_expr(e), kind(e, "call"), field(e, "function", g), la_rid(g, s).
+la_rid(e, s) :- la_dec_expr(e), kind(e, "identifier"), text(e, x), docof(e, d), la_gleaf(d, x, s).
+la_rid(e, cat(b, ".", a)) :- la_dec_expr(e), attr_of(e, o, a), la_rid(o, b), b != "".
+la_rid(e, a) :- la_dec_expr(e), attr_of(e, o, a), la_rid(o, "").
+la_rid(e, "") :- la_dec_expr(e), !kind(e, "call"), !kind(e, "identifier"), !kind(e, "attribute").
+.decl la_dec_expr(e: node)
+la_dec_expr(e) :- la_fn(f), decorator(f, e).
+la_dec_expr(g) :- la_dec_expr(e), (field(e, "function", g), kind(e, "call") ; attr_of(e, g, _)).
+la_gneed(d, x) :- la_dec_expr(e), kind(e, "identifier"), text(e, x), docof(e, d).
+.decl la_pure(f: node)
+la_pure(f) :- la_fn(f), decorator(f, e), la_rid(e, s), (s = "pure_lazy" ; suffix(".pure_lazy", s)).
+la_pure(s) :- la_field(s, _, _).
+.decl la_legacy(f: node)
+la_legacy(f) :- la_fn(f), decorator(f, e), la_rid(e, s), la_legacy_name(x), (s = x ; suffix(cat(".", x), s)).
+.decl la_legacy_name(x: symbol)
+la_legacy_name("legacy_sync"). la_legacy_name("legacy_async"). la_legacy_name("legacy_module_sync").
+la_legacy_name("legacy_module_async").
+// la_lazy(F): named *_lazy, or @pure_lazy.
+.decl la_lazy(f: node)
+la_lazy(f) :- la_fact(f, _, _, _, x), suffix("_lazy", x).
+la_lazy(f) :- la_pure(f).
+// la_exec_ctx(F): execute_sync / execute_async of a class that has, or is nested in one that has, a base whose
+// name ends in ExecutionContext (_class_inherits_execution_context).
+.decl la_exec_ctx(f: node)
+la_exec_ctx(f) :- la_cls_of(f, k), la_ctx_class(k), def_name(f, x), (x = "execute_sync" ; x = "execute_async").
+.decl la_ctx_class(k: node)
+la_ctx_class(k) :- la_cls(k, _, _), field(k, "superclasses", al), child(al, b, _), !kind(b, "keyword_argument"),
+    la_base_name(b, s), suffix("ExecutionContext", s).
+la_ctx_class(k) :- la_cls(k, _, _), ast_parent(k, o), la_ctx_class(o).
+// la_base_name(b, s): the method _expr_name: a name through the module's imports, an attribute's name, a call's
+// function; anything else by its text (the script's ast.unparse).
+.decl la_base_name(b: node, s: symbol)
+la_base_name(b, q) :- kind(b, "identifier"), text(b, x), docof(b, d), la_imp(d, x, q).
+la_base_name(b, x) :- kind(b, "identifier"), text(b, x), docof(b, d), !la_imp(d, x, _).
+la_base_name(b, a) :- attr_of(b, _, a).
+la_base_name(b, s) :- kind(b, "call"), field(b, "function", g), la_base_name(g, s).
+la_base_name(b, s) :- kind(b, k), k != "identifier", k != "attribute", k != "call", text(b, s).
+// la_native(F, x): parameter x is annotated psycopg.Cursor, psycopg.AsyncCursor or sqlite3.Cursor (subscripted
+// or not), through the module's imports.
+.decl la_native(f: node, x: symbol)
+la_native(f, x) :- la_fn(f), sig_param(f, _, nm, _, k, a, _), k != "vararg", k != "kwarg", text(nm, x),
+    child(a, t0, 0), la_ann_head(t0, h), docof(f, d), la_ann_q(d, h, q),
+    (q = "psycopg.Cursor" ; q = "psycopg.AsyncCursor" ; q = "sqlite3.Cursor").
+.decl la_ann_head(t: node, h: node)
+la_ann_head(t, h) :- kind(t, "subscript"), field(t, "value", h).
+la_ann_head(t, h) :- kind(t, "generic_type"), child(t, h, 0).
+la_ann_head(t, t) :- kind(t, k), k != "subscript", k != "generic_type".
+.decl la_ann_q(d: number, h: node, q: symbol)
+la_ann_q(d, h, q) :- kind(h, "identifier"), text(h, x), la_imp(d, x, q).
+la_ann_q(d, h, cat(m, ".", a)) :- attr_of(h, o, a), kind(o, "identifier"), text(o, x), la_impmod(d, x, m).
+
+// ---- module-level names -----------------------------------------------------------------------------------------------
+// la_imp(d, x, q): `from m import a as x` at module level gives x -> "m.a" (imported_names). A relative import
+// keeps its module as written without dots; `from . import a` is skipped.
+.decl la_imp(d: number, x: symbol, q: symbol)
+// A later import of the same name overwrites an earlier one (each is a dict).
+la_imp(d, x, cat(m, ".", a)) :- la_imp_at(d, x, i), la_from(i, m, a, x), count : { la_imp_at(d, x, i2), i2 > i } = 0.
+.decl la_imp_at(d: number, x: symbol, i: node)
+la_imp_at(d, x, i) :- modnode(d, mn), child(mn, i, _), la_from(i, _, _, x).
+// la_impmod(d, x, m): `import m as x` at module level (imported_modules); `import a.b` keys "a.b". The last wins.
+.decl la_impmod(d: number, x: symbol, m: symbol)
+la_impmod(d, x, m) :- la_impmod_at(d, x, i), la_import(i, m, x), count : { la_impmod_at(d, x, i2), i2 > i } = 0.
+.decl la_impmod_at(d: number, x: symbol, i: node)
+la_impmod_at(d, x, i) :- modnode(d, mn), child(mn, i, _), la_import(i, _, x).
+// la_from(i, m, a, x) / la_import(i, m, x): the aliases of one import statement.
+.decl la_from(i: node, m: symbol, a: symbol, x: symbol)
+la_from(i, m, a, a) :- from_module_raw(i, m), m != "", field(i, "name", n), kind(n, "dotted_name"), text(n, a).
+la_from(i, m, a, x) :- from_module_raw(i, m), m != "", field(i, "name", n), kind(n, "aliased_import"),
+    field(n, "name", an), text(an, a), field(n, "alias", xn), text(xn, x).
+.decl la_import(i: node, m: symbol, x: symbol)
+la_import(i, m, m) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), text(n, m).
+la_import(i, m, x) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "aliased_import"),
+    field(n, "name", mn), text(mn, m), field(n, "alias", xn), text(xn, x).
+// la_grhs(d, x, v): the last module-level `x = v` (module_rhs_bindings; later ones overwrite).
+.decl la_grhs(d: number, x: symbol, v: node)
+la_grhs(d, x, v) :- la_gasg(d, s, x, v), count : { la_gasg(d, s2, x, _), s2 > s } = 0.
+.decl la_gasg(d: number, s: node, x: symbol, v: node)
+la_gasg(d, s, x, v) :- modnode(d, mn), child(mn, s, _), asgstmt(a, s), !assign_ann(a, _), assign_target(a, t),
+    kind(t, "identifier"), text(t, x), assign_value(a, v0), unparen(v0, v).   // plain Assign only, not `x: T = v`
+// la_gleaf(d, x, s): _resolve_module_global_name: follow `x = y`, `x = y(…)` at module level; `x = o.a` gives "a";
+// then an imported name gives its "m.a"; else x itself. Asked for through la_gneed.
+.decl la_gneed(d: number, x: symbol)
+la_gneed(d, y) :- la_gneed(d, x), la_grhs(d, x, v), la_name_step(v, y).
+.decl la_gleaf(d: number, x: symbol, s: symbol)
+la_gleaf(d, x, s) :- la_gneed(d, x), la_grhs(d, x, v), la_name_step(v, y), la_gleaf(d, y, s).
+la_gleaf(d, x, a) :- la_gneed(d, x), la_grhs(d, x, v), attr_of(v, _, a).
+la_gleaf(d, x, q) :- la_gneed(d, x), la_grhs(d, x, v), !la_name_step(v, _), !kind(v, "attribute"), la_imp(d, x, q).
+la_gleaf(d, x, x) :- la_gneed(d, x), la_grhs(d, x, v), !la_name_step(v, _), !kind(v, "attribute"), !la_imp(d, x, _).
+la_gleaf(d, x, q) :- la_gneed(d, x), !la_grhs(d, x, _), la_imp(d, x, q).
+la_gleaf(d, x, x) :- la_gneed(d, x), !la_grhs(d, x, _), !la_imp(d, x, _).
+// la_name_step(v, y): v is the name y, or a call of the name y: the steps both resolvers follow.
+.decl la_name_step(v: node, y: symbol)
+la_name_step(v, y) :- kind(v, "identifier"), text(v, y).
+la_name_step(v, y) :- kind(v, "call"), field(v, "function", g), kind(g, "identifier"), text(g, y).
+
+// ---- what is walked, and what is scanned -------------------------------------------------------------------------------
+// la_body(F, b): a block the script walks for F: F's body, the bodies of the compound statements in it, and of
+// nested defs that are not route handlers.
+.decl la_body(f: node, b: node)
+la_body(f, b) :- la_fn(f), field(f, "body", b).
+la_body(f, b) :- la_stmt(f, _, s), la_nested_def(s, g), field(g, "body", b).
+la_body(f, b) :- la_stmt(f, _, s), la_sub_body(s, b).
+// la_stmt(F, b, s): statement s directly in walked block b.
+.decl la_stmt(f: node, b: node, s: node)
+la_stmt(f, b, s) :- la_body(f, b), child(b, s, _), !kind(s, "comment").
+// la_nested_def(s, g): statement s is def g (decorated or not); route handlers are left out entirely.
+.decl la_nested_def(s: node, g: node)
+la_nested_def(s, s) :- kind(s, "function_definition").
+la_nested_def(s, g) :- kind(s, "decorated_definition"), field(s, "definition", g), kind(g, "function_definition"),
+    !la_route(g).
+.decl la_route(g: node)
+la_route(g) :- decorator(g, e), (kind(e, "call"), field(e, "function", t) ; !kind(e, "call"), t = e),
+    attr_of(t, _, a), (a = "delete" ; a = "get" ; a = "patch" ; a = "post" ; a = "put").
+// la_sub_body(s, b): the bodies statement s walks: branches, loops and their else, `with` (not `async with`, which
+// the script scans whole), `try` (not `try … except*`), `match` cases.
+.decl la_sub_body(s: node, b: node)
+la_sub_body(s, b) :- kind(s, "if_statement"), field(s, "consequence", b).
+la_sub_body(s, b) :- kind(s, "if_statement"), child(s, c, _), kind(c, "elif_clause"), field(c, "consequence", b).
+la_sub_body(s, b) :- kind(s, "if_statement"), child(s, c, _), kind(c, "else_clause"), field(c, "body", b).
+la_sub_body(s, b) :- (kind(s, "for_statement") ; kind(s, "while_statement")), field(s, "body", b).
+la_sub_body(s, b) :- (kind(s, "for_statement") ; kind(s, "while_statement")), field(s, "alternative", c),
+    field(c, "body", b).
+la_sub_body(s, b) :- kind(s, "with_statement"), !op(s, "async"), field(s, "body", b).
+la_sub_body(s, b) :- la_try(s), field(s, "body", b).
+la_sub_body(s, b) :- la_try(s), child(s, c, _), (kind(c, "except_clause") ; kind(c, "finally_clause")),
+    child(c, b, _), kind(b, "block").
+la_sub_body(s, b) :- la_try(s), child(s, c, _), kind(c, "else_clause"), field(c, "body", b).
+la_sub_body(s, b) :- kind(s, "match_statement"), field(s, "body", mb), child(mb, c, _), kind(c, "case_clause"),
+    field(c, "consequence", b).
+.decl la_try(s: node)
+la_try(s) :- kind(s, "try_statement"), count : { child(s, c, _), kind(c, "except_group_clause") } = 0.
+// la_root(F, r): an expression (or a whole statement) the script scans for F.
+.decl la_root(f: node, r: node)
+la_root(f, v) :- la_stmt(f, _, s), asgstmt(a, s), assign_value(a, v).
+la_root(f, v) :- la_stmt(f, _, s), child(s, a, 0), kind(a, "augmented_assignment"), field(a, "right", v).
+la_root(f, s) :- la_stmt(f, _, s), kind(s, "expression_statement"), !asgstmt(_, s), !la_aug(s).
+.decl la_aug(s: node)
+la_aug(s) :- kind(s, "expression_statement"), child(s, a, 0), kind(a, "augmented_assignment").
+la_root(f, s) :- la_stmt(f, _, s), kind(s, "return_statement").
+la_root(f, c) :- la_stmt(f, _, s), kind(s, "if_statement"), field(s, "condition", c).
+la_root(f, c) :- la_stmt(f, _, s), kind(s, "if_statement"), child(s, e, _), kind(e, "elif_clause"),
+    field(e, "condition", c).
+la_root(f, c) :- la_stmt(f, _, s), kind(s, "for_statement"), field(s, "right", c).
+la_root(f, c) :- la_stmt(f, _, s), kind(s, "while_statement"), field(s, "condition", c).
+la_root(f, v) :- la_stmt(f, _, s), kind(s, "with_statement"), !op(s, "async"), child(s, cl, _),
+    kind(cl, "with_clause"), child(cl, it, _), field(it, "value", v0),
+    (kind(v0, "as_pattern"), child(v0, v, 0) ; !kind(v0, "as_pattern"), v = v0).
+la_root(f, v) :- la_stmt(f, _, s), la_try(s), child(s, x, _), kind(x, "except_clause"), field(x, "value", v0),
+    (kind(v0, "as_pattern"), child(v0, v, 0) ; !kind(v0, "as_pattern"), v = v0).
+la_root(f, v) :- la_stmt(f, _, s), kind(s, "match_statement"), field(s, "subject", v).
+la_root(f, g) :- la_stmt(f, _, s), kind(s, "match_statement"), field(s, "body", mb), child(mb, c, _),
+    kind(c, "case_clause"), field(c, "guard", g).
+la_root(f, s) :- la_stmt(f, _, s), la_whole(s).
+// A class statement scanned whole is scanned with its body (only classes below it are skipped); under a
+// decorator the class is the root's child, so it is a root of its own.
+la_root(f, g) :- la_stmt(f, _, s), la_whole(s), kind(s, "decorated_definition"), field(s, "definition", g),
+    kind(g, "class_definition").
+// la_whole(s): a statement the script scans as one subtree (everything it does not walk).
+.decl la_whole(s: node)
+la_whole(s) :- la_stmt(_, _, s), kind(s, k), !la_walked_kind(k), !la_nested_def(s, _), !la_route_stmt(s).
+la_whole(s) :- la_stmt(_, _, s), kind(s, "with_statement"), op(s, "async").
+la_whole(s) :- la_stmt(_, _, s), kind(s, "try_statement"), !la_try(s).
+.decl la_route_stmt(s: node)
+la_route_stmt(s) :- kind(s, "decorated_definition"), field(s, "definition", g), la_route(g).
+.decl la_walked_kind(k: symbol)
+la_walked_kind("expression_statement"). la_walked_kind("return_statement"). la_walked_kind("if_statement").
+la_walked_kind("for_statement"). la_walked_kind("while_statement"). la_walked_kind("with_statement").
+la_walked_kind("try_statement"). la_walked_kind("match_statement"). la_walked_kind("function_definition").
+// la_scan(F, n): n is r or below it, with no class in between (_iter_nodes_skip_nested_funcs skips classes only:
+// lambdas count for the function).
+.decl la_scan(f: node, n: node)
+la_scan(f, r) :- la_root(f, r).
+la_scan(f, n) :- la_root(f, r), within_stop(n, r, "class_definition").
+.decl la_call(f: node, c: node)
+la_call(f, c) :- la_scan(f, c), kind(c, "call").
+
+// ---- alias state ---------------------------------------------------------------------------------------------------------
+// la_asg(s, x, v, how): walked statement s assigns value v to name x: "rhs" for a plain name target (`x = v`,
+// `x: T = v`, each target of `a = b = v`), "elt" for a name in a tuple or list target (aliases only).
+.decl la_asg(s: node, x: symbol, v: node, how: symbol)
+la_asg(s, x, v, "rhs") :- la_stmt(_, _, s), asgstmt(a, s), assign_target(a, t), kind(t, "identifier"), text(t, x),
+    assign_value(a, v0), unparen(v0, v).
+la_asg(s, x, v, "elt") :- la_stmt(_, _, s), asgstmt(a, s), assign_target(a, t),
+    (kind(t, "pattern_list") ; kind(t, "tuple_pattern") ; kind(t, "list_pattern")), child(t, e, _),
+    kind(e, "identifier"), text(e, x), assign_value(a, v0), unparen(v0, v).
+// la_site(n): where state is read: scanned calls, and assignment statements (aliases are judged there).
+.decl la_site(n: node)
+la_site(c) :- la_call(_, c).
+la_site(s) :- la_asg(s, _, _, _).
+// la_vis(n, x, s, v, how): s comes before n in a walked block that holds n.
+.decl la_vis(n: node, x: symbol, s: node, v: node, how: symbol)
+la_vis(n, x, s, v, h) :- la_site(n), la_asg(s, x, v, h), la_stmt(_, b, s), within(n, b),
+    node(_, s, _, _, e), node(_, n, _, st, _), e <= st.
+// la_rhs(n, x, v): x's value at n: its latest visible plain assignment (local_rhs).
+.decl la_rhs(n: node, x: symbol, v: node)
+la_rhs(n, x, v) :- la_vis(n, x, s, v, "rhs"),
+    count : { la_vis(n, x, s2, _, "rhs"), s2 > s } = 0.
+// la_leaf(n, x, s): _resolve_local_name_leaf at n: follow the chain of values; a value of another shape, or no
+// value, hands over to the module-level resolver. Asked for through la_need.
+.decl la_need(n: node, x: symbol)
+la_need(n, y) :- la_need(n, x), la_rhs(n, x, v), la_name_step(v, y).
+la_gneed(d, x) :- la_need(n, x), docof(n, d).
+.decl la_leaf(n: node, x: symbol, s: symbol)
+la_leaf(n, x, s) :- la_need(n, x), la_rhs(n, x, v), la_name_step(v, y), la_leaf(n, y, s).
+la_leaf(n, x, a) :- la_need(n, x), la_rhs(n, x, v), attr_of(v, _, a).
+la_leaf(n, x, s) :- la_need(n, x), la_rhs(n, x, v), !la_name_step(v, _), !kind(v, "attribute"), docof(n, d),
+    la_gleaf(d, x, s).
+la_leaf(n, x, s) :- la_need(n, x), !la_rhs(n, x, _), docof(n, d), la_gleaf(d, x, s).
+
+// ---- callee strings -------------------------------------------------------------------------------------------------------
+// la_cstr(n, e, s): _resolve_call_callee_string for expression e at site n: a name's leaf, an attribute's name,
+// a call's function. la_callee(c, s) is it for call c's function.
+.decl la_ask_cstr(n: node, e: node)
+la_ask_cstr(c, f) :- la_call(_, c), field(c, "function", f).
+la_ask_cstr(n, g) :- la_ask_cstr(n, e), kind(e, "call"), field(e, "function", g).
+la_ask_cstr(n, m) :- la_ask_cstr(n, e), kind(e, "parenthesized_expression"), unparen(e, m).
+la_need(n, x) :- la_ask_cstr(n, e), kind(e, "identifier"), text(e, x).
+.decl la_cstr(n: node, e: node, s: symbol)
+la_cstr(n, e, s) :- la_ask_cstr(n, e), kind(e, "identifier"), text(e, x), la_leaf(n, x, s).
+la_cstr(n, e, a) :- la_ask_cstr(n, e), attr_of(e, _, a).
+la_cstr(n, e, s) :- la_ask_cstr(n, e), kind(e, "call"), field(e, "function", g), la_cstr(n, g, s).
+la_cstr(n, e, s) :- la_ask_cstr(n, e), kind(e, "parenthesized_expression"), unparen(e, m), la_cstr(n, m, s).
+.decl la_callee(c: node, s: symbol)
+la_callee(c, s) :- la_call(_, c), field(c, "function", f), la_cstr(c, f, s).
+.decl la_cleaf(c: node, x: symbol)
+la_cleaf(c, x) :- la_callee(c, s), la_last(s, x).
+// la_last(s, x): x is the part of dotted name s after its last dot (s itself if it has none), for any s that
+// la_lastq asks for.
+.decl la_lastq(s: symbol)
+la_lastq(s) :- la_callee(_, s).
+.decl la_last(s: symbol, x: symbol)
+la_last(s, x) :- la_lastq(s), split_dot(s, m, x), m != "".   // (m named: rrlab cannot lower `_` here)
+la_last(s, s) :- la_lastq(s), !contains(".", s).
+// la_func(c, g): call c's function, parentheses dropped (`(f)()` calls f, as in `ast`).
+.decl la_func(c: node, g: node)
+la_func(c, g) :- kind(c, "call"), field(c, "function", g0), unparen(g0, g).
+// la_gcstr(d, e, s): the same with no local state (the script passes {} for `vars(…).get`).
+.decl la_gcstr(d: number, e: node, s: symbol)
+la_gcstr(d, e, s) :- la_ask_gcstr(e), kind(e, "identifier"), text(e, x), docof(e, d), la_gleaf(d, x, s).
+la_gcstr(d, e, a) :- la_ask_gcstr(e), attr_of(e, _, a), docof(e, d).
+la_gcstr(d, e, s) :- la_ask_gcstr(e), kind(e, "call"), field(e, "function", g), la_gcstr(d, g, s).
+.decl la_ask_gcstr(e: node)
+la_ask_gcstr(g) :- la_ask_gcstr(e), kind(e, "call"), field(e, "function", g).
+la_gneed(d, x) :- la_ask_gcstr(e), kind(e, "identifier"), text(e, x), docof(e, d).
+
+// la_local(F, e, s): _local_callee_name, the symbol a call target e is taken to define:
+//   a name: an import anywhere in F's own blocks (scoped imports; not in nested defs), else a module-level
+//     `from` import, else the module-level resolution, as "module.name" unless that is an imported name;
+//   `self.m` / `cls.m` in a class: "module.Class.m", through a class-body alias `m = other`;
+//   `mod.f` for a module-level `import … as mod`: "mod.f".
+.decl la_ask_local(f: node, e: node)
+la_ask_local(f, g) :- la_call(f, c), la_func(c, g).
+.decl la_local(f: node, e: node, s: symbol)
+la_local(f, e, q) :- la_ask_local(f, e), kind(e, "identifier"), text(e, x), la_simp_last(f, x, q).
+la_local(f, e, q) :- la_ask_local(f, e), kind(e, "identifier"), text(e, x), !la_simp(f, x, _, _), docof(e, d),
+    la_imp(d, x, q).
+la_local(f, e, s) :- la_ask_local(f, e), kind(e, "identifier"), text(e, x), !la_simp(f, x, _, _), docof(e, d),
+    !la_imp(d, x, _), la_gleaf(d, x, r), (la_imp(d, r, s) ; !la_imp(d, r, _), path_module(d, m), s = cat(m, ".", r)).
+la_local(f, e, cat(m, ".", q, ".", t)) :- la_ask_local(f, e), attr_of(e, o, a), kind(o, "identifier"),
+    (text(o, "self") ; text(o, "cls")), la_cls_of(f, k), la_cls(k, d, q), path_module(d, m),
+    (la_calias(k, a, t) ; !la_calias(k, a, _), t = a).
+la_local(f, e, cat(m, ".", a)) :- la_ask_local(f, e), attr_of(e, o, a), kind(o, "identifier"), text(o, x),
+    !text(o, "self"), !text(o, "cls"), docof(e, d), la_impmod(d, x, m).
+la_local(f, e, cat(m, ".", a)) :- la_ask_local(f, e), attr_of(e, o, a), kind(o, "identifier"), text(o, x),
+    (x = "self" ; x = "cls"), !la_cls_of(f, _), docof(e, d), la_impmod(d, x, m).
+la_gneed(d, x) :- la_ask_local(_, e), kind(e, "identifier"), text(e, x), docof(e, d).
+// la_calias(k, a, t): `a = t` (both names) in class k's body; the last one counts.
+.decl la_calias(k: node, a: symbol, t: symbol)
+la_calias(k, a, t) :- la_calias_at(k, a, s, t), count : { la_calias_at(k, a, s2, _), s2 > s } = 0.
+.decl la_calias_at(k: node, a: symbol, s: node, t: symbol)   // plain Assign only, not `a: T = t`
+la_calias_at(k, a, s, t) :- la_cls(k, _, _), field(k, "body", b), child(b, s, _), asgstmt(x, s), !assign_ann(x, _),
+    assign_target(x, l), kind(l, "identifier"), text(l, a), assign_value(x, v), kind(v, "identifier"), text(v, t).
+// la_simp(F, x, i, q): an import of x as q in F's own blocks (if/for/while/with/try/match bodies, not nested
+// defs); the last one wins.
+.decl la_simp(f: node, x: symbol, i: node, q: symbol)
+la_simp(f, x, i, cat(m, ".", a)) :- la_stmt(f, b, i), nearest(b, f, "function_definition"), la_from(i, m, a, x).
+la_simp(f, x, i, m) :- la_stmt(f, b, i), nearest(b, f, "function_definition"), la_import(i, m, x).
+.decl la_simp_last(f: node, x: symbol, q: symbol)
+la_simp_last(f, x, q) :- la_simp(f, x, i, q), count : { la_simp(f, x, i2, _), i2 > i } = 0.
+
+// ---- name heuristics -----------------------------------------------------------------------------------------------------
+// Each is the script's predicate on expression e with the alias state at site n, asked for by la_ask_*.
+// la_pl: _looks_like_plan_expr. A name that is a plan alias, or whose leaf or own name ends in "plan"; an attribute
+// whose name ends in "plan"; a call whose callee string is "plan", ends in "_plan" or starts with "_build_".
+.decl la_ask_pl(n: node, e: node)
+la_ask_pl(s, v) :- la_ask_pl(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, _).
+la_need(n, x) :- la_ask_pl(n, e), kind(e, "identifier"), text(e, x).
+la_ask_cstr(n, g) :- la_ask_pl(n, e), kind(e, "call"), field(e, "function", g).
+.decl la_pl(n: node, e: node)
+la_pl(n, e) :- la_ask_pl(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, _), la_pl(s, v).
+la_pl(n, e) :- la_ask_pl(n, e), kind(e, "identifier"), text(e, x), la_leaf(n, x, s), suffix("plan", s).
+la_pl(n, e) :- la_ask_pl(n, e), kind(e, "identifier"), text(e, x), suffix("plan", x).
+la_pl(n, e) :- la_ask_pl(n, e), attr_of(e, _, a), suffix("plan", a).
+la_pl(n, e) :- la_ask_pl(n, e), kind(e, "call"), field(e, "function", g), la_cstr(n, g, s),
+    (s = "plan" ; suffix("_plan", s) ; prefix("_build_", s)).
+// la_lz: _looks_like_lazy_expr. A name that is a lazy alias; else, if it has a value, that value; else its leaf
+// has "lazy" (any case) or ends in "result" or "Intent". An attribute or a callee string with "lazy" (lower case)
+// or ending in "result".
+.decl la_ask_lz(n: node, e: node)
+la_ask_lz(s, v) :- la_ask_lz(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, _).
+la_ask_lz(n, v) :- la_ask_lz(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v).
+la_need(n, x) :- la_ask_lz(n, e), kind(e, "identifier"), text(e, x).
+la_ask_cstr(n, g) :- la_ask_lz(n, e), kind(e, "call"), field(e, "function", g).
+.decl la_lz(n: node, e: node)
+la_lz(n, e) :- la_ask_lz(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, _), la_lz(s, v).
+la_lz(n, e) :- la_ask_lz(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_lz(n, v).
+la_lz(n, e) :- la_ask_lz(n, e), kind(e, "identifier"), text(e, x), !la_rhs(n, x, _), la_leaf(n, x, s),
+    (icontains("lazy", s) ; suffix("result", s) ; suffix("Intent", s)).
+la_lz(n, e) :- la_ask_lz(n, e), attr_of(e, _, a), (contains("lazy", a) ; suffix("result", a)).
+la_lz(n, e) :- la_ask_lz(n, e), kind(e, "call"), field(e, "function", g), la_cstr(n, g, s),
+    (contains("lazy", s) ; suffix("result", s)).
+// la_cb: _expr_contains_callable_behavior. A lambda; a name whose latest value is callable (callable_aliases,
+// which every plain assignment resets) or holds one; a call's arguments; a tuple, list, set or dict's items; an
+// attribute's object.
+.decl la_ask_cb(n: node, e: node)
+la_ask_cb(n, v) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v).
+la_ask_cb(s, v) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_vis(n, x, s, v, "rhs").
+la_ask_cb(s, v) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, "elt").
+la_ask_cb(n, a) :- la_ask_cb(n, e), la_cb_part(e, a).
+.decl la_cb_part(e: node, a: node)
+la_cb_part(e, a) :- kind(e, "call"), (la_arg(e, _, a) ; la_kwv(e, a)).
+la_cb_part(e, a) :- (kind(e, "tuple") ; kind(e, "list") ; kind(e, "set") ; kind(e, "expression_list")),
+    child(e, a0, _), !kind(a0, "comment"), unparen(a0, a).
+la_cb_part(e, a) :- kind(e, "dictionary"), child(e, p, _), kind(p, "pair"), (field(p, "key", a0) ; field(p, "value", a0)),
+    unparen(a0, a).
+la_cb_part(e, a) :- attr_of(e, o, _), unparen(o, a).
+la_cb_part(e, a) :- kind(e, "parenthesized_expression"), unparen(e, a), a != e.
+.decl la_cb(n: node, e: node)
+la_cb(n, e) :- la_ask_cb(n, e), kind(e, "lambda").
+la_cb(n, e) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_vis(n, x, s, v, "rhs"),
+    la_cb(s, v).
+la_cb(n, e) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_cb(n, v).
+la_cb(n, e) :- la_ask_cb(n, e), la_cb_part(e, a), la_cb(n, a).
+// A tuple or list target whose value holds a callable makes each of its names an alias; only a later plain
+// assignment of the name clears it (_assigned_names, then difference_update over plain targets).
+la_cb(n, e) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, "elt"), la_cb(s, v),
+    count : { la_vis(n, x, s2, _, "rhs"), s2 > s } = 0.
+// la_dyn: _expr_is_dynamic_behavior_lookup. A name through its value; getattr(o, k) / __getattribute__ with k not
+// a literal or a literal naming a behaviour key part; `t.get(k)` the same, unless t is an UPPER_CASE table.
+.decl la_ask_dyn(n: node, e: node)
+la_ask_dyn(n, v) :- la_ask_dyn(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v).
+la_ask_cstr(n, g) :- la_ask_dyn(n, e), kind(e, "call"), field(e, "function", g).
+.decl la_dyn(n: node, e: node)
+la_dyn(n, e) :- la_ask_dyn(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_dyn(n, v).
+la_dyn(n, e) :- la_ask_dyn(n, e), kind(e, "call"), field(e, "function", g), la_cstr(n, g, s), la_getattr(s),
+    (!la_sarg(e, 1, _) ; la_sarg(e, 1, k), la_behavior_key(k)).
+la_dyn(n, e) :- la_ask_dyn(n, e), kind(e, "call"), field(e, "function", g), !la_getattr_call(n, e),
+    attr_of(g, t, "get"), la_arg(e, 0, _), !la_upper_name(t), (!la_sarg(e, 0, _) ; la_sarg(e, 0, k), la_behavior_key(k)).
+.decl la_getattr_call(n: node, e: node)
+la_getattr_call(n, e) :- la_ask_dyn(n, e), kind(e, "call"), field(e, "function", g), la_cstr(n, g, s), la_getattr(s).
+.decl la_upper_name(t: node)
+la_upper_name(t) :- kind(t, "identifier"), text(t, x), match("[^a-z]*[A-Z][^a-z]*", x).
+.decl la_behavior_key(k: symbol)
+la_behavior_key(k) :- la_sarg(_, _, k), la_behavior_part(p), icontains(p, k).
+.decl la_behavior_part(p: symbol)
+la_behavior_part(p) :- la_set("SERVERPLAN_BEHAVIOR_KEY_PARTS", p).
+.decl la_getattr(s: symbol)
+la_getattr("getattr"). la_getattr("builtins.getattr"). la_getattr("__getattribute__").
+la_getattr("object.__getattribute__").
+// la_ri: _expr_reads_lazy_internal_state. A name through its value; getattr/__getattribute__ of a LazyResult
+// internal; _resolved_lazy_revision_value / _literalize_resolved_lazy_result; any argument that does; an
+// attribute that is an internal or whose object does; a container's items.
+.decl la_ask_ri(n: node, e: node)
+la_ask_ri(n, v) :- la_ask_ri(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v).
+la_ask_ri(n, a) :- la_ask_ri(n, e), la_cb_part(e, a).
+la_ask_cstr(n, g) :- la_ask_ri(n, e), kind(e, "call"), field(e, "function", g).
+.decl la_ri(n: node, e: node)
+la_ri(n, e) :- la_ask_ri(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_ri(n, v).
+la_ri(n, e) :- la_ask_ri(n, e), kind(e, "call"), field(e, "function", g), la_cstr(n, g, s), la_getattr(s),
+    la_sarg(e, 1, k), la_internal_attr(k).
+la_ri(n, e) :- la_ask_ri(n, e), kind(e, "call"), field(e, "function", g), la_cstr(n, g, s),
+    (s = "_resolved_lazy_revision_value" ; s = "_literalize_resolved_lazy_result").
+la_ri(n, e) :- la_ask_ri(n, e), attr_of(e, _, a), la_internal_attr(a).
+la_ri(n, e) :- la_ask_ri(n, e), la_cb_part(e, a), la_ri(n, a).
+.decl la_internal_attr(a: symbol)
+la_internal_attr(a) :- la_set("LAZY_INTERNAL_ATTRS", a).
+
+// ---- expressions without state --------------------------------------------------------------------------------------------
+// la_arg(c, i, a): positional argument i of call c (ast's args: starred ones count, keywords and **kw do not).
+// la_kw(c, k, v): keyword argument k=v. la_argc(c, k): how many positional arguments. la_sarg(c, i, v): argument i
+// is a plain str literal with value v.
+.decl la_arg(c: node, i: number, a: node)
+la_arg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a0, j),
+    la_posarg(a0), unparen(a0, a), i = count : { child(al, b, j2), j2 < j, la_posarg(b) }.
+.decl la_posarg(a: node)
+la_posarg(a) :- child(al, a, _), kind(al, "argument_list"), !kind(a, "keyword_argument"),
+    !kind(a, "dictionary_splat"), !kind(a, "comment").
+.decl la_kw(c: node, k: symbol, v: node)
+la_kw(c, k, v) :- kind(c, "call"), field(c, "arguments", al), child(al, ka, _), kind(ka, "keyword_argument"),
+    field(ka, "name", n), text(n, k), field(ka, "value", v0), unparen(v0, v).
+// la_kwv(c, v): the value of a keyword argument or of a `**` argument (ast's keywords).
+.decl la_kwv(c: node, v: node)
+la_kwv(c, v) :- la_kw(c, _, v).
+la_kwv(c, v) :- kind(c, "call"), field(c, "arguments", al), child(al, ds, _), kind(ds, "dictionary_splat"),
+    child(ds, v0, _), !kind(v0, "comment"), unparen(v0, v).
+.decl la_argc(c: node, k: number)
+la_argc(c, k) :- kind(c, "call"), k = count : { la_arg(c, _, _) }.
+.decl la_sarg(c: node, i: number, v: symbol)
+la_sarg(c, i, v) :- la_arg(c, i, a), plain_str(a, v).
+// la_ename(e, s): the module-level _expr_name: a dotted chain as written; a broken chain keeps only what follows
+// the break (`f().LazyResult` gives "LazyResult"); anything else "".
+.decl la_ename(e: node, s: symbol)
+la_ename(e, x) :- kind(e, "identifier"), text(e, x).
+la_ename(e, s) :- attr_of(e, o, a), la_ename(o, p), (p = "", s = a ; p != "", s = cat(p, ".", a)).
+la_ename(e, "") :- kind(e, k), k != "identifier", k != "attribute".
+// la_ext(e): rooted at self or cls through attributes, subscripts and calls (_expr_is_external_state).
+.decl la_ext(e: node)
+la_ext(e) :- kind(e, "identifier"), (text(e, "self") ; text(e, "cls")).
+la_ext(e) :- (attr_of(e, o, _) ; kind(e, "subscript"), field(e, "value", o) ; kind(e, "call"), field(e, "function", o)),
+    la_ext(o).
+// la_conn(e): e reads an `_conn` attribute along its chain (_expr_uses_conn_handle).
+.decl la_conn(e: node)
+la_conn(e) :- attr_of(e, _, "_conn").
+la_conn(e) :- (attr_of(e, o, _) ; kind(e, "call"), field(e, "function", o) ;
+    kind(e, "subscript"), field(e, "value", o)), la_conn(o).
+
+// ---- tables ---------------------------------------------------------------------------------------------------------------
+// la_set(NAME, v): the script's module-level constants, one row per member (a string constant is one row). The
+// check provides them, generated from the script (data-layer/lazy-architecture.tables.rr).
+.decl la_set(name: symbol, v: symbol)
+.decl la_side_queue(x: symbol)
+la_side_queue(x) :- la_set("BOOTSTRAP_LAZY_FORBIDDEN_SIDE_QUEUE_ATTRS", x).

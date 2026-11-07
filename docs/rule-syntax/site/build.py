@@ -23,7 +23,9 @@ LIBS = [
     ("core", "native", "What the binary provides: tape relations, tree arithmetic, value builtins, repository readers."),
     ("python/names", "datalog", "Scopes, bindings, references and qualified names. Python's scope lookup and rebinding, adapted from an earlier Datalog prototype."),
     ("python/imports", "datalog", "What each import binds and loads, the import-time module graph, and module exports."),
-    ("python/calls", "datalog", "Call targets and call chains: which function a call can reach, with unknown targets kept as unknown."),
+    ("python/calls", "datalog", "Call targets and call chains: which function a call can reach, with unknown targets kept as unknown, joined from the typing program's answers; and the call syntax helpers."),
+    ("python/types", "datalog", "What class each expression may hold: type_of, proven_type, possible_type and their open sides, joined from the typing program's answers."),
+    ("typing/python", "program", "The Python typing program: points-to, call targets, method lookup through bases, and types, in .rr. The engine runs it before the rules, file by file and then in bounded cross-file rounds.", "typing/programs/calls.rr"),
     ("python/ast", "datalog", "Python as CPython's ast sees it: Name and context, frames with decorators inside the def, parameters by kind, assignments, constants, qualified names, and visit order."),
     ("python/flow", "datalog", "Statement order within a body, and blocks that always raise. Tree arithmetic only."),
     ("data-layer/signing", "datalog", "The data-layer repository's signed allowlists and ratchet baselines, verified in Datalog: the signed bytes rebuilt with join, checked with @ed25519_ok."),
@@ -45,6 +47,19 @@ DATA_LAYER = [
     ("versioned-table-names", "versioned-table-names", "lint_versioned_table_name_manipulation.py"),
     ("test-budget", "test-budget", "check_test_budget.py"),
 ]
+# The data-layer port's later batches (7-10), hand-written from the Python linters at NDL_COMMIT.
+DATA_LAYER += [(s, s, f"lint_{s.replace('-', '_')}.py") for s in """
+    authentication-plan-purity bootstrap-cache-health bootstrap-eager-resolve bootstrap-engine-invariants
+    bootstrap-lazy-sql bounded-composed-graph-paths conditional-architecture connection-mode-split
+    connection-service-architecture connection-structural-boundaries declared-fact-interrogation eager-resolve
+    embedding-vector-orchestration executor-publication-repairs generated-index-sources grammar-mutation-invalidation
+    graph-lazy-sql-plan graphql-plan-ownership history-serverplan-projection hnsw-architecture lazy-adapter-ownership
+    lazy-architecture lazy-sql-surface legacy-callback-quarantine matching-architecture plan-composition-architecture
+    plan-helpers-allowlist plan-optimizer-v2 post-op-side-effects publication-registry-writes pure-lazy-runtime-purity
+    readthrough-authority-architecture revision-ancestry-invariants schema-architecture schema-bootstrap-contracts
+    schema-introspection-data-paths unknown-contract-defaults""".split()]
+DATA_LAYER += [("versioned-merged-identity", "versioned-merged-identity", "check_versioned_merged_identity.py"),
+               ("cached-pure-lazy-allowlist", "cached-pure-lazy-allowlist", "verify_cached_pure_lazy_allowlist.py")]
 NDL_COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 PR2539 = "origin/jeremy/serverplan-architecture-integration"
 
@@ -80,8 +95,9 @@ def main():
     os.makedirs(os.path.join(a.out, "data"), exist_ok=True)
 
     libs = {}
-    for mod, kind, blurb in LIBS:
-        libs[mod] = {"kind": kind, "src": read(os.path.join(RS, "lib", mod + ".rr")), "blurb": blurb}
+    for mod, kind, blurb, *path in LIBS:
+        src = os.path.join(RS, *path) if path else os.path.join(RS, "lib", mod + ".rr")
+        libs[mod] = {"kind": kind, "src": read(src), "blurb": blurb}
     n_native = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for l in libs.values() if l["kind"] == "native")
     n_datalog = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for m, l in libs.items() if l["kind"] == "datalog")
 
@@ -148,15 +164,19 @@ def main():
         if not os.path.exists(p):
             continue
         final = read(p)
-        cand = os.path.join(a.dlre, "packs", "data-layer", "candidates", "rules", f"data-layer-{slug}.json")
+        cand = next((c for c in (os.path.join(a.dlre, "packs", "data-layer", d, "rules", f"data-layer-{slug}.json")
+                                 for d in ("candidates", ".")) if os.path.exists(c)), "")
         entry = {"final": final}
         views = [{"label": "Final form", "panes": [{"title": slug + ".rr", "src": "final", "lang": "rr"}]}]
         if os.path.exists(cand):
             doc = json.loads(read(cand))
             entry["json"] = compact(doc)
-            entry["gen"] = translate.translate(doc)[0]
             views[0]["panes"].append({"title": "Today: JSON port", "src": "json", "lang": "json"})
-            views.append({"label": "JSON port vs generated", "panes": [{"title": "JSON port in today's format", "src": "json", "lang": "json"}, {"title": "Generated .rr", "src": "gen", "lang": "rr"}]})
+            try:   # the machine translator reads the early JSON format only; later ports get no generated view
+                entry["gen"] = translate.translate(doc)[0]
+                views.append({"label": "JSON port vs generated", "panes": [{"title": "JSON port in today's format", "src": "json", "lang": "json"}, {"title": "Generated .rr", "src": "gen", "lang": "rr"}]})
+            except Exception:
+                pass
         src = git_show(a.ndl, NDL_COMMIT, "scripts/" + pyfile)
         if src:
             entry["py"] = src

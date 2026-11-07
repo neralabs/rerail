@@ -1,0 +1,17 @@
+.policy "clippy-zero-prefixed-literal" revision 3
+.description "Avoid leading zeros on Rust decimal literals; Rust doesn't read them as octal, so use an explicit octal prefix or drop the zero."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   num_lit(n, radix, int, suffix)   a number literal's radix and integer digits;  num_float(n)  it is a float
+
+// Clippy's zero_prefixed_literal (complexity): a decimal integer literal written with a leading 0, which
+// reads as octal in C but is decimal in Rust. Clippy skips the value zero.
+//   0123   0_1   0__1   0_1u32   reported        00   0_0   0.5   01f32 (a float)   0o17   not reported
+// The JSON's regex reported 0_0 and missed 0__1; this rule follows Clippy (NOTES-rust.md).
+.violation zero_prefixed_literal(at: node) code "zero_prefixed_literal"
+    "Drop the leading zero from this literal, or use the 0o prefix if you meant octal."
+    suppress clippy "clippy::zero_prefixed_literal", "clippy::all", "clippy::complexity", "warnings"
+zero_prefixed_literal(n) :- num_lit(n, 10, i, _), !num_float(n), prefix("0", i), glob("*[1-9]*", i).

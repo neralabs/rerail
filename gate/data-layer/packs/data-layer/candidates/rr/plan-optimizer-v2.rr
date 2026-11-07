@@ -1,0 +1,242 @@
+.policy "data-layer:plan-optimizer-v2" revision 1
+.description "Invariants of the greenfield plan optimizer: purity, one scope, typed shapes, contracts, pass structure, doc sync."
+.language python
+.mode block
+.scope include "impl/common/l2065_plan_core/**/*.py", "impl/common/l2066_plan_optimizer/**/*.py", "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md"
+.scope text "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md"
+.scope exclude "**/__pycache__/**", "**/.pytest_cache/**"
+.scope tests false
+// Python linter: scripts/lint_plan_optimizer_v2.py. Every file of the two v2 packages, except under tests:
+//   PV2-001 import of an I/O module (os, io, socket, subprocess, sqlite3, asyncio, threading, multiprocessing,
+//           urllib, http, or a submodule)
+//   PV2-002 in l2065_plan_core, import of a legacy layer or of l2066_plan_optimizer
+//   PV2-003 elsewhere, import of a legacy layer, except in adapter.py
+//   PV2-010 `._bindings` / `._exports` outside scope.py
+//   PV2-011 `x.split(".")` (also partition, rpartition, rsplit) outside scope.py
+//   PV2-012 a name ending in _by_table: assigned, annotated, or a def's parameter
+//   PV2-020 a comparison with "count_only", "count" or "exists" (not in adapter.py)
+//   PV2-021 a string, or a piece of an f-string, ending in _count
+//   PV2-022 `set(…) & x`, `x & frozenset(…)`, or `.intersection(…)`
+//   PV2-023 ColumnSchema("name"): a bare string id
+//   PV2-030 model_fields, model_json_schema, model_sql_column_type_hints, get_type_hints, as a name or attribute
+//   PV2-031 `raise E(…)` in a function none of whose strings gives a repair hint (Fix, Use, Add, …)
+//   PV2-060 legality predicates (`def placement_after`, `.estimated_param_count`, …) outside effects.py, adapter.py
+//   PV2-042 `obj.attr = …` outside __init__ / __post_init__
+//   PV2-044 more than 600 lines
+//   In passes.py: PV2-040 a *Pass class without phase, name and run(); PV2-041 DEFAULT_V2_PASSES out of
+//   NORMALIZE, ANALYZE, PHYSICAL order; PV2-043 run_verified_passes() without PlanVerifier.
+// Across files, the invariant codes registered in verifier.py (OptimizerInvariant(code="scope.x")) and the codes
+// the design doc lists (`scope.x` in backticks):
+//   PV2-050 registered, not in the doc (or the doc is missing: at its line 1)
+//   PV2-051 in the doc, not registered
+//   PV2-052 registered, never cited as "(scope.x)" in verifier.py
+// Follows the linter: names are compared as written, nothing is resolved.
+
+#include "python/names.rr"
+#include "python/ast.rr"      // from_module_raw, ast_name, assign_target, sig_param, unparen, str_const, fstring
+#include "python/calls.rr"    // posarg, call_arg
+
+// ---- the linter's lists -----------------------------------------------------------------------------------------
+.decl pv2_io_module(m: symbol)
+pv2_io_module("os"). pv2_io_module("io"). pv2_io_module("socket"). pv2_io_module("subprocess").
+pv2_io_module("sqlite3"). pv2_io_module("asyncio"). pv2_io_module("threading").
+pv2_io_module("multiprocessing"). pv2_io_module("urllib"). pv2_io_module("http").
+.decl pv2_legacy_module(m: symbol)
+pv2_legacy_module("l2070_batching"). pv2_legacy_module("impl.common.l2070_server_plan").
+pv2_legacy_module("impl.common.l2100_sql_grammar").
+.decl pv2_core_forbidden(m: symbol)
+pv2_core_forbidden(m) :- pv2_legacy_module(m).
+pv2_core_forbidden("impl.common.l2066_plan_optimizer").
+.decl pv2_dotted_parse(x: symbol)
+pv2_dotted_parse("partition"). pv2_dotted_parse("split"). pv2_dotted_parse("rpartition").
+pv2_dotted_parse("rsplit").
+.decl pv2_shape(v: symbol)
+pv2_shape("count_only"). pv2_shape("count"). pv2_shape("exists").
+.decl pv2_introspection(x: symbol)
+pv2_introspection("model_sql_column_type_hints"). pv2_introspection("model_fields").
+pv2_introspection("model_json_schema"). pv2_introspection("get_type_hints").
+.decl pv2_oracle_method(x: symbol)
+pv2_oracle_method("can_share_statement_after"). pv2_oracle_method("conflicts_with").
+pv2_oracle_method("repeated_write_keys"). pv2_oracle_method("placement_after").
+.decl pv2_visibility_attr(x: symbol)
+pv2_visibility_attr("requires_prior_statement_visibility_after_writes").
+pv2_visibility_attr("cte_rewritable_read_tables"). pv2_visibility_attr("supports_sql_batch_transport").
+pv2_visibility_attr("requires_runtime_sequential_batch"). pv2_visibility_attr("requires_materialized_inputs").
+pv2_visibility_attr("has_unbounded_params"). pv2_visibility_attr("estimated_param_count").
+.decl pv2_phase_rank(phase: symbol, r: number)
+pv2_phase_rank("NORMALIZE", 0). pv2_phase_rank("ANALYZE", 1). pv2_phase_rank("PHYSICAL", 2).
+
+// ---- files -------------------------------------------------------------------------------------------------------
+// pv2_file(d, x): Python file d, named x, outside tests (the linter skips tests, __pycache__, .pytest_cache parts).
+.decl pv2_file(d: number, x: symbol)
+pv2_file(d, x) :- file_name(d, x), suffix(".py", x), !path_part(d, "tests"), !path_part(d, "__pycache__"),
+    !path_part(d, ".pytest_cache").
+// pv2_in(n, x): node n is in such a file, named x.
+.decl pv2_in(n: node, x: symbol)
+pv2_in(n, x) :- docof(n, d), pv2_file(d, x).
+// pv2_def(f, w): def f (sync or async) and its extent w: the def with its decorators, as ast.walk(def) sees it.
+.decl pv2_def(f: node, w: node)
+pv2_def(f, w) :- kind(f, "function_definition"), (w = f, !field(_, "definition", f) ;
+    kind(w, "decorated_definition"), field(w, "definition", f)).
+// pv2_top(s): a statement of the module body (a decorated one is its definition).
+.decl pv2_top(s: node)
+pv2_top(s) :- modnode(_, m), child(m, t, _), (s = t ; kind(t, "decorated_definition"), field(t, "definition", s)).
+
+// ---- PV2-001 … 003: imports --------------------------------------------------------------------------------------
+// pv2_import(i, m): `import m` (each name) or `from m import …` (absolute only).
+.decl pv2_import(i: node, m: symbol)
+pv2_import(i, m) :- kind(i, "import_statement"), field(i, "name", a), dotted(a, m).
+pv2_import(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "dotted_name"), text(n, m).
+// pv2_under(m, p): m is p or a submodule of p.
+.decl pv2_under(m: symbol, p: symbol)
+pv2_under(m, p) :- pv2_import(_, m), (pv2_io_module(p) ; pv2_core_forbidden(p)), (m = p ; prefix(cat(p, "."), m)).
+// pv2_io_like(m): an I/O module. Its import is PV2-001 only, whatever else it is.
+.decl pv2_io_like(m: symbol)
+pv2_io_like(m) :- pv2_under(m, p), pv2_io_module(p).
+// pv2_core(n): n is in l2065_plan_core, the bottom of the optimizer's import DAG.
+.decl pv2_core(n: node)
+pv2_core(n) :- docof(n, d), path_part(d, "l2065_plan_core").
+
+.violation PV2_001(at: node, m: symbol) code "PV2-001" "Import of I/O module '{m}' is forbidden in the v2 optimizer packages."
+PV2_001(i, m) :- pv2_in(i, _), pv2_import(i, m), pv2_under(m, p), pv2_io_module(p).
+.violation PV2_002(at: node, m: symbol) code "PV2-002" "l2065_plan_core may not import '{m}'."
+PV2_002(i, m) :- pv2_in(i, _), pv2_core(i), pv2_import(i, m), pv2_under(m, p), pv2_core_forbidden(p),
+    !pv2_io_like(m).
+.violation PV2_003(at: node, m: symbol) code "PV2-003" "Only adapter.py may import legacy layer '{m}'."
+PV2_003(i, m) :- pv2_in(i, x), x != "adapter.py", !pv2_core(i), pv2_import(i, m), pv2_under(m, p),
+    pv2_legacy_module(p), !pv2_io_like(m).
+
+// ---- PV2-010 … 012: one scope authority --------------------------------------------------------------------------
+.violation PV2_010(at: node, a: symbol) code "PV2-010" "Direct access to PlanScope internal '{a}' outside scope.py."
+PV2_010(e, a) :- pv2_in(e, x), x != "scope.py", attr_of(e, _, a), (a = "_bindings" ; a = "_exports").
+.violation PV2_011(at: node) code "PV2-011" "Second dotted-ref parser; dotted refs are parsed in scope.py only."
+PV2_011(c) :- pv2_in(c, x), x != "scope.py", kind(c, "call"), field(c, "function", e), attr_of(e, _, m),
+    pv2_dotted_parse(m), posarg(c, 0, a0), unparen(a0, a), str_const(a, ".").
+// A Name target of an assignment (not inside a tuple), an annotated one, or a positional or keyword parameter.
+.violation PV2_012(at: node, x: symbol) code "PV2-012" "Parallel table-keyed binding map '{x}' is forbidden."
+PV2_012(t, x) :- pv2_in(t, _), assign_target(_, t), kind(t, "identifier"), text(t, x), suffix("_by_table", x).
+PV2_012(nm, x) :- pv2_in(nm, _), sig_param(f, _, nm, _, k, _, _), kind(f, "function_definition"),
+    (k = "posonly" ; k = "pos" ; k = "kwonly"), text(nm, x), suffix("_by_table", x).
+
+// ---- PV2-020 … 023: no magic strings -----------------------------------------------------------------------------
+.violation PV2_020(at: node, v: symbol) code "PV2-020" "Comparison against shape literal '{v}'; use the Cardinality lattice."
+PV2_020(c, v) :- pv2_in(c, x), x != "adapter.py", kind(c, "comparison_operator"), child(c, o0, _), unparen(o0, o),
+    str_const(o, v), pv2_shape(v).
+// A str constant (docstrings included) or a literal piece of an f-string; the f-string itself at its own line.
+.violation PV2_021(at: node, v: symbol) code "PV2-021" "'{v}' looks like a legacy *_count sibling ref; use RelationSchema.count()."
+PV2_021(at, v) :- pv2_in(s, _), str_part(s, _, v, at, _), suffix("_count", v).
+PV2_021(s, v) :- pv2_in(s, _), fstring(s), str_part(s, _, v, _, _), suffix("_count", v).
+.violation PV2_022(at: node) code "PV2-022" "Set intersection on names; derive schemas through the schema algebra."
+PV2_022(b) :- pv2_in(b, _), kind(b, "binary_operator"), op(b, "&"), child(b, o0, _), unparen(o0, o), kind(o, "call"),
+    field(o, "function", f), kind(f, "identifier"), text(f, s), (s = "set" ; s = "frozenset").
+PV2_022(c) :- pv2_in(c, _), kind(c, "call"), field(c, "function", e), attr_of(e, _, "intersection").
+.violation PV2_023(at: node, v: symbol) code "PV2-023" "ColumnSchema() called with bare string column id '{v}'; wrap it in ColumnId(...)."
+PV2_023(c, v) :- pv2_in(c, _), kind(c, "call"), field(c, "function", f), kind(f, "identifier"),
+    text(f, "ColumnSchema"), posarg(c, 0, a0), unparen(a0, a), str_const(a, v).
+
+// ---- PV2-030, 031: contracts -------------------------------------------------------------------------------------
+.violation PV2_030(at: node, x: symbol) code "PV2-030" "Model introspection '{x}' is forbidden; producer contracts are authoritative."
+PV2_030(n, x) :- pv2_in(n, _), ast_name(n, x), pv2_introspection(x).
+PV2_030(e, x) :- pv2_in(e, _), attr_of(e, _, x), pv2_introspection(x).
+// pv2_raise(r, w): `raise E(…)` or `raise mod.E` inside def extent w (nested defs too); a bare Name is not checked.
+.decl pv2_raise(r: node, w: node)
+pv2_raise(r, w) :- kind(r, "raise_statement"), child(r, e0, 0), !field(r, "cause", e0), unparen(e0, e),
+    !kind(e, "identifier"), pv2_def(_, w), within(r, w).
+// pv2_hinted(w): some string in w says how to repair: a word Fix, Use, Add, Publish, Call, Bind, …
+.decl pv2_hinted(w: node)
+pv2_hinted(w) :- pv2_raise(_, w), within(s, w), str_part(s, _, v, _, _),
+    match("(?s).*\\b(Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b.*", v).
+.violation PV2_031(at: node) code "PV2-031" "raise without a repair hint: say what is wrong and how to fix it."
+PV2_031(r) :- pv2_in(r, _), pv2_raise(r, w), !pv2_hinted(w).
+
+// ---- PV2-060: legality oracle discipline -------------------------------------------------------------------------
+.decl pv2_oracle_file(x: symbol)
+pv2_oracle_file(x) :- pv2_file(_, x), x != "effects.py", x != "adapter.py".
+.violation PV2_060(at: node, x: symbol) code "PV2-060" "Fusion legality '{x}' outside effects.py; ask EffectSummary.placement_after()."
+PV2_060(f, x) :- pv2_in(f, y), pv2_oracle_file(y), kind(f, "function_definition"), !is_async(f), def_name(f, x),
+    pv2_oracle_method(x).
+PV2_060(e, x) :- pv2_in(e, y), pv2_oracle_file(y), attr_of(e, _, x), pv2_visibility_attr(x).
+PV2_060(c, "can_share_statement_after") :- pv2_in(c, y), pv2_oracle_file(y), kind(c, "call"), field(c, "function", e),
+    attr_of(e, _, "can_share_statement_after").
+
+// ---- PV2-040 … 044: pass structure -------------------------------------------------------------------------------
+// PV2-042: the first target of an assignment is an attribute, and no enclosing def is __init__ / __post_init__.
+.violation PV2_042(at: node) code "PV2-042" "Attribute mutation outside __init__/__post_init__; use dataclasses.replace()."
+PV2_042(a) :- pv2_in(a, _), assign_target(a, t), field(a, "left", t), kind(t, "attribute"), !field(a, "type", _),
+    !pv2_in_init(a).
+.decl pv2_in_init(n: node)
+pv2_in_init(a) :- assign_target(a, _), pv2_def(f, w), within(a, w), def_name(f, x), (x = "__init__" ; x = "__post_init__").
+
+// PV2-044: source.count("\n") + 1 lines, so a final newline counts as a line. Python reads the file with universal
+// newlines, so \r\n and a lone \r each end a line too.
+.violation PV2_044(at: loc, k: number) code "PV2-044" "File has {k} lines (cap 600); split it."
+PV2_044(@place(p, 1), k) :- pv2_file(d, _), doc(d, p, _), source(d, sp), text(sp, s), k = @count_matches("\r\n|\r|\n", s) + 1,
+    k > 600.
+
+// The pass pipeline, in passes.py: its top-level `class XPass` definitions (Protocols aside) and their fields.
+.decl pv2_pass(c: node, x: symbol)
+pv2_pass(c, x) :- pv2_in(c, "passes.py"), pv2_top(c), kind(c, "class_definition"), def_name(c, x),
+    suffix("Pass", x), !pv2_protocol(c).
+// A base written `Protocol` or `typing.Protocol`; `Protocol[T]` is a subscript, which the linter does not accept.
+.decl pv2_protocol(c: node)
+pv2_protocol(c) :- field(c, "superclasses", al), child(al, b, _), (kind(b, "identifier"), text(b, "Protocol") ;
+    attr_of(b, _, "Protocol")).
+// pv2_field(c, x, a): class body statement `x: T = a` (a unset when there is no value).
+.decl pv2_field(c: node, x: symbol, a: node)
+pv2_field(c, x, v) :- pv2_pass(c, _), field(c, "body", b), child(b, s, _), kind(s, "expression_statement"),
+    child(s, a, 0), kind(a, "assignment"), field(a, "type", _), field(a, "left", t), kind(t, "identifier"),
+    text(t, x), (field(a, "right", v) ; !field(a, "right", _), unset(v)).
+// pv2_phase(c, p): `phase: OptimizerPhase = OptimizerPhase.P`, the first such field.
+.decl pv2_phase(c: node, p: symbol)
+pv2_phase(c, p) :- pv2_field(c, "phase", v), unparen(v, m), attr_of(m, _, p), !pv2_earlier_phase(c, v).
+.decl pv2_earlier_phase(c: node, v: node)
+pv2_earlier_phase(c, v) :- pv2_field(c, "phase", v), pv2_field(c, "phase", u), unparen(u, m), kind(m, "attribute"),
+    earlier(u, v).
+.decl pv2_has_run(c: node)
+pv2_has_run(c) :- pv2_pass(c, _), field(c, "body", b), child(b, s, _),
+    (f = s ; kind(s, "decorated_definition"), field(s, "definition", f)),
+    kind(f, "function_definition"), !is_async(f), def_name(f, "run").
+.violation PV2_040(at: node, x: symbol) code "PV2-040" "Pass class {x} must declare phase, name and a run() method."
+PV2_040(c, x) :- pv2_pass(c, x), (!pv2_phase(c, _) ; !pv2_field(c, "name", _) ; !pv2_has_run(c)).
+
+// PV2-041: DEFAULT_V2_PASSES = (A(), B(), …), as any target of the assignment: two elements whose classes, defined
+// above it, have phases out of order.
+.decl pv2_pipeline(a: node, i: number, r: number)
+pv2_pipeline(a, i, r) :- pv2_in(s, "passes.py"), pv2_top(s), child(s, a, 0), kind(a, "assignment"),
+    assign_target(a, t), kind(t, "identifier"), text(t, "DEFAULT_V2_PASSES"), assign_value(a, v0), unparen(v0, v),
+    (kind(v, "tuple") ; kind(v, "expression_list")), child(v, e, i), kind(e, "call"), field(e, "function", f),
+    kind(f, "identifier"), text(f, x), pv2_pass(c, x), earlier(c, a), pv2_phase(c, p), pv2_phase_rank(p, r).
+.violation PV2_041(at: node) code "PV2-041" "DEFAULT_V2_PASSES phases are not in NORMALIZE -> ANALYZE -> PHYSICAL order."
+PV2_041(a) :- pv2_pipeline(a, i, r), pv2_pipeline(a, j, q), i < j, r > q.
+
+// PV2-043: the top-level run_verified_passes() never names PlanVerifier.
+.violation PV2_043(at: node) code "PV2-043" "run_verified_passes() must run PlanVerifier after every pass."
+PV2_043(f) :- pv2_in(f, "passes.py"), pv2_top(f), kind(f, "function_definition"), !is_async(f),
+    def_name(f, "run_verified_passes"), pv2_def(f, w), !pv2_names_verifier(w).
+.decl pv2_names_verifier(w: node)
+pv2_names_verifier(w) :- pv2_def(_, w), within(n, w), ast_name(n, "PlanVerifier").
+
+// ---- PV2-050 … 052: the verifier's registry and the design doc ---------------------------------------------------
+// pv2_verifier(d): impl/common/l2065_plan_core/verifier.py. pv2_doc(d): the design doc, read as text.
+.decl pv2_verifier(d: number)
+pv2_verifier(d) :- doc(d, p, _), suffix("impl/common/l2065_plan_core/verifier.py", p), pv2_file(d, _).
+.decl pv2_doc_text(s: symbol)
+pv2_doc_text(s) :- doc(d, "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", _), source(d, sp), text(sp, s).
+// pv2_registered(c, code): call OptimizerInvariant(code="…") in the verifier.
+.decl pv2_registered(c: node, code: symbol)
+pv2_registered(c, v) :- pv2_verifier(d), docof(c, d), kind(c, "call"), field(c, "function", f), text(f, "OptimizerInvariant"),
+    kind(f, "identifier"), call_arg(c, -1, "code", a0), unparen(a0, a), str_const(a, v).
+// pv2_doc_code(v): each `scope.x`, `schema.x`, `effects.x`, `cardinality.x`, `rewrite.x` in backticks in the doc.
+.decl pv2_doc_code(v: symbol)
+pv2_doc_code(v) :- pv2_doc_text(s), match_all("`(?<v>(scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+)`", s).
+
+.violation PV2_050(at: loc, v: symbol) code "PV2-050" "Invariant code '{v}' is registered but missing from the design doc."
+PV2_050(c, v) :- pv2_registered(c, v), pv2_doc_text(_), !pv2_doc_code(v).
+.violation PV2_050_DOC(at: loc) code "PV2-050" "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+PV2_050_DOC(@place("docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", 1)) :- pv2_verifier(_), !pv2_doc_text(_).
+.violation PV2_051(at: loc, v: symbol) code "PV2-051" "The design doc lists invariant code '{v}', which is not registered."
+PV2_051(@place("docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", 1), v) :- pv2_verifier(_), pv2_doc_code(v),
+    !pv2_registered(_, v).
+.violation PV2_052(at: node, v: symbol) code "PV2-052" "Invariant code '{v}' is never cited as '({v})' in a verifier error message."
+PV2_052(c, v) :- pv2_registered(c, v), pv2_doc_text(_), docof(c, d), source(d, sp), text(sp, s),
+    !contains(cat("(", v, ")"), s).

@@ -1,0 +1,141 @@
+{
+  "format": "rerail.sql-shape-decisions/v1",
+  "baselineCommit": "b6934ddfaabd3b733b1c22387c9e7b886c3fc09d",
+  "decisions": {
+    "keep": [
+      "method identity index",
+      "return range index and bound",
+      "column demand in normal policy generation",
+      "completed-output virtual table",
+      "32-row bounded insertion",
+      "last-consumer release",
+      "three SQL source domains"
+    ],
+    "reject": [
+      "forced owner-first joins",
+      "UNION ALL root seeds",
+      "materialized root CTE",
+      "root unpivot",
+      "input row and capture adapters",
+      "shared input kind cache",
+      "historical authoring backends"
+    ]
+  },
+  "executionSwitches": [],
+  "benchmark": {
+    "metric": "process user + system CPU per phase",
+    "compileExcluded": true,
+    "trace": "off",
+    "sqlProfile": false,
+    "external": "none",
+    "allocator": "system-malloc-shim",
+    "build": {
+      "engineOptimization": 1,
+      "dependencyOptimization": 3,
+      "lto": "thin",
+      "codegenUnits": 256,
+      "features": [
+        "code-rule-profile"
+      ]
+    },
+    "before": {
+      "profile": ".rerail/profiles/sql-decisions/control-before/profile.json",
+      "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+      },
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "coldCpuMs": 2937.0040000000004,
+      "editCpuMs": 1139.1080000000002,
+      "peakRssMiB": 613.8125
+    },
+    "beforeRepetitions": 1,
+    "after": [
+      {
+        "profile": ".rerail/profiles/sql-decisions/default-1/profile.json",
+        "nativeSha256": "8a1f573e09b7837fabbf07073dbf7064b26ff298a7b104f0394acd2e8cac310f",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:41b2239e511448db516b5069d3abeacc92897e383360e0ce938502e38c5852b5"
+        },
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "coldCpuMs": 1930.683,
+        "editCpuMs": 713.137,
+        "peakRssMiB": 437.125
+      },
+      {
+        "profile": ".rerail/profiles/sql-decisions/default-2/profile.json",
+        "nativeSha256": "8a1f573e09b7837fabbf07073dbf7064b26ff298a7b104f0394acd2e8cac310f",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:41b2239e511448db516b5069d3abeacc92897e383360e0ce938502e38c5852b5"
+        },
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "coldCpuMs": 1967.154,
+        "editCpuMs": 702.367,
+        "peakRssMiB": 442.46875
+      },
+      {
+        "profile": ".rerail/profiles/sql-decisions/default-3/profile.json",
+        "nativeSha256": "8a1f573e09b7837fabbf07073dbf7064b26ff298a7b104f0394acd2e8cac310f",
+        "policyDigests": {
+          "data-layer-serverplan-quality": "sha256:41b2239e511448db516b5069d3abeacc92897e383360e0ce938502e38c5852b5"
+        },
+        "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+        "coldCpuMs": 1971.078,
+        "editCpuMs": 706.605,
+        "peakRssMiB": 461.140625
+      }
+    ],
+    "afterMedian": {
+      "coldCpuMs": 1967.154,
+      "editCpuMs": 706.605,
+      "peakRssMiB": 442.46875
+    },
+    "note": "Before is one drift control of the historical binary and original policy; after is three runs of the permanent path. The historical report retains the earlier three-round experiment results."
+  },
+  "validation": {
+    "upstream": {
+      "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "replayedCalls": 200,
+      "positiveCalls": 135,
+      "cleanCalls": 65,
+      "nativeSha256": "8a1f573e09b7837fabbf07073dbf7064b26ff298a7b104f0394acd2e8cac310f"
+    },
+    "productionGates": {
+      "cases": 219,
+      "positive": 130,
+      "clean": 89,
+      "transitions": 177
+    },
+    "differences": 0,
+    "nativeTests": {
+      "profilingBuild": 400,
+      "ordinaryBuild": 400
+    },
+    "producerGateTests": 5,
+    "ordinaryBuild": {
+      "features": [],
+      "engineOptimization": 1,
+      "lto": "off",
+      "nativeSha256": "8fed4b7de7d1ee8a024b2315a7faeace61555f595e4bbd4a9805a3dff53e1c12",
+      "profile": ".rerail/profiles/sql-decisions/native-production/profile.json"
+    },
+    "checks": {
+      "typecheck": "passed",
+      "repositoryGates": "passed",
+      "licenses": "passed",
+      "rustFormat": "passed",
+      "profilingClippy": "passed, -D warnings",
+      "profilingTools": "passed",
+      "sqlCapture": "passed, no incomplete executions",
+      "ordinaryClippy": "passed, -D warnings"
+    }
+  },
+  "sourceSha256": {
+    "native/src/code_rule_dsl/relational/producer.rs": "8a5ccf708385b74ba575ea744e1a25550177e11f0bb93a419e7e98aa6f97507e",
+    "native/src/code_rule_dsl/relational/producer/completed.rs": "e8914b20d099f111404c32c29f98dbc5370a37837005b2859041660de1081268",
+    "native/src/code_rule_dsl/relational/table.rs": "f878a7d3b26e43ca1a65080ed0d3517320ac8fa83256b7d6ce87f53ca8b1ac41",
+    "scripts/dsl/data_layer_six/sql_columns.py": "0ade52120138fcc76ae10d1a2dffce18d0a52a56927bca9790d8f2ce231e7b27",
+    "scripts/dsl/data_layer_six/common.py": "452c8f5263a68858e0782729d6271d86a4dba72ed2405be53ccd0a48a0a734c2",
+    "scripts/dsl/data_layer_six/conditional.py": "1c9d0aa2c22e434e841abe98991374fe7444dc481a7865a7d96af7b2e5b5ee06"
+  }
+}

@@ -1,0 +1,24 @@
+.policy "typescript-eslint-no-array-constructor" revision 5
+.description "Use an array literal instead of Array() or new Array() in TypeScript; the constructor treats a single number argument as a length."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-expressions.rr"
+//   deparen, call_arg_count, as_array
+
+// typescript-eslint's no-array-constructor: `Array(…)` or `new Array(…)` with any number of arguments but one,
+// and no type arguments. Unlike ESLint's rule it does not look for a local `Array`, a spread is one argument,
+// and the fix is always applied.
+//   new Array()    Array(a, b)    Array?.(a, b)         → reported; fix: []  [a, b]  [a, b]
+//   new Array(5)   Array(...xs)   new Array<Foo>(a, b)  fine
+.violation no_array_constructor(at: node) code "@typescript-eslint/no-array-constructor"
+    "The array literal notation [] is preferable."
+    suppress eslint "@typescript-eslint/no-array-constructor"
+    suppress oxlint "no-array-constructor"
+    suppress biome "lint/style/useArrayLiterals"
+    fix safe to_literal "Replace with an array literal"
+no_array_constructor(n) :- (kind(n, "call_expression"), field(n, "function", f) ; kind(n, "new_expression"),
+    field(n, "constructor", f)), deparen(f, c), kind(c, "identifier"), text(c, "Array"),
+    !field(n, "type_arguments", _), !call_arg_count(n, 1).
+to_literal(n) => as_array(n, "").

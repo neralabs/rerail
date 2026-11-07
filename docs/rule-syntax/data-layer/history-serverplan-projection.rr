@@ -1,0 +1,59 @@
+.policy "data-layer:history-serverplan-projection" revision 1
+.description "Revision history projection stays SQL-owned: no runtime projection helpers, runtime tags or post_op_with_refs in history steps."
+.language python
+.mode block
+.scope dirs "impl", "l7200_versioned_transactions"
+// Python linter: scripts/lint_history_serverplan_projection.py.
+//   HSP-001  production code (under impl/ or l7200_versioned_transactions/, outside tests) imports
+//            history_runtime_projection: `from impl.common.l2070_server_plan.steps.history_runtime_projection import x`
+//            (that exact module), or `import ….history_runtime_projection`
+// In a history step file (under impl/common/l2070_server_plan/steps/, "history" in the file name):
+//   HSP-002  a tag-like return (a string, a tuple, list or set display, or frozenset(…) with arguments) whose string
+//            constants include both "history" and "runtime": `return frozenset({"read", "history", "runtime"})`
+//   HSP-003  … or include "__history_runtime__"
+//   HSP-004  CompiledStep(…, post_op_with_refs=…)
+
+#include "python/ast.rr"    // from_module_raw, unparen, str_const, leaf_name
+
+// hsp_production(d) and hsp_history_file(d), by path. Tests are `tests` directories and test_*.py files.
+.decl hsp_production(d: number)
+hsp_production(d) :- doc(d, p, _), glob("{impl,l7200_versioned_transactions}/**", p), !path_part(d, "tests"),
+    file_name(d, f), !prefix("test_", f).
+.decl hsp_history_file(d: number)
+hsp_history_file(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/**", p), file_name(d, f),
+    glob("*history*.py", f).
+
+.violation HSP_001(at: node) code "HSP-001" "production code must not import history runtime projection helpers"
+HSP_001(i) :- from_module_raw(i, "impl.common.l2070_server_plan.steps.history_runtime_projection"),
+    docof(i, d), hsp_production(d).
+HSP_001(i) :- kind(i, "import_statement"), child(i, a, _), hsp_imported(a, m), suffix("history_runtime_projection", m),
+    docof(i, d), hsp_production(d).
+// hsp_imported(a, m): an item of `import …` names module m: `import a.b` or `import a.b as c`.
+.decl hsp_imported(a: node, m: symbol)
+hsp_imported(a, m) :- kind(a, "dotted_name"), text(a, m).
+hsp_imported(a, m) :- kind(a, "aliased_import"), field(a, "name", n), text(n, m).
+
+// hsp_tag_return(r, v): return r in a history file returns a value that can hold literal tags.
+.decl hsp_tag_return(r: node, v: node)
+hsp_tag_return(r, v) :- kind(r, "return_statement"), child(r, v0, 0), unparen(v0, v), hsp_tag_value(v),
+    docof(r, d), hsp_history_file(d).
+.decl hsp_tag_value(v: node)
+hsp_tag_value(v) :- str_const(v, _).
+hsp_tag_value(v) :- kind(v, k), (k = "set" ; k = "tuple" ; k = "list" ; k = "expression_list").
+hsp_tag_value(v) :- kind(v, "call"), field(v, "function", f), kind(f, "identifier"), text(f, "frozenset"),
+    field(v, "arguments", al), child(al, a, _), !kind(a, "comment"), !kind(a, "keyword_argument"),
+    !kind(a, "dictionary_splat").
+// hsp_tag(r, s): s is a str constant anywhere in the returned value, f-string pieces included (ast's Constant).
+.decl hsp_tag(r: node, s: symbol)
+hsp_tag(r, s) :- hsp_tag_return(r, v), str_part(v, _, s, _, _).
+hsp_tag(r, s) :- hsp_tag_return(r, v), within(l, v), str_part(l, _, s, _, _).
+
+.violation HSP_002(at: node) code "HSP-002" "history ServerPlan steps must not be tagged runtime"
+HSP_002(r) :- hsp_tag(r, "history"), hsp_tag(r, "runtime").
+.violation HSP_003(at: node) code "HSP-003" "history steps must not expose runtime projection sentinel tables"
+HSP_003(r) :- hsp_tag(r, "__history_runtime__").
+
+.violation HSP_004(at: node) code "HSP-004" "history ServerPlan steps must not project via post_op_with_refs"
+HSP_004(c) :- kind(c, "call"), field(c, "function", f), (kind(f, "identifier") ; kind(f, "attribute")),
+    leaf_name(f, "CompiledStep"), field(c, "arguments", al), child(al, k, _), kind(k, "keyword_argument"),
+    field(k, "name", n), text(n, "post_op_with_refs"), docof(c, d), hsp_history_file(d).

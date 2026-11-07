@@ -151,7 +151,7 @@ impl ContentStore {
             let existing = stored_object_identities(&transaction, &identities)?;
             let path_ids = stored_path_ids(&transaction, &path_hashes)?;
             let interned = resolve_publication_identities(&transaction, &candidate_identities)?;
-            transaction.commit()?;
+            self.commit(transaction)?;
             (existing, path_ids, interned)
         };
         let initial_objects = existing.clone();
@@ -286,7 +286,7 @@ impl ContentStore {
                             statement_count
                         )));
                     }
-                    transaction.commit()?;
+                    self.commit(transaction)?;
                     Ok((
                         u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                         statement_count,
@@ -316,7 +316,7 @@ impl ContentStore {
                     let path_ids = stored_path_ids(&transaction, &path_hashes)?;
                     let known_interned =
                         resolve_publication_identities(&transaction, &candidate_identities)?;
-                    transaction.commit()?;
+                    self.commit(transaction)?;
                     (stored_objects, path_ids, known_interned)
                 };
                 read_data_statements += 3;
@@ -424,7 +424,7 @@ impl ContentStore {
                     "overlay publication was cancelled".to_owned(),
                 ));
             }
-            transaction.commit()?;
+            self.commit(transaction)?;
             Ok((
                 u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                 statement_count,

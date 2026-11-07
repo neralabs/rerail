@@ -1,240 +1,405 @@
 # Contributing to Rerail
 
-Thank you for helping. A few rules keep the project open source and its licensing clean.
+Thank you for helping. This guide covers how contribution works, how work starts, how to set up a checkout, what a
+pull request needs, and the rules that keep the project open source and its licensing clean.
 
-## Getting the code
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report a security vulnerability privately, as
+[SECURITY.md](SECURITY.md) describes, never in a public issue or pull request. Who the maintainers are and how
+decisions are made is in [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
+
+## How contribution works
+
+Rerail is open source with gated contribution. Anyone can propose a change, from their fork. Code reaches this
+repository only through a pull request from a branch here, which contributors and the project's own automation open.
+Nera Software employees are contributors by being on the team; anyone else becomes one by approval.
+
+| | Anyone | Contributors |
+| --- | --- | --- |
+| Report a bug or a rule misfire, request a feature or an integration, ask a question | Yes, in an issue | Yes |
+| Propose a change from a fork: a pull request, or a branch linked from an issue ([below](#proposing-a-change-from-your-fork)) | Yes, with no CI | Not needed |
+| Push branches here and open pull requests from them, with CI | [Become a contributor](#becoming-a-contributor) | Yes |
+| Claim a `good first issue` or `help wanted` issue | Become a contributor | Yes |
+
+The automation is Dependabot, for dependency updates, and the GitHub Actions workflows that open the **Release** pull
+request (`release-pr.yml`) and upstream bump pull requests (`upstream-bump-publish.yml`) as the `neralabs-ci` app.
+Their pull requests are reviewed and merged like any other.
+
+### Proposing a change from your fork
+
+Anyone can write the change themselves:
+
+1. Open an issue for it, or find the one that covers it.
+2. Fork the repository and make the change on a branch in your fork, with tests, as
+   [Before you open a pull request](#before-you-open-a-pull-request) describes.
+3. Open a pull request from your fork against `main`, or link the branch in the issue.
+
+No CI runs on a fork's pull request. GitHub holds every fork run until a maintainer approves it, and maintainers do not
+approve them, since CI is costly to run. Run the checks yourself and say in the pull request what you ran.
+
+A maintainer reviews it there. If it goes in, the maintainer ports it onto a branch here in their own pull request,
+credits you with a `Co-authored-by:` trailer on the commit, and closes your pull request with a link to the new one.
+Pack data your change stages in `publish/` comes in with the ported pull request and is published from it. What you
+submit is licensed under Apache-2.0 ([Licence of contributions](#licence-of-contributions)), and
+[Third-party material](#third-party-material) applies to it like any other change.
+
+## Contributors
+
+Contributors push branches to this repository and open pull requests from them, so CI runs on their changes. Nera
+Software employees are contributors by being on the team. Anyone else applies, and the maintainers approve them. Being
+a contributor is not a path to maintainer: Nera Software appoints maintainers
+([docs/GOVERNANCE.md](docs/GOVERNANCE.md#who-the-maintainers-are)).
+
+### Becoming a contributor
+
+Ask in the issue you want to work on, or open one with the
+[contributor form](https://github.com/neralabs/rerail/issues/new?template=5-contributor.yml): say what you want to
+change and how you would go about it. For anything in [Start with an issue](#start-with-an-issue), that is the
+conversation a maintainer has with you anyway.
+
+Maintainers look at:
+
+- the issue itself: a reproduction, a failing case, or an approach that holds up;
+- changes you proposed from your fork, and how they went;
+- whether the change fits where Rerail is going, at a size you can finish;
+- how you have worked in the issues so far, under the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+A maintainer answers in the issue. If it's a yes, they add you to the list below and assign you the issue. If it's not
+yet, they say why and what would change it.
+
+Push access for contributors outside Nera Software comes once the repository is set up for it: secrets and OIDC
+scoped to branches, and a role narrower than write. Until then, an approved contributor proposes from their fork like
+anyone else
+([Proposing a change from your fork](#proposing-a-change-from-your-fork)).
+
+### The list
+
+Contributors from outside Nera Software are listed here. The list changes only through a maintainer's pull request
+that links the issue where it was agreed, so every name on it has a public reason.
+
+Contributors outside Nera Software: none yet.
+
+### Leaving the list
+
+- Ask, in any issue or at [opensource@nera.software](mailto:opensource@nera.software), and you are taken off.
+- Twelve months without a pull request, issue or comment here takes you off. Ask again any time.
+- Breaking the Code of Conduct can take you off, as its enforcement steps describe.
+
+Leaving the list removes your push access.
+
+## Start with an issue
+
+Open an issue before you start on:
+
+- a new feature, or a change to how Rerail behaves;
+- a new rule, rule pack, language or coding-agent integration;
+- a change to the rule-file format, the API, or what a pack publishes;
+- anything that spans several parts of the repository.
+
+Agree on the approach with a maintainer in the issue before you write the code. A pull request for work nobody agreed
+on may be closed, however good it is.
+
+Contributors take these straight to a pull request, with no issue; from a fork, they are a
+proposal like any other:
+
+- typo and documentation fixes;
+- a bug fix with a test that fails without it;
+- a rule's false positive or false negative, with the code that triggers it added as a test.
+
+### Claiming an issue
+
+Issues labelled `good first issue` or `help wanted` are open to any contributor, and asking for one is a good way to
+become one ([Becoming a contributor](#becoming-a-contributor)). Check that the issue is not assigned, then comment on it
+to claim it; a maintainer assigns it to you. If there is no pull request or update from you within two weeks, the issue
+is open to others again.
+
+## Contribution flow
+
+**From a branch here** (contributors):
+
+1. Find an issue, or open one ([Start with an issue](#start-with-an-issue)).
+2. Claim it or assign it to yourself, and agree on the approach with a maintainer when the issue needs one.
+3. Create a branch from `main` in this repository.
+4. Set up your checkout ([Development setup](#development-setup)), make the change, and add tests for the behavior it
+   changes.
+5. Run the checks in [Before you open a pull request](#before-you-open-a-pull-request).
+6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change.
+7. A code owner reviews it; the `neralabs-reviewer` bot may also comment (never on a pull request from a fork), but
+   its review never approves. Push fixes to the same branch. Pack data the pull request stages is published by a
+   maintainer first ([docs/upstream.md, "Publishing pack data"](docs/upstream.md#publishing-pack-data)); once a code
+   owner approves it and CI passes, it is squash-merged.
+
+**From a fork** (anyone): steps 1, 4 and 5 as above, on a branch in your fork, then open a pull request from it or link
+the branch in the issue ([Proposing a change from your fork](#proposing-a-change-from-your-fork)).
+
+## Getting help
+
+Ask in the issue you are working on, or open an issue with your question.
+
+### Response times
+
+These are the times we aim for, counted in business days: a first response within 5, and a decision within 10. For a
+bug or a rule misfire we also aim to have the fix merged to `main` within the 10 days; when it ships depends on the
+next release ([docs/release.md](docs/release.md)).
+
+| You sent | First response | Decision |
+| --- | --- | --- |
+| A vulnerability report ([SECURITY.md](SECURITY.md)) | 2 business days | As [SECURITY.md](SECURITY.md) describes |
+| A conduct report ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#reporting)) | 3 business days | As the [Code of Conduct](CODE_OF_CONDUCT.md#what-happens-next) describes |
+| A bug report or rule misfire | 5 business days: triaged, labelled, or asked for a reproduction | 10 business days: what we will do, with a reason; the fix is the aim |
+| A feature or integration request | 5 business days | 10 business days: accepted, declined, or "not now" with a reason |
+| A change from your fork ([Proposing a change from your fork](#proposing-a-change-from-your-fork)) | 5 business days | 10 business days: ported, or declined with a reason |
+| A request to become a contributor | 5 business days | 10 business days: yes, or not yet with what would change it |
+| A question | 5 business days | 10 business days: answered |
+
+If an issue or pull request gets no reply within its window, comment on it to bring it back up.
+
+## Development setup
+
+One repository holds everything: the core package at the root, rule packs under [`packs/`](packs/), and the engine's
+language conformance fixtures under [`fixtures/`](fixtures/) (test data, never published).
 
 Install [Git LFS](https://git-lfs.com) before you clone, and run `git lfs install` once. The embedding model's weights
 (`model/model.safetensors`) and the engine's Unicode names table (`native/src/code_rule_dsl/value/names/names.bin`,
 compiled into the engine) are stored in LFS (`.gitattributes`); without it a checkout holds pointer files, and neither
-the engine build nor the model works. In a checkout made without it, run `git lfs pull`. Then `npm ci`,
-`npm run build` and, for the pack tests, `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
+the engine build nor the model works: `npm run build:native` and `rerail install --root` stop on a pointer, naming the
+file. In a checkout made without it, run `git lfs install && git lfs pull`.
+
+```sh
+git clone https://github.com/neralabs/rerail.git
+```
+
+`RERAIL_ORACLES_DIR` points the build and tests at another fixtures directory.
+
+Prerequisites: Node.js 24+, npm, Rust through [rustup](https://rustup.rs/), and [`just`](https://github.com/casey/just)
+for the dev recipes (`just rerail-dev`, `just nuke-rerail`). `rust-toolchain.toml` pins the toolchain, so `cargo`
+installs and selects it on first use.
+
+```sh
+npm ci
+npm run build:native      # compile the native kernel into native/
+npm run build             # clean build: native kernel, runtime, host bundles, UI
+npm run check:all         # TypeScript, rustfmt + clippy, UI token and reference checks
+npm run test:all          # build, unit, conformance, reference, native, and integration suites
+npm run test:conformance  # the language conformance gate, offline
+npm run package:check     # build and dry-run the npm pack
+```
+
+The pack tests also need the pack test data: run `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
+
+`npm run build:native` needs `cargo` on `PATH`; after a fresh rustup install, `export PATH="$HOME/.cargo/bin:$PATH"`.
+
+### Each component
+
+| Component | Where | Build | Check and test |
+| --- | --- | --- | --- |
+| Runtime, CLI and coding-agent hosts | `src/` | `npm run build` | `npm run check`, `npm test` |
+| Native engine (Rust) | `native/` | `npm run build:native` | `npm run check:native`, `npm run test:native` |
+| Rule packs | `packs/` | none | `npm test` (the pack validation, `test/engine/catalog/packs.test.ts`), `npm run conformance:languages -- --pack <id>` |
+| Dashboard | `ui/` | `npm run build:ui` | `npm run check:ui-tokens` |
+| Integration suites | `integration/` | `npm run build` | `npm run test:integration:built` (needs a real OMP, below) |
+| Repository scripts | `scripts/` | none | `npm run test:scripts` |
 
 Generated files are listed, with the command that rewrites each, in
 [scripts/generate/README.md](scripts/generate/README.md); edit the generator, not its output.
 
-## Pack test data
+### Development builds
 
-A rule pack's test data is not in git. Under each `packs/<id>/upstream/<tool>/` it is the tool's test cases
-(`fixtures/`, `tests/`, the case lists `cases.json` and `*.cases.json`, `fixtures.upstream-check.json`, the
-complexity pack's `lizard-*.tsv`), the tool's recorded answers on them (`*.expected.json`), and `authored/`. The
-patterns are `PACK_FIXTURE_PATTERNS` in [scripts/s3/pack-fixtures.mjs](scripts/s3/pack-fixtures.mjs); everything
-else under `upstream/<tool>/` (`gates.yaml`, the generators and recorders, `UPSTREAM.md`, `goldens.tsv`,
-`recording.lock`, `test-data.lock`) stays in git. The data is of two kinds:
+Everything run from a checkout (tests, benchmarks, `node dist/cli/cli.js`) is a development build: its policy content
+store is `<checkout>/.rerail/content-v1.sqlite`, private to that checkout or worktree. Only the managed installation
+under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v1.sqlite`, so a checkout on a newer store
+schema cannot break the installed Rerail. `RERAIL_CONTENT_STORE_PATH` overrides the location; the test setup gives
+every test file its own store that way. See [The content store](docs/how-setup-works.md#the-content-store).
 
-- **Authored**: what Rerail wrote for the tool to score, which nothing can regenerate: the files the tool's own
-  `upstream/<tool>/UPSTREAM.md` lists as Rerail's (pack check 6 reads the same list), and everything under
-  `upstream/<tool>/authored/`, the place for a contributor's code corpus and its ground truth when the corpus is no
-  public repository a pin can name.
-- **Derived**: everything else, upstream's tests copied or derived and the tool's recorded answers on them.
-  `npm run fixtures:derive` makes it from the tool-pack's pins, running the pack's generator and then writing the case
-  sources the port readiness recorder names (recipes in [scripts/pack-data/recipes/](scripts/pack-data/recipes/)). A
-  maintainer runs it, and so does the nightly's bump workflow for an upstream release; pull request CI runs it only to
-  check that a changed lock's archive is what the pins derive (below).
+To run a checkout's build in your harnesses instead of the published package, run `just rerail-dev --install-bridge`.
+It builds the checkout, activates the checkout as `~/.rerail/current`, the way `setup` activates a published version,
+writes the launcher, and registers the harnesses; run `npx @neralabs/rerail setup` again to return to the published
+package.
 
-Both kinds of one tool-pack (one `packs/<pack>/upstream/<tool>/`) are one archive in S3: the canonical tar of its
-files (sorted, with fixed modes, owners and times; [scripts/s3/test-data-archive.mjs](scripts/s3/test-data-archive.mjs)),
-compressed with zstd, at `s3://nera-test-fixtures/rerail/archives/<pack>/<tool>/<sha256>.tar.zst` (us-east-2). The
-tool directory's tracked `test-data.lock` names it by the sha256 of the tar, with its file count and bytes, so a commit
-resolves to exactly one archive. An archive is never overwritten (every upload is a conditional write, and the bucket
-is versioned): changed data is a new archive and a new lock.
+Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime; its integration suites
+(`integration/omp-*.test.ts`, `integration/host-auth.test.ts`) use Vitest to drive a real standalone OMP executable.
+Set `RERAIL_OMP_EXECUTABLE` to its absolute path, or provision the release pinned to the SDK dependency with
+`node scripts/host/install-omp-host.mjs` (checksum-verified; uses a private local cache and prints the executable path).
+CI uses the same host. `npm run test:integration:built` skips the build step when `dist/` is current.
+
+`scripts/generate/model/prepare_model.py` reproduces the bundled INT8 artifact from the revision and checksums recorded
+in `model/manifest.json`.
+
+`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`) through
+the production workspace against the tool's expected findings in the pack's `upstream/` and, with `--samples`, on the
+tool-packs' labelled real-code samples (`samples.lock`, [docs/upstream.md](docs/upstream.md#samples));
+`--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the gate over the fixtures,
+their rename variants and the samples ([conformance/README.md](conformance/README.md#the-gate)); it runs offline in
+`npm run test:conformance`, part of `test:all` in CI.
+
+### Operational commands (`just`)
+
+The root [`Justfile`](Justfile) wraps the day-to-day operations; `just` lists them. Each recipe runs a script under
+`scripts/` (or `conformance/`, `benchmark/`), so the same command works without `just`.
+
+| Recipe | Does |
+| --- | --- |
+| `just rerail [--tag next] [setup args]` | Installs the published package on this machine (`npx @neralabs/rerail setup`). `RERAIL_TAG` selects the dist-tag; `--restore [dir]` then restores a `nuke-rerail` backup. |
+| `just nuke-rerail [--dry-run \| --yes]` | Removes Rerail from this machine (daemon, coding-agent registrations, `~/.rerail`, every checkout's dev daemon), moving it all to `~/.rerail-clean-YYYYMMDD[-HHMMSS]/` for `just rerail --restore`. |
+| `just rerail-native` | Installs rustup and the pinned toolchain if needed, then builds the native engine. |
+| `just rerail-setup` | Reserves this checkout's dev instance (`.rerail/dev/instance.json`: a stable loopback port in 35000–35999 and the home `.rerail/dev/home`) without starting anything. |
+| `just rerail-dev [--install-bridge] [--restore [dir]]` | Rebuilds whatever is stale and (re)starts this checkout's dev daemon on its own home and port, serving `ui/` live. `--install-bridge` registers this checkout's build with every coding agent (`rerail install --root`); hooks always use the default home, so a bridged checkout's dev daemon runs on `~/.rerail` until another `rerail setup` replaces the bridge. `--restore` loads a `nuke-rerail` backup's database. |
+| `just rerail-status`, `just rerail-down`, `just rerail-reset` | Shows the dev instance and build freshness; stops its daemon (state kept); deletes this repository's session history from the dev database (rules kept). |
+| `just rerail-smoke` | Packs this checkout, publishes it to a throwaway authenticated local registry, and drives install, update, `nuke-rerail`/`--restore` and `install --remove` in a sandbox `HOME` (`KEEP=1` keeps it). |
+| `just rerail-env-matrix run --tarball <file> [--env <ids>]` | Installs a package on throwaway Azure VMs (Linux and Windows, x64 and arm64) and checks it there as a user meets it; `--npm <spec>` installs from npmjs instead, `list` names the environments, `sweep` deletes leftovers. Needs `az login` ([docs/environment-matrix.md](docs/environment-matrix.md)). |
+| `just rerail-language-conformance` | Language-pack conformance (`--pack <id>`, `--check`). |
+| `just rerail-query-parity --corpus <dir> --manifest <paths.json>` | Compares a reference native addon (`RERAIL_QUERY_PARITY_REFERENCE_ADDON`) with this checkout's on a corpus. |
+
+`npm run test:scripts` runs the recipes' tests.
+
+### Live harness smoke (macOS)
+
+Run the real-provider smoke as the final acceptance step, after the deterministic regression suite:
 
 ```sh
-aws sso login           # or any AWS credentials with read access to s3://nera-test-fixtures/rerail/archives/
+npm run test:e2e:host -- --host all
+npm run test:e2e:host -- --host codex
+```
+
+It builds the package, then runs each harness's installed CLI against its real provider in a temporary workspace with
+a private profile, a resident daemon and a `sandbox-exec` write boundary. It passes when a violating edit reaches the
+file and Rerail records it, the executable-policy diagnostic arrives, exactly one conversation-rule delivery carries a
+private nonce, and the model restores the file and quotes the nonce and the diagnostic.
+
+Prerequisites:
+
+- macOS with `sandbox-exec`, and the selected harness CLIs installed. `RERAIL_CLAUDE_BIN` and `RERAIL_CURSOR_AGENT_BIN`
+  can select non-PATH executables.
+- Provider credentials for each selected harness, which `configureHostAuth` in `scripts/host/host-harness.ts` reads; a
+  missing credential or endpoint is a failure, never a skipped pass. An OAuth token copied from a harness login must
+  outlast the session limit by a minute; refresh credentials are not copied.
+
+| Variable | Default | Does |
+| --- | --- | --- |
+| `RERAIL_SMOKE_TIMEOUT_MS` | `180000` | Each provider session's hard limit. |
+| `RERAIL_SMOKE_ATTEMPTS` | `1` (CI: `3`) | Reruns a harness in a fresh sandbox while its attempt is inconclusive. |
+| `RERAIL_SMOKE_ACCEPTANCE` | `full` | `transport` (Codex and Cursor only) drops the checks on the model's restoration and final reply. |
+
+The command prints one JSON evidence record per harness attempt (`status` `PASSED`, `FAILED` or `INCONCLUSIVE`) and
+exits nonzero for any missing prerequisite or failed assertion. It leaves your daemon and harness profiles alone, and
+removes its profiles and workspaces after each run. When an attempt counts as inconclusive, and how each harness is set
+up, is in `scripts/host/host-smoke.ts` and `scripts/host/host-harness.ts`.
+
+### UI
+
+The browser view lives in `ui/` and has no toolchain: `index.html`, stylesheets under `ui/css/`, and native ES modules,
+served as bytes. No React, no Vite, no Tailwind, no TypeScript, not even as dev dependencies.
+[ui/README.md](ui/README.md) maps the modules and lists the routes; every route keeps the
+`?repository=<key>&checkout=<path>` scope, and without one the dashboard lists the repositories to pick from. Colours
+come from the committed `ui/tokens.generated.css` (and the terminal brand colour from
+`src/presentation/terminal-brand.generated.ts`); `npm run check:ui-tokens` fails when the UI references a `var(--…)`
+that neither the token sheet nor the page's own CSS declares.
+
+`npm run build:ui` copies `ui/` to `dist/ui`, which the daemon serves. A daemon started with `--dev`, or with
+`RERAIL_DEV=1` in its environment, serves `ui/` itself instead, so an edit needs only a browser reload; `rerail status`
+and `/healthz` report it as `dev` rather than `bundled`.
+
+## Before you open a pull request
+
+Open a pull request against `main` that links its issue, if it has one. Changes are squash-merged after review.
+
+- `npm run check` passes: the type check, the layer boundaries, the repository structure gate, Windows-safe paths and
+  no internal ticket IDs. While the pull request stages pack data in a `publish/`, structure metric #3 fails for each
+  such tool-pack until the data is published.
+- `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
+- `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
+  runs it).
+- A change to a pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)), and stages the
+  pack data it adds, changes or removes ([Adding or changing a pack](#adding-or-changing-a-pack)).
+- A change to what the core package ships adds an entry as a file of its own in `.changelog/`
+  ([.changelog/README.md](.changelog/README.md)), never under `## Unreleased` in `CHANGELOG.md`.
+- A changeset summary or changelog entry is a release note, and goes out as it is on the GitHub Release: it says what
+  changed for the person upgrading, in plain language, in a sentence or two (at most 60 words), and leaves out commit
+  hashes, ticket ids, pull request numbers and repository-internal maintenance; CI fails a pull request whose entry or
+  summary says otherwise ([release notes](docs/release.md#release)).
+- Tests cover the behavior you changed, and docs that describe it are updated.
+
+## Reporting a bug
+
+Open an issue with:
+
+- your Rerail version: the `Current:` line of `rerail update status`;
+- the coding agent and its version (Claude Code, Codex, Cursor, OMP or Pi);
+- your operating system and architecture, and whether you run it in WSL;
+- what you did, what happened, and what you expected;
+- for a rule: its id, its pack and the pack's version (`rerail packs list` prints `<pack>@<version>`), its mode (`log`
+  or `steer`), and the steer text or the dashboard entry;
+- the smallest code or steps that reproduce it.
+
+Leave out secrets and code you cannot share; a smaller reproduction is better than a redacted one.
+
+## Requesting a feature
+
+Open an issue with the problem you have, the solution you would like, the alternatives you considered, and your
+context: the coding agent, the language and the kind of repository.
+
+## Large changes
+
+For a change that spans components, changes the rule-file format or the API, or adds a language or a coding agent:
+
+- write a short design in the issue first: the problem, the approach, the alternatives, and what it changes for
+  existing rules, packs and installations (compatibility and upgrade);
+- once it is agreed, split it into pull requests that each build and pass on their own;
+- keep refactoring and behavior changes in separate pull requests.
+
+## Pack test data
+
+A pack that ports another tool's rules is judged on that tool's test cases and on labelled real-code samples, and none
+of that data is in git. Each tool-pack (`packs/<pack>/upstream/<tool>/`) has a test data archive in S3, named by
+sha256 in the tracked `test-data.lock`, and a samples archive when it has a `samples.lock`. Without the data, the pack
+tests (`npm test`, `npm run test:conformance`, `cargo test`) and the generators fail, saying to pull:
+
+```sh
 npm run fixtures:pull   # every tool-pack; -- --pack <id> [--tool <tool>] for some; -- --dry-run to see what it would fetch
 ```
 
-Pull again after a checkout or merge that changes a `test-data.lock`. `fixtures:pull` keeps each archive it fetches in
-`.rerail/pack-data/archives/` and reuses a copy there that still matches its lock, so it needs the
-[AWS CLI v2](https://aws.amazon.com/cli/) and read access to the bucket only for archives it has not fetched before;
-ask a maintainer for access. It verifies every archive against its lock (the tar's sha256, its file count and its
-bytes) before it extracts any, and refuses an archive with a path that has a control character, is not NFC, or equals
-another's ignoring case. It deletes the untracked derived files an archive lacks, which are stale, and keeps
-untracked authored ones, saying so. Files your branch tracks win: a pull puts each tracked file back to its committed
-content (or keeps your working-tree edit of it). It never writes through a symbolic link: when `packs/`, a tool
-directory or a directory an archive's file goes into is one, it stops before writing anything and says to make it a
-directory. `.gitignore` covers the patterns, so pulled data does not show in `git status`. Without the data, the pack
-tests (`npm test`, `npm run test:conformance`, `cargo test`) and the recorders fail saying to pull.
+`fixtures:pull` keeps every archive it fetches in `.rerail/pack-data/archives/`, so it needs read access to the
+bucket only for an archive it has not fetched before; ask a maintainer for access. It verifies each archive against
+its lock before it extracts anything, and lays any staged `publish/` (below) over what it extracted. Pulled data is
+ignored by git. Pull again after a checkout or merge that changes a lock.
 
-CI pulls the same way, in two kinds of job (`.github/actions/pack-test-data`). A fetching job (`fetch: "true"`) only
-warms the Actions cache: it looks up the entry keyed by its tool-packs' locks (`node scripts/s3/pack-fixtures.mjs
-cache`) without restoring it and, on a miss, downloads the archives from S3 under the repository's read-only OIDC role
-and saves them; it runs nothing but this commit's `scripts/s3/pack-fixtures.mjs`. A consuming job (`fetch: "false"`),
-which holds no OIDC token, restores that entry, verifies each archive against its lock and extracts it, and fails on a
-miss. Every job that reads pack test data consumes, after a fetching job of the same run: a job that can mint a token
-never extracts a cache entry, and a job that runs upstream's code (a port readiness gate leg, the nightly's drift
-check, the bump, the reproduction check below) has no token to mint. The fetching jobs run for pushes and
-same-repository pull requests only: GitHub gives a fork's or Dependabot's pull request no OIDC token.
-
-Two more checks guard the data. **Pack test data is in S3** runs `node scripts/s3/pack-fixtures.mjs check` under the
-read role: a `head-object` for every archive a `test-data.lock` names and every recording a `recording.lock` names,
-downloading nothing, failing with each missing key, its lock and the command that pushes it. Main's runs read only S3
-and never record, so a pull request cannot merge until S3 holds what its locks name. **Test data reproduces from the
-pins** derives each tool-pack whose `test-data.lock` the pull request changes again, with no credentials, and compares
-it byte for byte with the data the new archive holds (`npm run fixtures:derive -- --pack <id> --tool <tool> --compare
-<copy of the pulled data>`, without `--update`, so the tracked files must come out unchanged too). The required check
-is **CI result**, which fails when any CI job failed or was cancelled, since GitHub counts a job skipped after a
-failed dependency as passing ([docs/port-readiness.md](docs/port-readiness.md#ci)).
-
-Structure metric #3 (`npm run check`) fails while any pack test data is tracked, a tool directory lacks a
-`test-data.lock`, or a lock is malformed, so a pull request that checks data in cannot merge until a maintainer has
-archived it.
+What the archives hold, how data is published and how to replay a CI run are in [docs/upstream.md](docs/upstream.md);
+the files and the lock format are in [docs/pack-format.md, "Pack data"](docs/pack-format.md#pack-data).
 
 ### Adding or changing a pack
 
-Check the authored test data you add or change into your pull request, so review sees it and CI runs on it: the
-cases you wrote for the tool (listed in its `UPSTREAM.md`), or a code corpus with its ground truth under
-`upstream/<tool>/authored/`. The generators and recorders print the command that adds the authored files they wrote.
-Because `.gitignore` covers them, add them with `git add -f`, e.g. `git add -f --
-packs/<id>/upstream/<tool>/fixtures/rerail`. Derived data changes with the pins, a generator or a recipe, which your
-pull request changes instead; a maintainer derives it before merge. The usual rules for third-party material apply
-(below).
+Each change is one pull request, with a changeset for the pack ([.changeset/README.md](.changeset/README.md)).
+The steps for adding a rule, written for Rerail or ported from a tool, with what each has needed in practice, are
+[docs/adding-rules-to-a-pack.md](docs/adding-rules-to-a-pack.md).
 
-### Merging (maintainers)
+**A rule.** A pack ships the rules in `packs/<id>/rules/` that `pack.json` lists; `candidates/` holds ports under
+evaluation, which are scored and reported but never shipped. Start a new port as a candidate
+([docs/language-packs.md, "Start a pack"](docs/language-packs.md#start-a-pack)). For a false positive or a false
+negative, add the code that triggers it with the fix, as a sample or an authored case (below). Score the pack with
+`npm run conformance:languages -- --pack <id>` (`--samples` adds the samples) and run the gate with
+`npm run test:conformance`. Declare each intended disagreement with the tool in the pack's `divergences.json`, with the
+evidence you checked ([conformance/README.md, "Divergences"](conformance/README.md#divergences)).
 
-Before merging a pull request that tracks pack test data, changes a `recording.lock`, or changes what derives the
-data, a maintainer archives each tool-pack it changes and puts its recordings in S3. `fixtures:push` does that with
-the maintainer's own AWS credentials, which can write to the bucket, so it runs in a trusted worktree of main and
-takes the pull request as a git ref: it reads nothing from that commit but its tracked pack test data and lock files
-(with git plumbing), never checks it out and never runs its code. The pull request's scripts, `package.json` and
-generators never run next to the credentials.
+On a pull request from a branch here that changes what the check reads (any change under `packs/` does), CI keeps a
+**Conformance** comment. A shipped rule that fails a blocking check fails CI, and everything else in the comment is
+reported only ([conformance/README.md, "The pull request comment"](conformance/README.md#the-pull-request-comment)). A
+pull request from a fork runs no CI: run `npm run test:conformance` yourself and say so in the pull request. "Ready to
+promote" is necessary, not sufficient, and the reviewer decides; the steps are in
+[conformance/README.md, "Candidates and promotion"](conformance/README.md#candidates-and-promotion).
 
-```sh
-# In a trusted worktree of main, with AWS credentials that can write to the bucket:
-git fetch origin pull/<n>/head:pr-<n>   # or the pull request's branch
-gh run download <run-id> -n recordings-<pack>--<tool> -D .rerail/port-readiness/recordings   # when it changes a recording.lock
-npm run fixtures:push -- --from pr-<n> [--pack <id> [--tool <tool>]] [--replace] [--into <checkout of the PR branch>]
-```
-
-For each tool-pack, by default every one the commit tracks pack test data for, or whose `test-data.lock`,
-`recording.lock` or `UPSTREAM.md` differs from its merge base with `HEAD`, `fixtures:push --from`:
-
-- starts from the archive the commit's `test-data.lock` names, fetched and verified as `fixtures:pull` does but never
-  into the worktree; drops from it every file the merge base's `UPSTREAM.md` for the tool listed as Rerail's and the
-  commit's no longer lists; and lays the commit's tracked pack test data for the tool directory over it, so a file the
-  commit tracks is kept. Without a merge base it refuses and says to use `--replace`. With `--replace` there is no base
-  archive: the archive is exactly the commit's tracked pack test data of the tool directory, and a selected tool-pack
-  that tracks none fails;
-- archives the result, lists the files it dropped from the lock's archive, uploads it unless S3 holds it, and reads it
-  back and verifies it against the new lock;
-- puts every recording the commit's `recording.lock` names in S3 as
-  `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json`, from
-  `.rerail/port-readiness/recordings/<sha256>.json`: a copy whose sha256 is the one the lock names is uploaded by a
-  conditional write, unless S3 holds it, then read back and verified. A recording S3 already holds needs no local copy;
-  one in neither stops the push, naming its sha256 and how to get it;
-- prints the new `test-data.lock` and the git commands to run in a checkout of the pull request's branch: write the
-  lock, `git add` it, and `git rm -r -q --cached --` the tracked data the archive now holds.
-
-An archive path must have no control character, be NFC, and differ from every other path in the archive in more than
-case; a symbolic link in a tool directory where pack test data goes is refused. Archiving, pulling and pushing all
-check this.
-
-With `--into <dir>`, a checkout of the pull request's branch at the commit `--from` names, it writes the locks there
-itself and prints only the git commands. It runs no git there and reads only files: it refuses a checkout whose locks
-or tracked pack test data are not byte for byte that commit's, such as the trusted worktree itself. Run the commands in
-that checkout, commit and push; nothing there needs npm. The git you run there reads its `.git/config`, so make it one
-no code of the pull request has run in, such as a fresh `gh pr checkout <n>` in a clone of its own. On a branch of your
-own, `npm run fixtures:push -- --pack <id> --tool <tool>` archives the data as it is on disk (`--dry-run` shows what it
-would archive) and prints the same commands.
-
-Removing data: a file the archive holds is not in the pull request's diff, so deleting it from a checkout removes
-nothing. An authored file goes with its row: the pull request deletes the file's row from the tool's `UPSTREAM.md` (and
-the file, if it tracks it), and `fixtures:push --from` drops it as above. Derived files go with a derivation: the
-sandbox commit below tracks all of the tool directory's data, and `--replace` archives exactly that, so a file the
-derivation no longer makes is gone. Do not `--replace` a commit that tracks only part of the data: the rest would go
-too. The old archive stays in S3 for the commits that name it.
-
-The pull request is then checked by **Pack test data is in S3**, which stays red until S3 holds every archive and
-recording its locks name, and, when it changes a `test-data.lock`, by **Test data reproduces from the pins**, which
-derives the tool-pack again in CI and must find the new archive's data byte for byte.
-
-When that check fails, its leg uploads what Linux derived as artifact `derived-<pack>--<tool>` (a tar of the tool
-directory's pack test data). It is the Linux path for a maintainer without Linux, and the way to correct data that
-does not reproduce: review the difference, then commit the derived files to a local branch and archive exactly them
-from a trusted main worktree:
+**Test data.** You need no S3 credentials to change pack data. Pull, then write the cases in the pulled layout: a code
+corpus with its ground truth under `upstream/<tool>/authored/`, or a case file under the tool directory with its row
+in the tool's `UPSTREAM.md`. Then derive, stage what changed, and commit `publish/`:
 
 ```sh
-gh run download <run-id> -n derived-<pack>--<tool> -D /tmp/derived
-git switch -c derived-<pack>-<tool> <pull request branch> && tar -xf /tmp/derived/derived.tar
-git add -f -- packs/<pack>/upstream/<tool> && git commit -m "derived data, not for merge"
-# in the main worktree:
-npm run fixtures:push -- --from derived-<pack>-<tool> --replace --pack <pack> --tool <tool>
+npm run fixtures:derive -- --pack <id> --tool <tool>   # the case files' expected findings, and provenance.json
+npm run fixtures:stage -- --pack <id> --tool <tool>    # every file the locked archive lacks or holds differently
+git add packs/<id>/upstream/<tool>/publish
 ```
 
-A pull request that changes a `recording.lock` needs the recordings it names. A same-repository pull request's port
-readiness legs record every tool-pack whose `recording.lock` it changes, never reading the recordings the new lock
-names from S3 or the cache, so what they upload is what CI's recorder made from the pinned upstream; a leg also records
-an unchanged lock's recordings that neither holds. The legs upload the two as the artifact `recordings-<pack>--<tool>`
-of its CI run, kept for 7 days; `<run-id>` is that run's (`gh run list --workflow ci.yml --branch <branch>`), and the
-port readiness comment shows the per-rule summary of what upstream answers differently. That is also how
-`rust/clippy`'s recordings are made on Linux. The downloaded files are data: `fixtures:push` reads only the ones the
-lock names and checks each against its sha256. A fork's pull request has no such run: record it in a sandbox as below.
-
-When a pull request changes a pin, a generator or a recipe, the derived data must be made again, and so must the
-recording of a gated tool-pack. `fixtures:derive` and `port-readiness:record` run the pull request's own generators,
-recipes and recorder, and the upstream code they fetch, so a maintainer reviews that code first and then runs it in a
-sandbox: a clone of its own (not a `git worktree` of the trusted one, which shares its `.git` and hooks), in a
-container or VM that can reach no AWS or GitHub credentials (no `AWS_*` variables, no `~/.aws` or `gh` login), on Linux
-for `rust/clippy`, whose tokio corpus has `#[cfg(target_os = "linux")]` code. `fixtures:push --from` takes a commit,
-not a directory, so the sandbox commits the derived data on top of the pull request and hands the commit over as a git
-bundle, which is data; the commit is amended to hold only the locks before anything is pushed:
-
-```sh
-# 1. In the trusted worktree: the archive the pull request's test-data.lock names (main's, unless it changes the lock).
-npm run fixtures:pull -- --pack <id> --tool <tool>
-
-# 2. In the sandbox, a clone checked out at the pull request, with that archive (the trusted worktree's
-#    .rerail/pack-data/archives/<id>/<tool>/<sha256>.tar.zst, the sha256 its test-data.lock names) copied in:
-mkdir -p .rerail/pack-data/archives/<id>/<tool>
-cp <path to>/<sha256>.tar.zst .rerail/pack-data/archives/<id>/<tool>/
-npm ci
-npm run fixtures:pull -- --pack <id> --tool <tool>               # extracts the copied archive; reads no S3
-npm run fixtures:derive -- --pack <id> --tool <tool> --update    # the derived data, from the pins
-npm run port-readiness:record -- --pack <id> --tool <tool>       # a gated tool-pack (gates.yaml) only
-git add -f -- packs/<id>/upstream/<tool> packs/<id>/licenses
-git commit -m "Derive <id>/<tool>"
-git bundle create pr-<n>-derived.bundle HEAD
-# Copy out pr-<n>-derived.bundle and .rerail/port-readiness/recordings/*.json.
-
-# 3. In the trusted worktree, with the recordings copied into .rerail/port-readiness/recordings/:
-git fetch <path to>/pr-<n>-derived.bundle HEAD:pr-<n>-derived
-
-# 4. In a fresh checkout of the pull request's branch:
-git fetch <path to>/pr-<n>-derived.bundle HEAD:pr-<n>-derived
-git merge --ff-only pr-<n>-derived
-
-# 5. In the trusted worktree: the commit tracks all of the tool directory's data, so the archive is exactly that.
-npm run fixtures:push -- --from pr-<n>-derived --pack <id> --tool <tool> --replace --into <the checkout of step 4>
-
-# 6. In the checkout of step 4: the git commands it printed, then
-git commit --amend --no-edit   # the commit now holds the locks and no test data
-git push
-```
-
-`fixtures:derive` needs the network (the pinned upstreams and their packages), `uv`, and for the PHP and Blade packs
-the pinned PHP (`conformance/recorders/port-readiness/runtimes/php/build.sh`) and Composer, for the Rust pack
-`rustup`; it installs everything else under `.rerail/pack-data/`. It fails when a derivation changes a tracked file or
-an authored one; `--update` (a pin change) keeps the tracked files it changes (a licence table) for the commit instead,
-and `--compare <dir>` compares the result with another copy of the data byte for byte.
-
-An upstream release needs nobody to start it: the nightly (`port-readiness-nightly.yml`) goes red when an upstream has
-published a breaking release (a major one, or a minor one of a `0.x` pin), reports minor and patch releases without
-failing, and each night starts one bump of every tool-pack behind on a work branch (`port-readiness-bump.yml`), a leg
-per tool-pack, which derives and records the new test data with no OIDC token or write token and outside main's cache
-scope, since it runs upstream's unreviewed code. A workflow on main (`port-readiness-bump-publish.yml`) then checks
-each leg's result (it runs the bump itself and refuses a patch that differs from its own anywhere but the locks,
-`UPSTREAM.md` and licence files), uploads the archives and recordings, and opens one pull request on
-`auto/bump-upstream` with a commit per tool-pack, each carrying its new pins, `test-data.lock` and `recording.lock`
-together. That pull request's CI derives each changed tool-pack again and records it again, so neither the archives
-nor the answers are taken on the bump run's word. A maintainer reviews and merges it like any pull request; nothing
-merges itself. When one tool-pack's gates fail, merge the others without its commit; closing the pull request unmerged
-declines the releases it carried until newer ones appear ([docs/port-readiness.md](docs/port-readiness.md#bump-pull-requests)).
-The port readiness recordings are not pack test data and not in its archives: each is an object of its own in S3,
-written once at
-`s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json`, which `recording.lock` names by sha256, and
-the Actions cache holds copies for CI. `node scripts/s3/pack-fixtures.mjs recordings [--pack <id> [--tool <tool>]]`
-fetches the ones the checkout's locks name into `.rerail/port-readiness/recordings/`
-([docs/port-readiness.md](docs/port-readiness.md#the-recordings-are-not-in-the-tree)).
+Every file must be under a licence the allowlist takes ([Third-party material](#third-party-material)). CI judges the
+staged data, and the pull request cannot merge until a maintainer publishes it. Changing samples, removing a file,
+derived data and the publish itself are in
+[docs/upstream.md, "Publishing pack data"](docs/upstream.md#publishing-pack-data).
 
 ## Licence of contributions
 
@@ -244,25 +409,52 @@ sign-off to add.
 
 ## Third-party material
 
-Do not paste code, data or rules from another project without recording it:
+Do not paste code, data or rules from another project without recording it. Only permissively licensed material is
+accepted, anywhere in the repository: every licence must be on the allowlist in
+[scripts/check/licence-allowlist.json](scripts/check/licence-allowlist.json) (Apache-2.0, MIT, BSD-2-Clause,
+BSD-3-Clause, CC0-1.0, ISC, Zlib, 0BSD, Unicode-3.0, PostgreSQL), so no copyleft file can be committed or published.
+An SPDX licence expression passes when some way to satisfy it uses only listed licences: `A OR B` when either side is
+on the list, `A AND B` only when both are, with `AND` binding tighter than `OR`; a malformed one is refused.
 
-1. Add an `UPSTREAM.md` entry beside the material: source project, version or revision, files, and whether each is
-   verbatim, derived or an excerpt.
-2. Add the upstream licence text (to `LICENSES/` or beside the material under `licenses/<project>/`).
-3. Annotate the path in `REUSE.toml`.
+Anywhere outside a pack:
 
-`reuse lint` must pass. Only permissively licensed material is accepted, anywhere in the repository: the licence
-texts in `LICENSES/` must be on the allowlist in `scripts/check/licence-allowlist.json` (Apache-2.0, MIT, BSD-2-Clause,
-BSD-3-Clause, ISC, Zlib, 0BSD, CC0-1.0, Unicode-3.0), so no copyleft file can be committed.
+1. Add an `UPSTREAM.md` beside the material, per upstream repository: the source project, its version or revision
+   and commit, the paths taken, and whether each is verbatim, derived or an excerpt.
+2. Add the upstream licence text, to `LICENSES/` or beside the material.
+3. Annotate the path in `REUSE.toml`. `reuse lint` must pass.
 
-Fixtures (`fixtures/`) and rule packs (`packs/`) follow the same rules; see their READMEs.
+In a pack (`packs/<id>/`), the record is per upstream repository and covers the pack test data that is not in git:
+
+- `licenses/<project>/` holds the repository's licence text, verbatim, and its `UPSTREAM.md`: a `License:` line with
+  the SPDX expression, a `Source` table (repository, tag, commit and licence), a `Taken from it` table mapping each
+  pack-path glob of copied files to its upstream path and how it was copied, and a `Not copied` line for each part of
+  the repository that must not be copied, with the pack-path glob it would land under.
+- The tool's own `upstream/<tool>/UPSTREAM.md` lists, one row per file, the files in the tool directory that Rerail
+  wrote. They are Apache-2.0, like everything else Rerail writes.
+- Each test data archive holds `provenance.json` (every file, its upstream path and how it was made) and `LICENSES.md`
+  (the licence texts), for audit. No licence check reads them; publish prep reads the file list in `provenance.json`
+  and refuses an archive it does not describe.
+- `REUSE.toml` annotates the rule documents with the pack's licence expression, and the pulled and staged copies of
+  the copied files with the upstream licence.
+
+Pack check 6 (`npm test`) and the publish decide each file's licence the same way
+([docs/pack-format.md, "Licence of each file"](docs/pack-format.md#licence-of-each-file)); the records' formats are in
+[docs/pack-format.md, "UPSTREAM.md"](docs/pack-format.md#upstreammd) and
+[docs/pack-format.md, "provenance.json and LICENSES.md"](docs/pack-format.md#provenancejson-and-licensesmd).
+
+Real-code samples are whole files of other repositories. Each sample's labels declare its repository's licence, and
+publish takes it only when `scripts/samples/licences.ts` records that licence for the repository: a repository with
+no entry, a declared licence that is not its entry, and a copyleft repository are refused. A samples archive's
+`LICENSES.md` lists every file with its repository's licence, and holds a licence text only where one was read at the
+samples' commits (samples from the ESLint test set carry the licence it recorded, and no text); `SAMPLES.md` says which
+([docs/upstream.md, "Sample licences"](docs/upstream.md#sample-licences)).
+
+The checks confirm that licences are declared, permitted and cover every file; they cannot confirm that an
+`UPSTREAM.md` or a `licences.ts` entry is true. That is the reviewer's job ([REVIEW.md](REVIEW.md)). Fixtures
+(`fixtures/`) follow the same rules; see [fixtures/README.md](fixtures/README.md).
 
 ## Dependencies
 
 New dependencies must be permissively licensed if they end up in anything Rerail distributes:
 `npm run check:licenses` fails on a copyleft production dependency. Copyleft is acceptable only in
 development-only dependencies and tools, which are never committed or distributed.
-
-## Pull requests
-
-Open a pull request against `main`. Changes are squash-merged after review.

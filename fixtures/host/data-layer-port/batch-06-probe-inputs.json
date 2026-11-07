@@ -1,0 +1,276 @@
+{
+  "cases": [
+    {
+      "test": "batch-06:bare-callable-field",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nfrom typing import Callable\nclass Example(ConditionalStep):\n    callback: Callable[[], None]\n"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:qualified-callable-field",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nimport typing\nclass Example(ConditionalStep):\n    callback: typing.Callable[[], None]\n"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:repeated-callable-field",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nfrom typing import Callable\nclass Example(ConditionalStep):\n    callbacks: tuple[Callable[[], None], Callable[[int], str]]\n"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:qualified-callable-constructor",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nimport typing\nclass Example(ConditionalStep):\n    def __init__(self, callback: typing.Callable[[], None]):\n        self.callback = callback\n"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:augmented-instance-store",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nclass Example(ConditionalStep):\n    def run(self):\n        self.value += 1\n"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:annotation-only-instance-store",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nclass Example(ConditionalStep):\n    def run(self):\n        self.value: object\n"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:strategy-1500-lines",
+      "entry": "_check_serverplan_quality_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/strategies/example.py",
+          "source": "# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:strategy-1501-lines",
+      "entry": "_check_serverplan_quality_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/strategies/example.py",
+          "source": "# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-tuple-return",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def factory(self) -> tuple[BackendExecutor, str]: pass\n def run(self):\n  value = self.factory()\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-list-annotation",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: list[BackendExecutor]):\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-optional-annotation",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Optional[BackendExecutor]):\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-optional-tuple",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Optional[tuple[BackendExecutor]]):\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-union-annotation",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: BackendExecutor | None):\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-quoted-tuple",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: \"tuple[BackendExecutor]\"):\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-annotated-metadata",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Annotated[BackendExecutor, \"meta\"]):\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-awaitable-annotation",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Awaitable[BackendExecutor]):\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-coroutine-tuple",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Coroutine[None, None, BackendExecutor]):\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-qualified-quoted",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: \"mod.BackendExecutor\"):\n  return value.transport\n"
+        }
+      ]
+    },
+    {
+      "test": "state-metaclass-is-not-base",
+      "check": "serverplan_state_tripwires",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l2070_batching/step.py",
+          "source": "class StepBase(ABC, metaclass=ServerPlanStepMeta):\n def compile(self, name: str): return name\n"
+        }
+      ]
+    },
+    {
+      "test": "state-direct-step-base",
+      "check": "serverplan_state_tripwires",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l2070_batching/step.py",
+          "source": "class StepImpl(ServerPlanStep):\n def compile(self, name: str): return name\n"
+        }
+      ]
+    },
+    {
+      "test": "legacy-no-trigger",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l9900_auto_api/example.py",
+          "source": "query.select()\n"
+        }
+      ]
+    },
+    {
+      "test": "legacy-trigger-positive",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l9900_auto_api/example.py",
+          "source": "query.execute()\n"
+        }
+      ]
+    },
+    {
+      "test": "legacy-outside-plugin",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l6500_evidence/example.py",
+          "source": "query.execute()\n"
+        }
+      ]
+    },
+    {
+      "test": "legacy-test-directory",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l9900_auto_api/tests/example.py",
+          "source": "query.execute()\n"
+        }
+      ]
+    },
+    {
+      "test": "legacy-test-basename",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l9900_auto_api/test_example.py",
+          "source": "query.execute()\n"
+        }
+      ]
+    }
+  ]
+}

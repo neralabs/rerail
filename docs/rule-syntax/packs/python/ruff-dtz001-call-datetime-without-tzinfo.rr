@@ -1,0 +1,23 @@
+.policy "ruff-dtz001-call-datetime-without-tzinfo" revision 2
+.description "Pass a real timezone when constructing a datetime; a naive datetime carries no zone information and causes subtle bugs."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff DTZ001 (flake8-datetimez): `datetime.datetime(…)` without a timezone, or with `tzinfo=None`. The
+// timezone is the 8th positional argument or `tzinfo=`. A call followed by `.astimezone()` (through any
+// `.replace(…)`) is aware and not reported. Reported at the call. Only in a file that imports datetime.
+//   datetime.datetime(2000, 1, 1, 0, 0, 0)                 ← DTZ001
+//   datetime.datetime(2000, 1, 1, tzinfo=None)             ← DTZ001: None
+//   datetime.datetime(2000, 1, 1, 0, 0, 0, 0, timezone.utc)    not reported
+//   datetime(2000, 1, 1, 0, 0, 0).astimezone()             not reported
+#include "python/datetime.rr"
+
+.violation DTZ001(at: node) code "DTZ001"
+    "Add `tzinfo=` with a timezone, such as `tzinfo=datetime.timezone.utc`, so this datetime is aware. Leave it naive only if the code receiving it requires a naive value."
+    suppress ruff "DTZ001"
+.violation DTZ001_none(at: node) code "DTZ001"
+    "Replace `tzinfo=None` with a real timezone, such as `datetime.timezone.utc`, so this datetime is aware. Keep `None` only if the code receiving it requires a naive value."
+    suppress ruff "DTZ001"
+DTZ001(c) :- naive_tz(c, "datetime.datetime", "missing"), !then_astimezone(c).
+DTZ001_none(c) :- naive_tz(c, "datetime.datetime", "none"), !then_astimezone(c).

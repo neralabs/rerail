@@ -1,0 +1,28 @@
+.policy "ruff-pyi054-numeric-literal-too-long" revision 2
+.description "Replace long numeric literals in stub files with an ellipsis; a value that long is an implementation detail or varies by system."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI054 (flake8-pyi), stubs only: a number literal written with more than 10 characters, anywhere,
+// annotations included. `-1234567890` is fine: the literal is the 10 digits. Inside a string annotation, the
+// number is found in its parsed tree; Ruff can place it only in a plain string (no escapes, no adjacent
+// pieces), and reports the whole string otherwise.
+//   x: int = 12345678901        ← PYI054
+//   y: Literal[1_000_000_000]   ← PYI054
+#include "python/typing.rr"
+
+.violation PYI054(at: node, msg: symbol) code "PYI054" "{msg}"
+    suppress ruff "PYI054"
+PYI054(n, "Replace this long numeric literal with `...` in the stub; the exact value is an implementation detail that stubs should not pin.") :-
+    long_number(n), in_stub(n), !hidden(n).
+PYI054(s, "Write this string annotation as one plain string without escapes, and replace any numeric literal in it longer than ten characters with `...`; stubs should not pin exact values.") :-
+    parsed(s, "annotation", r), in_stub(s), within(n, r), long_number(n), !simple_string(s).
+.decl long_number(n: node)
+long_number(n) :- number_lit(n), text(n, t), strlen(t) > 10.
+// hidden(n): n is in the parsed tree of a string annotation that is not simple.
+.decl hidden(n: node)
+hidden(n) :- parsed(s, "annotation", r), !simple_string(s), (n = r ; within(n, r)).
+// simple_string(s): one literal without escapes, whose parsed nodes keep their own positions.
+.decl simple_string(s: node)
+simple_string(s) :- kind(s, "string"), !child(s, _, 3), !has(s, _, "escape_sequence").

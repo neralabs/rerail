@@ -1,0 +1,23 @@
+.policy "react-jsx-no-script-url" revision 2
+.description "Avoid javascript: URLs in links; React will block them, and they run code from markup."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/jsx-no-script-url: a string literal `href` of an <a> that is a javascript: URL. The test is the one
+// browsers apply: leading control characters and spaces are ignored, as are tabs and line breaks inside the
+// scheme, and case does not matter. Link components from settings and the options are not in the JSON: <a> only.
+//   <a href="javascript:void(0)">     reported, at the prop
+//   <a href=" J\na\tvascript:x">       reported
+//   <a href={"javascript:"}>           not: only a literal value, as the rule checks
+// A JSX attribute string has no escapes: "\x01javascript:" is that text, backslash and all.
+#include "tsx/react.rr"
+
+.violation script_url(at: node)
+    code "react/jsx-no-script-url"
+    "Replace this javascript: URL with an onClick handler (and a button, or a real href); React will block javascript: URLs as a security precaution."
+    suppress eslint "react/jsx-no-script-url"
+    suppress oxlint "jsx-no-script-url"
+    suppress biome "lint/security/noScriptUrl"
+script_url(a) :- react_open(_, o), open_name(o, "a"), jsx_prop(o, "href", a), child(a, v, 1), kind(v, "string"),
+    jsx_string(v, u), match("[\\x00-\\x1F ]*[jJ][\\r\\n\\t]*[aA][\\r\\n\\t]*[vV][\\r\\n\\t]*[aA][\\r\\n\\t]*[sS][\\r\\n\\t]*[cC][\\r\\n\\t]*[rR][\\r\\n\\t]*[iI][\\r\\n\\t]*[pP][\\r\\n\\t]*[tT][\\r\\n\\t]*:[\\s\\S]*", u).

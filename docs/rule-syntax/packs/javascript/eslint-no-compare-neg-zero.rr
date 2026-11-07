@@ -1,0 +1,19 @@
+.policy "eslint-no-compare-neg-zero" revision 4
+.description "Don't compare against -0 with equality or relational operators; they treat -0 and 0 as equal, so use Object.is instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-compare-neg-zero: a comparison with -0 on either side. `x === -0` is true for x = 0 as well.
+//   x === -0    -0 < x    x == (-0.0)    → reported;   Object.is(x, -0)  x === 0  x === -0n → not
+.decl compares(o: symbol)
+compares(">"). compares(">="). compares("<"). compares("<="). compares("=="). compares("==="). compares("!=").
+compares("!==").
+
+.violation no_compare_neg_zero(at: node, op: symbol) code "no-compare-neg-zero"
+    "Replace this '{op}' comparison with Object.is(value, -0), or compare against 0."
+    suppress eslint "no-compare-neg-zero"
+    suppress oxlint "no-compare-neg-zero"
+    suppress biome "lint/suspicious/noCompareNegZero"
+no_compare_neg_zero(n, o) :- binop(n, o, l, r), compares(o), (neg_zero(l) ; neg_zero(r)).

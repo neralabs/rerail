@@ -1,0 +1,16 @@
+.policy "ruff-pyi010-non-empty-stub-body" revision 2
+.description "Use an ellipsis as the whole body of a function in stub files instead of real statements; stubs are never executed, so bodies are redundant."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI010 (flake8-pyi), stubs only: a def whose body is one statement other than `...`. `pass` (PYI009),
+// a docstring (PYI021) and several statements (PYI048) are other rules'.
+//   def f():
+//       raise NotImplementedError      ← PYI010
+//   def g(): ...                       fine
+#include "python/typing.rr"
+
+.violation PYI010(at: node) code "PYI010" "Replace this function body with `...`; stubs are never executed, so a real body is redundant."
+    suppress ruff "PYI010"
+PYI010(s) :- def_body(_, b), body_one(b, s), !pass_stmt(s), !doc_stmt(s, _), !ellipsis_stmt(s), in_stub(s).

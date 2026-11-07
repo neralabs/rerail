@@ -36,7 +36,7 @@ B102(c) :- kind(c, "call"), field(c, "function", f),
 ])
 
 row("It cannot say what the data-layer checks need", [
-    "The data layer is a Python codebase of about 9,000 files whose architecture is enforced by custom checks: which layer may import which, sync and async methods in pairs, no import cycles. They follow imports across files and reason over the module graph, so today they are Python scripts, not Rerail rules. The six on this page are {{dl_py_lines}} lines. An earlier attempt moved one into YAML rules with embedded SQL, which can only test the text of names.",
+    "The data layer is a Python codebase of about 9,000 files whose architecture is enforced by custom checks: which layer may import which, sync and async methods in pairs, no import cycles. They follow imports across files and reason over the module graph, so today they are Python scripts, not Rerail rules. The 49 on this page are {{dl_py_lines}} lines of Python. An earlier attempt moved one into YAML rules with embedded SQL, which can only test the text of names.",
     "Example: function-level-imports calls an import \"circular-avoidance\" when the module <em>name</em> looks internal. The .rr version proves the cycle on the import graph.",
 ], [
  ("src", '''
@@ -238,21 +238,26 @@ w('''  <section style="display:grid;gap:10px">
         fixed. Each rule's NOTES file lists where it still differs from the tool, and why.</li>
       <li>The rules run in <code>tools/rrlab</code>, a lab harness on Soufflé, and are scored against the tool's own
         findings on its test fixtures.</li>
-      <li>The engine reads <code>.rr</code> as its only rule format. With the reader work on its branch
-        <code>final-rerail-shape-rr-align</code> (not merged yet), 3,890 of the libraries' 3,906 clauses and 5,220
-        of the packs' 5,264 clauses lower. The rest are constructs it still refuses by
-        name, such as <code>ordered by</code>, a place used as a value, and recursion whose bound it cannot yet
-        prove. <code>docs/rule-syntax/ALIGN-FINAL-SHAPE.md</code> lists every difference and who changes
-        what.</li>
+      <li>The engine reads <code>.rr</code> as its only rule format. It lowers 4,256 of the libraries' 4,277
+        clauses, 5,202 of the packs' 5,264 and 2,403 of the data-layer checks' 2,418. The rest are constructs it
+        still refuses by name, such as patterns, <code>ordered by</code> and recursion whose bound it cannot yet
+        prove ("What the engine runs today", on the Syntax page). <code>docs/rule-syntax/ALIGN-FINAL-SHAPE.md</code>
+        lists every difference.</li>
+      <li>Types are arriving. A typing program, itself <code>.rr</code>, resolves Python calls and infers what class
+        each value may hold, keeping every gap as unknown. Rules read <code>call_target</code> and
+        <code>proven_type</code> as relations. Against what the code does at run time, none of its definite
+        answers has been wrong ("Types", on the Syntax page).</li>
       <li>The machine translation of the JSON is kept as a second tab, for comparison.</li>
-      <li>Six data-layer checks, function-level-imports and the router rule are also written in their final form, beside the Python they replace.</li>
+      <li>49 data-layer checks, function-level-imports and the router rule are also written in their final form,
+        beside the Python they replace. Each data-layer check follows its Python linter and is scored with
+        <code>rrlab dl</code> against the linter calls recorded from that linter's own test suite.</li>
     </ul>
   </section>
 
   <section style="display:grid;gap:10px">
     <h2>How to read this page</h2>
     <ul class="tight">
-      <li><a href="#syntax">Syntax</a>: Datalog from the start, then what is added to Soufflé, each part of the format, fixes, and possible findings.</li>
+      <li><a href="#syntax">Syntax</a>: Datalog from the start, then what is added to Soufflé, each part of the format, fixes, possible findings, types, and what the engine runs today.</li>
       <li><a href="#library">Library</a>: the Datalog libraries and the native core they stand on.</li>
       <li><a href="#packs">Pack rules</a>: every shipped rule, its hand-written .rr beside today's JSON.</li>
       <li><a href="#data-layer">Data-layer rules</a>: the hand-written rules, each beside the JSON port and the Python linter.</li>

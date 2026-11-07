@@ -334,6 +334,32 @@ export const workLinks = sqliteTable(
 );
 
 /**
+ * A coding agent's one-line reason for not following a steer (`rerail feedback`), kept on this computer for tuning
+ * the rule; `rerail feedback list` prints them for the person to attach to a rule misfire issue. Rerail sends none
+ * anywhere. The repository is the checkout's, so a reset deletes the repository's notes, and the session is where the
+ * rule last steered there, when Rerail found one; like `work_links`, no foreign key.
+ */
+export const steerFeedback = sqliteTable(
+  "steer_feedback",
+  {
+    id: text("id").primaryKey(),
+    ruleId: text("rule_id").notNull(),
+    packId: text("pack_id"),
+    packVersion: text("pack_version"),
+    host: text("host").$type<RerailHost>(),
+    sessionId: text("session_id"),
+    repositoryId: text("repository_id").notNull(),
+    reason: text("reason").notNull(),
+    rerailVersion: text("rerail_version").notNull(),
+    recordedAt: integer("recorded_at").notNull(),
+  },
+  table => [
+    index("steer_feedback_rule_recorded").on(table.ruleId, table.recordedAt),
+    index("steer_feedback_repository").on(table.repositoryId),
+  ],
+);
+
+/**
  * Durable audit bookkeeping. This deliberately has no session foreign key:
  * evaluation can begin before a host has recorded its session row, and a
  * reset must not make a live evaluator unable to finish its run.
@@ -597,7 +623,7 @@ export function sessionsOfRepository(repositoryIds: string | readonly string[], 
  * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`; `sessions` and `policy_session_owners`
  * lose only ended sessions, so running ones keep recording.
  */
-export const SESSION_HISTORY_TABLES = [events, workLinks, audits, auditRequests, repositoryAudits] as const;
+export const SESSION_HISTORY_TABLES = [events, workLinks, steerFeedback, audits, auditRequests, repositoryAudits] as const;
 
 export type RuleRow = typeof rules.$inferSelect;
 export type NewRuleRow = typeof rules.$inferInsert;

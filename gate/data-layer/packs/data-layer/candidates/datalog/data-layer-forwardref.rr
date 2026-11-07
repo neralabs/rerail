@@ -8,29 +8,29 @@
 k0("function_definition"). k0("module").
 .decl k1(kind: symbol)
 k1("assignment").
-.decl blocked12(low: node, high: node)
-.decl blocked17(low: node, high: node)
+.decl blocked11(low: node, high: node)
+.decl blocked16(low: node, high: node)
+.decl blocked31(low: node, high: node)
 .decl blocked36(low: node, high: node)
-.decl blocked41(low: node, high: node)
-.decl blocked60(low: node, high: node)
-.decl blocked65(low: node, high: node)
+.decl blocked51(low: node, high: node)
+.decl blocked56(low: node, high: node)
 .decl in_scope(d: number)
-.decl m11(n: node)
+.decl m12(n: node)
 .decl m14(n: node)
-.decl m16(n: node)
-.decl m33(n: node)
-.decl m35(n: node)
-.decl m38(n: node)
-.decl m40(n: node)
+.decl m17(n: node)
+.decl m29(n: node)
+.decl m32(n: node)
+.decl m34(n: node)
+.decl m37(n: node)
+.decl m49(n: node)
+.decl m52(n: node)
+.decl m54(n: node)
 .decl m57(n: node)
-.decl m59(n: node)
-.decl m62(n: node)
-.decl m64(n: node)
 .decl m9(n: node)
 .decl out_scope(d: number)
 .decl u13(n: node)
-.decl u37(n: node)
-.decl u61(n: node)
+.decl u33(n: node)
+.decl u53(n: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
@@ -44,35 +44,35 @@ out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 m9(n) :- node(_, n, "call", _, _), child(n, v1, 0), node(_, v1, "identifier", _, _), text(v1, "isinstance"), child(n, v2, 1), node(_, v2, "argument_list", _, _), child(v2, v3, 0), node(_, v3, "identifier", _, _), text(v3, "annotation"), child(v2, v4, 1), node(_, v4, "identifier", _, _), text(v4, "type"), !child(v2, _, 2), !child(n, _, 2).
 m9(n) :- node(_, n, "call", _, _), child(n, v5, 0), node(_, v5, "identifier", _, _), text(v5, "isinstance"), child(n, v6, 1), node(_, v6, "argument_list", _, _), child(v6, v7, 0), node(_, v7, "identifier", _, _), text(v7, "annotation"), child(v6, v8, 1), node(_, v8, "identifier", _, _), text(v8, "type"), !child(n, _, 2).
-m11(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m11(n) :- node(_, n, "module", _, _).
-blocked12(low, high) :- inside(low, s, k0), m11(s), inside(s, high, k0).
+m12(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
+m12(n) :- node(_, n, "module", _, _).
+blocked11(low, high) :- inside(low, s, k0), m12(s), inside(s, high, k0).
 m14(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
 m14(n) :- node(_, n, "module", _, _).
 u13(n) :- m14(n).
-m16(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m16(n) :- node(_, n, "module", _, _).
-blocked17(low, high) :- inside(low, high, k1), inside(low, s, k0), m16(s), node(_, s, _, v18, v19), node(_, high, _, v20, v21), v20 <= v18, v19 <= v21, s != high.
-m33(n) :- node(_, n, "call", _, _), child(n, v27, 0), node(_, v27, "identifier", _, _), text(v27, "issubclass"), child(n, v28, 1), node(_, v28, "argument_list", _, _), child(v28, v29, 0), node(_, v29, "identifier", _, _), text(v29, "annotation"), !child(v28, _, 1), !child(n, _, 2).
-m33(n) :- node(_, n, "call", _, _), child(n, v30, 0), node(_, v30, "identifier", _, _), text(v30, "issubclass"), child(n, v31, 1), node(_, v31, "argument_list", _, _), child(v31, v32, 0), node(_, v32, "identifier", _, _), text(v32, "annotation"), !child(n, _, 2).
-m35(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m35(n) :- node(_, n, "module", _, _).
-blocked36(low, high) :- inside(low, s, k0), m35(s), inside(s, high, k0).
-m38(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m38(n) :- node(_, n, "module", _, _).
-u37(n) :- m38(n).
-m40(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m40(n) :- node(_, n, "module", _, _).
-blocked41(low, high) :- inside(low, high, k1), inside(low, s, k0), m40(s), node(_, s, _, v42, v43), node(_, high, _, v44, v45), v44 <= v42, v43 <= v45, s != high.
-m57(n) :- node(_, n, "call", _, _), child(n, v51, 0), node(_, v51, "identifier", _, _), text(v51, "callable"), child(n, v52, 1), node(_, v52, "argument_list", _, _), child(v52, v53, 0), node(_, v53, "identifier", _, _), text(v53, "annotation"), !child(v52, _, 1), !child(n, _, 2).
-m57(n) :- node(_, n, "call", _, _), child(n, v54, 0), node(_, v54, "identifier", _, _), text(v54, "callable"), child(n, v55, 1), node(_, v55, "argument_list", _, _), child(v55, v56, 0), node(_, v56, "identifier", _, _), text(v56, "annotation"), !child(n, _, 2).
-m59(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m59(n) :- node(_, n, "module", _, _).
-blocked60(low, high) :- inside(low, s, k0), m59(s), inside(s, high, k0).
-m62(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m62(n) :- node(_, n, "module", _, _).
-u61(n) :- m62(n).
-m64(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m64(n) :- node(_, n, "module", _, _).
-blocked65(low, high) :- inside(low, high, k1), inside(low, s, k0), m64(s), node(_, s, _, v66, v67), node(_, high, _, v68, v69), v68 <= v66, v67 <= v69, s != high.
+m17(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
+m17(n) :- node(_, n, "module", _, _).
+blocked16(low, high) :- inside(low, s, k0), m17(s), inside(s, high, k0).
+m29(n) :- node(_, n, "call", _, _), child(n, v23, 0), node(_, v23, "identifier", _, _), text(v23, "issubclass"), child(n, v24, 1), node(_, v24, "argument_list", _, _), child(v24, v25, 0), node(_, v25, "identifier", _, _), text(v25, "annotation"), !child(v24, _, 1), !child(n, _, 2).
+m29(n) :- node(_, n, "call", _, _), child(n, v26, 0), node(_, v26, "identifier", _, _), text(v26, "issubclass"), child(n, v27, 1), node(_, v27, "argument_list", _, _), child(v27, v28, 0), node(_, v28, "identifier", _, _), text(v28, "annotation"), !child(n, _, 2).
+m32(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
+m32(n) :- node(_, n, "module", _, _).
+blocked31(low, high) :- inside(low, s, k0), m32(s), inside(s, high, k0).
+m34(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
+m34(n) :- node(_, n, "module", _, _).
+u33(n) :- m34(n).
+m37(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
+m37(n) :- node(_, n, "module", _, _).
+blocked36(low, high) :- inside(low, s, k0), m37(s), inside(s, high, k0).
+m49(n) :- node(_, n, "call", _, _), child(n, v43, 0), node(_, v43, "identifier", _, _), text(v43, "callable"), child(n, v44, 1), node(_, v44, "argument_list", _, _), child(v44, v45, 0), node(_, v45, "identifier", _, _), text(v45, "annotation"), !child(v44, _, 1), !child(n, _, 2).
+m49(n) :- node(_, n, "call", _, _), child(n, v46, 0), node(_, v46, "identifier", _, _), text(v46, "callable"), child(n, v47, 1), node(_, v47, "argument_list", _, _), child(v47, v48, 0), node(_, v48, "identifier", _, _), text(v48, "annotation"), !child(n, _, 2).
+m52(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
+m52(n) :- node(_, n, "module", _, _).
+blocked51(low, high) :- inside(low, s, k0), m52(s), inside(s, high, k0).
+m54(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
+m54(n) :- node(_, n, "module", _, _).
+u53(n) :- m54(n).
+m57(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
+m57(n) :- node(_, n, "module", _, _).
+blocked56(low, high) :- inside(low, s, k0), m57(s), inside(s, high, k0).
 .output violation

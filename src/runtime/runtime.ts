@@ -24,7 +24,7 @@ import {
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
 } from "../engine/code-rule/code-rule.js";
 import type { AuditSettings as CheckoutAuditSettings } from "../engine/audit/audit-control-schema.js";
-import { missedSteerDigestEnabled, steerStrategiesEnabled } from "../engine/experimental-features.js";
+import { firstRepositoryAuditEnabled, missedSteerDigestEnabled, steerStrategiesEnabled } from "../engine/experimental-features.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
@@ -1364,7 +1364,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // itself, and a boundary that finds the evaluator still opening has queued for the drain, one that finds it open
     // uses the bridge.
     state.codeRuleOpening = false;
-    if (auditor.audit !== undefined) state.repositoryAudit = this.#runRepositoryAudit(sessionId, state);
+    if (auditor.audit !== undefined && firstRepositoryAuditEnabled()) state.repositoryAudit = this.#runRepositoryAudit(sessionId, state);
     return bridge;
   }
 
@@ -1450,7 +1450,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * The audit at session start: one repository audit per checkout it reaches, each claimed before it starts.
-   * Internal testing: the automatic first full-repository scan, log-only.
+   * Internal testing: the automatic first full-repository scan, log-only, off unless {@link firstRepositoryAuditEnabled}.
    */
   async #runRepositoryAudit(sessionId: string, state: RuntimeSessionState): Promise<void> {
     const claimed = new Set<string>();

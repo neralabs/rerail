@@ -10,7 +10,9 @@
 .decl k0(kind: symbol)
 k0("attribute"). k0("call"). k0("identifier").
 .decl k1(kind: symbol)
-k1("concatenated_string"). k1("string").
+k1("comparison_operator").
+.decl k2(kind: symbol)
+k2("concatenated_string"). k2("string").
 .decl in_scope(d: number)
 .decl m10(n: node)
 .decl m100(n: node)
@@ -98,7 +100,7 @@ m50(n) :- node(_, n, "identifier", _, _), text(n, v40), v40 = "backend_type".
 m50(n) :- node(_, n, "attribute", _, _), m44(n).
 m50(n) :- node(_, n, "call", _, _), field(n, "function", v45), m49(v45).
 m51(n) :- m38(n).
-m51(n) :- inside(v39, n, k0), m50(v39).
+m51(n) :- inside(v39, n, k1), m50(v39).
 m54(n) :- node(_, n, "string", _, _).
 m54(n) :- node(_, n, "concatenated_string", _, _).
 m59(n) :- node(v57, n, _, _, _), doc(v57, v58, _), (v58 = "impl/common/l2070_server_plan/backend_profiles.py" ; v58 = "impl/common/l2070_server_plan/backend_traits.py").

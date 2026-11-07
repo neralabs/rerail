@@ -1,0 +1,18 @@
+.policy "next-no-sync-scripts" revision 4
+.description "Add async or defer to script tags that load an external src; synchronous scripts block page rendering."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-sync-scripts. A <script> with a src attribute and neither async nor defer:
+//   <script src="https://x.com/a.js" />          reported
+//   <script src="https://x.com/a.js" async />    fine
+// Attributes count by name, with or without a value; a spread {...p} is not read.
+
+#include "tsx/next.rr"
+
+.violation sync(at: node) code "@next/next/no-sync-scripts"
+    "Synchronous scripts should not be used. See: https://nextjs.org/docs/messages/no-sync-scripts"
+    suppress eslint "@next/next/no-sync-scripts"
+    suppress oxlint "no-sync-scripts"
+    suppress biome "lint/performance/noSyncScripts"
+sync(o) :- tag_of(o, "script"), attr(o, "src", _), !attr(o, "async", _), !attr(o, "defer", _).

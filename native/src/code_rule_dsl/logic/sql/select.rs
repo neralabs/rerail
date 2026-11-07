@@ -112,9 +112,22 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "docof" => &["n", "d"],
         "source" => &["d", "sp"],
         "src_line" => &["d", "l", "sp"],
+        "split_line" | "lf_line" => &["d", "l", "t"],
         "str_part" => &["lit", "i", "v", "at", "spec"],
+        "str_part_word" => &["lit", "i", "w", "at", "spec"],
+        "str_part_start" => &["lit", "i", "l", "c"],
         "first_token" | "last_token" => &["n", "t"],
         "token_before" | "token_after" => &["x", "t"],
+        "tree_digest" => &["n", "s"],
+        "rx_span" => &["p", "c", "j", "g", "m"],
+        // Decision 0055's (`facts::vtab::syntax::guests`).
+        "guest" => &["g", "host", "at", "grammar"],
+        "doc_role" => &["d", "r"],
+        "doc_root" => &["d", "n"],
+        "tape_of" => &["d", "t"],
+        "parsed" => &["s", "grammar", "root"],
+        "sub_tape" => &["at", "grammar", "t"],
+        "host_node" => &["n", "h"],
         // The repository inputs (`facts::repository`).
         "option" => &["name", "v"],
         "option_item" => &["name", "i", "v"],
@@ -126,6 +139,9 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],
+        // Containment read off the tree (`facts::vtab::syntax::within`, decision 0050).
+        "within" => &["n", "a"],
+        "span_within" => &["inner", "outer"],
         // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &["n", "a"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
@@ -344,10 +360,13 @@ enum Columns<'a> {
     Positional,
 }
 
-fn columns<'a>(relation: &Relation, ctes: &'a BTreeMap<&str, Vec<Option<String>>>) -> Result<Columns<'a>, String> {
+fn columns<'a>(relation: &'a Relation, ctes: &'a BTreeMap<&str, Vec<Option<String>>>) -> Result<Columns<'a>, String> {
     Ok(match relation {
-        // A batch source of a named input (a `py.*` family read by the demand statement) keeps its names.
-        Relation::Input { rel, .. } | Relation::Batch { rel, .. } => input_columns(rel).map_or(Columns::Positional, |names| Columns::Named(names.to_vec())),
+        Relation::Input { rel, .. } => input_columns(rel).map_or(Columns::Positional, |names| Columns::Named(names.to_vec())),
+        // A batch source declares its own SQL projection. Even a familiar fact relation may
+        // be supplied positionally, and an extension may supply arbitrary named columns.
+        Relation::Batch { source, .. } if source.positional => Columns::Positional,
+        Relation::Batch { source, .. } => Columns::Named(source.columns.iter().map(String::as_str).collect()),
         Relation::Derived { .. } | Relation::Bound { .. } => Columns::Positional,
         Relation::DocRange { .. } => Columns::Named(vec!["d", "lo", "hi"]),
         Relation::Integers => Columns::Named(vec!["i"]),

@@ -1,0 +1,20 @@
+.policy "data-layer:executor-publication-repairs" revision 1
+.description "Publication contracts stay producer-owned: the ServerPlan executor never names the producer's caches."
+.language python
+.mode block
+.scope include "l2070_batching/executor.py"
+// Python linter: scripts/lint_executor_publication_repairs.py. Each line of the executor that holds one of four
+// producer-owned names, as a plain substring (comments and strings included), is an executor_publication_repair.
+//   setattr(step, "_cte_output_columns", columns)      -> reported at its line
+//   return step.with_optimizer_projection(columns, h)  -> nothing
+// A line with several of the names gives one finding per name in the linter's message list; the key is the line.
+
+// FORBIDDEN_TOKENS.
+.decl epr_token(t: symbol)
+epr_token("_cte_output_columns"). epr_token("_cte_column_type_hints").
+epr_token("_publication_contract_cache"). epr_token("_cte_publication_contract_cache").
+
+#include "data-layer/pub-lines.rr"   // py_line: lines as splitlines() numbers them (U+2028 splits a line too)
+
+.violation executor_publication_repair(at: loc, token: symbol) "executor references producer-owned {token}"
+executor_publication_repair(@place(p, n), t) :- py_line(d, n, s), epr_token(t), contains(t, s), doc(d, p, _).

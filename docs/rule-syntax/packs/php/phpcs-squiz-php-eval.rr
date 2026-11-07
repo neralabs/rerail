@@ -1,0 +1,16 @@
+.policy "phpcs-squiz-php-eval" revision 2
+.description "Avoid eval() in PHP; running strings as code is a security risk and hard to debug."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+// PHP_CodeSniffer's Squiz.PHP.Eval (code Discouraged): every use of the `eval` language construct.
+//   eval('$var = 4;');      reported at `eval`
+//   EVAL($code);            reported too: keywords are case-insensitive
+//   $obj->eval($code);      not reported: a method, not the construct
+// tree-sitter-php reads `eval(…)` as a call of the name `eval`; a method or static call has no such name.
+.violation eval(at: node) code "Squiz.PHP.Eval"
+    "Replace this eval() with direct PHP code, such as a callable or a lookup array; evaluating strings invites code injection."
+    suppress phpcs "Squiz.PHP.Eval.Discouraged"
+eval(c) :- kind(c, "function_call_expression"), field(c, "function", f), kind(f, "name"), iglob("eval", f).

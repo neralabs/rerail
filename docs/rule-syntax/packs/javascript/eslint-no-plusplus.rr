@@ -1,0 +1,27 @@
+.policy "eslint-no-plusplus" revision 5
+.description "Use += 1 and -= 1 instead of the ++ and -- operators; automatic semicolon insertion can change what they apply to."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   deparen
+
+// ESLint's no-plusplus: every `++` and `--`, prefix or postfix.
+//   i++;  --n;  a[i++] = 0;                         → reported
+// allowForLoopAfterthoughts: true allows them as a for loop's update, alone or in a comma list there:
+//   for (i = 0; i < n; i++, j--) {}                 fine with the option
+//   for (i = 0; i < n; ++i) { j++; }                j++ is still reported
+.violation no_plusplus(at: node, o: symbol, a: symbol) code "no-plusplus"
+    "Replace {o} with {a} 1, moving it to its own statement if its value is used."
+    suppress eslint "no-plusplus"
+    suppress oxlint "no-plusplus"
+    suppress biome "lint/style/noIncrementDecrement"
+no_plusplus(u, o, a) :- kind(u, "update_expression"), (o = "++", a = "+=" ; o = "--", a = "-="), op(u, o),
+    !(option("allowForLoopAfterthoughts", "true"), afterthought(u)).
+
+// afterthought(e): e is a for loop's update, or an operand of a comma expression that is (ESLint's
+// isForLoopAfterthought). ESTree has no parentheses, so `for (;; (i++))` counts too.
+.decl afterthought(e: node)
+afterthought(e) :- kind(f, "for_statement"), field(f, "increment", x), deparen(x, e).
+afterthought(e) :- kind(s, "sequence_expression"), afterthought(s), child(s, x, _), deparen(x, e).

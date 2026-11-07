@@ -1,0 +1,17 @@
+.policy "ruff-fix001-line-contains-fixme" revision 2
+.description "Resolve the bug or unexpected behavior a FIXME comment marks before shipping, then remove the comment."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FIX001 (flake8-fixme): a comment holding the task tag `FIXME`, in any case, as the first word after a `#`
+// (python/misc-comments). Reported at the comment; Ruff reports at the tag, on the same line.
+//   # FIXME: something           ← FIX001
+//   # a # fixme                  ← FIX001: after another `#`
+//   # FIXMES                     not reported: not the whole word
+#include "python/misc-comments.rr"
+
+.violation FIX001(at: node, d: symbol) code "FIX001"
+    "Fix the bug this `{d}` comment describes, then remove the `{d}` note; if the fix belongs in a separate change, leave the note until that change lands."
+    suppress ruff "FIX001"
+FIX001(c, d) :- fixme_tag(c, "fixme", d).

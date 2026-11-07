@@ -1,0 +1,20 @@
+.policy "ruff-d102-undocumented-public-method" revision 2
+.description "Document each public Python method with a docstring describing its behavior, arguments and return value."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D102 (pydocstyle): a public method of a public class with no docstring. Dunder methods are D105 and
+// `__init__` is D107, except `__new__` and `__call__`, which are D102. Not checked: `@overload` and
+// `@override` methods, `@x.setter`/`@x.deleter` (private), defs decorated with a `pydocstyle.ignore-decorators`
+// entry, and `.pyi` stubs.
+//   class C:
+//       """Doc."""
+//       def run(self): pass    ← D102 at `run`
+//       def __call__(self): …  ← D102
+#include "python/docstrings.rr"
+
+.violation D102(at: node, x: symbol) code "D102"
+    "Add a docstring as the first statement of method `{x}` describing what it does, its arguments and return value; if it overrides a documented base method, decorate it with `@override` instead."
+    suppress ruff "D102"
+D102(nm, x) :- doc_missing(_, "method", nm, x), (!dunder(x) ; x = "__new__" ; x = "__call__").

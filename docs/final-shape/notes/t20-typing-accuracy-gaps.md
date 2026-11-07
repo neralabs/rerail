@@ -150,7 +150,7 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 
   Every departure of the program is one the native resolver also has. The program departs nowhere the native
   resolver agrees. That is decision 0047's condition for the switch. The Jedi corpus comparison is a broader
-  accuracy check beside it, not a gate (O83).
+  accuracy check beside it, not a gate (O88).
 
 - **Rule-facing type relations, Python** (decision 0047, point 3; step 1). `calls.rr` exports them beside
   `call_target`/`call_open`. They are three-valued, as calls are, and read the program's points-to values:
@@ -199,7 +199,7 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 
   A bytes literal is told from a str by `strprefix`, which T's shape of the syntax facts already makes.
   The receiver fixture is small and written for this, so 44 of 44 says the relations are sound where they
-  answer, not how often they answer on a real corpus. What they leave out is O84.
+  answer, not how often they answer on a real corpus. What they leave out is O89.
 
   **For More-ergonomic-rule-syntax (information).** The relations above, with their columns, are what
   `core.rr` would declare for Python's `proven:`/`possible:`. They are in
@@ -244,9 +244,9 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   At the end: 75 files take 3.9 s, 172 files 37 s and 393 files (django without `contrib` and `conf`) 51.5 s,
   with a peak RSS of 552 MB. Before, 172 files did not finish in 110 s.
 
-  The program-side fixes work around engine costs, which are listed in O85.
+  The program-side fixes work around engine costs, which are listed in O90.
 
-- **`calls.rr` against Jedi on django** (O83; `typing::oracle_tests::benchmark_python_calls_program_corpus`,
+- **`calls.rr` against Jedi on django** (O88; `typing::oracle_tests::benchmark_python_calls_program_corpus`,
   ignored). Jedi 0.19.2 `goto` recorded over django's 907 files. The run took 112 s of CPU (debug, the test with
   its scoring) and a peak RSS of 815 MB.
 
@@ -266,8 +266,8 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   Jedi stops at `object.__init__` and the program gives a workspace base's. Neither group has been judged one by
   one. The 7,286 unknowns are where the program says `call_open` instead of guessing.
 
-- **Declared types, Python** (2026-11-07; O84, step 2). `calls.rr` reads parameter, return and class-attribute
-  annotations, and decorators declared `(fn: F) -> F`; what it trusts and what stays open is in O84. Django is
+- **Declared types, Python** (2026-11-07; O89, step 2). `calls.rr` reads parameter, return and class-attribute
+  annotations, and decorators declared `(fn: F) -> F`; what it trusts and what stays open is in O89. Django is
   barely annotated, so the score was taken on the data layer (commit 41ab36f): Jedi 0.19.2 `goto` recorded over
   its l1–l20 packages (489 files, 246 s of CPU), and both programs scored on 84 of those files
   (`_internal`, `l1100_exceptions`, `l1200_json`, `l1400_types`, `l2050_transaction`, `l2055_lazy_result`):
@@ -281,7 +281,7 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   | CPU (debug, load about 80) | 13.0 s | 15.3 s |
 
   Every newly decided call agrees with Jedi. The 412 calls with no edge are calls into packages outside the 84
-  files: Jedi saw all 489 files, the program saw only these. Scoring all 489 files is O86. The runtime and
+  files: Jedi saw all 489 files, the program saw only these. Scoring all 489 files is O94. The runtime and
   receiver-type oracles are unchanged.
 
 - **The first rule that reads types** (step 1's end-to-end rule): `docs/rule-syntax/data-layer/leg-083-typed.rr`.
@@ -294,7 +294,7 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
     counted; a path, a quoted annotation and an untyped parameter are unknown; a call with an argument is
     not counted.
   - **Data layer.** On the 84 files, the 16 calls it counts are all lazy terminals, and none of the 17 pathlib
-    calls is counted. Those are unknown until external classes have types (O84).
+    calls is counted. Those are unknown until external classes have types (O89).
   - **What it took in the engine.** The corpus runner now drops rules no output reads: including
     `python/calls.rr` had run all of `names`, `imports` and `flow`. The bridge hands the typing rows over as
     values, not as `.rr` text. On 39 files the rule went from over 100 s (killed) to 9.8 s, most of it the

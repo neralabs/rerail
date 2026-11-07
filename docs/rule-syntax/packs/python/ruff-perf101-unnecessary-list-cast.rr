@@ -1,0 +1,47 @@
+.policy "ruff-perf101-unnecessary-list-cast" revision 2
+.description "Iterate over a list, tuple or set directly in a for loop instead of first copying it into a new list, unless the loop changes it; the copy only costs time."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PERF101 (perflint): a for loop over `list(x)` where x is already a list, tuple or set: a display, or a
+// name whose binding is one (python/misc2-perf's perf_only_binding is not required: Ruff reads the binding in
+// force). Kept when the body mutates the name: `x.append(…)` (or insert, extend, remove, pop, clear, reverse,
+// sort) as a statement, `x[i] = …`, `x += …`, `del x[i]`, at any depth of the body.
+//   for i in list((1, 2, 3)): …      ← PERF101; the fix drops `list(…)` (safe without comments inside)
+//   xs = [1, 2]
+//   for i in list(xs): …             ← PERF101
+//   for i in list(xs): xs.append(i)  not reported: the copy is needed
+#include "python/misc2-perf.rr"
+//   perf_for(f, t, it), perf_latest_site(n, site), perf_site_value(site, v), perf_call_stmt(st, c)
+
+.violation PERF101(at: node) code "PERF101"
+    "Loop over the list, tuple or set directly instead of copying it with `list(...)`; the copy changes nothing here."
+    suppress ruff "PERF101"
+    fix safe drop_cast "Remove the `list()` call"
+PERF101(it) :- perf_for(_, _, it), list_cast(it, a), (kind(a, "tuple") ; kind(a, "list") ; kind(a, "set")).
+PERF101(it) :- perf_for(f, _, it), list_cast(it, a), kind(a, "identifier"), text(a, x), perf_latest_site(a, site),
+    perf_site_value(site, v), (kind(v, "tuple") ; kind(v, "list") ; kind(v, "set") ; kind(v, "expression_list")),
+    !mutated(f, x).
+drop_cast(it) :- list_cast(it, a), !has(it, _, "comment") => replace(it, `$a`).
+
+.decl list_cast(it: node, a: node)  // `list(a)` with one positional argument; keywords do not matter
+list_cast(it, a) :- kind(it, "call"), field(it, "function", f), ruff_qual(f, "builtins.list"), ruff_arg(it, 0, a0),
+    call_nargs(it, 1), !call_splat(it), unparen(a0, a).
+.decl mutated(f: node, x: symbol)
+mutated(f, x) :- field(f, "body", b), has(b, c, "call"), perf_call_stmt(_, c), field(c, "function", g),
+    attr_of(g, o, m), text(o, x), kind(o, "identifier"), mutator(m).
+mutated(f, x) :- field(f, "body", b), has(b, a, "assignment"), field(a, "left", l), kind(l, "subscript"),
+    field(l, "value", o), kind(o, "identifier"), text(o, x).
+mutated(f, x) :- field(f, "body", b), has(b, a, "augmented_assignment"), field(a, "left", o), kind(o, "identifier"),
+    text(o, x).
+// `del x[i]`: a subscript of the bare name as one of the del's own targets (not `del y[x[0]]` or `del x[0][1]`).
+mutated(f, x) :- field(f, "body", b), has(b, d, "delete_statement"), del_target(d, l), kind(l, "subscript"),
+    field(l, "value", o), kind(o, "identifier"), text(o, x).
+.decl del_target(d: node, t: node)
+del_target(d, t) :- kind(d, "delete_statement"), child(d, e, _), !kind(e, "expression_list"), unparen(e, t).
+del_target(d, t) :- kind(d, "delete_statement"), child(d, l, _), kind(l, "expression_list"), child(l, e, _),
+    unparen(e, t).
+.decl mutator(m: symbol)
+mutator("append"). mutator("insert"). mutator("extend"). mutator("remove"). mutator("pop"). mutator("clear").
+mutator("reverse"). mutator("sort").

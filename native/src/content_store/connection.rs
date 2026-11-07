@@ -307,9 +307,18 @@ impl ThreadConnection {
     }
 }
 
+/// A connection's page cache at rest, in KiB.
+pub(super) const CACHE_KIB: i64 = 1_024;
+
 pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
     connection.set_prepared_statement_cache_capacity(128);
     connection.busy_handler(Some(wait_for_writer))?;
+    // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
+    // creating transaction, it was ignored, so no store returned freed pages (decision 0053 §4).
+    let pages: i64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+    if pages == 0 {
+        connection.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
+    }
     connection.pragma_update(None, "foreign_keys", "ON")?;
     // Readers never block the writer, nor it them: every worker thread reads while one apply
     // publishes.
@@ -317,7 +326,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     // A store may be opened by each of Rerail's worker threads. Keep their aggregate page-cache
     // residency bounded; active reads still use the decompressed cache above.
-    connection.pragma_update(None, "cache_size", -1_024_i64)?;
+    connection.pragma_update(None, "cache_size", -CACHE_KIB)?;
     connection.pragma_update(None, "mmap_size", 0_i64)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
     // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay
@@ -327,6 +336,9 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     super::vocabulary::install(connection)?;
     crate::code_rule_dsl::text::install(connection)?;
     crate::code_rule_dsl::prefilter::tapes::install(connection)?;
+    // `atoms` over this process's arena, and the commit hook that keeps pending atoms out of
+    // committed rows (decision 0049).
+    super::atoms::Atoms::install(connection)?;
     Ok(())
 }
 
@@ -334,7 +346,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
 /// refuses afterwards, and then keeps the system allocator). Freed SQLite pages are then returned
 /// with the heap's (`purge_allocator_pages`) instead of staying fragmented in the system's zones:
 /// a slice's prefilter and ingest held ~140 MB there for ~30 MB live (O30).
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 pub(crate) fn sqlite_on_jemalloc() {
     use std::ffi::{c_int, c_void};
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -377,7 +389,7 @@ pub(crate) fn sqlite_on_jemalloc() {
 }
 
 fn open_runtime_connection(path: &Path) -> StoreResult<Connection> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     sqlite_on_jemalloc();
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
@@ -437,7 +449,7 @@ impl ContentStore {
             .expect("content store connection unavailable");
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(value)
     }
 
@@ -454,7 +466,7 @@ impl ContentStore {
         let _no_wait = NoBusyWait::enter();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(value)
     }
 }

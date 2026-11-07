@@ -1,0 +1,14 @@
+.policy "tlint-no-dump-directives" revision 3
+.description "Remove @dd and @dump directives from Blade templates before shipping; they dump debug output into the page."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/syntax.rr"
+//   blade_directive(d, x)   d is directive @x
+
+// tlint's NoDumpDirectives: a @dd or @dump directive left in a template. Reported at the directive:
+//   @dump($order)   @dd($user)                 reported
+//   @@dd   {{-- @dump --}}                     not reported: escaped, a comment
+.violation no_dump(at: node) code "NoDumpDirectives" "Do not use the @dump or @dd directives."
+no_dump(d) :- blade_directive(d, x), (x = "dd" ; x = "dump").

@@ -1,0 +1,123 @@
+.policy "eslint-plugin-vue-require-valid-default-prop" revision 2
+.description "Give each Vue prop a default value of the type it declares; an Object, Array or Function default must come from a factory function."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+//   vopt(o, x, h, v), vprops_call(c), vmacro(c, x), vunwrap(e, x), key_static(k, x), call_arg(c, a, i)
+
+// eslint-plugin-vue's require-valid-default-prop. No options. A prop is checked when its type names one of the
+// native constructors (String, Number, Boolean, Function, Object, Array, Symbol, BigInt) and it has a default:
+//   props: { n: { type: Number, default: '' } }          reported: '' is a string
+//   props: { o: { type: Object, default: {} } }          reported: an object default must come from a factory
+//   props: { o: { type: Object, default: () => ({}) } }  not reported; a factory's returns are checked instead
+// The props are an Options API `props: { … }` object's, `defineProps({ … })`'s (with defaults from withDefaults'
+// second argument and from destructuring, `const { n = 1 } = defineProps(…)`, where a factory is reported too),
+// and defineModel's options. Props declared only by a TypeScript type (defineProps<T>(), defineModel<T>()) are not
+// read: their runtime types need type inference.
+.violation invalid(at: node, x: symbol, t: symbol) code "vue/require-valid-default-prop"
+    "Type of the default value for '{x}' prop must be a {t}." suppress eslint "vue/require-valid-default-prop"
+invalid(e, x, t) :- dflt(p, e, src), fn_type(e, _), !native(p, _, "Function"), src = "assignment", says(p, "plain", x, t).
+invalid(b, x, t) :- dflt(p, e, _), fn_type(e, "expression"), !native(p, _, "Function"), field(e, "body", w),
+    deparen(w, b), default_type(b, y), !native(p, _, y), src_not_assignment(p, e), says(p, "plain", x, t).
+invalid(a, x, t) :- dflt(p, e, _), fn_type(e, "block"), !native(p, _, "Function"), src_not_assignment(p, e),
+    returns(e, a), default_type(a, y), !native(p, _, y), says(p, "plain", x, t).
+invalid(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), !native(p, _, y), mode(src, m),
+    says(p, m, x, t).
+invalid(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), native(p, _, y), src != "assignment",
+    factory_type(y), says(p, "factory", x, t).
+.decl src_not_assignment(p: node, e: node)
+src_not_assignment(p, e) :- dflt(p, e, src), src != "assignment".
+.decl mode(src: symbol, m: symbol)
+mode("assignment", "plain"). mode("withDefaults", "factory"). mode("defaultProperty", "factory").
+
+// ---- the props: prop(p, x, v, c), p's name x and definition v, from defineProps call c (0 for the others) ----------
+.decl prop(p: node, x: symbol, v: node, c: node)
+prop(p, x, v, 0) :- vopt(_, "props", _, po), kind(po, "object"), entry(po, p, x, v), kind(v, "object").
+prop(p, x, v, c) :- vprops_call(c), call_arg(c, a, 0), vunwrap(a, po), kind(po, "object"), entry(po, p, x, v).
+prop(m, x, v, 0) :- vmacro(m, "defineModel"), !field(m, "type_arguments", _),
+    (call_arg(m, s, 0), kind(s, "string"), str(s, x), call_arg(m, a, 1) ;
+     call_arg(m, a, 0), !kind(a, "string"), x = "modelValue"), vunwrap(a, v), kind(v, "object").
+.decl entry(po: node, p: node, x: symbol, v: node)  // a pair; a key with no static name is named by its text: `[k]`
+entry(po, p, x, v) :- child(po, p, _), kind(p, "pair"), field(p, "key", k), field(p, "value", w), vunwrap(w, v),
+    (key_static(k, x) ; !key_static(k, _), text(k, x)).
+// named(v, x, e): getPropertyNode, a non-computed identifier key: `type: …`, `default() {}`, a shorthand `{ type }`.
+.decl named(v: node, x: symbol, e: node)
+named(v, x, e) :- prop(_, _, v, _), child(v, p, _), kind(p, "pair"), field(p, "key", k), kind(k, "property_identifier"),
+    text(k, x), field(p, "value", w), deparen(w, e).
+named(v, x, p) :- prop(_, _, v, _), child(v, p, _), kind(p, "method_definition"), field(p, "name", k),
+    kind(k, "property_identifier"), text(k, x).
+named(v, x, p) :- prop(_, _, v, _), child(v, p, _), kind(p, "shorthand_property_identifier"), text(p, x).
+// native(p, i, y): the i-th type the prop names is the native y: `type: Number`, `type: [String, Boolean]`.
+.decl native(p: node, i: number, y: symbol)
+native(p, i, y) :- prop(p, _, v, _), (kind(v, "object"), named(v, "type", w) ; !kind(v, "object"), w = v),
+    unas(w, t), (kind(t, "identifier"), i = 0, text(t, y) ; kind(t, "array"), child(t, n, i), kind(n, "identifier"),
+    text(n, y)), native_type(y).
+.decl unas(w: node, t: node)  // skipTSAsExpression
+unas(w, t) :- deparen(w, t), !kind(t, "as_expression").
+unas(w, t) :- deparen(w, a), kind(a, "as_expression"), child(a, z, 0), unas(z, t).
+.decl native_type(y: symbol)
+native_type("String"). native_type("Number"). native_type("Boolean"). native_type("Function"). native_type("Object").
+native_type("Array"). native_type("Symbol"). native_type("BigInt").
+.decl factory_type(y: symbol)
+factory_type("Function"). factory_type("Object"). factory_type("Array").
+// dflt(p, e, src): a default of the prop, from its `default`, withDefaults' second argument or a destructuring default.
+.decl dflt(p: node, e: node, src: symbol)
+dflt(p, e, "defaultProperty") :- prop(p, _, v, _), kind(v, "object"), named(v, "type", _), named(v, "default", e).
+dflt(p, e, "withDefaults") :- prop(p, x, v, c), typed(p, v), with_defaults(c, t), call_arg(t, d, 1), deparen(d, o),
+    kind(o, "object"), child(o, q, _), kind(q, "pair"), field(q, "key", k), key_static(k, x), field(q, "value", w),
+    deparen(w, e).
+dflt(p, e, "assignment") :- prop(p, x, v, c), typed(p, v), (t = c ; with_defaults(c, t)), kind(dc, "variable_declarator"),
+    field(dc, "value", w), deparen(w, t), field(dc, "name", l), kind(l, "object_pattern"), child(l, q, _),
+    (kind(q, "pair_pattern"), field(q, "key", k), key_static(k, x), field(q, "value", a), kind(a, "assignment_pattern") ;
+     kind(q, "object_assignment_pattern"), field(q, "left", k), text(k, x), a = q), field(a, "right", r), deparen(r, e).
+.decl typed(p: node, v: node)  // an object definition needs a `type`
+typed(p, v) :- prop(p, _, v, _), (!kind(v, "object") ; named(v, "type", _)).
+.decl with_defaults(c: node, t: node)
+with_defaults(c, t) :- vprops_call(c), call_arg(t, w, 0), deparen(w, c), field(t, "function", f), text(f, "withDefaults").
+
+// ---- getValueType ---------------------------------------------------------------------------------------------------
+.decl default_type(e: node, y: symbol)
+default_type(e, y) :- vt_ask(e), kind(e, "call_expression"), field(e, "function", f), kind(f, "identifier"), text(f, y),
+    native_type(y).
+default_type(e, "String") :- vt_ask(e), (kind(e, "template_string") ; kind(e, "string")).
+default_type(e, "Number") :- vt_ask(e), kind(e, "number"), text(e, s), !match("[\\s\\S]*n", s).
+default_type(e, "BigInt") :- vt_ask(e), kind(e, "number"), text(e, s), match("[\\s\\S]*n", s).
+default_type(e, "Boolean") :- vt_ask(e), (kind(e, "true") ; kind(e, "false")).
+default_type(e, "Object") :- vt_ask(e), (kind(e, "object") ; kind(e, "regex")).
+default_type(e, "Array") :- vt_ask(e), kind(e, "array").
+default_type(e, "Function") :- vt_ask(e), fn_type(e, _).
+.decl fn_type(e: node, how: symbol)
+fn_type(e, "block") :- vt_ask(e), (kind(e, "function_expression") ; kind(e, "generator_function") ;
+    kind(e, "method_definition")).
+fn_type(e, "block") :- vt_ask(e), kind(e, "arrow_function"), field(e, "body", b), kind(b, "statement_block").
+fn_type(e, "expression") :- vt_ask(e), kind(e, "arrow_function"), field(e, "body", b), !kind(b, "statement_block").
+.decl vt_ask(e: node)
+vt_ask(e) :- dflt(_, e, _).
+vt_ask(b) :- dflt(_, e, _), kind(e, "arrow_function"), field(e, "body", w), deparen(w, b).
+vt_ask(a) :- returns(_, a).
+// returns(f, a): the argument of a return statement of f's own body (not of a nested function's).
+.decl returns(f: node, a: node)
+returns(f, a) :- dflt(_, f, _), kind(r, "return_statement"), nearest(r, f, vfn_kind), child(r, w, 0), deparen(w, a).
+
+// ---- the message: the native types, joined by " or ", lower-cased; "factory" names Object and Array "function" ----
+.decl says(p: node, m: symbol, x: symbol, t: symbol)
+says(p, m, x, t) :- joined(p, m, i, t), !later(p, i), prop(p, x, _, _).
+.decl once(p: node, i: number, y: symbol)
+once(p, i, y) :- native(p, i, y), !repeated(p, i, y).
+.decl repeated(p: node, i: number, y: symbol)  // a Set keeps the first
+repeated(p, i, y) :- native(p, i, y), native(p, j, y), j < i.
+.decl later(p: node, i: number)
+later(p, i) :- once(p, i, _), once(p, j, _), j > i.
+.decl preceded(p: node, i: number)
+preceded(p, i) :- once(p, i, _), once(p, j, _), j < i.
+.decl between(p: node, i: number, j: number)
+between(p, i, j) :- once(p, i, _), once(p, j, _), once(p, k, _), i < k, k < j.
+.decl joined(p: node, m: symbol, i: number, t: symbol)
+joined(p, m, i, t) :- once(p, i, y), !preceded(p, i), mode(_, m), shown(m, y, t).
+joined(p, m, j, cat(t, " or ", u)) :- joined(p, m, i, t), once(p, j, y), j > i, !between(p, i, j),
+    shown(m, y, u).
+.decl shown(m: symbol, y: symbol, t: symbol)
+shown("plain", y, @lower(y)) :- native_type(y).
+shown("factory", y, "function") :- factory_type(y).
+shown("factory", y, @lower(y)) :- native_type(y), !factory_type(y).

@@ -286,7 +286,24 @@ export interface NativeExclusiveFileLock {
   release(): void;
 }
 
+/** A connection-local SQL extension context over the native content store. */
+export interface NativeCodeRuleSqlExecutor {
+  bindSnapshot(snapshotJson: string): void;
+  bindStored(scope: string, paths?: string[] | null): void;
+  bindRelation(relationJson: string): void;
+  lower(program: string, dialect: string): string;
+  run(program: string, dialect: string, maxWaves?: number | null): string;
+  runFile(path: string, dialect: string, maxWaves?: number | null): string;
+  query(sql: string, parametersJson?: string | null, maxRows?: number | null): string;
+}
+
+export interface NativeCodeRuleSqlExecutorConstructor {
+  new(storePath: string): NativeCodeRuleSqlExecutor;
+}
+
 export interface NativeBinding {
+  CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
+  executeSqlRequest(storePath: string, requestJson: string): string;
   health(): NativeHealth;
   nativeMemoryProfile(): string;
   processSessionId(pid: number): number | null;
@@ -318,7 +335,7 @@ export interface NativeBinding {
   validateRegex(pattern: string): void;
   /** Windows only: start a detached process that inherits only NUL stdin and the appended log file; returns its pid. */
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
-  /** The content-store file name this binary's store schema owns (`content-v2.sqlite` at store floor 2). */
+  /** The content-store file name this binary's store schema owns (`content-v3.sqlite` at store floor 3). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;

@@ -1,0 +1,20 @@
+.policy "ruff-pth120-os-path-dirname" revision 2
+.description "Use the parent property of a Path object instead of os.path.dirname; pathlib reads better than string-based os.path functions."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH120 (flake8-use-pathlib): a call of `os.path.dirname`, however it is imported, with exactly one argument:
+// the `p` parameter, by position or by keyword. pathlib's form is `Path(p).parent`.
+// Reported at the callee.
+//   os.path.dirname(p)              ← PTH120
+//   from os.path import dirname
+//   dirname(p=p)                    ← PTH120
+//   os.path.dirname(path=p)         not reported: the parameter is `p`
+#include "python/pathlib.rr"
+//   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
+
+.violation PTH120(at: node, s: node) code "PTH120"
+    "Use `Path({s}).parent` instead of `os.path.dirname({s})`. It returns a `Path`, not a `str`, and normalizes the path; keep `dirname` where the exact string matters or the path is bytes."
+    suppress ruff "PTH120"
+PTH120(f, a) :- single_arg(_, "os.path.dirname", "p", f, a).

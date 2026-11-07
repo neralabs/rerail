@@ -1,0 +1,16 @@
+.policy "ruff-pyi046-unused-private-protocol" revision 2
+.description "Use, make public or remove a private Protocol class that nothing in its file references; an unused private protocol is likely a mistake."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI046 (flake8-pyi), every file: a private Protocol class (`class _P(Protocol)`, `Protocol[T]` too) that
+// nothing in the file reads. Class bodies are checked only in stubs (python/typing's unused_private). Reported
+// at the class name.
+//   class _P(Protocol): ...       ← PYI046 when nothing mentions _P
+#include "python/typing.rr"
+
+.violation PYI046(at: node, x: symbol) code "PYI046" "Nothing in this file uses the private protocol `{x}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
+    suppress ruff "PYI046"
+PYI046(n, x) :- unused_private(_, x, c), kind(c, "class_definition"), class_base_sym(c, q), split_dot(q, m, "Protocol"),
+    typing_mod(m), field(c, "name", n).

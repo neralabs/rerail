@@ -62,6 +62,34 @@ pub(crate) trait Source: Send + Sync {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         None
     }
+    /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
+    fn doc_column(&self) -> Option<usize> {
+        None
+    }
+    /// The rows whose `column` is one of `values` in document `doc` (by its key): a lookup over a column that
+    /// spans the documents (a kind) where the statement binds the document too. `None`: not kept to one.
+    fn lookup_in(&self, _column: usize, _values: &[i64], _doc: i64) -> Option<Vec<usize>> {
+        None
+    }
+    /// Whether a lookup on `column` can be kept to one document (`lookup_in`).
+    fn kept_to_doc(&self, _column: usize) -> bool {
+        false
+    }
+    /// The rows whose columns hold every `(column, value)` of `eqs`, ascending: a scan, which a source may do faster
+    /// than a `value` call per row.
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
+    }
+    /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
+    /// makes every one: a join probes such a source through `lookup`, whatever its match estimate.
+    fn made_on_lookup(&self) -> bool {
+        false
+    }
+    /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
+    /// reading every row: a source whose rows are made on lookup.
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        None
+    }
     fn indexed(&self, column: usize) -> bool;
     /// Whether an upper bound on `upper` also bounds `lower` (an end bounds its start).
     fn range_upper_compatible(&self, _lower: usize, _upper: usize) -> bool {
@@ -279,6 +307,17 @@ unsafe impl<'a> VTab<'a> for Table {
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         let source = self.binding.current();
+        // The document bound by an `EQ`, where the source can keep a lookup to it (`lookup_in`).
+        let doc = source.doc_column().filter(|&d| {
+            info.constraints().enumerate().any(|(j, c)| {
+                c.is_usable() && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ && c.column() == d as i32 && info.collation(j).is_ok_and(|v| v == "BINARY")
+            })
+        });
+        // A lookup kept to one document reads that document's share of its matches.
+        let in_doc = |col: usize, matches: usize| match doc {
+            Some(d) if source.kept_to_doc(col) => (matches * source.estimated_matches(d, false) / source.estimated_len().max(1)).max(1),
+            _ => matches,
+        };
         // Every usable `=` on a column, one value each; an `IN` list only as the probed column.
         let mut equal: Vec<(usize, usize)> = Vec::new();
         let mut probe: Option<(usize, usize, bool, usize)> = None;
@@ -296,7 +335,7 @@ unsafe impl<'a> VTab<'a> for Table {
                 equal.push((i, col));
             }
             if source.indexed(col) {
-                let matches = source.estimated_matches(col, batch);
+                let matches = in_doc(col, source.estimated_matches(col, batch));
                 if probe.is_none_or(|p| matches < p.3) {
                     probe = Some((i, col, batch, matches));
                 }
@@ -488,9 +527,16 @@ unsafe impl VTabCursor for Cursor {
                         by.sort_unstable();
                         source.lookup_all(&by).or_else(|| source.lookup(by[0].0, &[by[0].1]).map(|r| r.into_iter().filter(keep).collect()))
                     }
-                    "p" => source.lookup(columns[0], &[equal[0].1]).map(|r| r.into_iter().filter(keep).collect()),
-                    "b" => source.lookup(columns[0], &values).map(|r| r.into_iter().filter(keep).collect()),
-                    _ => Some((0..source.len()).filter(keep).collect()),
+                    // A probe over a column that spans the documents (a kind), where the document is bound as
+                    // well: kept to that document, rather than every document's rows rechecked against it.
+                    "p" | "b" => {
+                        let probed: Vec<i64> = if tag == "p" { vec![equal[0].1] } else { values.clone() };
+                        let doc = source.doc_column().filter(|_| source.kept_to_doc(columns[0])).and_then(|d| equal.iter().find(|&&(c, _)| c == d).map(|&(_, v)| v));
+                        doc.and_then(|d| source.lookup_in(columns[0], &probed, d))
+                            .or_else(|| source.lookup(columns[0], &probed))
+                            .map(|r| r.into_iter().filter(keep).collect())
+                    }
+                    _ => Some(source.filter_eq(&equal).into_iter().map(|r| r as usize).collect()),
                 }
             };
         } else if index & (1 << 20) != 0 {

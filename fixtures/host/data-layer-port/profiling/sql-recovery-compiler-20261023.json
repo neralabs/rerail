@@ -1,0 +1,425 @@
+{
+  "format": "rerail.sql-compiler-recovery/v1",
+  "date": "2026-10-23",
+  "status": "partial recovery; complete-job budget fails",
+  "implementation": "prepare-only input/syntax schemas and compiler connection initialization; runtime empty schemas remain executable; original physical plan order retained",
+  "limit": 100,
+  "engineSubmitted": 9695,
+  "sqliteInternal": 994,
+  "totalObserved": 10689,
+  "coverageProblems": [],
+  "enginePhases": {
+    "connectionSetup": 498,
+    "filePublication": 36,
+    "catalogPublication": 12,
+    "candidatePreparation": 4924,
+    "cleanup": 2444,
+    "relationalEvaluation": 1781
+  },
+  "firstOverBudget": {
+    "startNs": 834044917,
+    "session": "profile-92732-32.json",
+    "query": 3,
+    "sql": " PRAGMA temp_store=FILE;",
+    "context": {
+      "component": "ast-index",
+      "stage": "schema"
+    },
+    "thread": "ThreadId(1)"
+  },
+  "capturedPriorEngineSubmitted": 10443,
+  "connectionSetupRemoved": 406,
+  "matchedControls": {
+    "priorCheckpoint": {
+      "nativeSha256": "f52ffe46ee05e8728cc1b0917e9c5f108b9f7b74026d2b8f825af87382d4b27b",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2280.677,
+          "systemMs": 93.513,
+          "cpuMs": 2374.19,
+          "wallMs": 2662.478833,
+          "maxRSSRaw": 341072,
+          "memory": {
+            "rss": 296134264,
+            "heapTotal": 104759296,
+            "heapUsed": 34189912,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2271.871,
+          "systemMs": 162.584,
+          "cpuMs": 2434.455,
+          "wallMs": 4390.236209,
+          "maxRSSRaw": 357360,
+          "memory": {
+            "rss": 312370736,
+            "heapTotal": 109232128,
+            "heapUsed": 42312192,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2111.213,
+          "systemMs": 105.465,
+          "cpuMs": 2216.678,
+          "wallMs": 4680.068833,
+          "maxRSSRaw": 395072,
+          "memory": {
+            "rss": 351397832,
+            "heapTotal": 109330432,
+            "heapUsed": 40257032,
+            "external": 52718455,
+            "arrayBuffers": 45092435
+          }
+        }
+      ],
+      "medianCpuMs": 2374.19,
+      "minCpuMs": 2216.678,
+      "maxCpuMs": 2434.455,
+      "medianReportedMaxRSSKiB": 357360
+    },
+    "selected": {
+      "nativeSha256": "1d580b5a82da9060f6e8741e010a2690444da962440ffbec5cc2f8cf4b147048",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2183.194,
+          "systemMs": 82.842,
+          "cpuMs": 2266.036,
+          "wallMs": 2286.691833,
+          "maxRSSRaw": 346496,
+          "memory": {
+            "rss": 301164152,
+            "heapTotal": 105021440,
+            "heapUsed": 34224168,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2073.8,
+          "systemMs": 94.729,
+          "cpuMs": 2168.529,
+          "wallMs": 3087.384083,
+          "maxRSSRaw": 335168,
+          "memory": {
+            "rss": 289891960,
+            "heapTotal": 108429312,
+            "heapUsed": 34178944,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2205.234,
+          "systemMs": 120.908,
+          "cpuMs": 2326.142,
+          "wallMs": 3836.1073750000005,
+          "maxRSSRaw": 353296,
+          "memory": {
+            "rss": 307389784,
+            "heapTotal": 105021440,
+            "heapUsed": 34189120,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2266.036,
+      "minCpuMs": 2168.529,
+      "maxCpuMs": 2326.142,
+      "medianReportedMaxRSSKiB": 346496
+    }
+  },
+  "medianCpuReductionPercent": 4.555406264873496,
+  "smallReplay": {
+    "nativeCalls": 2,
+    "positiveCalls": 1,
+    "cleanCalls": 1,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "nativeSha256": "1d580b5a82da9060f6e8741e010a2690444da962440ffbec5cc2f8cf4b147048"
+  },
+  "broaderReplay": {
+    "nativeCalls": 120,
+    "positiveCalls": 60,
+    "cleanCalls": 60,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "nativeSha256": "1d580b5a82da9060f6e8741e010a2690444da962440ffbec5cc2f8cf4b147048"
+  },
+  "functionalTests": {
+    "nativeFacing": 304,
+    "standaloneSql": 24,
+    "nodeProfiling": 26,
+    "pythonProfiling": 75
+  },
+  "validation": [
+    "native profiling library Clippy",
+    "standalone SQL host Clippy",
+    "npm run check",
+    "native and standalone Rust formatting"
+  ],
+  "method": {
+    "workers": 4,
+    "build": "opt1 engine; deps3; LTO disabled; 256 codegen units; code-rule-profile enabled in both binaries",
+    "allocator": "same system allocator shim in both controls",
+    "order": "three alternating fresh-process pairs",
+    "cpuScope": "process.cpuUsage around complete replay, including policy validation and compilation, both snapshot and workspace evaluation, findings parity, and cleanup",
+    "detailedTracing": false,
+    "recordingSha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4",
+    "machine": "shared host; ranges overlap; no statistical or aggregate performance claim",
+    "memory": "reported process.resourceUsage maxRSS, in KiB; no aggregate memory recovery claim"
+  },
+  "remaining": [
+    "194 compiler stage CTAS executions in this capture already exceed the complete-job limit",
+    "whole-job publication and session lifetimes",
+    "shared named physical producers and broad consumers",
+    "allocation-dependent candidate lowering/broadening",
+    "full repository CPU, memory and parity acceptance"
+  ],
+  "rejectedExperiments": {
+    "authoredPhysicalOrder": {
+      "engineSubmitted": 14699,
+      "prior": {
+        "nativeSha256": "f52ffe46ee05e8728cc1b0917e9c5f108b9f7b74026d2b8f825af87382d4b27b",
+        "trials": [
+          {
+            "passed": true,
+            "userMs": 2586.996,
+            "systemMs": 120.705,
+            "cpuMs": 2707.701,
+            "wallMs": 4312.8517090000005,
+            "maxRSSRaw": 346528,
+            "memory": {
+              "rss": 299197472,
+              "heapTotal": 105807872,
+              "heapUsed": 34290256,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            }
+          },
+          {
+            "passed": true,
+            "userMs": 2181.954,
+            "systemMs": 85.538,
+            "cpuMs": 2267.492,
+            "wallMs": 2638.162458,
+            "maxRSSRaw": 383248,
+            "memory": {
+              "rss": 337798848,
+              "heapTotal": 106332160,
+              "heapUsed": 34283776,
+              "external": 47782937,
+              "arrayBuffers": 2241491
+            }
+          },
+          {
+            "passed": true,
+            "userMs": 2265.341,
+            "systemMs": 103.459,
+            "cpuMs": 2368.8,
+            "wallMs": 2960.6392499999997,
+            "maxRSSRaw": 353520,
+            "memory": {
+              "rss": 307914240,
+              "heapTotal": 105021440,
+              "heapUsed": 34219480,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            }
+          }
+        ],
+        "medianCpuMs": 2368.8,
+        "minCpuMs": 2267.492,
+        "maxCpuMs": 2707.701,
+        "medianReportedMaxRSSKiB": 353520
+      },
+      "candidate": {
+        "nativeSha256": "023a0708ee80cdbd51ed35aab6d97739a41cbc8a2cb77cfdfb029bbd15ac3d71",
+        "trials": [
+          {
+            "passed": true,
+            "userMs": 2343.308,
+            "systemMs": 112.776,
+            "cpuMs": 2456.084,
+            "wallMs": 3850.4157920000002,
+            "maxRSSRaw": 359024,
+            "memory": {
+              "rss": 239265016,
+              "heapTotal": 104759296,
+              "heapUsed": 34228312,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            }
+          },
+          {
+            "passed": true,
+            "userMs": 2413.224,
+            "systemMs": 107.527,
+            "cpuMs": 2520.751,
+            "wallMs": 3052.847917,
+            "maxRSSRaw": 400496,
+            "memory": {
+              "rss": 286008784,
+              "heapTotal": 109330432,
+              "heapUsed": 41023488,
+              "external": 52724423,
+              "arrayBuffers": 45098403
+            }
+          },
+          {
+            "passed": true,
+            "userMs": 2372.755,
+            "systemMs": 102.961,
+            "cpuMs": 2475.716,
+            "wallMs": 3501.7039590000004,
+            "maxRSSRaw": 375008,
+            "memory": {
+              "rss": 331097384,
+              "heapTotal": 105545728,
+              "heapUsed": 34190336,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            }
+          }
+        ],
+        "medianCpuMs": 2475.716,
+        "minCpuMs": 2456.084,
+        "maxCpuMs": 2520.751,
+        "medianReportedMaxRSSKiB": 375008
+      },
+      "decision": "remove; median CPU regression and higher execution count"
+    },
+    "boundedWorkEstimateOrder": {
+      "engineSubmitted": 14699,
+      "prior": {
+        "nativeSha256": "f52ffe46ee05e8728cc1b0917e9c5f108b9f7b74026d2b8f825af87382d4b27b",
+        "trials": [
+          {
+            "passed": true,
+            "userMs": 2284.606,
+            "systemMs": 96.714,
+            "cpuMs": 2381.32,
+            "wallMs": 2920.028875,
+            "maxRSSRaw": 347600,
+            "memory": {
+              "rss": 302737280,
+              "heapTotal": 105283584,
+              "heapUsed": 34240192,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            }
+          },
+          {
+            "passed": true,
+            "userMs": 2258.173,
+            "systemMs": 98.585,
+            "cpuMs": 2356.758,
+            "wallMs": 2704.018583,
+            "maxRSSRaw": 370640,
+            "memory": {
+              "rss": 326330888,
+              "heapTotal": 110313472,
+              "heapUsed": 67512936,
+              "external": 7399752,
+              "arrayBuffers": 2241491
+            }
+          },
+          {
+            "passed": true,
+            "userMs": 2300.052,
+            "systemMs": 116.918,
+            "cpuMs": 2416.97,
+            "wallMs": 2981.3565,
+            "maxRSSRaw": 369360,
+            "memory": {
+              "rss": 325182832,
+              "heapTotal": 106594304,
+              "heapUsed": 34325944,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            }
+          }
+        ],
+        "medianCpuMs": 2381.32,
+        "minCpuMs": 2356.758,
+        "maxCpuMs": 2416.97,
+        "medianReportedMaxRSSKiB": 369360
+      },
+      "candidate": {
+        "nativeSha256": "6095df6d86c9a4a90caef9ba1199731e9a31e1dab64622f9662b9e553208630e",
+        "trials": [
+          {
+            "passed": true,
+            "userMs": 2292.598,
+            "systemMs": 99.211,
+            "cpuMs": 2391.809,
+            "wallMs": 3154.290541,
+            "maxRSSRaw": 358848,
+            "memory": {
+              "rss": 246146848,
+              "heapTotal": 108085248,
+              "heapUsed": 42254808,
+              "external": 9867511,
+              "arrayBuffers": 2241491
+            }
+          },
+          {
+            "passed": true,
+            "userMs": 2359.034,
+            "systemMs": 102.247,
+            "cpuMs": 2461.281,
+            "wallMs": 3040.3839580000003,
+            "maxRSSRaw": 350992,
+            "memory": {
+              "rss": 241313376,
+              "heapTotal": 105807872,
+              "heapUsed": 34182456,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            }
+          },
+          {
+            "passed": true,
+            "userMs": 2396.072,
+            "systemMs": 120.908,
+            "cpuMs": 2516.98,
+            "wallMs": 2601.126333,
+            "maxRSSRaw": 382496,
+            "memory": {
+              "rss": 239134400,
+              "heapTotal": 105807872,
+              "heapUsed": 34266192,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            }
+          }
+        ],
+        "medianCpuMs": 2461.281,
+        "minCpuMs": 2391.809,
+        "maxCpuMs": 2516.98,
+        "medianReportedMaxRSSKiB": 358848
+      },
+      "decision": "remove; no count benefit and median CPU regression"
+    },
+    "cachePruning": {
+      "decision": "remove; corrected control passes the earlier engine; no count benefit proven",
+      "invalidControl": "original seven-to-eight count omitted the kind producer required by the broadened rule"
+    }
+  },
+  "evidenceDirectory": ".rerail/profiles/sql-recovery-compiler-20261023",
+  "sourceSelectionProvenance": ".rerail/profiles/sql-recovery-tdd-20261023/selected-source/provenance.json"
+}

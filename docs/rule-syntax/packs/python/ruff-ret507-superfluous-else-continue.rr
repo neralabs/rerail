@@ -1,0 +1,20 @@
+.policy "ruff-ret507-superfluous-else-continue" revision 2
+.description "Remove the else or elif after an if branch that continues the loop, and dedent its code; the branch already skips ahead."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RET507 (flake8-return): an `elif` or `else` right after an `if` body whose first jump is a `continue`. That
+// branch goes on to the next iteration, so the rest can be dedented. Only an if's first elif/else clause is
+// paired with its body, and only the body's own statements are looked at, in order: the first return, raise,
+// break or continue decides which rule fires. Checked in each def RET reads (python/flow-return); reported
+// at the keyword.
+//   if x:
+//       continue
+//   else:                      ← RET507 "Unnecessary `else` after `continue` statement"
+//       y()
+#include "python/flow-return.rr"
+
+.violation RET507(at: span, w: symbol) code "RET507" "Unnecessary `{w}` after `continue` statement"
+    suppress ruff "RET507"
+RET507(kw, w) :- else_after_jump(kw, w, "continue").
