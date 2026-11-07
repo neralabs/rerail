@@ -400,14 +400,19 @@ fn t_programs_run_natively_over_atoms_like_t() {
 fn product_programs_derive_t_outputs() {
     let facts = facts();
     // T's facts predate `strprefix` (which calls.rr's type relations read, decision 0047): empty here, so every
-    // string is str. No T output reads it.
+    // string is str. Likewise the guests (`parsed`, `host_node`, decision 0055): no string is parsed. No T output
+    // reads them.
     Connection::open(&facts).unwrap().execute_batch(
         "CREATE TABLE strprefix(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.strprefix', 0);
-         INSERT INTO stat_col VALUES ('strprefix', 'n', 0, 0, 0, 0), ('strprefix', 's', 0, 0, 0, 0)",
+         INSERT INTO stat_col VALUES ('strprefix', 'n', 0, 0, 0, 0), ('strprefix', 's', 0, 0, 0, 0);
+         CREATE TABLE parsed(s INTEGER, grammar TEXT, root INTEGER); INSERT INTO stat_meta VALUES ('rows.parsed', 0);
+         INSERT INTO stat_col VALUES ('parsed', 's', 0, 0, 0, 0), ('parsed', 'grammar', 0, 0, 0, 0), ('parsed', 'root', 0, 0, 0, 0);
+         CREATE TABLE host_node(n INTEGER, h INTEGER); INSERT INTO stat_meta VALUES ('rows.host_node', 0);
+         INSERT INTO stat_col VALUES ('host_node', 'n', 0, 0, 0, 0), ('host_node', 'h', 0, 0, 0, 0)",
     ).unwrap();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
-        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::tools::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let p = prune(parse(&src).unwrap());
         let options = Options::default();
         let p = prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap());
@@ -461,7 +466,7 @@ fn own_ingestion_derives_what_t_facts_do() {
     };
     let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     for name in ["workload", "calls"] {
-        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::tools::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");

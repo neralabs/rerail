@@ -27,6 +27,15 @@
 .decl parsed(s: node, grammar: symbol, root: node)
 .decl host_node(n: node, h: node)
 .input parsed, host_node
+// Libraries (t21): the run's settings, the file system the library rules read, and the documents they load. The
+// rules are Python's (python/modules.rr, which reads python/env.rr): an import resolved into typeshed's standard
+// library loads that stub as a document named by its module, so the program reads it as it reads a workspace file.
+.decl env(key: symbol, value: symbol)
+.decl dir_entry(dir: symbol, name: symbol, is_dir: number)
+.decl file_line(path: symbol, i: number, text: symbol)
+.decl load(path: symbol, module: symbol, grammar: symbol, role: symbol)
+.decl loaded(path: symbol, module: symbol, grammar: symbol, role: symbol)
+#include "python/modules.rr"
 
 .decl scope(kind: symbol)
 scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").

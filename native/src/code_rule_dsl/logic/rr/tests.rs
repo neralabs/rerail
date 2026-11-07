@@ -646,7 +646,10 @@ fn rdl_programs_translate_to_the_same_program() {
         if beside.exists() && std::fs::read_to_string(&beside).unwrap() != rr {
             failures.push(format!("{name}: {} is not its translation", beside.display()));
         }
-        match (front::parse(&text).map(normalized), parse(&rr)) {
+        // The program's own statements: an `#include` passes through the translation as it is (checked above), and
+        // what it names is read with the file (`parse_file`), not here.
+        let own: String = rr.lines().map(|l| if l.starts_with("#include") { "" } else { l }).collect::<Vec<_>>().join("\n");
+        match (front::parse(&text).map(normalized), parse(&own)) {
             (Ok(a), Ok(b)) => {
                 failures.extend(difference(&a, &without_requests(b.clone())).map(|d| format!("{name}: {d}")));
                 // Printed, the program reads back as itself.

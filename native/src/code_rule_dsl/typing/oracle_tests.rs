@@ -148,7 +148,7 @@ pub(super) fn score_python(program: &str) -> (usize, BTreeMap<String, Departure>
 }
 
 fn program(name: &str) -> String {
-    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
+    crate::code_rule_dsl::tools::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
 }
 
 /// Where `calls.rr` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
@@ -515,8 +515,8 @@ at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
 #[test]
 fn imports_resolve_into_a_library_and_load_its_stubs() {
     // fixtures/python/world_load: ws/main.py imports os.path, json and collections; ws/rerail.env says `lib =
-    // ../lib`, a stub tree with os/__init__.pyi, os/path.pyi, collections/__init__.pyi and a VERSIONS file. The rules
-    // walk it with dir_entry and file_line and load what resolves (t21 E1, E2, E4); json is in no root.
+    // ../ts/stdlib`, a stub tree with os/__init__.pyi, os/path.pyi, collections/__init__.pyi and a VERSIONS file. The
+    // rules walk it with dir_entry and file_line and load what resolves (t21 E1, E2, E4); json is in no root.
     let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
     let rule = r#"
 .decl doc(d: number, path: symbol, module: symbol)
@@ -559,6 +559,23 @@ own(n) :- imp(n, _).
     assert_eq!(read("got"), "collections\tcollections\tlibrary\nos\tos\tlibrary\nos.path\tos\tlibrary\n");
     // The loaded documents' rows are not the corpus's: main.py's three imports only.
     assert_eq!(read("own").lines().count(), 3, "{}", read("own"));
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn calls_into_the_standard_library_reach_its_stubs() {
+    // fixtures/python/world_load/ws: `python.typeshed = ../ts`, a miniature typeshed. calls.rr includes
+    // python/modules.rr, which resolves `import os.path` into ts/stdlib/os/path.pyi and loads it: `os.path.join("a",
+    // "b")` targets the stub's `join`, and no row is about a stub.
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("stdlib");
+    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let rows: Vec<(&str, &str)> = text.lines().filter_map(|l| l.split_once('\t')).collect();
+    // Cells are `path:node`: the one call is main.py's, its target in the stub.
+    assert_eq!(rows.len(), 1, "{text}");
+    assert!(rows[0].0.starts_with("main.py:"), "{text}");
+    assert!(rows[0].1.rsplit_once(':').unwrap().0.ends_with("world_load/ts/stdlib/os/path.pyi"), "{text}");
     let _ = std::fs::remove_dir_all(&out);
 }
 
