@@ -1,7 +1,7 @@
 # Parser generators: JSON's two tiers on Metal, designed before they are built
 
 Status: design, for review (2026-11-07). Nothing here is built. It is designed for JSON, the
-simdjson case, first. §10 lists what must generalise.
+simdjson case, first. §10 lists what must generalise. §11 records the answers given so far.
 
 ## Intro
 
@@ -20,13 +20,13 @@ prefix scans over small per-chunk entries, and everything else runs in parallel.
 The plan for JSON, from the analysis in §1:
 
 ```
-pass A    every byte, once:  tier 1, and each 2 KB's entry (two candidates)
+pass A    every byte, once:  tier 1, and each 2 KB's entry (four candidates)
 barrier
 scans     over the entries:  S1 (strings)  ->  S2 (stack, keys)  ->  S3 (counts)
 barrier
-pass B    every byte again:  exact carry-ins; each block's tokens; node records
-barrier                      (with one mid-pass barrier to match closes to opens)
-pass C    every node:        the tape's columns, at their final widths
+pass B    every byte again:  exact carry-ins; each block's tokens; the tape, written
+barrier                      directly (closes matched to opens: §4, set in Bitlex)
+pass C    every node:        `off`, and the 2-byte narrowing of `off` and `tail`
 ```
 
 So the bytes are read twice, and the longest chain of dependent scans is three. No
@@ -72,14 +72,10 @@ Two choices made by this table:
 
 ### 1.1 Fusing a scan into the pass before it
 
-S2's entries depend on S1 only through the string state at a block's first byte. Each entry
-holds both candidates, and the scan phase picks one once S1 is done. So S1 and S2 need no pass
-over the bytes between them.
-
-- **The string state:** in a string at the block's start or not, two candidates.
-- **The escape state** at the first byte matters only when the byte before the block is a
-  backslash. The lane sees that byte in its halo. Only then does an entry need four candidates,
-  and that case is rare.
+S2's entries depend on S1 only through two bits at a block's first byte: in a string or not,
+and escaped or not. Each entry holds all four candidates, always, so every entry has one
+layout. The scan phase picks one once S1 is done. So S1 and S2 need no pass over the bytes
+between them.
 
 The general rule, for later: fuse when the dependent summary is small and the earlier carry
 reaches it through `k` bits at the edge, so `2^k` candidates, and when computing the
@@ -94,20 +90,23 @@ entries are stored between passes.
 | field | bits | combine |
 |---|---:|---|
 | S1: the escape and string carries, as a function of the carry-in | 4 | compose |
-| *per string-state candidate (×2):* | | |
+| *per candidate (×4): string state × escape state at the first byte* | | |
 | the stack effect (§3) | 64 | §3 |
 | first and last token kinds | 6 | first / last present |
+| the last token start, from the entry's start (for `tail`, §5) | 11 | last present |
 | keys: is the string open at the end a key? (needs the right) | 2 | backward borrow |
 | token count; node count, and +1 if the open string is a key | 12 + 13 + 1 | add |
 | error | 1 | OR |
-| codes used (JSON has fewer than 32) | 32 | OR |
-| total | about 35 bytes | |
+| total | about 57 bytes | |
+
+The codes used are not in the entry. Pass B finds each code's first use by an `atomic_min`
+of `ord`.
 
 S1's 4 bits are a function from the escape carry-in to (escape carry-out, string parity).
 Two such functions compose into one, so S1 is one scan for both of tier 1's carries.
 
 **Where entries go.** In threadgroup memory while they fit, and in device memory past that.
-32 KB, less pass B's 3.4 KB (§4), holds about 800 entries, so 1.6 MB of a file at a time.
+32 KB, less pass B's 3.4 KB (§4), holds about 500 entries, so 1 MB of a file at a time.
 Larger files go in chunks (§6).
 
 ## 3. The 8-byte stack effect
@@ -170,7 +169,16 @@ The node starts at one byte, with their ranks:
 
 **Matching a close to its open** needs the open's `ord`. That is the latest open at the same
 level before the close. JSON has 13 bracket levels, 13 pair levels and the open string, so 27
-values:
+values. There are two ways to find it, and the Bitlex file chooses one, so both can be
+measured:
+
+```
+nested max 13 match barrier     # the default: below
+nested max 13 match scan        # a fourth scan over the entries, for the 27 open ords
+```
+
+`match scan` adds 108 bytes per candidate to an entry, and needs no mid-pass barrier and no
+second walk. `match barrier` works like this:
 
 - **in the same lane:** in registers, from the walk;
 - **in an earlier lane of the same pass:** each lane offers its last unmatched open per level.
@@ -178,13 +186,25 @@ values:
   SIMD group and level goes to threadgroup memory: 32 × 27 × 4 bytes, 3.4 KB. Barrier.
 - **in an earlier pass:** the 27 values carried from pass to pass.
 
-So pass B has one barrier in its middle. Before it, the walk writes every node's start record.
-After it, the closes whose open is outside the lane write `size` and `end` into the open's
-record. The second half walks only the lane's closes again.
+So pass B has one barrier in its middle. Before it, the walk writes every node's columns that
+its start decides. After it, the closes whose open is outside the lane write that open's
+`size` and `tail`. The second half walks only the lane's closes again.
 
-**Records** go to scratch in device memory, one per node: start, end and size (4 bytes each),
-code (2) and level (1). `atomic_min` of `ord` per code gives first use. `atomic_max` per
-column gives the widths.
+**Pass B writes the tape directly**, at `ord`:
+
+| column | written by | width |
+|---|---|---|
+| `code` | the node's start; renumbered in pass C if first use differs from the guess | known |
+| `size` | its close: `C[end + 1] − ord` | known after S3, from the total |
+| `base` | each node whose `ord` is a multiple of 16: its start | 4 bytes |
+| `off` | the node's start, as an absolute position for now (pass C) | 4 bytes for now |
+| `tail` | its close: `end + 1 −` the last token start at or before `end` | 4 bytes for now |
+
+Every node starts at a token start, so the last node to start inside a node is the last token
+start at or before its end. That is a forward "last present": in the lane, from the walk;
+before it, from the SIMD prefix max and the entry's field.
+
+`atomic_min` of `ord` per code gives first use. `atomic_max` of `tail` gives its width.
 
 **Checks** in the walk, any failure setting the file's error:
 
@@ -193,19 +213,23 @@ column gives the widths.
 - keywords;
 - the stack's errors.
 
-## 5. Pass C: the tape
+## 5. Pass C: a second pass over the tape
 
-One thread per node, reading the scratch records:
+One thread per node, over the tape pass B wrote:
 
-- `code`: renumbered by first use, from a table of a few dozen codes sorted by one thread
-  after pass B;
-- `size`;
-- `base` for each 16 nodes, the start of node `16g`, and `off = start − base`;
-- `tail = end + 1 − start[C[end + 1] − 1]`, a gather from the starts;
-- each column at its final width.
+1. `off = start − base[ord / 16]`, from the absolute start pass B left in `off`; a threadgroup
+   max of `off`. Barrier.
+2. `off` and `tail` narrowed to 2 bytes where their maxima allow, into their final place.
+3. `code` renumbered, if the first-use order differs from the guessed one. The few dozen codes
+   are sorted by one thread.
 
-The only guess is the host's buffer capacity, from the file's length at JSON's measured node
-density. A file that overflows it runs again with the true size, which the first run knows.
+The only other guess is the host's buffer capacity, from the file's length at JSON's measured
+node density. A file that overflows it runs again with the true size, which the first run
+knows.
+
+`off` might instead come in pass B from a forward scan of "the start of the last node whose
+`ord` is a multiple of 16". That scan depends on S3, so it would be a fourth. Pass C is
+simpler, and it is needed for the narrowing anyway.
 
 ## 6. Large files: sequential chunks
 
@@ -268,13 +292,10 @@ register, the bracket stack in registers bounded by 13. The CPU needs no scans:
   chooses forward or backward by depth.
 - The chunk commit point, for any backward carry.
 
-## 11. Open questions
+## 11. Answered (2026-11-07)
 
-1. **Pass B's mid barrier.** Matching closes inside a pass needs it. The alternative is a
-   fourth scan over the entries, for the 27 open `ord`s. That needs 108 bytes per entry, about
-   four times the entry, but drops the barrier and the second walk.
-2. **The four-candidate case** (a block after a backslash): store four candidates always, or
-   flag the entry and re-run its block in the scan phase?
-3. **Scratch records then pass C, or pass B writing the tape directly** once the widths are
-   known. They are known after S3 for `size`, but not for `off` and `tail` until every start is
-   written.
+1. **Matching closes to opens:** set in Bitlex, `match barrier` or `match scan`, and measured
+   (§4).
+2. **Candidates:** always four, so every entry has one layout (§1.1).
+3. **The tape:** pass B writes it directly. `off` and `tail` are finished by a second pass over
+   the tape (§5), or from a prefix sum where one is at hand, as `tail` is.
