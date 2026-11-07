@@ -185,7 +185,7 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/hnsw-architecture.rr",
-      "sha256": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e",
+      "sha256": "f229140c59da19643bcdd901b6cb70274eaf5bc5226ffb1291ce1cc83e8bfc4a",
       "importedSha256": "7f6aa1428a8c1ffb9b1f1e806213b05bf3ab9d2286e167e76a4ffbd07f2c5147",
       "repairs": [
         {
@@ -202,6 +202,11 @@
           "before": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100",
           "after": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e",
           "reason": "Match Python identifier normalization, normalized import components, and parenthesized SqlFragment receivers"
+        },
+        {
+          "before": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e",
+          "after": "f229140c59da19643bcdd901b6cb70274eaf5bc5226ffb1291ce1cc83e8bfc4a",
+          "reason": "Retain each decoded string constant occurrence as a distinct diagnostic witness"
         }
       ]
     },
@@ -1908,7 +1913,7 @@
       "legacySha256": "c7545b1fb8197b746548e00b4318a65710dd54c39bee35790a1ebd8a7e80ebd6",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/hnsw-architecture.rr",
-      "ruleSha256": "e9c850a314e95643c4ce334d0382fcfaad3e39b3da5170b18bc7b77ebdb2f52e"
+      "ruleSha256": "f229140c59da19643bcdd901b6cb70274eaf5bc5226ffb1291ce1cc83e8bfc4a"
     },
     {
       "check": "embedding_vector_orchestration",
