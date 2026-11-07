@@ -1404,6 +1404,13 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/transaction-closures.rr",
+      "sha256": "9f23a9293cf43b70f29c9aa40bece1331aa3566689ae67b8d3824d7770bc6b5d",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_transaction_closures.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
@@ -1615,8 +1622,9 @@
       "batch": 3,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-transaction-closures.json",
       "legacySha256": "83f35c1e002c5f11945b0fdf18a02ecae99f2a976a0124b87ffcdb84f0e8da56",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/transaction-closures.rr",
+      "ruleSha256": "9f23a9293cf43b70f29c9aa40bece1331aa3566689ae67b8d3824d7770bc6b5d"
     },
     {
       "check": "transaction_callback_wrappers",

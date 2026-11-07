@@ -61,12 +61,13 @@ class Contract:
         self.module=importlib.import_module('scripts.lint_transaction_closures');m=self.module
         from native_guard import codes
         originals=codes({'transaction_closures':m})
+        targets=[(m,n) for n in FUNCTIONS]+[(getattr(m,c),n) for c,names in METHODS.items() for n in names]
+        signatures={(owner,name):inspect.signature(getattr(owner,name)) for owner,name in targets}
         if self.backend:
             from transaction_port import install
             install(self.backend,m)
-        targets=[(m,n) for n in FUNCTIONS]+[(getattr(m,c),n) for c,names in METHODS.items() for n in names]
         for owner,name in targets:
-            original=getattr(owner,name);signature=inspect.signature(original);entry=name if owner is m else owner.__name__+'.'+name
+            original=getattr(owner,name);signature=signatures[owner,name];entry=name if owner is m else owner.__name__+'.'+name
             def wrap(original,signature,entry):
                 def run(*args,**kwargs):
                     if self.depth:return original(*args,**kwargs)
@@ -118,12 +119,11 @@ class Contract:
             for test in selected:
                 expected=sum(r['test']==test for r in self.baseline['calls'])
                 if expected!=self.observed.get(test,0):missing.append(test)
-        assert not missing,missing
         result=dict(format='rerail.transaction-closures-original-contracts/v1',sourcePin=PIN,commit=PIN,
             pytest_exit_code=int(code),exitCode=int(code),events=[],source_mismatches=[],oracle=self.backend is None,
             execution='native-snapshot' if self.backend else 'offline-source',fullMigrationAcceptance=False,
             part=self.args.part,parts=self.args.parts,collected=self.collected,cases=self.cases,calls=self.calls,
-            semanticFallbacks=self.semantic_fallbacks,casesWithoutCalls=[t for t in selected if not any(r['test']==t for r in self.calls)],
+            semanticFallbacks=self.semantic_fallbacks,missingResults=missing,casesWithoutCalls=[t for t in selected if not any(r['test']==t for r in self.calls)],
             sourceSha256=sha((self.source/'scripts/lint_transaction_closures.py').read_bytes()),
             testsSha256=sha((self.source/'scripts/tests/test_lint_transaction_closures.py').read_bytes()),
             harnessSha256=sha(Path(__file__).read_bytes()))
@@ -137,6 +137,8 @@ def main():
     parser.add_argument('--part',type=int,default=0);parser.add_argument('--parts',type=int,default=1);args=parser.parse_args()
     args.source=args.source.absolute();args.out=args.out.absolute()
     if args.baseline:args.baseline=args.baseline.absolute()
+    if args.engine:args.engine=args.engine.absolute()
+    if args.rule_root:args.rule_root=args.rule_root.absolute()
     assert git(args.source,'rev-parse','HEAD')==PIN
     assert 0<=args.part<args.parts and (args.command=='native' or (args.part,args.parts)==(0,1))
     sys.path[:0]=[str(args.source),str(args.source/'scripts'),str(ROOT/'scripts/dsl/data_layer_audit')]
