@@ -4,10 +4,11 @@
 //!   rerail-engine asm <file.rir>
 //!   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
 //!   rerail-engine gc <store.sqlite> [--history-mb <n>]
+//!   rerail-engine flatten <program.rr>
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine flatten <program.rr>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -32,6 +33,11 @@ fn run(args: &[String]) -> Result<String, String> {
             _ => Err(USAGE.into()),
         },
         Some("logic") => logic(&args[1..]),
+        // The program `logic` runs for a file: `core.rr` and its includes resolved, lowered and printed as `.rr`.
+        Some("flatten") => match &args[1..] {
+            [file] => rerail_engine::tools::flatten(Path::new(file.as_str())),
+            _ => Err(USAGE.into()),
+        },
         #[cfg(feature = "tape-cache")]
         Some("gc") => gc(&args[1..]),
         #[cfg(not(all(feature = "dump-cli", feature = "tape-cache")))]
