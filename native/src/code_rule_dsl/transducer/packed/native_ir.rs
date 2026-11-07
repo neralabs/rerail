@@ -423,7 +423,7 @@ pub(super) enum BlockInst {
     /// block to block; on Metal by a scan of lane summaries (`metal_block_program`).
     Prev(u16, u8),
     Toggle(u16),
-    AfterOddRun(u16),
+    Escaped(u16),
     /// `fill(s, e)` (`block::BlockOp::Fill`): one add per word, its carry a borrow.
     Fill(u16, u16),
     /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
@@ -433,7 +433,7 @@ pub(super) enum BlockInst {
 impl BlockInst {
     /// Whether the instruction carries across blocks.
     pub(super) fn carried(&self) -> bool {
-        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_) | BlockInst::Fill(..))
+        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..))
     }
 }
 
@@ -455,7 +455,7 @@ impl BlockNative {
                 BlockOp::AndNot(a, b) => BlockInst::AndNot(a, b),
                 BlockOp::Prev(a, k) => BlockInst::Prev(a, k),
                 BlockOp::Toggle(a) => BlockInst::Toggle(a),
-                BlockOp::AfterOddRun(a) => BlockInst::AfterOddRun(a),
+                BlockOp::Escaped(a) => BlockInst::Escaped(a),
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
             })
@@ -518,7 +518,7 @@ impl BlockNative {
                 BlockInst::AndNot(a, b) => f.push(BlockInst::AndNot(m(a), m(b))),
                 BlockInst::Prev(a, k) => f.push(BlockInst::Prev(m(a), k)),
                 BlockInst::Toggle(a) => f.push(BlockInst::Toggle(m(a))),
-                BlockInst::AfterOddRun(a) => f.push(BlockInst::AfterOddRun(m(a))),
+                BlockInst::Escaped(a) => f.push(BlockInst::Escaped(m(a))),
                 BlockInst::Fill(a, b) => f.push(BlockInst::Fill(m(a), m(b))),
                 other => f.push(other),
             };

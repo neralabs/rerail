@@ -641,7 +641,7 @@ fn class_strategies_gpu_time() {
     }
 }
 
-// --- Primitives 9-11: prev, toggle, after_odd_run (carried) ---------------------------------
+// --- Primitives 9-11: prev, toggle, escaped (carried) ---------------------------------
 
 /// The byte-by-byte references of the carried operations, over a mask of bytes.
 fn bits(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<bool> {
@@ -665,23 +665,25 @@ fn toggle_reference(a: &[bool]) -> Vec<bool> {
     a.iter().map(|&x| { parity ^= x; parity }).collect()
 }
 
-fn after_odd_run_reference(a: &[bool]) -> Vec<bool> {
+/// simdjson's escaped bytes: each byte after an even-offset bit of a run (the run's own
+/// odd-offset bits, and the byte after an odd run).
+fn escaped_reference(a: &[bool]) -> Vec<bool> {
     let mut run = 0usize;
     a.iter()
         .map(|&x| {
-            let after = !x && run % 2 == 1;
+            let escaped = run % 2 == 1;
             run = if x { run + 1 } else { 0 };
-            after
+            escaped
         })
         .collect()
 }
 
 #[test]
 fn carried_round_trip_and_refusals() {
-    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 3\n  block 0 %2 = toggle %0\n  block 0 %3 = after_odd_run %0\n  block 0 output %1\n  block 0 output %2\n  block 0 output %3\n";
+    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 3\n  block 0 %2 = toggle %0\n  block 0 %3 = escaped %0\n  block 0 output %1\n  block 0 output %2\n  block 0 output %3\n";
     let p = program(rows);
     let text = rir::disassemble(&p, None);
-    for line in ["%1 = prev %0, 3", "%2 = toggle %0", "%3 = after_odd_run %0"] {
+    for line in ["%1 = prev %0, 3", "%2 = toggle %0", "%3 = escaped %0"] {
         assert!(text.contains(line), "{line}\n{text}");
     }
     assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
@@ -689,7 +691,7 @@ fn carried_round_trip_and_refusals() {
         ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 0\n  block 0 output %1\n", "distance 0"),
         ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 64\n  block 0 output %1\n", "distance 64"),
         ("  block 0 %0 = toggle %0\n  block 0 output %0\n", "toggle of itself"),
-        ("  block 0 %0 = after_odd_run %1\n  block 0 output %0\n", "a later operand"),
+        ("  block 0 %0 = escaped %1\n  block 0 output %0\n", "a later operand"),
     ] {
         let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
         assert!(rir::assemble(&text).is_err(), "{why}: accepted\n{text}");
@@ -711,9 +713,9 @@ fn toggle_equals_reference_on_every_executor() {
 }
 
 #[test]
-fn after_odd_run_equals_reference_on_every_executor() {
-    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = after_odd_run %0\n  block 0 output %1\n";
-    check_all(rows, |bytes| vec![words_of(&after_odd_run_reference(&bits(bytes, |b| b == b'\\')))]);
+fn escaped_equals_reference_on_every_executor() {
+    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = escaped %0\n  block 0 output %1\n";
+    check_all(rows, |bytes| vec![words_of(&escaped_reference(&bits(bytes, |b| b == b'\\')))]);
 }
 
 // --- Primitive 13: fill (carried, two operands) ---------------------------------------------
@@ -763,14 +765,14 @@ fn fill_equals_reference_on_every_executor() {
     });
 }
 
-/// `fill` in one round with `toggle` and `after_odd_run` (three scanned carries, one table), and
+/// `fill` in one round with `toggle` and `escaped` (three scanned carries, one table), and
 /// a fill whose operands are carried values.
 #[test]
 fn fill_with_other_carries_equals_reference_on_every_executor() {
     let rows = "  block 0 %0 = eq 0x5c
   block 0 %1 = eq 0x22
   block 0 %2 = eq 0x61
-  block 0 %3 = after_odd_run %0
+  block 0 %3 = escaped %0
                 \x20 block 0 %4 = toggle %1
   block 0 %5 = fill %2, %0
   block 0 %6 = fill %4, %3
@@ -779,7 +781,7 @@ fn fill_with_other_carries_equals_reference_on_every_executor() {
 ";
     check_all(rows, |bytes| {
         let (bs, q, a) = (bits(bytes, |x| x == b'\\'), bits(bytes, |x| x == b'"'), bits(bytes, |x| x == b'a'));
-        let (escaped, inside) = (after_odd_run_reference(&bs), toggle_reference(&q));
+        let (escaped, inside) = (escaped_reference(&bs), toggle_reference(&q));
         vec![words_of(&fill_reference(&a, &bs)), words_of(&fill_reference(&inside, &escaped))]
     });
 }
@@ -797,9 +799,9 @@ fn fill_lowers_to_straight_bit_operations() {
 /// quotes removed before the toggle, then a shift of the result.
 #[test]
 fn carried_chain_equals_reference_on_every_executor() {
-    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 1\n  block 0 output %4\n  block 0 output %5\n";
+    let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 1\n  block 0 output %4\n  block 0 output %5\n";
     check_all(rows, |bytes| {
-        let escaped = after_odd_run_reference(&bits(bytes, |b| b == b'\\'));
+        let escaped = escaped_reference(&bits(bytes, |b| b == b'\\'));
         let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
         let inside = toggle_reference(&quote);
         vec![words_of(&inside), words_of(&prev_reference(&inside, 1))]
@@ -813,13 +815,13 @@ fn carried_chain_equals_reference_on_every_executor() {
 #[cfg(target_os = "macos")]
 fn lookback_fallback_equals_reference() {
     use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
-    let one = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
-    let two = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n";
+    let one = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
+    let two = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n";
     for (rows, halo) in [(one, false), (two, true)] {
         let p = program(rows);
         let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
         for bytes in runs() {
-            let escaped = after_odd_run_reference(&bits(&bytes, |b| b == b'\\'));
+            let escaped = escaped_reference(&bits(&bytes, |b| b == b'\\'));
             let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
             let inside = toggle_reference(&quote);
             let mut want = vec![words_of(&inside)];
@@ -859,7 +861,7 @@ fn generated_msl_is_one_kernel() {
 fn carried_lower_to_straight_bit_operations() {
     check_lowering(
         "carried",
-        &program("  block 0 %0 = eq 0x5c\n  block 0 %1 = after_odd_run %0\n  block 0 %2 = toggle %1\n  block 0 %3 = prev %2, 1\n  block 0 output %3\n"),
+        &program("  block 0 %0 = eq 0x5c\n  block 0 %1 = escaped %0\n  block 0 %2 = toggle %1\n  block 0 %3 = prev %2, 1\n  block 0 output %3\n"),
     );
 }
 
@@ -1286,7 +1288,7 @@ fn rir_loop_size() {
     }
 }
 
-/// A program's carried state in bits (decision 0048): one bit per `toggle`, `after_odd_run` and
+/// A program's carried state in bits (decision 0048): one bit per `toggle`, `escaped` and
 /// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
 /// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
 /// costs `k - 1` more. Every executor carries these bits and no more: Cranelift packs them into
@@ -1300,7 +1302,7 @@ pub(super) fn state_bits(p: &block::BlockProgram) -> usize {
             *m = (*m).max(k);
         }
     }
-    let ops = p.ops.iter().filter(|op| matches!(op, Toggle(_) | AfterOddRun(_) | Fill(..))).count();
+    let ops = p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count();
     let looks: usize = back
         .iter()
         .map(|(&a, &k)| match p.ops[usize::from(a)] {
@@ -1315,5 +1317,5 @@ pub(super) fn state_bits(p: &block::BlockProgram) -> usize {
 pub(super) fn carried_words(p: &block::BlockProgram) -> usize {
     use super::block::BlockOp::*;
     let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
-    bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | AfterOddRun(_) | Fill(..))).count()
+    bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count()
 }

@@ -11,7 +11,7 @@
 //! lanes holds one file, so it runs one program. Files are read in place through a file table
 //! (`FileRow`), as zero outside them.
 //!
-//! Carried operations (`prev`, `toggle`, `after_odd_run`, `fill`) follow `06-block-parallel.md` §2
+//! Carried operations (`prev`, `toggle`, `escaped`, `fill`) follow `06-block-parallel.md` §2
 //! and §5. A lane's carry is combined across its SIMD group by SIMD-group operations, and across a
 //! file's groups by decoupled look-back with bounded polls (`13-tape-on-the-gpu.md` §5.3). Groups
 //! take their numbers in launch order from persistent workers; a group waits only on earlier groups
@@ -109,7 +109,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::PlaneBefore(k) => [11, 0, 0, u32::from(k)],
         BlockInst::Prev(a, k) => [8, u32::from(a), carry, u32::from(k)],
         BlockInst::Toggle(a) => [9, u32::from(a), carry, 0],
-        BlockInst::AfterOddRun(a) => [10, u32::from(a), carry, 0],
+        BlockInst::Escaped(a) => [10, u32::from(a), carry, 0],
         // Its second operand in `imm`: `b` is the carry's index.
         BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
@@ -646,7 +646,7 @@ struct Plan {
     /// The local `prev`s: of a value of the bytes alone with no `prev` in it; their halo is
     /// recomputed over the 64 bytes before the lane (`halo_window`).
     windowed: Vec<usize>,
-    /// The scanned carries (`toggle`, `after_odd_run`, `fill`), in order: a state per group each.
+    /// The scanned carries (`toggle`, `escaped`, `fill`), in order: a state per group each.
     scanned: Vec<usize>,
     /// The other `prev`s, in order: a published halo per group each.
     halos: Vec<usize>,
@@ -708,7 +708,7 @@ impl Plan {
 
 fn operands(inst: &BlockInst) -> Vec<usize> {
     match *inst {
-        BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::AfterOddRun(a) => vec![usize::from(a)],
+        BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => vec![usize::from(a)],
         BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
             vec![usize::from(a), usize::from(b)]
         }
@@ -790,7 +790,7 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
                  \x20 if (!look_back(states + f.state_base + {j}u * f.groups, g, l, s{at} | ((1u ^ s{at}) << 1u), spins, cin{at})) return false;\n\
                  \x20 const {m} v{at} = apply_toggle(v{a}, cin{at});\n"
             )),
-            (Placement::Scanned(j), BlockInst::AfterOddRun(a)) => scanned(out, j, &format!("after_odd_run(v{a}, CIN, OUT)")),
+            (Placement::Scanned(j), BlockInst::Escaped(a)) => scanned(out, j, &format!("escaped(v{a}, CIN, OUT)")),
             (Placement::Scanned(j), BlockInst::Fill(a, e)) => scanned(out, j, &format!("fill_word(v{a}, v{e}, CIN, OUT)")),
             _ => unreachable!("placement"),
         }
@@ -915,7 +915,7 @@ fn emit(
             // The bits of the word's bytes below the stream's end.
             BlockInst::Within(0) => format!("within_lane<{m}>(len, {offset})"),
             BlockInst::Within(d) => format!("{m}(within_lane<{m}>(len + {d}u, {offset}) & ~within_lane<{m}>({d}u, {offset}))"),
-            BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_) | BlockInst::Fill(..) => unreachable!(),
+            BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
     }
@@ -932,7 +932,7 @@ fn cone(native: &BlockNative, roots: &[usize]) -> Vec<usize> {
             continue;
         }
         match native.insts[at] {
-            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::AfterOddRun(a) => stack.push(usize::from(a)),
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => stack.push(usize::from(a)),
             BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
                 stack.push(usize::from(a));
                 stack.push(usize::from(b));

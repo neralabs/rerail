@@ -47,3 +47,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0046 | The CPU tape writer: starts and ends a word at a time, a stack per row and level, nodes in preorder, packed by the tape's one packer (`from_written`) | accepted |
 | 0047 | Compiled languages keep simdjson's shape, locked by tests: no alignment carries (outputs and fallback at their own delays), `within d` a leaf, byte classes and `prev`s fold, JSON budgets as ratchets | accepted |
 | 0048 | Carried state is bits: one per carried op, `k` per looked-back value; Cranelift packs them into fields of a few words; guards count bits and carried parameters | accepted |
+| 0049 | Two tiers, as simdjson's two stages: tier 1 (block program) only classes, strings, token starts and lasts, per-byte errors; tier 2 (the tape writer, per token) kinds, keywords, checks, nesting on a stack, roles; the primitive is simdjson's `escaped` | accepted |

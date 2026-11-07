@@ -25,7 +25,7 @@ program -
   block 0 %2 = class t0 0x20      ; backslash
   block 0 %3 = class t0 0x40      ; raw quote
   block 0 %4 = class t0 0x80      ; unescaped (control characters)
-  block 0 %5 = after_odd_run %2   ; escaped
+  block 0 %5 = escaped %2         ; escaped
   block 0 %6 = andnot %3, %5      ; quote
   block 0 %7 = toggle %6          ; in_string: prefix_xor(quote)
   block 0 %8 = xor %7, %6         ; string_tail

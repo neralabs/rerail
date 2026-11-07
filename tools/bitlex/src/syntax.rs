@@ -52,6 +52,52 @@ pub struct MachineDef {
     pub rules: Vec<(String, Vec<String>, String)>,
 }
 
+/// Where a tree node starts.
+#[derive(Clone, Debug)]
+pub enum NodeStart {
+    /// A mask, or a node kind's name (its starts).
+    At(Expr),
+    FirstToken,
+}
+
+/// Where a tree node ends.
+#[derive(Clone, Debug)]
+pub enum NodeEnd {
+    At(Expr),
+    /// With its child that has this field.
+    With(String),
+    LastToken,
+}
+
+/// A node's nesting.
+#[derive(Clone, Debug)]
+pub enum Nest {
+    /// A `count` scan's level (the one end rule).
+    Level(String),
+    /// The tape writer's stack, at most `max` deep.
+    Nested(Option<u32>),
+}
+
+/// A tier-2 condition at a node's start: the previous token is of one of `after`'s kinds, and the
+/// innermost open node is of kind `parent`.
+#[derive(Clone, Debug, Default)]
+pub struct Cond {
+    pub after: Vec<String>,
+    pub parent: Option<String>,
+}
+
+/// A code fact's test.
+#[derive(Clone, Debug)]
+pub enum FactWhen {
+    Mask(Expr),
+    StartOf(String),
+    /// `= not start of K`: no node of kind `K` starts at the node's start.
+    NotStartOf(String),
+    Cond(Cond),
+    /// No test: every node of the kinds.
+    Always,
+}
+
 #[derive(Clone, Debug)]
 pub enum Stmt {
     Lexer(String),
@@ -73,7 +119,10 @@ pub enum Stmt {
     Carry(String, Expr),
     Next(String, Expr),
     Ucode { over: Expr, classes: Vec<(String, UClass)> },
-    Token { kind: String, start: Expr, through: Option<Expr> },
+    /// `token K = start S [through T | last L]`: a token at each bit of `S`, running through
+    /// `T`'s bytes, or ending at the first bit of `L` at or after its start (a tier-1 mask: no
+    /// fill, docs/final-shape/decisions/0049).
+    Token { kind: String, start: Expr, through: Option<Expr>, last: Option<Expr> },
     Munch { kind: String, over: Expr, lits: Vec<(Vec<u8>, Option<String>)> },
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
@@ -84,12 +133,19 @@ pub enum Stmt {
     /// `tree NAME { … }`: the statements that say where each node starts and ends
     /// (docs/parser-generators/13-tape-on-the-gpu.md).
     Tree { name: String, body: Vec<Stmt> },
-    /// `node KIND start S end E [level L]`: a node at each bit of `S`, ending at the first bit of
-    /// `E` at or after it where count `L` after the byte equals `L` before the start.
-    Node { kind: String, start: Expr, end: Expr, level: Option<String> },
+    /// `node KIND start S [when C] end E [level L | nested [max D]]`: a node at each bit of `S`
+    /// (a mask, or another node kind's starts; or `first token`) where `C` holds, ending at the
+    /// first bit of `E` at or after it where count `L` after the byte equals `L` before the
+    /// start; or `end with F`, with its child of field `F`; or `last token`. `nested`: on the
+    /// tape writer's stack (decision 0049).
+    Node { kind: String, start: NodeStart, when: Option<Cond>, end: NodeEnd, level: Option<Nest> },
     /// `field NAME of KIND … = E`, `supertype NAME of KIND … = E`: a fact of the code of a node
-    /// of those kinds that starts at a bit of `E`.
-    Fact { field: bool, name: String, kinds: Vec<String>, expr: Expr },
+    /// of those kinds that starts at a bit of `E`; `= start of K`, where a node of kind `K` starts
+    /// too; `when C`, where `C` holds at its start.
+    Fact { field: bool, name: String, kinds: Vec<String>, expr: FactWhen },
+    /// `check KIND is VALIDATOR`: each node of the kind is checked by a built-in validator
+    /// (`json_number`, `integer`, `float`, …); a failing one sends the file to tree-sitter.
+    Check { kind: String, validator: String },
     /// `extra KIND …`: nodes of these kinds carry the extra flag.
     Extra(Vec<String>),
     /// `untoken KIND …`: tokens of these kinds are not nodes; a `node` statement makes them.
@@ -321,6 +377,30 @@ impl P {
             }
             _ => self.ident(),
         }
+    }
+
+    /// `after K | after (K | K …)`, then optionally `and parent K`; or `parent K`.
+    fn cond(&mut self) -> R<Cond> {
+        let mut c = Cond::default();
+        if self.eat_kw("after") {
+            if self.eat_p("(") {
+                loop {
+                    c.after.push(self.kind()?);
+                    if !self.eat_p("|") {
+                        break;
+                    }
+                }
+                self.want_p(")")?;
+            } else {
+                c.after.push(self.kind()?);
+            }
+            if !self.eat_kw("and") {
+                return Ok(c);
+            }
+        }
+        self.want_kw("parent")?;
+        c.parent = Some(self.kind()?);
+        Ok(c)
     }
 
     // --- expressions ---
@@ -607,21 +687,61 @@ impl P {
             "node" => {
                 let kind = self.kind()?;
                 self.want_kw("start")?;
-                let start = self.expr()?;
+                let start = if self.is_kw("first") && matches!(self.peek_at(1), Some(Tok::Ident(t)) if t == "token") {
+                    self.i += 2;
+                    NodeStart::FirstToken
+                } else {
+                    NodeStart::At(self.expr()?)
+                };
+                let when = if self.eat_kw("when") { Some(self.cond()?) } else { None };
                 self.want_kw("end")?;
-                let end = self.expr()?;
-                let level = if self.eat_kw("level") { Some(self.ident()?) } else { None };
-                Stmt::Node { kind, start, end, level }
+                let end = if self.eat_kw("with") {
+                    NodeEnd::With(self.ident()?)
+                } else if self.is_kw("last") && matches!(self.peek_at(1), Some(Tok::Ident(t)) if t == "token") {
+                    self.i += 2;
+                    NodeEnd::LastToken
+                } else {
+                    NodeEnd::At(self.expr()?)
+                };
+                let level = if self.eat_kw("level") {
+                    Some(Nest::Level(self.ident()?))
+                } else if self.eat_kw("nested") {
+                    Some(Nest::Nested(if self.eat_kw("max") { Some(self.int()? as u32) } else { None }))
+                } else {
+                    None
+                };
+                Stmt::Node { kind, start, when, end, level }
+            }
+            "check" => {
+                let kind = self.kind()?;
+                self.want_kw("is")?;
+                Stmt::Check { kind, validator: self.ident()? }
             }
             "field" | "supertype" => {
                 let name = self.ident()?;
                 self.want_kw("of")?;
                 let mut kinds = vec![];
-                while !self.is_p("=") {
+                while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) && !self.is_kw("when") {
                     kinds.push(self.kind()?);
                 }
-                self.want_p("=")?;
-                Stmt::Fact { field: kw == "field", name, kinds, expr: self.expr()? }
+                let start_of = |p: &P| p.is_kw("start") && matches!(p.peek_at(1), Some(Tok::Ident(t)) if t == "of");
+                let expr = if self.eat_kw("when") {
+                    FactWhen::Cond(self.cond()?)
+                } else if !self.eat_p("=") {
+                    FactWhen::Always
+                } else if start_of(self) {
+                    self.i += 2;
+                    FactWhen::StartOf(self.kind()?)
+                } else if self.is_kw("not") && {
+                    self.i += 1;
+                    start_of(self)
+                } {
+                    self.i += 2;
+                    FactWhen::NotStartOf(self.kind()?)
+                } else {
+                    FactWhen::Mask(self.expr()?)
+                };
+                Stmt::Fact { field: kw == "field", name, kinds, expr }
             }
             "extra" | "untoken" => {
                 let mut kinds = vec![];
@@ -636,7 +756,8 @@ impl P {
                 self.want_kw("start")?;
                 let start = self.expr()?;
                 let through = if self.eat_kw("through") { Some(self.expr()?) } else { None };
-                Stmt::Token { kind, start, through }
+                let last = if through.is_none() && self.eat_kw("last") { Some(self.expr()?) } else { None };
+                Stmt::Token { kind, start, through, last }
             }
             "munch" => {
                 let kind = self.ident()?;
@@ -755,4 +876,44 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
         p.nls();
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tier2_tests {
+    use super::*;
+
+    /// The tier-2 forms of decision 0049, as JSON's tree section writes them.
+    #[test]
+    fn tier2_rules_parse() {
+        let src = r#"
+lexer t
+class lbrace = '{'
+mask s = lbrace
+token number = start s last s
+tree json {
+  node document start first token end last token
+  node object start s end s nested max 13
+  node pair start string when after ('{' | ',') and parent object end with value
+  field key of string = start of pair
+  field value of number object when after ':'
+  supertype _value of object number = s
+  check number is json_number
+  supertype _value of object number
+  supertype _value of string = not start of pair
+}
+"#;
+        let stmts = parse(src).expect("parses");
+        let Some(Stmt::Tree { body, .. }) = stmts.iter().find(|s| matches!(s, Stmt::Tree { .. })) else { panic!("a tree") };
+        assert!(matches!(stmts.iter().find(|s| matches!(s, Stmt::Token { .. })), Some(Stmt::Token { last: Some(_), through: None, .. })));
+        assert!(matches!(&body[0], Stmt::Node { start: NodeStart::FirstToken, end: NodeEnd::LastToken, when: None, level: None, .. }));
+        assert!(matches!(&body[1], Stmt::Node { level: Some(Nest::Nested(Some(13))), .. }));
+        let Stmt::Node { when: Some(c), end: NodeEnd::With(f), start: NodeStart::At(Expr::Name(k)), .. } = &body[2] else { panic!("pair: {:?}", body[2]) };
+        assert_eq!((c.after.clone(), c.parent.clone(), f.as_str(), k.as_str()), (vec!["{".to_owned(), ",".to_owned()], Some("object".to_owned()), "value", "string"));
+        assert!(matches!(&body[3], Stmt::Fact { expr: FactWhen::StartOf(k), .. } if k == "pair"));
+        assert!(matches!(&body[4], Stmt::Fact { expr: FactWhen::Cond(Cond { after, parent: None }), kinds, .. } if after == &[":"] && kinds.len() == 2));
+        assert!(matches!(&body[5], Stmt::Fact { expr: FactWhen::Mask(_), .. }));
+        assert!(matches!(&body[6], Stmt::Check { kind, validator } if kind == "number" && validator == "json_number"));
+        assert!(matches!(&body[7], Stmt::Fact { expr: FactWhen::Always, kinds, .. } if kinds.len() == 2));
+        assert!(matches!(&body[8], Stmt::Fact { expr: FactWhen::NotStartOf(k), .. } if k == "pair"));
+    }
 }

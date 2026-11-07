@@ -6,7 +6,7 @@
 //! with it.
 
 use crate::mask::Mask;
-use crate::syntax::{Arg, Expr, MachineDef, Stmt, UClass};
+use crate::syntax::{Arg, Expr, FactWhen, MachineDef, Nest, NodeEnd, NodeStart, Stmt, UClass};
 use std::collections::HashMap;
 
 /// A state per byte: after the events at bytes `<= i` (`st`), before the event at `i` (`pre`),
@@ -46,6 +46,10 @@ pub struct TreeDecl {
     pub facts: Vec<(bool, String, Vec<String>, Mask)>,
     pub extra: Vec<String>,
     pub untoken: Vec<String>,
+    /// The section has tier-2 rules (decision 0049): conditions on the token stream, ends with a
+    /// child, nesting on the writer's stack. Their executor is the engine's tape writer, checked
+    /// against tree-sitter; this evaluator keeps the masks only.
+    pub tier2: bool,
 }
 
 pub struct Output {
@@ -70,6 +74,7 @@ struct TokDef {
     kind: String,
     start: Mask,
     through: Option<Mask>,
+    last: Option<Mask>,
 }
 
 pub struct Ev<'a> {
@@ -304,13 +309,17 @@ impl<'a> Ev<'a> {
                     self.vars.insert(name.clone(), Val::M(m));
                 }
             }
-            Stmt::Token { kind, start, through } => {
+            Stmt::Token { kind, start, through, last } => {
                 let start = self.mask(start)?;
                 let through = match through {
                     Some(t) => Some(self.mask(t)?),
                     None => None,
                 };
-                self.toks.push(TokDef { kind: kind.clone(), start, through });
+                let last = match last {
+                    Some(l) => Some(self.mask(l)?),
+                    None => None,
+                };
+                self.toks.push(TokDef { kind: kind.clone(), start, through, last });
             }
             Stmt::Munch { kind, over, lits } => {
                 let over = self.mask(over)?;
@@ -327,21 +336,36 @@ impl<'a> Ev<'a> {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
             }
-            Stmt::Node { kind, start, end, level } => {
+            Stmt::Node { kind, start, when, end, level } => {
+                let (NodeStart::At(start), None, NodeEnd::At(end), None | Some(Nest::Level(_))) = (start, when, end, level) else {
+                    self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
+                    return Ok(());
+                };
+                if matches!(start, Expr::Name(n) if !self.vars.contains_key(n)) {
+                    // Another node kind's starts: a tier-2 rule.
+                    self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
+                    return Ok(());
+                }
                 let (start, end) = (self.mask(start)?, self.mask(end)?);
                 let level = match level {
-                    Some(l) => match self.vars.get(l) {
+                    Some(Nest::Level(l)) => match self.vars.get(l) {
                         Some(Val::C(c)) => Some(c.clone()),
                         _ => return Err(format!("node {kind}: level `{l}` is not a count")),
                     },
-                    None => None,
+                    _ => None,
                 };
                 self.tree.get_or_insert_with(TreeDecl::default).nodes.push((kind.clone(), start, end, level));
             }
             Stmt::Fact { field, name, kinds, expr } => {
+                let FactWhen::Mask(expr) = expr else {
+                    self.tree.get_or_insert_with(TreeDecl::default).tier2 = true;
+                    return Ok(());
+                };
                 let m = self.mask(expr)?;
                 self.tree.get_or_insert_with(TreeDecl::default).facts.push((*field, name.clone(), kinds.clone(), m));
             }
+            // A validator runs once per token, in tier 2 (or as masks the compiler writes).
+            Stmt::Check { .. } => self.tree.get_or_insert_with(TreeDecl::default).tier2 = true,
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
             Stmt::Untoken(kinds) => self.tree.get_or_insert_with(TreeDecl::default).untoken.extend(kinds.iter().cloned()),
             Stmt::Error(msg, e) => {
@@ -845,9 +869,12 @@ impl<'a> Ev<'a> {
                         }
                         Mask::back_fill(&s, &e)
                     }
-                    "after_odd_run" => {
+                    // simdjson's escaped bytes; `after_odd_run` is the ones outside the run.
+                    "after_odd_run" | "escaped" => {
                         let a = ea(0)?;
+                        let all = f == "escaped";
                         match &self.seg {
+                            None if all => a.escaped(),
                             None => a.after_odd_run(),
                             Some(s) => {
                                 let mut out = Mask::zeros(n);
@@ -856,14 +883,10 @@ impl<'a> Ev<'a> {
                                     if s.first.get(i) {
                                         run = 0
                                     }
-                                    if a.get(i) {
-                                        run += 1
-                                    } else {
-                                        if run % 2 == 1 {
-                                            out.set(i)
-                                        }
-                                        run = 0
+                                    if run % 2 == 1 && (all || !a.get(i)) {
+                                        out.set(i)
                                     }
+                                    run = if a.get(i) { run + 1 } else { 0 };
                                 }
                                 out
                             }
@@ -938,10 +961,12 @@ impl<'a> Ev<'a> {
         let mut len_at: Vec<u32> = vec![0; n]; // fixed length (munch), or 0
         let mut kinds: Vec<String> = vec![];
         let mut throughs: Vec<Option<Mask>> = vec![];
+        let mut lasts: Vec<Option<Mask>> = vec![];
         let mut overlap: Option<String> = None;
         for t in &self.toks {
             kinds.push(t.kind.clone());
             throughs.push(t.through.clone());
+            lasts.push(t.last.clone());
             let k = kinds.len() as u32;
             for i in t.start.ones_iter() {
                 if kind_at[i] != 0 && overlap.is_none() {
@@ -967,6 +992,7 @@ impl<'a> Ev<'a> {
                         None => {
                             kinds.push(kind.clone());
                             throughs.push(None);
+                            lasts.push(None);
                             kinds.len() as u32
                         }
                     };
@@ -996,6 +1022,13 @@ impl<'a> Ev<'a> {
                 while end < n && t.get(end) && kind_at[end] == 0 {
                     end += 1
                 }
+            } else if let Some(l) = &lasts[k] {
+                // Through the first bit of `last` at or after the start.
+                let mut e = i;
+                while e < n && !l.get(e) {
+                    e += 1
+                }
+                end = (e + 1).min(n);
             }
             for j in i..end {
                 covered.set(j)

@@ -182,7 +182,7 @@ const FRONT: usize = 16;
 
 /// A field of the carried state: bits `pos..pos + width` of loop-carried word `word`. A `top`
 /// field keeps the top `width` bits of instruction `at`'s word (for its `prev`s, and a `toggle`'s
-/// or `fill`'s own carry, its top bit); a `flag` field an `after_odd_run`'s borrow.
+/// or `fill`'s own carry, its top bit); a `flag` field an `escaped`'s borrow.
 #[derive(Clone, Copy, Debug)]
 struct Field {
     at: usize,
@@ -214,7 +214,7 @@ impl State {
         for (at, inst) in native.insts.iter().enumerate() {
             match inst {
                 BlockInst::Toggle(_) | BlockInst::Fill(..) => wanted.push((at, back[at].max(1), false)),
-                BlockInst::AfterOddRun(_) => {
+                BlockInst::Escaped(_) => {
                     wanted.push((at, 1, true));
                     if back[at] > 0 {
                         wanted.push((at, back[at], false));
@@ -517,9 +517,9 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     let y = f.ins().bxor(x, parity);
                     y
                 }
-                BlockInst::AfterOddRun(a) => {
-                    // simdjson's find_escaped_branchless (`block::carry::after_odd_run`).
-                    let flag = &state.fields[state.flag[at].expect("an after_odd_run has a field")];
+                BlockInst::Escaped(a) => {
+                    // simdjson's find_escaped_branchless (`block::carry::escaped`).
+                    let flag = &state.fields[state.flag[at].expect("an escaped has a field")];
                     let cin = read(&mut f, flag, 0, 1);
                     let run = v(a);
                     let b = f.ins().band_not(run, cin);
@@ -533,7 +533,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     let escaped = f.ins().band(flipped, follows);
                     let borrow = f.ins().uextend(types::I64, overflow);
                     put(&mut f, &mut packed_out, &state.fields[state.flag[at].expect("a field")], borrow);
-                    f.ins().band_not(escaped, run)
+                    escaped
                 }
                 BlockInst::Fill(s, e) => {
                     // `block::carry::fill`: the carry into each bit of `s + (s | !e) + cin` is

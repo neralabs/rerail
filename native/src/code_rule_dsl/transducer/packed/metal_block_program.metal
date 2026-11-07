@@ -8,7 +8,7 @@
 // An operation of the planes form (native IR, `class` written as formulas of bit-planes): op (0
 // eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane, 11 the byte before's plane), operands
 // a and b, and an immediate (eq's byte; const's pattern as b = low half, imm = high half; plane's
-// bit), and the carried operations 8 prev (imm the distance), 9 toggle, 10 after_odd_run, 12 fill
+// bit), and the carried operations 8 prev (imm the distance), 9 toggle, 10 escaped, 12 fill
 // (imm its ends), each with its index among the program's carried steps in b; 13 within (imm its delay).
 struct BlockStep { uint op, a, b, imm; };
 // A program of the batch: its steps, its outputs (value slots, at `outs[out0..]`) and its extracts
@@ -95,7 +95,7 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
       }
       case 10u: {
         uint o0 = 0u, o1 = 0u, cin = 0u;
-        const M f0 = after_odd_run(a, M(0), o0), f1 = after_odd_run(a, M(1), o1);
+        const M f0 = escaped(a, M(0), o0), f1 = escaped(a, M(1), o1);
         if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1u), spins, cin)) return false;
         v = select(f0, f1, cin != 0u);
         break;

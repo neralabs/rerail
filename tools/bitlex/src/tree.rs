@@ -40,6 +40,9 @@ struct Raw {
 
 /// The nodes of `decl` and `tokens` over `n` bytes, or the reason the file goes to tree-sitter.
 pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, String> {
+    if decl.tier2 {
+        return Err("the tree section has tier-2 rules: the engine's tape writer runs them".into());
+    }
     let mut raw: Vec<Raw> = Vec::new();
     for (rank, (kind, start, end, level)) in decl.nodes.iter().enumerate() {
         for s in start.ones_iter() {

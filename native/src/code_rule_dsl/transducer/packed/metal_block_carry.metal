@@ -7,7 +7,7 @@ using namespace metal;
 // threadgroups the combined summaries pass through look-back states. Shared by the interpreter
 // and generated MSL. No loops and no branches here.
 //
-// Kinds: 0 parity (`toggle`), 1 borrow (`after_odd_run`, `fill`: bit 0 generate, bit 1 propagate).
+// Kinds: 0 parity (`toggle`), 1 borrow (`escaped`, `fill`: bit 0 generate, bit 1 propagate).
 // `prev` needs no scan: its carry is a halo, the 64 bits before a lane, from the lanes before it
 // in the group and the group before's last 64 bits (published in its round, read in later ones).
 
@@ -137,25 +137,24 @@ template <typename M> static inline uint summary_toggle(M a) { return uint(popco
 template <typename M> static inline M apply_toggle(M a, uint cin) { return M(prefix_xor(a) ^ M(M(0) - M(cin))); }
 
 // simdjson's find_escaped_branchless on a lane word, with the carry in; `overflow` is the carry out.
-template <typename M> static inline M after_odd_run(M run, M cin, thread uint& overflow) {
+template <typename M> static inline M escaped(M run, M cin, thread uint& overflow) {
   const M even = M(0x5555555555555555ul);
   const M b = M(run & M(~cin));
   const M follows = M(M(b << 1u) | cin);
   const M odd_starts = M(b & M(~even) & M(~follows));
   const M sequences = M(odd_starts + b);
   overflow = uint(sequences < odd_starts);
-  const M escaped = M(M(even ^ M(sequences << 1u)) & follows);
-  return M(escaped & M(~run));
+  return M(M(even ^ M(sequences << 1u)) & follows);
 }
-template <typename M> static inline uint summary_after_odd_run(M a) {
+template <typename M> static inline uint summary_escaped(M a) {
   uint c0 = 0u, c1 = 0u;
-  after_odd_run(a, M(0), c0);
-  after_odd_run(a, M(1), c1);
+  escaped(a, M(0), c0);
+  escaped(a, M(1), c1);
   return c0 | ((c1 & ~c0) << 1u);
 }
-template <typename M> static inline M apply_after_odd_run(M a, uint cin) {
+template <typename M> static inline M apply_escaped(M a, uint cin) {
   uint unused = 0u;
-  return after_odd_run(a, M(cin), unused);
+  return escaped(a, M(cin), unused);
 }
 
 // Bitlex's `fill(s, e)` on a lane word (`block::carry::fill`): the carry into each bit of

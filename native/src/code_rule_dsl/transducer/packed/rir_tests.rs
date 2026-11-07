@@ -372,23 +372,29 @@ fn the_frontends_dumps_are_the_goldens() {
     assert!(expected == dump, "the dumps differ from {} (RERAIL_BLESS=1 to accept them)", golden.display());
 }
 
-/// A block program's tree rows (`13-tape-on-the-gpu.md` §3.1): node rows in rank order with an
-/// optional level and the extra flag, code rows; each mask must be an output and each code row's
-/// node a row.
+/// A block program's tree rows (`13-tape-on-the-gpu.md` §3.1, decision 0049): node rows in rank
+/// order with their tier-2 rules (leaf, nested, after, parent, check, extra), code rows with each
+/// kind of test, keywords and the skip mask; each mask must be an output, each row a row.
 #[test]
 fn block_tree_rows_round_trip() {
-    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 delay 2\n  block 0 node 0 kind 3 start %0 end %1 level %0 %1\n  block 0 node 1 kind 9 start %2 end %2 extra\n  block 0 code 1 field 4 when %2\n  block 0 code 0 supertype 12 when %0\n  0000 STOP 0\n";
+    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 delay 2\n  block 0 node 0 kind 15 start first end last\n  block 0 node 1 kind 3 start %0 end %1 nested 13\n  block 0 node 2 kind 18 start %2 end with 2 after r3 r4 parent r1\n  block 0 node 3 kind 1 start %0 end %0 leaf\n  block 0 node 4 kind 9 start %2 end %2 leaf check 10 json_number extra\n  block 0 code 4 field 4 when %2\n  block 0 code 1 supertype 12 when always\n  block 0 code 4 field 1 when start r2\n  block 0 code 4 supertype 12 when not r2\n  block 0 code 1 field 2 when after r3\n  block 0 keyword 4 74727565 11\n  block 0 skip %1\n  0000 STOP 0\n";
     let program = assemble(rows).unwrap_or_else(|e| panic!("{e}"));
     let block = &program.block_programs()[0];
-    assert_eq!(block.nodes.len(), 2);
-    assert_eq!(block.nodes[0].level, Some((0, 1)));
-    assert!(block.nodes[1].extra && block.codes[0].field && !block.codes[1].field);
+    assert_eq!(block.nodes.len(), 5);
+    assert_eq!(block.nodes[1].nested, Some(13));
+    assert_eq!((block.nodes[2].after.clone(), block.nodes[2].parent), (vec![3, 4], Some(1)));
+    assert!(block.nodes[4].extra && block.nodes[4].leaf && block.codes[0].field && !block.codes[1].field);
+    assert_eq!(block.keywords[0].word, b"true".to_vec());
+    assert_eq!(block.skip, Some(1));
     let text = round_trip(&program, None);
-    assert!(text.contains("node 1 kind 9 start %2 end %2 extra"), "{text}");
-    let without = assemble(&rows.replace("  block 0 code 1 field 4 when %2\n", "")).unwrap_or_else(|e| panic!("{e}"));
+    assert!(text.contains("node 4 kind 9 start %2 end %2 leaf check 10 json_number extra"), "{text}");
+    let without = assemble(&rows.replace("  block 0 code 4 field 4 when %2\n", "")).unwrap_or_else(|e| panic!("{e}"));
     assert_ne!(without.plain_digest(), program.plain_digest(), "the rows are in the digest");
+    let unkeyed = assemble(&rows.replace("  block 0 keyword 4 74727565 11\n", "")).unwrap_or_else(|e| panic!("{e}"));
+    assert_ne!(unkeyed.plain_digest(), program.plain_digest(), "the keywords are in the digest");
     assert!(refused(&rows.replace("node 1 kind", "node 2 kind")).contains("out of order"));
     assert!(!refused(&rows.replace("  block 0 output %2\n", "")).is_empty(), "a row's mask must be an output");
-    assert!(!refused(&rows.replace("code 1 field", "code 5 field")).is_empty(), "a code row's node must be a row");
+    assert!(!refused(&rows.replace("code 4 field 4", "code 5 field 4")).is_empty(), "a code row's node must be a row");
+    assert!(!refused(&rows.replace("after r3 r4", "after r1")).is_empty(), "`after` names token rows");
     assert!(refused(&rows.replace("extra\n", "wide\n")).contains("wide"));
 }

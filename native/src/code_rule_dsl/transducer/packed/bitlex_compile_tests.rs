@@ -232,10 +232,12 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}"));
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let ops = compiled.rows.lines().filter(|l| l.contains(" = ")).count();
-    let carried = compiled.rows.lines().filter(|l| [" = fill ", " = toggle ", " = after_odd_run ", " = prev "].iter().any(|op| l.contains(op))).count();
+    let carried = compiled.rows.lines().filter(|l| [" = fill ", " = toggle ", " = escaped ", " = prev "].iter().any(|op| l.contains(op))).count();
     eprintln!("{ops} operations, {carried} carried or prev, {} outputs", compiled.rows.lines().filter(|l| l.contains(" output ")).count());
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
     let prepared = Executors::new(&p);
+    let block = &p.block_programs()[0];
+    let tokens: Vec<&str> = stmts.iter().filter_map(|s| match s { ::bitlex::syntax::Stmt::Token { kind, .. } => Some(kind.as_str()), _ => None }).collect();
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
@@ -255,10 +257,11 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
         let want = |label: &str| -> Option<Vec<u64>> {
             let words: Vec<&str> = label.split(' ').collect();
             match words.as_slice() {
-                ["node", k, side] => Some(match tree.nodes.iter().find(|r| r.0 == *k) {
-                    Some(r) => if *side == "start" { r.1.w.clone() } else { r.2.w.clone() },
-                    None => token_mask(k, *side == "end"),
-                }),
+                // Tier-2 nodes are the writer's: the evaluator has masks only for tier 1's.
+                ["node", k, side] => match tree.nodes.iter().find(|r| r.0 == *k) {
+                    Some(r) => Some(if *side == "start" { r.1.w.clone() } else { r.2.w.clone() }),
+                    None => tokens.contains(k).then(|| token_mask(k, *side == "end")),
+                },
                 ["code", _, name] => Some(tree.facts.iter().find(|f| f.1 == *name).expect("a fact").3.w.clone()),
                 _ => None,
             }
@@ -266,7 +269,10 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
         let (runs, over) = prepared.run(&bytes, true);
         assert!(over.is_empty(), "over the launch budget: {over:?}");
         for (executor, got) in runs {
-            let falls = compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0));
+            // Tier 1 refuses by a fallback bit; tier 2, the writer, by tokens that make no tree.
+            let cuts: Vec<Vec<u64>> = got.iter().map(|w| cut(w.clone(), n)).collect();
+            let falls = compiled.fallbacks.iter().any(|&k| cuts[usize::from(k)].iter().any(|&w| w != 0))
+                || tape_writer::write(block, &cuts, &bytes).is_err();
             if !out.errors.is_empty() {
                 assert!(falls, "{executor}, {n} bytes: the evaluator rejects ({:?}) but the file does not fall back", out.errors);
                 rejected += 1;
@@ -367,7 +373,7 @@ fn batch_programs() -> Vec<Program> {
         let rows = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).rows;
         rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).expect("assembles")
     };
-    let chain = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n  0000 STOP 0\n";
+    let chain = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n  0000 STOP 0\n";
     vec![
         compiled(JSON, &[bitlex_compile::FALLBACK], Some(&symbols)),
         compiled(LATER, &["a", "b", "c", "last_byte", "d", "e", "f", "g", "h", "i", "j"], None),
@@ -556,7 +562,17 @@ fn json_corpus_tapes_equal_tree_sitter() {
         let parsed = TapeImage::parse(&grammar, source, &|| false).expect("parses").expect("encodes").primary;
         let has_error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
         match tape_writer::tape_of(block, &run.outputs, &falls, &grammar, source).unwrap_or_else(|e| panic!("{path}: {e}")) {
-            None => fallback += 1,
+            None => {
+                fallback += 1;
+                if !has_error {
+                    // Valid JSON sent to tree-sitter: say which tier sent it.
+                    let why = match tape_writer::write(block, &run.outputs, bytes) {
+                        Err(e) => format!("the writer: {e}"),
+                        Ok(_) => "a fallback bit".to_owned(),
+                    };
+                    eprintln!("{path}: to tree-sitter by {why}");
+                }
+            }
             Some(_) if has_error => panic!("{path}: a tape where tree-sitter finds an error"),
             Some(tape) if tape.to_bytes().expect("bytes") == parsed.to_bytes().expect("bytes") => equal += 1,
             Some(_) => differ.push(path.clone()),
@@ -632,8 +648,8 @@ fn json_state_is_bits() {
     assert!(bits <= JSON_STATE_BITS, "json: {bits} state bits (budget {JSON_STATE_BITS})");
 }
 
-/// JSON's state budget (a ratchet).
-const JSON_STATE_BITS: usize = 104;
+/// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0049).
+const JSON_STATE_BITS: usize = 4;
 
 /// A token without `through` is its start byte alone, so its last byte is its start: no carry
 /// finds it. JSON has seven: `{ } [ ] , :` and `"`.
@@ -641,13 +657,13 @@ const JSON_STATE_BITS: usize = 104;
 fn one_byte_tokens_end_at_their_start() {
     let program = json_program();
     let p = &program.block_programs()[0];
-    let same = p.nodes.iter().filter(|n| n.start == n.end).count();
+    let same = p.nodes.iter().filter(|n| matches!((n.start, n.end), (block::RowStart::At(s), block::RowEnd::At(e)) if s == e)).count();
     assert_eq!(same, 7, "json's one-byte tokens' rows: {:?}", p.nodes.iter().map(|n| (n.kind, n.start, n.end)).collect::<Vec<_>>());
 }
 
 /// JSON's budgets (ratchets: lower them as the compiler improves).
-const JSON_OPS: usize = 483;
-const JSON_CARRIED_WORDS: usize = 78;
+const JSON_OPS: usize = 65;
+const JSON_CARRIED_WORDS: usize = 4;
 
 #[test]
 #[ignore = "a dump; run by name"]
@@ -675,10 +691,10 @@ fn json_loop_keeps_values_in_registers() {
 
 /// JSON's loop budgets (ratchets): lower them as the program and the lowering improve. Packing
 /// the carried state (decision 0048) raised the instructions once, 1915 -> 1939, for 405 -> 164
-/// stack operations, at an equal or lower CPU time in every paired timing. The remaining stack
-/// traffic is live values in the body; the target is stage 1's 0.
-const JSON_LOOP: usize = 1939;
-const JSON_LOOP_STACK: usize = 164;
+/// stack operations, at an equal or lower CPU time in every paired timing. Two tiers (decision
+/// 0049) lowered them to 483 and 6; the target is stage 1's 150 and 0.
+const JSON_LOOP: usize = 483;
+const JSON_LOOP_STACK: usize = 6;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0049) ---------------------------------------------
 //
@@ -686,16 +702,16 @@ const JSON_LOOP_STACK: usize = 164;
 // classification, the string state, the token starts and the per-byte errors. Everything about
 // a token (its kind, its text's checks, its place in the tree) is tier 2's, once per token.
 
-/// A tier-1 program's violations: more string state than simdjson's (one `after_odd_run`, one
+/// A tier-1 program's violations: more string state than simdjson's (one `escaped`, one
 /// `toggle`), a `fill` (a run is a token's; tier 2 reads it from the token's text), or a look-back
 /// past the byte before (a token start looks one byte back, as simdjson's `follows`).
 fn tier1_violations(p: &block::BlockProgram) -> Vec<String> {
     use super::block::BlockOp::*;
     let count = |f: fn(&block::BlockOp) -> bool| p.ops.iter().filter(|op| f(op)).count();
     let mut out = Vec::new();
-    let runs = count(|op| matches!(op, AfterOddRun(_)));
+    let runs = count(|op| matches!(op, Escaped(_)));
     if runs > 1 {
-        out.push(format!("{runs} after_odd_runs (simdjson: 1, the escapes)"));
+        out.push(format!("{runs} escapeds (simdjson: 1, the escapes)"));
     }
     let toggles = count(|op| matches!(op, Toggle(_)));
     if toggles > 1 {
@@ -731,6 +747,10 @@ fn json_tier1_is_simdjsons_stage1() {
     let lines = super::block_tests::machine_loop(&compiled.disassembly);
     let (stack, _) = super::block_tests::loop_costs(&lines);
     eprintln!("json tier 1: {} violations, {bits} state bits, loop {} instructions, {stack} stack", violations.len(), lines.len());
+    if std::env::var_os("RERAIL_RIR").is_some() {
+        eprintln!("{}", p.ops.iter().enumerate().map(|(i, op)| format!("%{i} = {}", op.text())).collect::<Vec<_>>().join("\n"));
+        eprintln!("outputs {:?}\n{}", p.outputs, lines.join("\n"));
+    }
     assert!(violations.is_empty(), "{} violations:\n{}", violations.len(), violations.join("\n"));
     assert!(bits <= 4, "json tier 1: {bits} state bits (at most 4)");
     assert!(lines.len() <= 150 && stack == 0, "json tier 1 loop: {} instructions (at most 150), {stack} stack loads or stores (0)", lines.len());

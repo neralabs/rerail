@@ -247,6 +247,15 @@ fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
     }
 }
 
+/// Row numbers `rA rB …`, as many as follow.
+fn row_list(line: &mut Line<'_>) -> Result<Vec<u16>, String> {
+    let mut out = Vec::new();
+    while line.peek_word().is_some_and(|w| w.starts_with('r') && w[1..].chars().all(|c| c.is_ascii_digit()) && w.len() > 1) {
+        out.push(line.number("r")?);
+    }
+    Ok(out)
+}
+
 /// Block program `at`'s rows: tables, operations, outputs, extracts, delay, node and code rows.
 pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
     let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -272,14 +281,69 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
     }
+    tree_rows(out, at, block);
+}
+
+/// Block program `at`'s tree rows (decision 0049):
+///
+/// ```text
+/// block N node R kind K start %s|first end %e|with F|last [leaf] [nested D] [after rA rB…]
+///     [parent rP] [check K V] [extra]
+/// block N code R field|supertype ID when %m | start rS | not rS | after rA rB… | always
+/// block N keyword R HEX K
+/// block N skip %v
+/// ```
+pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
+    use super::block::{Fact, RowEnd, RowStart};
+    let rows = |rs: &[u16]| rs.iter().map(|r| format!(" r{r}")).collect::<String>();
     for (r, row) in block.nodes.iter().enumerate() {
-        let level = row.level.map(|(u, d)| format!(" level %{u} %{d}")).unwrap_or_default();
-        let extra = if row.extra { " extra" } else { "" };
-        let _ = writeln!(out, "  block {at} node {r} kind {} start %{} end %{}{level}{extra}", row.kind, row.start, row.end);
+        let start = match row.start {
+            RowStart::At(v) => format!("%{v}"),
+            RowStart::FirstToken => "first".to_owned(),
+        };
+        let end = match row.end {
+            RowEnd::At(v) => format!("%{v}"),
+            RowEnd::With(f) => format!("with {f}"),
+            RowEnd::LastToken => "last".to_owned(),
+        };
+        let mut more = String::new();
+        if row.leaf {
+            more.push_str(" leaf");
+        }
+        if let Some(d) = row.nested {
+            let _ = write!(more, " nested {d}");
+        }
+        if !row.after.is_empty() {
+            let _ = write!(more, " after{}", rows(&row.after));
+        }
+        if let Some(p) = row.parent {
+            let _ = write!(more, " parent r{p}");
+        }
+        if let Some((k, v)) = row.check {
+            let _ = write!(more, " check {k} {}", v.name());
+        }
+        if row.extra {
+            more.push_str(" extra");
+        }
+        let _ = writeln!(out, "  block {at} node {r} kind {} start {start} end {end}{more}", row.kind);
     }
     for c in &block.codes {
         let what = if c.field { "field" } else { "supertype" };
-        let _ = writeln!(out, "  block {at} code {} {what} {} when %{}", c.node, c.id, c.when);
+        let when = match &c.when {
+            Fact::At(v) => format!("%{v}"),
+            Fact::StartOf(r) => format!("start r{r}"),
+            Fact::NotStartOf(r) => format!("not r{r}"),
+            Fact::After(rs) => format!("after{}", rows(rs)),
+            Fact::Always => "always".to_owned(),
+        };
+        let _ = writeln!(out, "  block {at} code {} {what} {} when {when}", c.node, c.id);
+    }
+    for k in &block.keywords {
+        let hex: String = k.word.iter().map(|b| format!("{b:02x}")).collect();
+        let _ = writeln!(out, "  block {at} keyword {} {hex} {}", k.node, k.kind);
+    }
+    if let Some(v) = block.skip {
+        let _ = writeln!(out, "  block {at} skip %{v}");
     }
 }
 
@@ -738,7 +802,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     program.output_delays.push(own.unwrap_or(u8::MAX));
                 }
             } else if first == "node" {
-                // `block N node R kind K start %s end %e [level %u %d] [extra]`, in rank order.
+                // `block N node R kind K start … end … [more]` (`tree_rows`), in rank order.
+                use super::block::{RowEnd, RowStart};
                 let r: usize = line.number("")?;
                 if r != program.nodes.len() {
                     return Err(format!("block {at} node {r} out of order (expected {})", program.nodes.len()));
@@ -750,20 +815,36 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 want(line, "kind")?;
                 let kind = line.number("")?;
                 want(line, "start")?;
-                let start = line.number("%")?;
+                let start = match line.word()?.as_str() {
+                    "first" => RowStart::FirstToken,
+                    v => RowStart::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad start `{v}`"))?),
+                };
                 want(line, "end")?;
-                let end = line.number("%")?;
-                let (mut level, mut extra) = (None, false);
+                let end = match line.word()?.as_str() {
+                    "last" => RowEnd::LastToken,
+                    "with" => RowEnd::With(line.number("")?),
+                    v => RowEnd::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad end `{v}`"))?),
+                };
+                let mut row = block::NodeRow { kind, start, end, extra: false, leaf: false, nested: None, after: Vec::new(), parent: None, check: None };
                 while let Ok(word) = line.word() {
                     match word.as_str() {
-                        "level" => level = Some((line.number("%")?, line.number("%")?)),
-                        "extra" => extra = true,
+                        "leaf" => row.leaf = true,
+                        "extra" => row.extra = true,
+                        "nested" => row.nested = Some(line.number("")?),
+                        "after" => row.after = row_list(line)?,
+                        "parent" => row.parent = Some(line.number("r")?),
+                        "check" => {
+                            let k = line.number("")?;
+                            let name = line.word()?;
+                            row.check = Some((k, block::Validator::named(&name).ok_or_else(|| format!("no validator `{name}`"))?));
+                        }
                         other => return Err(format!("a node row has no `{other}`")),
                     }
                 }
-                program.nodes.push(block::NodeRow { kind, start, end, level, extra });
+                program.nodes.push(row);
             } else if first == "code" {
-                // `block N code R field|supertype ID when %m`.
+                // `block N code R field|supertype ID when …` (`tree_rows`).
+                use super::block::Fact;
                 let node = line.number("")?;
                 let field = match line.word()?.as_str() {
                     "field" => true,
@@ -775,8 +856,24 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 if word != "when" {
                     return Err(format!("expected `when`, found `{word}`"));
                 }
-                let when = line.number("%")?;
+                let when = match line.word()?.as_str() {
+                    "start" => Fact::StartOf(line.number("r")?),
+                    "not" => Fact::NotStartOf(line.number("r")?),
+                    "after" => Fact::After(row_list(line)?),
+                    "always" => Fact::Always,
+                    v => Fact::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad fact `{v}`"))?),
+                };
                 program.codes.push(block::CodeRow { node, field, id, when });
+            } else if first == "keyword" {
+                let node = line.number("")?;
+                let hex = line.word()?;
+                let word = (0..hex.len() / 2)
+                    .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("a bad keyword `{hex}`")))
+                    .collect::<Result<Vec<u8>, String>>()?;
+                let kind = line.number("")?;
+                program.keywords.push(block::KeywordRow { node, word, kind });
+            } else if first == "skip" {
+                program.skip = Some(line.number("%")?);
             } else if first == "delay" {
                 // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).
                 let d: u64 = line.number("")?;

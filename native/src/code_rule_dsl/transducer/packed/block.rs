@@ -51,10 +51,10 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     Toggle(u16),
     /// The bytes just after a run of `a`'s bits of odd length: simdjson's escaped characters
     /// (`a` the backslashes), by its add-with-carry. Carry: borrow (generate and propagate).
-    AfterOddRun(u16),
+    Escaped(u16),
     /// Bitlex's `fill(s, e)`: each byte from a byte of `s` up to, not including, the next byte of
     /// `e`; a byte in both starts a new fill. One add per word (`carry::fill`). Carry: whether a
-    /// fill is open into the next block, a borrow like `after_odd_run`'s.
+    /// fill is open into the next block, a borrow like `escaped`'s.
     Fill(u16, u16),
     /// The bytes inside the stream at a delay `d`: bit `i` is set when `d <= i < len + d`. A
     /// program with a delay (`BlockProgram::delay`) runs past the end; the compiler cleans `~`
@@ -110,16 +110,16 @@ pub(super) mod carry {
         (f, f >> 63)
     }
 
-    /// `after_odd_run`: simdjson's branch-free escape finder (`find_escaped_branchless`) with the
-    /// carry in (`cin`, 0 or 1: the block's first byte is escaped), without the backslashes
-    /// themselves; the carry out is the add's overflow.
-    pub(in crate::code_rule_dsl) fn after_odd_run(run: u64, cin: u64) -> (u64, u64) {
+    /// `escaped`: simdjson's branch-free escape finder (`find_escaped_branchless`) with the
+    /// carry in (`cin`, 0 or 1: the block's first byte is escaped). Every byte an odd-offset
+    /// bit of a run escapes, escaped bits of the run included; the carry out is the add's
+    /// overflow.
+    pub(in crate::code_rule_dsl) fn escaped(run: u64, cin: u64) -> (u64, u64) {
         let b = run & !cin;
         let follows = (b << 1) | cin;
         let odd_starts = b & !EVEN & !follows;
         let (sequences, overflow) = odd_starts.overflowing_add(b);
-        let escaped = (EVEN ^ (sequences << 1)) & follows;
-        (escaped & !run, u64::from(overflow))
+        ((EVEN ^ (sequences << 1)) & follows, u64::from(overflow))
     }
 }
 
@@ -139,7 +139,7 @@ impl BlockOp {
             BlockOp::AndNot(a, b) => two("andnot", a, b),
             BlockOp::Prev(a, k) => format!("prev %{a}, {k}"),
             BlockOp::Toggle(a) => format!("toggle %{a}"),
-            BlockOp::AfterOddRun(a) => format!("after_odd_run %{a}"),
+            BlockOp::Escaped(a) => format!("escaped %{a}"),
             BlockOp::Fill(a, b) => two("fill", a, b),
             BlockOp::Within(0) => "within".to_owned(),
             BlockOp::Within(d) => format!("within {d}"),
@@ -150,7 +150,7 @@ impl BlockOp {
     pub(super) fn operands(&self) -> Vec<u16> {
         match *self {
             BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) => vec![],
-            BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::AfterOddRun(a) => vec![a],
+            BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) => {
                 vec![a, b]
             }
@@ -164,7 +164,7 @@ impl BlockOp {
             BlockOp::Not(a) => BlockOp::Not(f(a)),
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
             BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
-            BlockOp::AfterOddRun(a) => BlockOp::AfterOddRun(f(a)),
+            BlockOp::Escaped(a) => BlockOp::Escaped(f(a)),
             BlockOp::Fill(a, b) => BlockOp::Fill(f(a), f(b)),
             BlockOp::And(a, b) => BlockOp::And(f(a), f(b)),
             BlockOp::Or(a, b) => BlockOp::Or(f(a), f(b)),
@@ -209,7 +209,7 @@ impl BlockOp {
             ["andnot", a, b] => Ok(BlockOp::AndNot(value(a)?, value(b)?)),
             ["prev", a, k] => Ok(BlockOp::Prev(value(a)?, k.parse().map_err(|_| format!("a bad distance `{k}`"))?)),
             ["toggle", a] => Ok(BlockOp::Toggle(value(a)?)),
-            ["after_odd_run", a] => Ok(BlockOp::AfterOddRun(value(a)?)),
+            ["escaped", a] => Ok(BlockOp::Escaped(value(a)?)),
             ["fill", a, b] => Ok(BlockOp::Fill(value(a)?, value(b)?)),
             ["within"] => Ok(BlockOp::Within(0)),
             ["within", d] => match d.parse::<u8>() {
@@ -250,7 +250,7 @@ impl BlockOp {
             BlockOp::AndNot(a, b) => two(out, 6, a, b),
             BlockOp::Prev(a, k) => two(out, 8, a, u16::from(k)),
             BlockOp::Toggle(a) => two(out, 9, a, a),
-            BlockOp::AfterOddRun(a) => two(out, 10, a, a),
+            BlockOp::Escaped(a) => two(out, 10, a, a),
             BlockOp::Fill(a, b) => two(out, 12, a, b),
             // `within` alone keeps its byte; at a delay, a new one and the delay.
             BlockOp::Within(0) => out.push(13),
@@ -275,29 +275,96 @@ impl ClassTable {
     }
 }
 
-/// A tree section's node kind (`docs/parser-generators/13-tape-on-the-gpu.md` §3.1): its grammar
-/// id, its start and end masks, and its level's up and down masks if it has one. Its place in
-/// `BlockProgram::nodes` is its rank.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// A tree section's node kind (`docs/parser-generators/13-tape-on-the-gpu.md` §3.1, decision
+/// 0049): its grammar id, where its nodes start and end, and its tier-2 rules, which the tape
+/// writer runs once per token. Its place in `BlockProgram::nodes` is its rank.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) struct NodeRow {
     pub(super) kind: u16,
-    pub(super) start: u16,
-    pub(super) end: u16,
-    pub(super) level: Option<(u16, u16)>,
+    pub(super) start: RowStart,
+    pub(super) end: RowEnd,
     /// The kind's nodes carry the extra flag.
     pub(super) extra: bool,
+    /// A token's row: the tokens tile the file (apart from the skipped bytes), and `after` reads
+    /// the previous one.
+    pub(super) leaf: bool,
+    /// On the writer's stack of nested nodes, at most this deep: an end closes the innermost
+    /// open nested node, which must be of this row.
+    pub(super) nested: Option<u8>,
+    /// A node starts only where the previous token's row is one of these (none: anywhere).
+    pub(super) after: Vec<u16>,
+    /// A node starts only where the innermost open node is of this row.
+    pub(super) parent: Option<u16>,
+    /// The built-in validator of the row's nodes of kind `.0` (`Validator`).
+    pub(super) check: Option<(u16, Validator)>,
 }
 
-/// A fact of a node kind's code, where a mask holds at the node's start: its field, or one of
-/// its supertypes.
+/// Where a row's nodes start: at each bit of an output, or at the first token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) enum RowStart {
+    At(u16),
+    FirstToken,
+}
+
+/// Where a row's node ends: at the first bit of an output at or after its start; with its child
+/// that has field `With`'s id; or with the last token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) enum RowEnd {
+    At(u16),
+    With(u16),
+    LastToken,
+}
+
+/// A built-in validator of a token's text (decision 0049): one check per token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) enum Validator {
+    /// JSON's number: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE]-?[0-9]+)?`, tree-sitter-json's.
+    JsonNumber,
+}
+
+impl Validator {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Validator::JsonNumber => "json_number",
+        }
+    }
+
+    pub(super) fn named(name: &str) -> Option<Self> {
+        [Validator::JsonNumber].into_iter().find(|v| v.name() == name)
+    }
+}
+
+/// A fact of a node kind's code: its field, or one of its supertypes, where its test holds at the
+/// node's start.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) struct CodeRow {
     /// The node row the fact is about.
     pub(super) node: u16,
     /// A field (else a supertype), by grammar id.
     pub(super) field: bool,
     pub(super) id: u16,
-    pub(super) when: u16,
+    pub(super) when: Fact,
+}
+
+/// A code fact's test at a node's start.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) enum Fact {
+    /// A bit of an output.
+    At(u16),
+    /// A node of this row starts at the same byte; or does not.
+    StartOf(u16),
+    NotStartOf(u16),
+    /// The previous token's row is one of these.
+    After(Vec<u16>),
+    Always,
+}
+
+/// A keyword of a token row: a token of the row whose text is `word` has kind `kind`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct KeywordRow {
+    pub(super) node: u16,
+    pub(super) word: Vec<u8>,
+    pub(super) kind: u16,
 }
 
 /// A block program: its class tables, its operations, the values it outputs, and the outputs
@@ -319,9 +386,12 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
     /// shifts each by its own (decision 0047).
     pub(super) output_delays: Vec<u8>,
-    /// The tree section's node kinds and code facts, for the tape writer; every mask an output.
+    /// The tree section's node kinds, code facts and keywords, for the tape writer; every mask
+    /// an output. `skip`: the bytes between tokens that belong to none.
     pub(super) nodes: Vec<NodeRow>,
     pub(super) codes: Vec<CodeRow>,
+    pub(super) keywords: Vec<KeywordRow>,
+    pub(super) skip: Option<u16>,
 }
 
 /// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
@@ -366,8 +436,22 @@ impl BlockProgram {
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
         let output = |v: u16| self.outputs.contains(&v);
-        let nodes = self.nodes.iter().all(|r| output(r.start) && output(r.end) && r.level.is_none_or(|(u, d)| output(u) && output(d)))
-            && self.codes.iter().all(|c| usize::from(c.node) < self.nodes.len() && output(c.when));
+        let row = |r: u16| usize::from(r) < self.nodes.len();
+        let nodes = self.nodes.iter().all(|r| {
+            !matches!(r.start, RowStart::At(v) if !output(v))
+                && !matches!(r.end, RowEnd::At(v) if !output(v))
+                && r.after.iter().all(|&a| row(a) && self.nodes[usize::from(a)].leaf)
+                && r.parent.is_none_or(row)
+        }) && self.codes.iter().all(|c| {
+            row(c.node)
+                && match &c.when {
+                    Fact::At(v) => output(*v),
+                    Fact::StartOf(r) | Fact::NotStartOf(r) => row(*r),
+                    Fact::After(rs) => rs.iter().all(|&a| row(a) && self.nodes[usize::from(a)].leaf),
+                    Fact::Always => true,
+                }
+        }) && self.keywords.iter().all(|k| row(k.node) && self.nodes[usize::from(k.node)].leaf && !k.word.is_empty() && k.word.len() <= 8)
+            && self.skip.is_none_or(output);
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !nodes {
             return Err(Error::InvalidTarget(0));
         }
@@ -409,20 +493,12 @@ impl BlockProgram {
         }
         // And the tree section's rows.
         if !self.nodes.is_empty() || !self.codes.is_empty() {
-            out.extend_from_slice(b"tree");
-            out.extend_from_slice(&(self.nodes.len() as u32).to_le_bytes());
-            for r in &self.nodes {
-                let (u, d) = r.level.unwrap_or((u16::MAX, u16::MAX));
-                for x in [r.kind, r.start, r.end, u, d, u16::from(r.extra)] {
-                    out.extend_from_slice(&x.to_le_bytes());
-                }
-            }
-            out.extend_from_slice(&(self.codes.len() as u32).to_le_bytes());
-            for c in &self.codes {
-                for x in [c.node, u16::from(c.field), c.id, c.when] {
-                    out.extend_from_slice(&x.to_le_bytes());
-                }
-            }
+            // The rows' text (`rir`), which names every field of every row.
+            out.extend_from_slice(b"tree2");
+            let mut text = String::new();
+            super::rir::tree_rows(&mut text, 0, self);
+            out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+            out.extend_from_slice(text.as_bytes());
         }
         out
     }
@@ -534,7 +610,7 @@ impl BlockProgram {
                 // The carried operations: one pass over the blocks, the carry in a register.
                 BlockOp::Prev(a, k) => carried(one(a), &first, 0u64, |x, _, previous| (carry::prev(x, previous, k), x)),
                 BlockOp::Toggle(a) => carried(one(a), &first, 0u64, |x, _, c| carry::toggle(x, c)),
-                BlockOp::AfterOddRun(a) => carried(one(a), &first, 0u64, |x, _, c| carry::after_odd_run(x, c)),
+                BlockOp::Escaped(a) => carried(one(a), &first, 0u64, |x, _, c| carry::escaped(x, c)),
                 BlockOp::Fill(a, b) => {
                     let pairs = v(a).iter().zip(v(b)).enumerate().map(|(i, (&x, &y))| (i, x, y));
                     carried(pairs, &first, 0u64, |x, y, c| carry::fill(x, y, c))
