@@ -446,6 +446,27 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
 pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
+    // An atom such as field(parent, name, child) connects its node columns. Document equality
+    // and comparisons of node attributes do not: enumerating their independent node groups
+    // before the remaining candidate predicates creates quadratic or cubic intermediate relations.
+    let independent_node_groups = |atoms: &[&Atom]| {
+        let mut groups: Vec<BTreeSet<String>> = Vec::new();
+        for atom in atoms {
+            let Some(columns) = prog.decls.get(&atom.rel) else { continue };
+            let nodes: BTreeSet<String> = atom.args.iter().zip(columns).filter_map(|(term, (_, ty))| {
+                if matches!(ty.as_str(), "node" | "loc" | "span") && let Term::Var(value) = term { Some(value.clone()) } else { None }
+            }).collect();
+            if nodes.is_empty() { continue; }
+            let mut connected = nodes;
+            let mut separate = Vec::new();
+            for group in groups {
+                if group.is_disjoint(&connected) { separate.push(group); } else { connected.extend(group); }
+            }
+            separate.push(connected);
+            groups = separate;
+        }
+        groups.len()
+    };
     // Per rule, how much it takes: 0 negated base and file-local reads, 1 negated base reads only, 2 nothing (the
     // split did not find the join file-local: a negation read through no location column, say).
     let mut level: BTreeMap<usize, u8> = BTreeMap::new();
@@ -481,6 +502,9 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
             for (mut lits, vars) in comps {
                 let atoms: Vec<&Atom> = lits.iter().filter_map(|&j| rule.body[j].atom()).collect();
                 if !atoms.iter().any(|a| base(&a.rel)) {
+                    continue;
+                }
+                if independent_node_groups(&atoms) > 1 {
                     continue;
                 }
                 if let [a] = atoms[..] {
