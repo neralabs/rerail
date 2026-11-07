@@ -3,7 +3,7 @@
   "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "syntaxSource": {
     "branch": "jeremybarnes/final-rerail-shape",
-    "commit": "7e49971d1c1fda93f9f5a17847d342d958e72ec1",
+    "commit": "31d3d15dc2882f3dc81eb79f24729f32d723656b",
     "uncommitted": []
   },
   "legacyBaseline": "ce3669ddba89d09acec1094e006446a16a7b296d",
@@ -548,9 +548,17 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/lazy-analyzer.rr",
-      "sha256": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
+      "sha256": "8ba3cc99b75b37e770217c48b70a06d2a198aac9fa3a44fedc4ca321f849af62",
       "upstreamSha256": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "importedSha256": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
+      "repairs": [
+        {
+          "before": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
+          "after": "8ba3cc99b75b37e770217c48b70a06d2a198aac9fa3a44fedc4ca321f849af62",
+          "reason": "State the existing class-parent preorder bound explicitly for the current Final shape value-cycle checker"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/match-frames.rr",
@@ -2294,11 +2302,16 @@
       "branch": "jeremybarnes/final-rerail-shape",
       "commit": "ee59790f00ba0688e42da4313bcaa042fa18ba69",
       "uncommitted": []
+    },
+    {
+      "branch": "jeremybarnes/final-rerail-shape",
+      "commit": "7e49971d1c1fda93f9f5a17847d342d958e72ec1",
+      "uncommitted": []
     }
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "7e49971d1c1fda93f9f5a17847d342d958e72ec1",
+    "upstreamCommit": "31d3d15dc2882f3dc81eb79f24729f32d723656b",
     "status": "Root Final shape engine with generic Boolean-context and Python AST diagnostic/order repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",

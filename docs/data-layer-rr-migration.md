@@ -11,8 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its baseline is Final rerail shape
-`ee59790f00ba0688e42da4313bcaa042fa18ba69`. That branch includes the earlier migration and regex fixes,
-the shared guest/value runtime, and the current world-demand and environment-fact model.
+`31d3d15dc`. That branch includes the migration and regex fixes, the current planner,
+indexed SQL maintenance, native relation reclamation, and corpus publication leases.
 Merge its committed engine, frontend, libraries, build files, and locks into this root.
 Local native repairs normalize Boolean contexts after demand planning (`25b580262`),
 format Python parser diagnostics (`1e10cb39d`), and visit conditional expressions in AST field order (`0b29647da`).
@@ -40,6 +40,11 @@ Freeze the completed binary before acceptance and record its hash, root commit, 
 Merge future Final shape updates into this branch. Resolve engine conflicts in favor of its current architecture;
 port any still-needed generic capability onto that architecture and test it there.
 
+Merge `4fb37a504` adopts committed Final shape `31d3d15dc`, including its planner and SQL maintenance resolutions.
+The focused checks pass on a frozen CLI built from this root. The sibling's unfinished merge remains untouched.
+The current cycle checker needs an explicit preorder bound for nested class names in `data-layer/lazy-analyzer.rr`.
+The library now states that existing bound. It requires no native engine change.
+
 ## Imported drafts and provenance
 
 [migration.json](../gate/data-layer/packs/data-layer/candidates/rr/migration.json) lists each of the 100 checks and its original policy hash.
@@ -47,7 +52,11 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **68 target drafts and 32 absent translations**. None has full acceptance yet.
+The current inventory contains **69 target drafts and 31 absent translations**. None has full acceptance yet.
+The 69th draft, `unresolved_forward_refs`, passes 116 direct original cases and its associated supplied-AST case.
+It also passes 206 supplemental contracts and 205 configured reporter cases, including 109 positive reporter cases.
+Its [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-forward-refs-native-direct-contracts.json.gz)
+and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-forward-refs-native-supplemental-contracts.json.gz) retain the complete results.
 The grammar-surface draft passes all nine original cases, 197 public/helper contracts, and 207 reporter cases.
 Its [direct-suite receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-grammar-surface-native-direct-contracts.json.gz)
 and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-grammar-surface-native-supplemental-contracts.json.gz) retain the complete results.

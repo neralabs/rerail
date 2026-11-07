@@ -43,7 +43,8 @@
 // la_cls(k, d, q): class k is collected: at module level, or directly in a collected class. q is "Outer.Inner".
 .decl la_cls(k: node, d: number, q: symbol)
 la_cls(k, d, x) :- kind(k, "class_definition"), ast_parent(k, m), kind(m, "module"), def_name(k, x), docof(k, d).
-la_cls(k, d, @dot(p, x)) :- kind(k, "class_definition"), ast_parent(k, o), la_cls(o, d, p), def_name(k, x).
+// A nested class follows its parent in tape order. State the finite recursion bound explicitly.
+la_cls(k, d, @dot(p, x)) :- kind(k, "class_definition"), ast_parent(k, o), o < k, la_cls(o, d, p), def_name(k, x).
 
 // la_fact(F, d, sym, q, x): a function the script collects (module level or directly in a collected class), or a
 // side-queue field declared in a collected class body (la_field, a "pseudo fact" the script makes lazy and

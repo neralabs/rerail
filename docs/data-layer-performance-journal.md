@@ -8201,3 +8201,54 @@ The inventory remains 68 drafts and 32 absent translations. No new Linear ticket
 The next missing translation is `unresolved_forward_refs`. Its source survey and offline run cover all 116 original cases.
 The recording captures 62 outer calls and identifies 54 cases without one. Those helper, configuration, and CLI assertions still require native transfers.
 No native port or acceptance is claimed for that next rule.
+
+## 2026-11-07 — Final shape 31d3 alignment and FieldInfo contracts
+
+Merge `4fb37a504` adopts committed Final shape `31d3d15dc2882f3dc81eb79f24729f32d723656b`.
+It includes the current planner, native relation reclamation, indexed SQL maintenance, and corpus publication protections.
+The active engine is this repository root. Neither retired nested engine received changes or a build.
+The sibling has another unfinished merge. Its uncommitted files remain untouched.
+
+The root CLI build passed. Acceptance used frozen executable SHA-256
+`f3d121eb3da0a71f2c12cf190a8f6751ee7948deea9dddef2937429d90446ae4`.
+The remaining native differences from Final shape are the existing generic Boolean-context and Python AST diagnostic/order repairs.
+No new native implementation was added for this rule or alignment.
+
+The 69th draft translates `unresolved_forward_refs`. Its `.rr` predicates implement FieldInfo receiver recognition,
+safe conversion and fallback contexts, inspection calls, comparisons, scope, ordering, and configuration.
+Private helper assertions execute native queries. Supplied ASTs enter as flat typed columns, including edges and field order.
+They use the same decision predicates as parsed source. Rules do not invoke Python.
+The CLI keeps the original argument parsing and rendering, with native batches for file selection and detection.
+
+Focused acceptance on the merged engine passed:
+
+- All 116 unchanged cases in the direct source module: 114 native calls and 62 complete API returns.
+- The original associated supplied-AST case, including the complete mutated instance state and return value.
+- All 206 supplemental cases: 195 file API cases and 11 supplied-AST state cases.
+- All 205 configured reporter cases, including 109 cases with findings.
+- One disabled-detector control rejected by an original positive assertion, plus three independent reporter-family controls.
+- All 52 migration tooling tests, both authoring gate tests, 59 native reader/runtime tests, and four collection-lease tests.
+
+The direct module includes 25 cases without a per-case native call. Nineteen assert configuration decoded from a native query.
+Six assert callable/export or argparse interfaces. The supplemental receipt identifies each case and its backing contract.
+No helper detector assertion was removed. The associated module's transaction DTO and structural-helper tests belong to their respective ports.
+They remain required for the full migration; this rule's receipt does not claim their coverage.
+
+The supplemental corpus caught a real duplicate: parenthesized attributes produced three findings instead of one.
+The fix restricts attribute candidates to attribute nodes before receiver analysis. The original red result remains in a separate archive.
+
+The current draft reader sweep also rejected `la_cls` in the shared lazy-analysis library as an unbounded value cycle.
+The `.rr` library now states its existing class-parent preorder bound explicitly. A native execution check preserves
+`Outer`, `Outer.Inner`, `Outer.Inner.Deep`, and `Next`, while excluding a function-local class.
+All 69 drafts then passed the reader. The failed sweep and successful execution are retained in the supplemental receipt.
+
+Eight disjoint shards per corpus covered every case exactly once, with two workers. Individual acceptance commands took at most 67 seconds.
+The unit build took 82 seconds. No full repository or whole-batch cold run was performed.
+
+Evidence: [direct original contracts](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-forward-refs-native-direct-contracts.json.gz),
+[supplemental contracts and merge checks](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-forward-refs-native-supplemental-contracts.json.gz),
+and [duplicate-finding regression](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-forward-refs-wrapper-red.json.gz).
+
+The inventory is 69 drafts and 31 absent translations. Full migration acceptance remains false.
+Production integration, persistent-workspace contracts, and the remaining rules still require work.
+No Linear ticket was created. The next missing translation is `conn_or_txn_union`.
