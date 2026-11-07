@@ -2629,7 +2629,7 @@ impl Run<'_> {
                         .args
                         .iter()
                         .position(|x| matches!(x, Term::Var(v) if v == n))
-                        .map(|c| prog.decls[&l.rel][c].1.clone()),
+                        .and_then(|c| Some(prog.decls.get(&l.rel)?.get(c)?.1.clone())),
                     _ => None,
                 }),
                 _ => None,
@@ -2670,7 +2670,9 @@ impl Run<'_> {
                     wheres.push(format!("{} = {}", sql_col(&l.rel, c), sql_term(t, &HashMap::new(), self.model.inputs.atoms).ok()?.render()));
                 }
             }
-            let decl = prog.decls.get(&l.rel).unwrap_or_else(|| panic!("{} is read and not declared", l.rel));
+            // A relation this program part does not declare (an input view of the whole) is not joined natively: SQL
+            // reads it.
+            let decl = prog.decls.get(&l.rel)?;
             let types: String = keep.iter().map(|&c| sym_char(&self.model.inputs, &decl[c].1)).collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
             let mut sel = self.model.relation(prog, projected.map_or(&l.rel, |(base, _)| base), false).render();
@@ -2705,6 +2707,27 @@ impl Run<'_> {
                     }
                     let (ta, tb) = (tok(&xl[0], &mut slots)?, tok(&xr[0], &mut slots)?);
                     lines.push(format!("{} {ta} {tb}", if *op == "=" { "deq" } else { "dne" }));
+                }
+                Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
+                    if crate::code_rule_dsl::logic::strings::is_test(f) && args.len() == 2 =>
+                {
+                    // `@prefix($s, p) = 1` (or `= 0`): a text test of a string no text relation gives (`strings::as_test`
+                    // takes the others to the vocabulary), its string and pattern bound; a set's patterns as one string.
+                    let pattern = match crate::code_rule_dsl::logic::strings::patterns(&args[1]) {
+                        Some(ps) => Term::Str(ps.join(&crate::code_rule_dsl::logic::strings::SET_SEP.to_string())),
+                        None => args[1].clone(),
+                    };
+                    // A constant string is a symbol (`Int`) once lowered.
+                    let bound = |t: &Term| match t {
+                        Term::Var(v) => slots.contains_key(v),
+                        Term::Str(_) | Term::Int(_) => true,
+                        _ => false,
+                    };
+                    if !bound(&args[0]) || !bound(&pattern) {
+                        return None;
+                    }
+                    let (ts, tp) = (tok(&args[0], &mut slots)?, tok(&pattern, &mut slots)?);
+                    lines.push(format!("test {f} {ts} {tp} {want}"));
                 }
                 Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
                     if let Term::Call(f, args) = r
@@ -3689,7 +3712,16 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     drop(tables);
     let mut outcome = Outcome::default();
-    for scc in &sccs {
+    // Each native relation is dropped after the last stratum that reads it (an output, a relation kept for the caller
+    // and a gate's relations stay to the end).
+    let last = last_reads(prog, &sccs, &run.views);
+    let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps))).cloned().collect();
+    for (at, scc) in sccs.iter().enumerate() {
+        let done: Vec<String> = run.native_rels.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
+        if !done.is_empty() {
+            super::native::component::release(db, &done);
+            done.iter().for_each(|r| { run.native_rels.remove(r); });
+        }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
         let _stratum = super::profile::span(|| format!("stratum {}", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
@@ -3814,6 +3846,24 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     Ok(outcome)
 }
 
+/// Per relation, the last stratum (an index into `sccs`) whose rules read it. A view is read where its readers run,
+/// so what a view reads lives as long as the view's last reader.
+fn last_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>) -> HashMap<String, usize> {
+    let mut last: HashMap<String, usize> = HashMap::new();
+    for (j, scc) in sccs.iter().enumerate().rev() {
+        let at = if scc.iter().all(|r| views.contains(r)) { scc.iter().filter_map(|r| last.get(r)).copied().max().unwrap_or(j).max(j) } else { j };
+        for r in prog.rules.iter().filter(|r| scc.contains(&r.head.rel)) {
+            for l in &r.body {
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
+                    let e = last.entry(a.rel.clone()).or_insert(at);
+                    *e = (*e).max(at);
+                }
+            }
+        }
+    }
+    last
+}
+
 /// The program's outputs as text rows, sorted (symbols as text, kinds and fields by name), and per
 /// output the columns that hold nodes.
 #[allow(clippy::type_complexity)]
@@ -3855,9 +3905,12 @@ fn decoded_outputs(
         let of_tag = |tag: i64| u8::try_from(tag).ok().and_then(crate::code_rule_dsl::language::from_tape_tag).map(|d| d.kinds());
         let decode = |i: usize, v: i64| -> Option<String> {
             let run = kinds?;
-            let stride = i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE);
             match domains.get(i)? {
-                lower::Domain::Kind => Some(of_tag(v / stride).unwrap_or(run).kind_name((v % stride) as u16)?.to_owned()),
+                lower::Domain::Kind => {
+                    let atom = u32::try_from(v).ok()?;
+                    let (tag, code) = (crate::code_rule_dsl::facts::core::kind_tag(atom), crate::code_rule_dsl::facts::core::kind_code(atom));
+                    Some(of_tag(i64::from(tag)).unwrap_or(run).kind_name(code)?.to_owned())
+                }
                 lower::Domain::Field => Some(of_tag(v >> 16).unwrap_or(run).field_name((v & 0xffff) as u16)?.to_owned()),
                 _ => None,
             }

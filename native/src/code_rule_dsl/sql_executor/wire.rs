@@ -62,7 +62,8 @@ pub(super) fn register(db: &rusqlite::Connection) -> Result<()> {
                 if field {
                     catalog.field_name(code)
                 } else {
-                    catalog.kind_name(code)
+                    // `kind_atom`'s inverse: code 0 is ERROR.
+                    catalog.kind_name(super::super::facts::core::kind_code(u32::from(code)))
                 }
             });
             Ok(result.map(str::to_owned))

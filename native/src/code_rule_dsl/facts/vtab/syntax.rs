@@ -104,7 +104,7 @@ impl Projection {
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
         use crate::code_rule_dsl::logic::front::SpanIn;
         self.wants("text") && self.text_spans.as_ref().map_or_else(
-            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line" }),
+            || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", SpanIn::Comment => "text" }),
             |spans| spans.contains(&within),
         )
     }
@@ -334,7 +334,7 @@ pub(crate) struct Document {
 /// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
 /// kind name. For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
 pub(crate) fn numbering(doc: &Document) -> StoreResult<Vec<(u32, &'static str)>> {
-    let tag = (doc.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
+    let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::new(tag)?;
     // A guest's nodes are its root's subtree.
     let guest = doc.guest.as_deref().map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
@@ -437,7 +437,7 @@ impl Dialect {
         Ok(Self { tag, family, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes })
     }
     fn code(f: &Facts, id: u32) -> u16 {
-        (f.kind[id as usize] % KIND_STRIDE) as u16
+        crate::code_rule_dsl::facts::core::kind_code(f.kind[id as usize])
     }
     fn class(&self, f: &Facts, id: u32) -> Class {
         self.classes.get(usize::from(Self::code(f, id))).copied().unwrap_or(Class::Other)
@@ -791,7 +791,7 @@ impl Batch {
         };
         let mut withheld_at = Vec::with_capacity(documents.len());
         for d in &documents {
-            let tag = (d.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
+            let tag = crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
             if !dialects.contains_key(&tag) {
                 dialects.insert(tag, Dialect::new(tag)?);
             }
@@ -804,8 +804,8 @@ impl Batch {
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
-            if !rx_spans.is_empty() && guest.is_none() {
-                c.matches(&mut p, &rx_spans, &mut string);
+            if !rx_spans.is_empty() && guest.is_none() && !withheld {
+                c.matches(&mut p, dialect, &rx_spans, &mut string);
             }
             if core && guest.is_none() && let Some(x) = &p.extra {
                 lines_of.insert(d.key, Arc::clone(&x.lines));
@@ -1247,8 +1247,8 @@ impl Viewed {
             (View::Node | View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id as i64,
             (View::Node, 2) => {
-                let code = (p.facts.kind[id] % KIND_STRIDE) as usize;
-                i64::from(kind_atom(p.tag, self.batch.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16)))
+                let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[id]);
+                i64::from(kind_atom(p.tag, self.batch.dialects[&p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
             }
             (View::Node, 3) => i64::from(p.facts.start[id]),
             (View::Node, 4) => i64::from(p.facts.end[id]),

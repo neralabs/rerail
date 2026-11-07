@@ -242,11 +242,21 @@ pub(super) fn rule(
 }
 
 impl Rule {
-    pub fn context_field(&self, e: &E) -> usize {
-        let E::Qualified { alias, column } = e else {
-            unreachable!()
-        };
-        self.fields[&(alias.clone(), column.clone())]
+    pub fn in_context(&self, e: &E, context: &str) -> E {
+        let mut expression = e.clone();
+        expression.visit_mut(&mut |e| {
+            if let E::Qualified {
+                alias,
+                column: name,
+            } = e
+            {
+                *e = column(
+                    context,
+                    &format!("c{}", self.fields[&(alias.clone(), name.clone())]),
+                );
+            }
+        });
+        expression
     }
     pub fn evaluation(&self, table: &str) -> Query {
         let mut query = self.evaluation.clone();

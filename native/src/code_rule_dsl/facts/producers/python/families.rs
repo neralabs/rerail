@@ -19,7 +19,7 @@
 //! check these rows equal theirs. Rows are in core ids here; `facts::vtab::syntax` maps them to the
 //! wave's node ids and serves them.
 
-use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, kind_atom};
+use crate::code_rule_dsl::facts::core::{Facts, NONE, kind_atom};
 use crate::code_rule_dsl::language::KindCatalog;
 
 /// The rows' version: a change to what they hold changes the families' producer (`families::py_producer`).
@@ -104,7 +104,7 @@ impl Grammar {
         self.tag
     }
     fn role(&self, f: &Facts, id: u32) -> Role {
-        self.roles.get((f.kind[id as usize] % KIND_STRIDE) as usize).copied().unwrap_or(Role::Other)
+        self.roles.get(usize::from(crate::code_rule_dsl::facts::core::kind_code(f.kind[id as usize]))).copied().unwrap_or(Role::Other)
     }
 }
 

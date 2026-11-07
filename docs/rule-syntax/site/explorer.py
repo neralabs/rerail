@@ -10,7 +10,8 @@ The page runs the engine in the browser (native/wasm/README.md). It needs the Py
       --no-default-features --features headless,lang-python
 
 python.json holds every hand-written Python pack rule (its .rr, its part files, its description) and the library
-files they include, transitively: the page mounts them where `logic` looks for them (/lib, and beside the rule).
+files they include, transitively: the page mounts them where `logic` looks for them (/lib, and beside the rule). It
+also holds the scenarios in explorer/scenarios: a rule with Python files that show what it finds and what it leaves.
 """
 
 import glob
@@ -49,6 +50,20 @@ def library_closure(texts):
     return found
 
 
+def scenarios(rule_ids):
+    """The page's pre-baked scenarios, in explorer/scenarios/order.json's order: each folder holds scenario.json
+    (title, rule, note) and the Python files the rule runs over. Their files are also the ones "Add file" offers."""
+    base = os.path.join(HERE, "explorer", "scenarios")
+    found = []
+    for slug in json.loads(read(os.path.join(base, "order.json"))):
+        meta = json.loads(read(os.path.join(base, slug, "scenario.json")))
+        if meta["rule"] not in rule_ids:
+            sys.exit(f"scenario {slug}: no rule {meta['rule']}")
+        files = {os.path.basename(f): read(f) for f in sorted(glob.glob(os.path.join(base, slug, "*.py")))}
+        found.append({"id": slug, **meta, "files": files})
+    return found
+
+
 def main():
     out = os.path.join(HERE, "out")
     os.makedirs(os.path.join(out, "explorer"), exist_ok=True)
@@ -64,15 +79,21 @@ def main():
         parts = {os.path.basename(p): read(p) for p in sorted(glob.glob(os.path.join(RS, "packs", "python", rid + ".*.rr")))}
         rules.append({"id": rid, "d": described.get(rid, ""), "rr": read(f), "parts": parts})
     lib = library_closure([r["rr"] for r in rules] + [t for r in rules for t in r["parts"].values()])
-    bundle = {"rules": rules, "lib": lib}
+    bundle = {"rules": rules, "lib": lib, "scenarios": scenarios({r["id"] for r in rules})}
     with open(os.path.join(out, "explorer", "python.json"), "w", encoding="utf-8") as f:
         json.dump(bundle, f, ensure_ascii=False, separators=(",", ":"))
-    shutil.copyfile(os.path.join(HERE, "explorer", "explorer.html"), os.path.join(out, "explorer.html"))
-    for name in ("worker.js", "engine.js"):
-        shutil.copyfile(os.path.join(HERE, "explorer", name), os.path.join(out, "explorer", name))
     if not os.path.exists(WASM):
         sys.exit(f"{WASM}: build the browser engine first (see this file's docstring)")
+    # The page shows download progress against the engine's size where the response does not give its length.
+    page = re.sub(r"const ENGINE_BYTES = \d+;", f"const ENGINE_BYTES = {os.path.getsize(WASM)};",
+                  read(os.path.join(HERE, "explorer", "explorer.html")), count=1)
+    with open(os.path.join(out, "explorer.html"), "w", encoding="utf-8") as f:
+        f.write(page)
+    for name in ("worker.js", "engine.js"):
+        shutil.copyfile(os.path.join(HERE, "explorer", name), os.path.join(out, "explorer", name))
     shutil.copyfile(WASM, os.path.join(out, "explorer", "rerail-engine.wasm"))
+    # The WASI shim, vendored (explorer/shim/README.md): a CDN module import fails in some browsers' frames.
+    shutil.copytree(os.path.join(HERE, "explorer", "shim"), os.path.join(out, "explorer", "shim"), dirs_exist_ok=True)
     size = os.path.getsize(os.path.join(out, "explorer", "python.json"))
     print(f"{len(rules)} rules, {len(lib)} library files, python.json {size / 1e6:.1f} MB, "
           f"engine {os.path.getsize(WASM) / 1e6:.1f} MB")

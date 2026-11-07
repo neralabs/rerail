@@ -259,7 +259,13 @@ impl ContentStore {
 
     /// Decides which manifests to keep under `policy` at unix second `now`, and applies it: evicted manifests go,
     /// `corpus_live` becomes what the kept ones name, and plans no kept manifest names are marked dead.
+    /// Defers with an empty report while a reader or another collector holds the collection lease.
     pub fn keep_corpus_runs(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusKept> {
+        let Some(_lease) = self.try_collect()? else { return Ok(CorpusKept::default()) };
+        self.keep_corpus_runs_held(policy, now)
+    }
+
+    fn keep_corpus_runs_held(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusKept> {
         // Read, decided and applied in one transaction (O95): a manifest or plan another run records meanwhile waits
         // for the write lock, so a decision never drops what it did not see.
         self.immediate_transaction(|tx| {
@@ -327,10 +333,12 @@ impl ContentStore {
 
     /// One bounded pass: the keep decision when one is due, up to `PLAN_ROWS_PER_PASS` memo rows of dead plans, and
     /// the store's collection (`collect`).
+    /// Active readers defer the pass without clearing the pending collection flag.
     pub fn collect_corpus_pass(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusPass> {
+        let Some(_lease) = self.try_collect()? else { return Ok(CorpusPass::default()) };
         let mut pass = CorpusPass::default();
         if self.corpus_due()? == 1 {
-            pass.kept = Some(self.keep_corpus_runs(policy, now)?);
+            pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
         }
         pass.plan_rows = self.immediate_transaction(|tx| {
             let dead: Option<Vec<u8>> = tx.query_row("SELECT plan_digest FROM corpus_plans WHERE live=0 LIMIT 1", [], |r| r.get(0)).optional()?;
@@ -345,7 +353,7 @@ impl ContentStore {
             }
             Ok(n)
         })?;
-        pass.collection = self.collect(now, MAX_COLLECTION_BATCH)?;
+        pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
         if !pass.did_work() {
             self.immediate_transaction(|tx| Ok(tx.execute("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
         }

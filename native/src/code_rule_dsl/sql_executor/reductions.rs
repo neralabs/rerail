@@ -6,6 +6,7 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
+mod lattice;
 mod maintain;
 mod plan;
 mod reducer;
@@ -18,6 +19,7 @@ pub(super) struct Retained {
     heads: String,
     width: usize,
     rules: Vec<Rule>,
+    lattice: Option<lattice::Lattice>,
     pub(super) ready: bool,
 }
 
@@ -144,9 +146,20 @@ fn planned(
     }
     let mut retained = BTreeMap::new();
     for (output, width) in &e.program.relations {
-        if e.program.lattices.iter().any(|(r, _, _)| r == output) {
-            continue;
-        }
+        let lattice =
+            e.program
+                .lattices
+                .iter()
+                .find(|(r, _, _)| r == output)
+                .map(|(_, keys, top)| lattice::Lattice {
+                    keys: *keys,
+                    top: *top,
+                    aggregate: e
+                        .program
+                        .lattice_operations
+                        .get(output)
+                        .map(|o| o.aggregate.clone()),
+                });
         let Some(stratum) = positions.get(output) else {
             continue;
         };
@@ -162,7 +175,7 @@ fn planned(
             .filter(|(_, (s, _))| s.output == *output)
             .collect();
         let mut rules = Vec::new();
-        let mut nonmonotone = false;
+        let mut nonmonotone = lattice.is_some();
         let mut eligible = true;
         for (id, (_, q)) in steps {
             let Some(q) = q else {
@@ -195,6 +208,7 @@ fn planned(
             heads: format!("__sql_state_{output}_heads"),
             width: *width,
             rules,
+            lattice,
             ready: false,
         };
         retained.insert(output.clone(), state);
@@ -279,7 +293,7 @@ impl Retained {
                 )?;
             }
             for reducer in &rule.reducers {
-                rule.index(db, &reducer.context_keys(rule))?;
+                reducer.index_context(db, rule)?;
             }
             execute(
                 db,

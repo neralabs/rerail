@@ -51,6 +51,20 @@ pub(super) const TESTS: [(&str, &str); 11] = [
     ("match", "rx"),
 ];
 
+/// A regex the rule computes, made whole-string: `@concat(@concat("^(?:", re), ")$")` (`print` writes it back as `re`).
+pub(super) fn anchored(re: Term) -> Term {
+    let cat = |a: Term, b: Term| Term::Call("concat".to_owned(), vec![a, b]);
+    cat(cat(Term::Str("^(?:".to_owned()), re), Term::Str(")$".to_owned()))
+}
+
+/// The pattern `anchored` wrapped.
+pub(super) fn unanchored(t: &Term) -> Option<&Term> {
+    let Term::Call(f, args) = t else { return None };
+    let [Term::Call(g, inner), Term::Str(close)] = args.as_slice() else { return None };
+    let [Term::Str(open), re] = inner.as_slice() else { return None };
+    (f == "concat" && g == "concat" && open == "^(?:" && close == ")$").then_some(re)
+}
+
 fn test_of(rel: &str) -> Option<&'static str> {
     TESTS.iter().find(|(rr, _)| *rr == rel).map(|(_, engine)| *engine)
 }
@@ -120,6 +134,8 @@ struct Lowerer {
     /// The literals beside the one being lowered, in its conjunction and those enclosing it: what binds an
     /// aggregate's shared variables (`aggregate`).
     siblings: Vec<Lit>,
+    /// The relations the clause being lowered writes: a context leaves their atoms out where it can (`context`).
+    heads: BTreeSet<String>,
     /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
     /// lattice's top value (`v != top`), as the translated programs write it.
     top_is_var: bool,
@@ -611,6 +627,7 @@ impl Lowerer {
             })
         }
         self.top_is_var = binds_top(body);
+        self.heads = heads.iter().map(|h| h.rel.clone()).collect();
         // An aggregate in a head's argument (`cc(f, 1 + count : { … })`) is a variable the body binds.
         let mut heads = heads.to_vec();
         let mut body = body.to_vec();
@@ -1280,10 +1297,10 @@ impl Lowerer {
         };
         let gs = groups(re);
         let all = rel == "match_all";
-        // A span `match_all` reads through a derived relation (`t(d, sp) :- source(d, sp), …`) is a node-typed
-        // column here; `span_patterns` finds which spans it holds.
+        // A span `match_all` (or `match` with groups) reads through a derived relation (`t(d, sp) :- source(d, sp),
+        // …`, or `kind(c, "comment")`) is a node-typed column here; `span_patterns` finds which spans it holds.
         if let STerm::Var(v) = s
-            && (self.span_container(v).is_some() || all && self.node_typed(v))
+            && (self.span_container(v).is_some() || (all || !gs.is_empty()) && self.node_typed(v))
         {
             if !positions.is_empty() {
                 return Err(Error::Syntax("match_all ordinal, start, end outputs require a symbol text".to_owned()));
@@ -1337,7 +1354,7 @@ impl Lowerer {
     }
 
     /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
-    /// the same body by `source` or `src_line`. Read off the rules, so a printed program (`rr::print`) has them too.
+    /// the same body by `source`, `src_line` or `kind(c, "comment")`. Read off the rules, so a printed program (`rr::print`) has them too.
     /// A derived relation's column holds `source` spans, or `src_line` spans, when every rule binds it so: directly,
     /// or through another such column (a fixpoint).
     fn span_patterns(&mut self) -> Result<(), Error> {
@@ -1346,6 +1363,7 @@ impl Lowerer {
             body.iter().filter_map(Literal::atom).filter(|b| !b.neg).find_map(|b| match (b.rel.as_str(), b.args.as_slice()) {
                 ("source", [_, Term::Var(y)]) if y == x => Some(SpanIn::Source),
                 ("src_line", [_, _, Term::Var(y)]) if y == x => Some(SpanIn::Line),
+                ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some(SpanIn::Comment),
                 _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).copied()).flatten()),
             })
         };
@@ -1378,7 +1396,7 @@ impl Lowerer {
                     return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
                 };
                 let Some(within) = binder(&rule.body, c, &columns) else {
-                    return not_yet(format!("{}: match_all over ${c}, a node or span not of `source` or `src_line` (O80: a node's matches as spans)", rule.head.rel));
+                    return not_yet(format!("{}: match_all over ${c}, a node or span not of `source`, `src_line` or a comment (O80: a node's matches as spans)", rule.head.rel));
                 };
                 self.prog.rx_spans.insert((within, p.clone()));
             }
@@ -1415,12 +1433,13 @@ impl Lowerer {
         }
     }
 
-    /// Whether a sibling binds `v` to a `source` or `src_line` span, the spans `rx_span` runs over.
+    /// Whether a sibling binds `v` to a `source` or `src_line` span or a comment, the spans `rx_span` runs over.
     fn span_container(&self, v: &str) -> Option<SpanIn> {
         self.siblings.iter().find_map(|l| match l {
             Lit::Atom { rel, args, neg: false } => match (rel.as_str(), args.as_slice()) {
                 ("source", [_, STerm::Var(x)]) if x == v => Some(SpanIn::Source),
                 ("src_line", [_, _, STerm::Var(x)]) if x == v => Some(SpanIn::Line),
+                ("kind", [STerm::Var(x), STerm::Str(k)]) if x == v && k == "comment" => Some(SpanIn::Comment),
                 _ => None,
             },
             _ => None,
@@ -1443,7 +1462,9 @@ impl Lowerer {
         let [STerm::Str(re), s] = args else { unreachable!("match with a pattern") };
         let whole = Term::Str(format!("^(?:{re})$"));
         let s = self.term(s)?;
-        let mut out = Vec::new();
+        // The test as well as the groups: a group the head alone reads is a column, which SQL does not filter on, so
+        // a text that does not match would make a row with no value (`pct_rest`'s `%%` step).
+        let mut out = vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![s.clone(), whole.clone()]), op: "=", r: Term::Int(1) }];
         for g in groups(re) {
             out.push(Literal::Cmp { l: Term::Var(g.clone()), op: "=", r: Term::Call("rx_group".to_owned(), vec![s.clone(), whole.clone(), Term::Str(g)]) });
         }
@@ -1523,14 +1544,12 @@ impl Lowerer {
                     .map_err(|e| Error::Syntax(format!("match regex: {e}")))?;
             }
             let (s, mut p) = (self.term(s)?, self.term(p)?);
-            // `match` is whole-string, as in Soufflé; the engine's `rx` searches.
+            // `match` is whole-string, as in Soufflé; the engine's `rx` searches. A pattern the rule reads (an
+            // option's) is anchored as it runs.
             if op == "rx" {
                 p = match p {
                     Term::Str(re) => Term::Str(format!("^(?:{re})$")),
-                    pattern => Term::Call("concat".to_owned(), vec![
-                        Term::Call("concat".to_owned(), vec![Term::Str("^(?:".to_owned()), pattern]),
-                        Term::Str(")$".to_owned()),
-                    ]),
+                    other => anchored(other),
                 };
             }
             return Ok(Literal::Cmp { l: Term::Call(op.to_owned(), vec![s, p]), op: "=", r: Term::Int(if neg { 0 } else { 1 }) });
@@ -1675,9 +1694,28 @@ impl Lowerer {
                 .cloned()
                 .collect()
         };
+        // Inputs alone when they bind the variables: a context of derived relations ties the helper to them, and
+        // to their recursion (`type_app(t, h, i, a) :- ann_input(t), …, field(m, "subscript", a), i = count : {
+        // field(m, "subscript", a0), a0 < a }` with ann_input recursive through type_app would aggregate in its
+        // own component). The context may hold more rows than the rule; the rule joins it with its own literals.
+        let inputs: BTreeSet<String> = self.prog.inputs.iter().cloned().collect();
+        let base: Vec<Lit> = context(false).into_iter().filter(|l| !matches!(l, Lit::Atom { rel, .. } if !inputs.contains(rel))).collect();
+        let (base, base_bound) = Self::bound_context(base);
         // Aggregates stay out unless a variable needs one: `m = cat(…, body, …)` over `body = join … : { … }`.
-        let (first, bound) = Self::bound_context(context(false));
-        let context = if vars.iter().all(|v| bound.contains(v)) { first } else { Self::bound_context(context(true)).0 };
+        // So do atoms of the clause's own heads, where the rest binds the variables: through one, the aggregate
+        // would sit in the head's recursion (`la_cb(n, e) :- …, la_cb(s, v), count : { la_vis(n, x, s2, …) } = 0`).
+        // The context then holds more rows than the rule, which joins it with its own literals.
+        let heads = self.heads.clone();
+        let own = |l: &Lit| matches!(l, Lit::Atom { rel, .. } if heads.contains(rel));
+        let (first, bound) = Self::bound_context(context(false).into_iter().filter(|l| !own(l)).collect());
+        let (first, bound) = if vars.iter().all(|v| bound.contains(v)) { (first, bound) } else { Self::bound_context(context(false)) };
+        let context = if vars.iter().all(|v| base_bound.contains(v)) {
+            base
+        } else if vars.iter().all(|v| bound.contains(v)) {
+            first
+        } else {
+            Self::bound_context(context(true)).0
+        };
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();

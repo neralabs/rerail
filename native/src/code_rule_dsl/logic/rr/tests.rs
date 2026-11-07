@@ -352,6 +352,22 @@ best(n, @dot("a", x)) :- name(n, x).
     assert_eq!(p.rules.iter().find(|r| r.head.rel == "cv").unwrap().head.args[1], Term::Top);
 }
 
+/// An aggregate's context leaves out the clause's own head where the rest binds its variables: through it, the
+/// aggregate would sit in the head's recursion (lazy-analyzer.rr's `la_cb`).
+#[test]
+fn a_context_leaves_out_the_clause_head() {
+    let p = parse(concat!(
+        ".decl e(n: node, x: symbol, s: number)\n.decl seed(n: node)\n.input e, seed\n",
+        ".decl cb(n: node)\n.output cb\n",
+        "cb(n) :- seed(n).\n",
+        "cb(n) :- e(n, x, s), cb(n), count : { e(n, x, s2), s2 > s } = 0.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
+    assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
+}
+
 /// What is not lowered yet says so by name.
 #[test]
 fn unlowered_constructs_are_named() {
@@ -1652,6 +1668,34 @@ fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
         .map(|line| serde_json::from_str(line).unwrap()).collect();
     std::fs::remove_dir_all(root).unwrap();
     rows
+}
+
+
+#[test]
+fn printed_guest_demand_rules_are_not_generated_again() {
+    for source in [r#"
+.decl context(n: node, x: symbol)
+.input context
+.decl parsed(s: node, grammar: symbol, r: node)
+.input parsed
+.decl result(r: node)
+result(r) :- context(n, _), parsed(n, "annotation", r).
+.output result
+"#,r#"
+.decl context(n: node, x: symbol)
+.input context
+.decl result(t: symbol)
+result(t) :- context(n, x), t = @parse("sql", x).
+.output result
+"#] {
+        let original = parse(source).unwrap();
+        assert!(original.rules.iter().any(|r|r.head.rel.starts_with("rr_")));
+        let mut current = original.clone();
+        for _ in 0..3 {
+            current = parse(&print(&current).unwrap()).unwrap();
+            assert!(difference(&original,&current).is_none(), "{:?}",difference(&original,&current));
+        }
+    }
 }
 
 /// A value document is its askers' files' (O96): two files asking for one text share a value, and each keeps its

@@ -20,9 +20,32 @@ pub(crate) const NONE: u32 = u32::MAX;
 /// Kind codes per dialect (the tape's `KIND_LIMIT`).
 pub(crate) const KIND_STRIDE: u32 = 1024;
 
-/// The atom of kind `code` in the dialect whose tape tag is `tag`.
+/// Tree-sitter's ERROR symbol, past every grammar's kinds and so past the stride.
+const ERROR_SYMBOL: u16 = u16::MAX;
+
+/// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's atom takes code 0, the grammar's end
+/// symbol, which never labels a node (the tape's own `ERROR_CODE`), so every atom of a dialect stays in its stride:
+/// `tag * 1024 + 0xffff` would read as another dialect's kind.
 pub(crate) fn kind_atom(tag: u8, code: u16) -> u32 {
-    u32::from(tag) * KIND_STRIDE + u32::from(code)
+    u32::from(tag) * KIND_STRIDE + if code == ERROR_SYMBOL { 0 } else { u32::from(code) }
+}
+
+/// The tape tag of a kind atom's dialect.
+pub(crate) fn kind_tag(atom: u32) -> u8 {
+    (atom / KIND_STRIDE) as u8
+}
+
+/// The kind code of a kind atom in its dialect's catalog (`kind_atom`'s inverse: code 0 is ERROR).
+pub(crate) fn kind_code(atom: u32) -> u16 {
+    match atom % KIND_STRIDE {
+        0 => ERROR_SYMBOL,
+        code => code as u16,
+    }
+}
+
+/// The tape tag of a document's dialect: its root's kind's.
+pub(crate) fn facts_tag(f: &Facts) -> u8 {
+    f.kind.first().map_or(0, |&k| kind_tag(k))
 }
 
 /// One file's facts. Columns are indexed by node id.
@@ -92,6 +115,8 @@ pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::Co
 /// source in one transaction (O95), so a source collected since the caller resolved `known` is stored again, under a
 /// new id; `None` when the file did not parse and its source is not known.
 pub(crate) fn build_cached_source(file: &FileInput, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<(Built, Option<crate::content_store::SourceId>), String> {
+    // A standalone cache build has the same lookup/parse/publication window as a corpus run.
+    let _reading = cache.hold_collection().map_err(|e| e.to_string())?;
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeImage};
     use crate::code_rule_dsl::workspace::grammar_version;
