@@ -15,7 +15,8 @@ DISABLED = '.policy "disabled-control" revision 1\n.language python\n.violation 
 
 def auxiliary_output(check, row):
     """Only these transport outputs can remain in a disabled backend detector."""
-    allowed = {'backend_coupling': {'BC_CONFIG', 'BC_CHECK', 'BC_FILE'},
+    allowed = {'async_sync_boundary': {'BS_COUNT', 'BS_CATEGORY'},
+               'backend_coupling': {'BC_CONFIG', 'BC_CHECK', 'BC_FILE'},
                'backend_type_strings': {'BTS_CONFIG', 'BTS_SKIP', 'BTS_FILE', 'BTS_SKIPPED'},
                'unresolved_forward_refs': {'UF_CONFIG', 'UF_HELPER_TRUE', 'UF_READ_ERROR', 'UF_CLI_FILE'},
                'connection_caches': {'CC_CONFIG', 'CC_PATTERN', 'CC_ALLOWED', 'CC_SKIP'}}
@@ -23,6 +24,11 @@ def auxiliary_output(check, row):
 
 
 def disable_policy(check, source):
+    if check == 'async_sync_boundary':
+        disabled, count = re.subn(r'(?m)^(bs_detect\([^\n]*?\)\s*:-)', r'\1 1 = 0,', source)
+        if count != 3:
+            raise ValueError('Boundary mutation requires all three detector categories')
+        return disabled
     if check == 'backend_type_strings':
         disabled, count = re.subn(r'(?m)^(BackendBT\d+\([^\n]*?\)\s*:-)', r'\1 1 = 0,', source)
         if count != 6:

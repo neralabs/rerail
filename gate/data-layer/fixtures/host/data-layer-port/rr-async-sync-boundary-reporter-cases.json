@@ -1,0 +1,1584 @@
+{
+  "cases": [
+    {
+      "id": "sync-run",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f():\n    return asyncio.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "sync-threadsafe",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f():\n    return asyncio.run_coroutine_threadsafe(fetch(), loop)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-thread",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-bare-thread",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-executor",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return loop.run_in_executor(None, fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-bare-executor",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return run_in_executor(None, fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "executor-suffix",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return object.not_run_in_executor(None, fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "executor-call-receiver",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return get_loop().run_in_executor(None, fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "executor-subscript-receiver",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return loops[0].run_in_executor(None, fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "partial-dotted-name",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f():\n    return factory().asyncio.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "module-run",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "asyncio.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "module-thread",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "module-executor",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "loop.run_in_executor(None, fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "sync-thread",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-run",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return asyncio.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "sync-executor",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f():\n    return loop.run_in_executor(None, fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-lambda",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return lambda: asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "sync-lambda",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f():\n    return lambda: asyncio.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "module-lambda",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "x = lambda: asyncio.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-sync",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def outer():\n    def inner():\n        return asyncio.run(fetch())\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-async",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def outer():\n    async def inner():\n        return asyncio.to_thread(fetch)\n    return asyncio.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "class-in-async",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def outer():\n    class Nested:\n        x = asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "async-default",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f(x=asyncio.to_thread(fetch)):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "sync-default",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f(x=asyncio.run(fetch())):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "async-decorator",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "@deco(asyncio.to_thread(fetch))\nasync def f():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "async-decorator-run",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "@deco(asyncio.run(fetch()))\nasync def f():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "sync-decorator",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "@deco(asyncio.run(fetch()))\ndef f():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "async-annotation",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f(x: asyncio.to_thread(fetch)):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "sync-return-annotation",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f() -> asyncio.run(fetch()):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "parenthesized",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "# asyncio.run\ndef f():\n    return ((asyncio) . run)(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-trigger-absent",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f():\n    return asyncio . run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "qualified-clean",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "def f():\n    return other.asyncio.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "alias-clean",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "import asyncio as aio\ndef f():\n    return aio.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "nfkc",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "# asyncio.run\ndef \uff46():\n    return \uff41\uff53\uff59\uff4e\uff43\uff49\uff4f.run(fetch())\n"
+        }
+      ]
+    },
+    {
+      "id": "unicode-columns",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f(): \u03c0 = 0; return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "duplicates",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return (to_thread(a), to_thread(a), loop.run_in_executor(None, a))\n"
+        }
+      ]
+    },
+    {
+      "id": "parse-error",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def broken(: # to_thread\n"
+        }
+      ]
+    },
+    {
+      "id": "clean-await",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "async def f():\n    return await fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "source-comment",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/module.py",
+          "source": "# asyncio.run to_thread run_in_executor\nx = 1\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-api/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-conform/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-public/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "public/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-scripts/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "scripts/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/tests/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/tests/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/test/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/test/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/test_input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/test_input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/not_tests/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/not_tests/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/tmp/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/tmp/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/venv/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/venv/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/.venv/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/.venv/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/__pycache__/input.py",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/__pycache__/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-0",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/conform/l7000_versioned/test_column_evolution_versioned_e2e.py",
+          "source": "async def test_versioned_column_evolution_e2e():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-0",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/conform/l7000_versioned/test_column_evolution_versioned_e2e.py",
+          "source": "async def test_versioned_column_evolution_e2e_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-1",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/conform/l9800_rippling/test_async_handler_support.py",
+          "source": "async def _process_event_with_async_connection():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-1",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/conform/l9800_rippling/test_async_handler_support.py",
+          "source": "async def _process_event_with_async_connection_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-2",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/browser/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-3",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l1000_cache/invalidation_broadcast.py",
+          "source": "async def _drain_loop():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-3",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l1000_cache/invalidation_broadcast.py",
+          "source": "async def _drain_loop_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-4",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "async def _execute_query_execute_aggregate_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-4",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "async def _execute_query_execute_aggregate_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-5",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "async def _execute_query_execute_windowed_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-5",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "async def _execute_query_execute_windowed_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-6",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "async def _execute_query_keyset_paginate_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-6",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "async def _execute_query_keyset_paginate_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-7",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def delete_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-7",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def delete_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-8",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def exists_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-8",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def exists_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-9",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def get_metadata_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-9",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def get_metadata_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-10",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def get_stats_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-10",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def get_stats_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-11",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def iter_content_hashes_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-11",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def iter_content_hashes_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-12",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def retrieve_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-12",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def retrieve_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-13",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def store_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-13",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/common/l2550_storage_backend/backend.py",
+          "source": "async def store_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-14",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/l1570_llm_client/client.py",
+          "source": "async def _run_sync():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-14",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/l1570_llm_client/client.py",
+          "source": "async def _run_sync_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-15",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/mariadb/connection.py",
+          "source": "async def _common_close_resources():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-15",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/mariadb/connection.py",
+          "source": "async def _common_close_resources_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-16",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/mariadb/connection.py",
+          "source": "async def close():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-16",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/mariadb/connection.py",
+          "source": "async def close_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-17",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/postgres/connection.py",
+          "source": "async def _close_async_conn_sync():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-17",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/postgres/connection.py",
+          "source": "async def _close_async_conn_sync_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-18",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/postgres/connection.py",
+          "source": "async def close():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-18",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/postgres/connection.py",
+          "source": "async def close_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-19",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/impl/sqlite/native_async_wrapper.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-20",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2000_connection/async_executor.py",
+          "source": "async def _run_sync():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-20",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2000_connection/async_executor.py",
+          "source": "async def _run_sync_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-21",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2000_connection/connection_pool.py",
+          "source": "async def _cleanup_connection_state():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-21",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2000_connection/connection_pool.py",
+          "source": "async def _cleanup_connection_state_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-22",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2000_connection/connection_pool.py",
+          "source": "async def _create_connection():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-22",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2000_connection/connection_pool.py",
+          "source": "async def _create_connection_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-23",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2050_transaction/transaction.py",
+          "source": "async def _execute_fragment_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-23",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2050_transaction/transaction.py",
+          "source": "async def _execute_fragment_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-24",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2050_transaction/transaction.py",
+          "source": "async def _execute_vector_query_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-24",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2050_transaction/transaction.py",
+          "source": "async def _execute_vector_query_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-25",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def _execute_aggregate_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-25",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def _execute_aggregate_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-26",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def count_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-26",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def count_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-27",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def cursor_paginate_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-27",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def cursor_paginate_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-28",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def execute_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-28",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def execute_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-29",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def execute_one_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-29",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def execute_one_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-30",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def execute_raw_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-30",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def execute_raw_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-31",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def execute_with_meta_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-31",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def execute_with_meta_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-32",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def exists_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-32",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def exists_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-33",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def first_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-33",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/query_builder.py",
+          "source": "async def first_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-34",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/tuple_query.py",
+          "source": "async def execute_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-34",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/tuple_query.py",
+          "source": "async def execute_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-35",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/tuple_query.py",
+          "source": "async def execute_one_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-35",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2060_query_builder/tuple_query.py",
+          "source": "async def execute_one_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-36",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/azure_backend.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-37",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/database_backend.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-38",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/dual_write.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-39",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/encryption.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-40",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/gcs_backend.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-41",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/local_backend.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-42",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/memory_backend.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-43",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/resilient_backend.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-44",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/s3_backend.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-45",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l2550_storage_backend/tiered_backend.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-46",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l4170_inbound_bridge/process.py",
+          "source": "async def _run_sync():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-46",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l4170_inbound_bridge/process.py",
+          "source": "async def _run_sync_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-47",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l4200_event_pipeline/persistent_metrics.py",
+          "source": "async def run_in_thread():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-47",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l4200_event_pipeline/persistent_metrics.py",
+          "source": "async def run_in_thread_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-48",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l4200_event_pipeline/persistent_metrics.py",
+          "source": "async def snapshot_now():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-48",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l4200_event_pipeline/persistent_metrics.py",
+          "source": "async def snapshot_now_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-49",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l4300_ipc/client.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-50",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l4300_ipc/server_mixin.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-51",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l5000_subscriptions/deferred_dispatch.py",
+          "source": "async def _run_async_callback_sync():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-51",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l5000_subscriptions/deferred_dispatch.py",
+          "source": "async def _run_async_callback_sync_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-52",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l5000_subscriptions/deferred_dispatch.py",
+          "source": "async def dispatch_queued_events():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-52",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l5000_subscriptions/deferred_dispatch.py",
+          "source": "async def dispatch_queued_events_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-53",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l5000_subscriptions/dispatcher.py",
+          "source": "async def dispatch_branch_event():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-53",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l5000_subscriptions/dispatcher.py",
+          "source": "async def dispatch_branch_event_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-54",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l6600_cleanup/reaper.py",
+          "source": "async def cleanup_expired_data_async():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-54",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l6600_cleanup/reaper.py",
+          "source": "async def cleanup_expired_data_async_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-55",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l8000_admin/tools/ipc_tools.py",
+          "source": "async def list_backends_handler():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "allow-wrong-function-55",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/l8000_admin/tools/ipc_tools.py",
+          "source": "async def list_backends_handler_other():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "informational-0",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/tests/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "informational-1",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/benchmarks/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "informational-2",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/scripts/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "informational-3",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/data_layer_testing/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "informational-4",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/demos/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "informational-5",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/examples/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "informational-6",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/exploration/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    },
+    {
+      "id": "informational-7",
+      "check": "async_sync_boundary",
+      "files": [
+        {
+          "path": "impl/prefix/integration_tests/input.py",
+          "source": "async def bridge():\n    return asyncio.to_thread(fetch)\n"
+        }
+      ]
+    }
+  ]
+}

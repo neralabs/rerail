@@ -4,11 +4,163 @@
 .language python
 .mode block
 .scope include "api/**/*.py", "impl/**/*.py", "conform/**/*.py"
-.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/test/**", "**/tests/**"
+.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_async_sync_boundary.py
 #include "python/ast.rr"
+.decl bs_trigger(text: symbol)
+bs_trigger("asyncio.run").
+bs_trigger("run_in_executor").
+bs_trigger("to_thread").
+.decl bs_information_dir(text: symbol)
+bs_information_dir("benchmarks/").
+bs_information_dir("data_layer_testing/").
+bs_information_dir("demos/").
+bs_information_dir("examples/").
+bs_information_dir("exploration/").
+bs_information_dir("integration_tests/").
+bs_information_dir("scripts/").
+bs_information_dir("tests/").
+.decl bs_static_allow(file: symbol, function: symbol)
+bs_static_allow("conform/l7000_versioned/test_column_evolution_versioned_e2e.py", "test_versioned_column_evolution_e2e").
+bs_static_allow("conform/l9800_rippling/test_async_handler_support.py", "_process_event_with_async_connection").
+bs_static_allow("impl/browser/*", "*").
+bs_static_allow("impl/common/l1000_cache/invalidation_broadcast.py", "_drain_loop").
+bs_static_allow("impl/common/l2070_server_plan/base_server_plan.py", "_execute_query_execute_aggregate_async").
+bs_static_allow("impl/common/l2070_server_plan/base_server_plan.py", "_execute_query_execute_windowed_async").
+bs_static_allow("impl/common/l2070_server_plan/base_server_plan.py", "_execute_query_keyset_paginate_async").
+bs_static_allow("impl/common/l2550_storage_backend/backend.py", "delete_async").
+bs_static_allow("impl/common/l2550_storage_backend/backend.py", "exists_async").
+bs_static_allow("impl/common/l2550_storage_backend/backend.py", "get_metadata_async").
+bs_static_allow("impl/common/l2550_storage_backend/backend.py", "get_stats_async").
+bs_static_allow("impl/common/l2550_storage_backend/backend.py", "iter_content_hashes_async").
+bs_static_allow("impl/common/l2550_storage_backend/backend.py", "retrieve_async").
+bs_static_allow("impl/common/l2550_storage_backend/backend.py", "store_async").
+bs_static_allow("impl/l1570_llm_client/client.py", "_run_sync").
+bs_static_allow("impl/mariadb/connection.py", "_common_close_resources").
+bs_static_allow("impl/mariadb/connection.py", "close").
+bs_static_allow("impl/postgres/connection.py", "_close_async_conn_sync").
+bs_static_allow("impl/postgres/connection.py", "close").
+bs_static_allow("impl/sqlite/native_async_wrapper.py", "*").
+bs_static_allow("l2000_connection/async_executor.py", "_run_sync").
+bs_static_allow("l2000_connection/connection_pool.py", "_cleanup_connection_state").
+bs_static_allow("l2000_connection/connection_pool.py", "_create_connection").
+bs_static_allow("l2050_transaction/transaction.py", "_execute_fragment_async").
+bs_static_allow("l2050_transaction/transaction.py", "_execute_vector_query_async").
+bs_static_allow("l2060_query_builder/query_builder.py", "_execute_aggregate_async").
+bs_static_allow("l2060_query_builder/query_builder.py", "count_async").
+bs_static_allow("l2060_query_builder/query_builder.py", "cursor_paginate_async").
+bs_static_allow("l2060_query_builder/query_builder.py", "execute_async").
+bs_static_allow("l2060_query_builder/query_builder.py", "execute_one_async").
+bs_static_allow("l2060_query_builder/query_builder.py", "execute_raw_async").
+bs_static_allow("l2060_query_builder/query_builder.py", "execute_with_meta_async").
+bs_static_allow("l2060_query_builder/query_builder.py", "exists_async").
+bs_static_allow("l2060_query_builder/query_builder.py", "first_async").
+bs_static_allow("l2060_query_builder/tuple_query.py", "execute_async").
+bs_static_allow("l2060_query_builder/tuple_query.py", "execute_one_async").
+bs_static_allow("l2550_storage_backend/azure_backend.py", "*").
+bs_static_allow("l2550_storage_backend/database_backend.py", "*").
+bs_static_allow("l2550_storage_backend/dual_write.py", "*").
+bs_static_allow("l2550_storage_backend/encryption.py", "*").
+bs_static_allow("l2550_storage_backend/gcs_backend.py", "*").
+bs_static_allow("l2550_storage_backend/local_backend.py", "*").
+bs_static_allow("l2550_storage_backend/memory_backend.py", "*").
+bs_static_allow("l2550_storage_backend/resilient_backend.py", "*").
+bs_static_allow("l2550_storage_backend/s3_backend.py", "*").
+bs_static_allow("l2550_storage_backend/tiered_backend.py", "*").
+bs_static_allow("l4170_inbound_bridge/process.py", "_run_sync").
+bs_static_allow("l4200_event_pipeline/persistent_metrics.py", "run_in_thread").
+bs_static_allow("l4200_event_pipeline/persistent_metrics.py", "snapshot_now").
+bs_static_allow("l4300_ipc/client.py", "*").
+bs_static_allow("l4300_ipc/server_mixin.py", "*").
+bs_static_allow("l5000_subscriptions/deferred_dispatch.py", "_run_async_callback_sync").
+bs_static_allow("l5000_subscriptions/deferred_dispatch.py", "dispatch_queued_events").
+bs_static_allow("l5000_subscriptions/dispatcher.py", "dispatch_branch_event").
+bs_static_allow("l6600_cleanup/reaper.py", "cleanup_expired_data_async").
+bs_static_allow("l8000_admin/tools/ipc_tools.py", "list_backends_handler").
+.decl bs_label(category: symbol, text: symbol)
+bs_label("ASYNC_WRAPS_SYNC", "async wraps sync (asyncio.to_thread)").
+bs_label("EXECUTOR_ESCAPE", "async wraps sync (run_in_executor)").
+bs_label("SYNC_WRAPS_ASYNC", "sync wraps async (asyncio.run)").
 
 .violation Count(at: span, count: number) code "BS_COUNT" "{count}"
 Count(@place("<inventory>", 1), n) :- option("entryPoint", "scan_tree"), n = count : { option_item("checkedPaths", _, _) }.
 .violation Category(at: span, index: number) code "BS_CATEGORY" "category"
 Category(@place("<category>", 1), i) :- option("entryPoint", "category"), option("category", c), option_item("categories", i, c).
+
+.decl bs_api_helper()
+bs_api_helper() :- option("entryPoint", "_get_call_name").
+.decl bs_name(n: node, name: symbol)
+bs_name(n, @nfkc(name)) :- !bs_api_helper(), unparen(n, e), kind(e, "identifier"), text(e, name).
+.decl bs_attr(n: node, obj: node, name: symbol)
+bs_attr(n, obj, @nfkc(name)) :- !bs_api_helper(), unparen(n, e), kind(e, "attribute"), field(e, "object", obj), field(e, "attribute", a), text(a, name).
+.decl bs_identifier(n: node)
+bs_identifier(n) :- !bs_api_helper(), unparen(n, e), kind(e, "identifier").
+// ast collects the attribute suffix even when its receiver is a call, subscript, or literal.
+bs_name(n, name) :- bs_attr(n, obj, name), !bs_identifier(obj), !bs_attr(obj, _, _).
+bs_name(n, cat(prefix, ".", name)) :- bs_attr(n, obj, name), n < obj, bs_name(obj, prefix).
+.decl bs_call(n: node, fn: node)
+bs_call(n, fn) :- kind(n, "call"), field(n, "function", fn).
+.decl bs_context(c: node, name: symbol, async_: number)
+bs_context(c, @nfkc(name), 1) :- bs_call(c, _), def_frame(c, f), def_name(f, name), op(f, "async").
+bs_context(c, @nfkc(name), 0) :- bs_call(c, _), def_frame(c, f), def_name(f, name), !op(f, "async").
+bs_context(c, "<module>", 0) :- bs_call(c, _), !def_frame(c, _).
+.decl bs_document(d: number, path: symbol)
+bs_document(d, p) :- doc(d, p, _), option("entryPoint", "scan_tree"), file_name(d, nm), suffix(".py", nm), !syntax_error(d, _, _).
+bs_document(d, p) :- doc(d, p, _), !option("entryPoint", _), file_name(d, nm), suffix(".py", nm),
+ (prefix("api/", p) ; prefix("impl/", p) ; prefix("conform/", p)), !bs_hidden(d), !syntax_error(d, _, _).
+.decl bs_hidden(d: number)
+bs_hidden(d) :- path_part(d, part), (part = ".git" ; part = ".venv" ; part = "venv" ; part = "__pycache__" ; part = "tmp").
+.decl bs_source_enabled(d: number)
+bs_source_enabled(d) :- bs_document(d, _), source(d, span), text(span, source), bs_trigger(trigger), contains(trigger, source).
+.decl bs_detect(c: node, category: symbol, name: symbol, async_: number, call_text: symbol)
+bs_detect(c, "SYNC_WRAPS_ASYNC", fn, 0, cat(name, "()")) :- bs_call(c, f), docof(c, d), bs_source_enabled(d), bs_name(f, name),
+ (name = "asyncio.run" ; name = "asyncio.run_coroutine_threadsafe"), bs_context(c, fn, 0).
+bs_detect(c, "ASYNC_WRAPS_SYNC", fn, 1, cat(name, "()")) :- bs_call(c, f), docof(c, d), bs_source_enabled(d), bs_name(f, name),
+ (name = "asyncio.to_thread" ; name = "to_thread"), bs_context(c, fn, 1).
+bs_detect(c, "EXECUTOR_ESCAPE", fn, 1, cat(name, "()")) :- bs_call(c, f), docof(c, d), bs_source_enabled(d), bs_name(f, name),
+ suffix("run_in_executor", name), bs_context(c, fn, 1).
+
+.decl bs_allowed_pairs(file: symbol, function: symbol)
+bs_allowed_pairs(p, f) :- !option("entryPoint", "_is_allowlisted"), bs_static_allow(p, f).
+bs_allowed_pairs(p, f) :- option("entryPoint", "_is_allowlisted"), option_item("allowedFiles", i, p), option_item("allowedFunctions", i, f).
+.decl bs_info_pattern(pattern: symbol)
+bs_info_pattern(p) :- !option("entryPoint", "_is_informational"), bs_information_dir(p).
+bs_info_pattern(p) :- option("entryPoint", "_is_informational"), option_item("informationDirs", _, p).
+.decl bs_target(path: symbol, function: symbol)
+bs_target(p, f) :- bs_detect(c, _, f, _, _), docof(c, d), bs_document(d, p).
+bs_target(p, f) :- option("entryPoint", "_is_allowlisted"), option("file_rel", p), option("function_name", f).
+.decl bs_allowed(path: symbol, function: symbol)
+bs_allowed(p, f) :- bs_target(p, f), bs_allowed_pairs(pattern, fun), (fun = "*" ; fun = f), !suffix("*", pattern), suffix(pattern, p).
+bs_allowed(p, f) :- bs_target(p, f), bs_allowed_pairs(pattern, fun), (fun = "*" ; fun = f), suffix("*", pattern),
+ prefix_ = @slice(pattern, 0, strlen(pattern) - 1), trimmed = @replace_all(prefix_, "/+$", ""),
+ (suffix(trimmed, p) ; contains(cat(trimmed, "/"), p) ; suffix(prefix_, p) ; contains(prefix_, p)).
+.decl bs_info_path(path: symbol)
+bs_info_path(p) :- bs_document(_, p).
+bs_info_path(p) :- option("entryPoint", "_is_informational"), option("file_rel", p).
+.decl bs_informational(path: symbol)
+bs_informational(p) :- bs_info_path(p), bs_info_pattern(part), contains(part, p).
+.decl bs_emit(c: node, category: symbol, function_name: symbol, async_: number, call_text: symbol)
+bs_emit(c, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text), option("entryPoint", "scan_tree").
+bs_emit(c, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text), !option("entryPoint", _),
+ docof(c, d), bs_document(d, p), !bs_allowed(p, fn), !bs_informational(p).
+
+.violation Sync(at: node, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "SYNC_WRAPS_ASYNC" "{message}"
+Sync(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c, "SYNC_WRAPS_ASYNC", fn, a, t), col(c, col), visit_index(c, ordinal), bs_label("SYNC_WRAPS_ASYNC", label).
+.violation Async(at: node, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "ASYNC_WRAPS_SYNC" "{message}"
+Async(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c, "ASYNC_WRAPS_SYNC", fn, a, t), col(c, col), visit_index(c, ordinal), bs_label("ASYNC_WRAPS_SYNC", label).
+.violation Executor(at: node, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "EXECUTOR_ESCAPE" "{message}"
+Executor(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c, "EXECUTOR_ESCAPE", fn, a, t), col(c, col), visit_index(c, ordinal), bs_label("EXECUTOR_ESCAPE", label).
+
+.decl bs_graph_kind(n: node, kind: symbol)
+bs_graph_kind(n, k) :- bs_api_helper(), option_item("astKinds", n, k).
+.decl bs_graph_edge(p: node, field: symbol, n: node)
+bs_graph_edge(to_number(p), field, n) :- bs_api_helper(), option_item("astParents", n, p), p != "-1", option_item("astFields", n, field).
+bs_name(n, name) :- bs_graph_kind(n, "Name"), option_item("astIds", n, name).
+bs_identifier(n) :- bs_graph_kind(n, "Name").
+bs_attr(n, obj, name) :- bs_graph_kind(n, "Attribute"), bs_graph_edge(n, "value", obj), option_item("astAttrs", n, name).
+.violation CallName(at: span, name: symbol) code "BS_CALL_NAME" "{name}"
+CallName(@place("<call-name>", 1), name) :- bs_graph_kind(0, "Call"), bs_graph_edge(0, "func", f), bs_name(f, name).
+.violation Allow(at: span) code "BS_ALLOW" "allowlisted"
+Allow(@place("<allow>", 1)) :- option("entryPoint", "_is_allowlisted"), option("file_rel", p), option("function_name", f), bs_allowed(p, f).
+.violation Info(at: span) code "BS_INFO" "informational"
+Info(@place("<info>", 1)) :- option("entryPoint", "_is_informational"), option("file_rel", p), bs_informational(p).
