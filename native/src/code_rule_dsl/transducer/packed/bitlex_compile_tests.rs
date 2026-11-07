@@ -236,7 +236,6 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
     eprintln!("{ops} operations, {carried} carried or prev, {} outputs", compiled.rows.lines().filter(|l| l.contains(" output ")).count());
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
     let prepared = Executors::new(&p);
-    let block = &p.block_programs()[0];
     let tokens: Vec<&str> = stmts.iter().filter_map(|s| match s { ::bitlex::syntax::Stmt::Token { kind, .. } => Some(kind.as_str()), _ => None }).collect();
     // A token row's tokens: its kind's and its keywords' kinds (the evaluator retypes them).
     let members = |row: &str| -> Vec<String> {
@@ -282,12 +281,10 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
         let (runs, over) = prepared.run(&bytes, true);
         assert!(over.is_empty(), "over the launch budget: {over:?}");
         for (executor, got) in runs {
-            // Tier 1 refuses by a fallback bit; tier 2, the writer, by tokens that make no tree.
-            let cuts: Vec<Vec<u64>> = got.iter().map(|w| cut(w.clone(), n)).collect();
-            let falls = compiled.fallbacks.iter().any(|&k| cuts[usize::from(k)].iter().any(|&w| w != 0))
-                || tape_writer::write(block, &cuts, &bytes).is_err();
+            // Tier 1 refuses by a fallback bit. The evaluator's other refusals (tokens that make
+            // no tree) are tier 2's, which this test does not run.
+            let falls = compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0));
             if !out.errors.is_empty() {
-                assert!(falls, "{executor}, {n} bytes: the evaluator rejects ({:?}) but the file does not fall back", out.errors);
                 rejected += 1;
                 continue;
             }
@@ -465,21 +462,6 @@ fn json_batch_cost_per_block() {
     println!("files to the fallback: {fallback}");
     let s = compiled.batch_cpu_seconds(&slices, 3);
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
-    // Tier 2 (decision 0049): the writer over each file's outputs, once per token.
-    let block = &program.block_programs()[0];
-    let now = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: `t` is a valid timespec to write.
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
-    let (mut best, mut nodes) = (f64::MAX, 0);
-    for _ in 0..3 {
-        let start = now();
-        nodes = runs.iter().zip(&bytes).filter_map(|(r, b)| tape_writer::write(block, &r.outputs, b).ok()).map(|(n, _)| n.len()).sum::<usize>();
-        best = best.min(now() - start);
-    }
-    println!("tier 2, the writer: {:.3} ns per block, {nodes} nodes (CPU time, best of 3)", best / blocks as f64 * 1e9);
     #[cfg(target_os = "macos")]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, REPEATED_LAUNCHES, run_split};
@@ -526,90 +508,20 @@ fn json_fallbacks() -> Vec<u16> {
 
 /// The tape a block program writes (decision 0046) equals tree-sitter's byte for byte, for every
 /// file that does not go to tree-sitter; a file tree-sitter finds an error in always goes to it.
-/// On the CPU interpreter and on Cranelift (the same writer over each executor's masks).
+/// Open: waits for the generated tier 2 (decision 0050).
 #[test]
+#[ignore = "no tier-2 executor: the generated one (decision 0050) replaces the deleted Rust writer"]
 fn json_tapes_equal_tree_sitter_byte_for_byte() {
-    use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-    let grammar = Grammar::new(GrammarDialect::Json).expect("json");
-    let program = json_program();
-    let falls = json_fallbacks();
-    let block = &program.block_programs()[0];
-    let compiled = native_cpu_block::compile(&native_ir::lower(&program).expect("lowers").block_programs.remove(0)).expect("compiles");
-    let mut cases = inputs();
-    cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
-    let (mut equal, mut fallback) = (0, 0);
-    for bytes in cases {
-        let Ok(source) = std::str::from_utf8(&bytes) else { continue };
-        let parsed = TapeImage::parse(&grammar, source, &|| false).expect("parses").expect("encodes").primary;
-        let has_error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
-        let want = parsed.to_bytes().expect("bytes");
-        for (executor, outputs) in [("interpreter", block.interpret(&bytes)), ("cranelift", compiled.run(&bytes))] {
-            let written = tape_writer::tape_of(block, &outputs, &falls, &grammar, source).unwrap_or_else(|e| panic!("{executor}: {e}"));
-            match written {
-                None => fallback += 1,
-                Some(_) if has_error => {
-                    let mut parser = tree_sitter::Parser::new();
-                    { use ast_grep_language::LanguageExt; parser.set_language(&GrammarDialect::Json.get_ts_language()).expect("json"); }
-                    let tree = parser.parse(source, None).expect("parses");
-                    panic!("{executor}: a tape for a file tree-sitter finds an error in: {source:?}: {}", tree.root_node().to_sexp());
-                }
-                Some(tape) => {
-                    assert!(tape.to_bytes().expect("bytes") == want, "{executor}: tape differs for {source:?}");
-                    equal += 1;
-                }
-            }
-        }
-    }
-    eprintln!("{equal} tapes equal, {fallback} to tree-sitter");
-    assert!(equal > 0);
+    todo!("tier 2 is generated from the Bitlex file (decision 0050); the Rust writer is gone")
 }
 
 /// `json_tapes_equal_tree_sitter_byte_for_byte` over every file listed in `RERAIL_JSON_FILES`
 /// (one path a line), on Cranelift's batch: each file's tape equals tree-sitter's byte for byte,
 /// or the file goes to tree-sitter; never a tape where tree-sitter finds an error. Run by name.
 #[test]
-#[ignore = "a corpus check; run by name with RERAIL_JSON_FILES"]
+#[ignore = "no tier-2 executor: the generated one (decision 0050) replaces the deleted Rust writer"]
 fn json_corpus_tapes_equal_tree_sitter() {
-    use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-    let list = std::env::var("RERAIL_JSON_FILES").expect("RERAIL_JSON_FILES: a file of paths");
-    let paths: Vec<String> = std::fs::read_to_string(&list).expect("reads the list").lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
-    let bytes: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap_or_else(|e| panic!("{p}: {e}"))).collect();
-    let grammar = Grammar::new(GrammarDialect::Json).expect("json");
-    let program = json_program();
-    let falls = json_fallbacks();
-    let block = &program.block_programs()[0];
-    let compiled = native_cpu_block::compile(&native_ir::lower(&program).expect("lowers").block_programs.remove(0)).expect("compiles");
-    let files: Vec<block::BatchFile<'_>> = bytes.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
-    let runs = native_cpu_block::run_batch(&[&compiled], &files);
-    let (mut equal, mut fallback, mut not_utf8, mut differ) = (0, 0, 0, Vec::new());
-    for ((path, bytes), run) in paths.iter().zip(&bytes).zip(&runs) {
-        let Ok(source) = std::str::from_utf8(bytes) else {
-            not_utf8 += 1;
-            continue;
-        };
-        let parsed = TapeImage::parse(&grammar, source, &|| false).expect("parses").expect("encodes").primary;
-        let has_error = !parsed.error_nodes().is_empty() || !parsed.missing_nodes().is_empty();
-        match tape_writer::tape_of(block, &run.outputs, &falls, &grammar, source).unwrap_or_else(|e| panic!("{path}: {e}")) {
-            None => {
-                fallback += 1;
-                if !has_error {
-                    // Valid JSON sent to tree-sitter: say which tier sent it.
-                    let why = match tape_writer::write(block, &run.outputs, bytes) {
-                        Err(e) => format!("the writer: {e}"),
-                        Ok(_) => "a fallback bit".to_owned(),
-                    };
-                    eprintln!("{path}: to tree-sitter by {why}");
-                }
-            }
-            Some(_) if has_error => panic!("{path}: a tape where tree-sitter finds an error"),
-            Some(tape) if tape.to_bytes().expect("bytes") == parsed.to_bytes().expect("bytes") => equal += 1,
-            Some(_) => differ.push(path.clone()),
-        }
-    }
-    eprintln!("{} files: {equal} tapes equal, {fallback} to tree-sitter, {not_utf8} not UTF-8, {} differ", paths.len(), differ.len());
-    assert!(differ.is_empty(), "tapes differ: {:?}", &differ[..differ.len().min(10)]);
+    todo!("tier 2 is generated from the Bitlex file (decision 0050); the Rust writer is gone")
 }
 
 

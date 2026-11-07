@@ -247,7 +247,6 @@ mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
-pub(in crate::code_rule_dsl) mod tape_writer;
 mod native_ir;
 mod output;
 mod packed_arena;

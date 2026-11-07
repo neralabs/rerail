@@ -1346,7 +1346,7 @@ impl TapeImage {
         Self::pack(&nodes, std::mem::take(&mut supertypes), grammar, source, budget)
     }
 
-    /// The image of nodes written in preorder by a tape writer (`transducer::packed::tape_writer`):
+    /// The image of nodes written in preorder by a tape writer (tier 2 of a block program, decision 0049):
     /// each node's kind and field, extra flag, span and subtree size, and the supertype
     /// memberships (node, class). Packed as a parsed tree's are (`pack`), so the bytes are the
     /// same for the same nodes.
