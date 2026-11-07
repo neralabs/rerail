@@ -330,6 +330,16 @@
           "source": "self._expected_tip_revision_id = x; self._branch_tip = x"
         }
       ]
+    },
+    {
+      "id": "production-test-prefix-filename",
+      "check": "connection_caches",
+      "files": [
+        {
+          "path": "api/test_cache.py",
+          "source": "self._branch_tip = 1\n"
+        }
+      ]
     }
   ]
 }
