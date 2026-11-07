@@ -225,6 +225,8 @@ const BODY_OPCODES: &[&str] = &[
     // Constants, made where they are used (decision 0047): `movi` and literal-pool loads, and
     // the output words' one pointer (`i * outputs * 8`).
     "splat", "vconst", "imul_imm",
+    // The packed carried state (decision 0048): a field's bits read with a mask.
+    "band_imm",
 ];
 
 /// Check the lowered forms of a program and print them.
@@ -1230,7 +1232,7 @@ pub(super) fn carried_params(clif: &str) -> usize {
 }
 
 /// Stage 1 compiles to a loop with no stack traffic and no vector `mvn`: every value and
-/// constant in a register, one carried word per value a carry reads.
+/// constant in a register, its carried state packed into words.
 #[test]
 #[cfg(target_arch = "aarch64")]
 fn stage1_loop_keeps_values_in_registers() {
@@ -1242,8 +1244,34 @@ fn stage1_loop_keeps_values_in_registers() {
     eprintln!("stage 1 loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
     assert_eq!((stack, mvn), (0, 0), "stage 1's loop spills or inverts vectors:\n{}", lines.join("\n"));
     let block = &p.block_programs()[0];
-    let words = carried_words(block) + native.extracts.len();
-    assert_eq!(carried_params(&compiled.clif), words, "one carried word per prev base and per carry");
+    // The state is packed: one carried word per 64 state bits (decision 0048).
+    let words = state_bits(block).div_ceil(64) + native.extracts.len();
+    assert_eq!(carried_params(&compiled.clif), words, "stage 1's carried state is not packed");
+}
+
+/// A program's carried state in bits (decision 0048): one bit per `toggle`, `after_odd_run` and
+/// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
+/// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
+/// costs `k - 1` more. Every executor carries these bits and no more: Cranelift packs them into
+/// words, never a word per bit.
+pub(super) fn state_bits(p: &block::BlockProgram) -> usize {
+    use super::block::BlockOp::*;
+    let mut back: std::collections::BTreeMap<u16, u8> = std::collections::BTreeMap::new();
+    for op in &p.ops {
+        if let Prev(a, k) = *op {
+            let m = back.entry(a).or_insert(0);
+            *m = (*m).max(k);
+        }
+    }
+    let ops = p.ops.iter().filter(|op| matches!(op, Toggle(_) | AfterOddRun(_) | Fill(..))).count();
+    let looks: usize = back
+        .iter()
+        .map(|(&a, &k)| match p.ops[usize::from(a)] {
+            Toggle(_) | Fill(..) => usize::from(k) - 1,
+            _ => usize::from(k),
+        })
+        .sum();
+    ops + looks
 }
 
 /// The values a program's `prev`s read, one carried word each, and its other carried operations.

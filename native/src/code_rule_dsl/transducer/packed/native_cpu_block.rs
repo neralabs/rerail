@@ -180,6 +180,68 @@ impl CompiledBlock {
 const FRONT: usize = 16;
 
 
+/// A field of the carried state: bits `pos..pos + width` of loop-carried word `word`. A `top`
+/// field keeps the top `width` bits of instruction `at`'s word (for its `prev`s, and a `toggle`'s
+/// or `fill`'s own carry, its top bit); a `flag` field an `after_odd_run`'s borrow.
+#[derive(Clone, Copy, Debug)]
+struct Field {
+    at: usize,
+    width: u8,
+    word: usize,
+    pos: u8,
+}
+
+/// The carried state's layout (decision 0048): its fields, packed first-fit into words.
+#[derive(Debug)]
+struct State {
+    fields: Vec<Field>,
+    /// Each instruction's top field and flag field, if it has one.
+    top: Vec<Option<usize>>,
+    flag: Vec<Option<usize>>,
+    words: usize,
+}
+
+impl State {
+    fn of(native: &BlockNative) -> Self {
+        let n = native.insts.len();
+        let mut back = vec![0u8; n];
+        for inst in &native.insts {
+            if let BlockInst::Prev(a, k) = *inst {
+                back[usize::from(a)] = back[usize::from(a)].max(k);
+            }
+        }
+        let mut wanted: Vec<(usize, u8, bool)> = Vec::new();
+        for (at, inst) in native.insts.iter().enumerate() {
+            match inst {
+                BlockInst::Toggle(_) | BlockInst::Fill(..) => wanted.push((at, back[at].max(1), false)),
+                BlockInst::AfterOddRun(_) => {
+                    wanted.push((at, 1, true));
+                    if back[at] > 0 {
+                        wanted.push((at, back[at], false));
+                    }
+                }
+                _ if back[at] > 0 => wanted.push((at, back[at], false)),
+                _ => {}
+            }
+        }
+        let mut used: Vec<u8> = Vec::new();
+        let (mut fields, mut top, mut flag) = (Vec::new(), vec![None; n], vec![None; n]);
+        for (at, width, is_flag) in wanted {
+            let word = match used.iter().position(|&u| u + width <= 64) {
+                Some(w) => w,
+                None => {
+                    used.push(0);
+                    used.len() - 1
+                }
+            };
+            fields.push(Field { at, width, word, pos: used[word] });
+            used[word] += width;
+            if is_flag { flag[at] = Some(fields.len() - 1) } else { top[at] = Some(fields.len() - 1) }
+        }
+        State { fields, top, flag, words: used.len() }
+    }
+}
+
 /// Compile a block program's native IR.
 pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     // Not optimised: the mid-end's code motion would hoist every vector constant out of the loop,
@@ -212,25 +274,10 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         f.append_block_params_for_function_params(entry);
         f.append_block_param(row, types::I64);
         f.append_block_param(body, types::I64);
-        // One loop-carried word per value a `prev` reads (its previous word, shared by every
-        // distance), and per other carried instruction: `toggle`'s parity (all ones or zero),
-        // `after_odd_run`'s and `fill`'s borrow (0 or 1). `slot[at]`: instruction `at`'s word.
-        let mut slot: Vec<Option<usize>> = vec![None; native.insts.len()];
-        let mut bases: std::collections::HashMap<u16, usize> = std::collections::HashMap::new();
-        let mut carried = 0usize;
-        for (at, inst) in native.insts.iter().enumerate() {
-            slot[at] = match *inst {
-                BlockInst::Prev(a, _) => Some(*bases.entry(a).or_insert_with(|| {
-                    carried += 1;
-                    carried - 1
-                })),
-                _ if inst.carried() => {
-                    carried += 1;
-                    Some(carried - 1)
-                }
-                _ => None,
-            };
-        }
+        // The carried state, packed (decision 0048): each carry holds only its bits, in a field
+        // of a few loop-carried words, never a word per bit.
+        let state = State::of(native);
+        let carried = state.words;
         for _ in 0..carried {
             f.append_block_param(body, types::I64);
         }
@@ -275,9 +322,23 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         // The body: one block, straight-line.
         f.switch_to_block(body);
         let i = f.block_params(body)[0];
-        let carries_in: Vec<Value> = f.block_params(body)[1..1 + carried].to_vec();
+        let packed_in: Vec<Value> = f.block_params(body)[1..1 + carried].to_vec();
         let counts_in: Vec<Value> = f.block_params(body)[1 + carried..].to_vec();
-        let mut carries_out: Vec<Option<Value>> = vec![None; carried];
+        // The state carried out, word by word: each field ORed in as soon as its value is made,
+        // so that no value stays live to the back edge for its carry.
+        let mut packed_out: Vec<Option<Value>> = vec![None; carried];
+        let put = |f: &mut FunctionBuilder<'_>, packed_out: &mut Vec<Option<Value>>, field: &Field, bits: Value| {
+            let placed = if field.pos == 0 { bits } else { f.ins().ishl_imm(bits, i64::from(field.pos)) };
+            packed_out[field.word] = Some(match packed_out[field.word] {
+                None => placed,
+                Some(acc) => f.ins().bor(acc, placed),
+            });
+        };
+        // Bits `from..from + n` of the state carried in, as the low bits of a word.
+        let read = |f: &mut FunctionBuilder<'_>, field: &Field, from: u8, n: u8| {
+            let x = f.ins().ushr_imm(packed_in[field.word], i64::from(field.pos + from));
+            if field.pos + from + n == 64 { x } else { f.ins().band_imm(x, ((1u64 << n) - 1) as i64) }
+        };
         // Constants are made in the body, where they are used (decision 0047): `movi` for a
         // splat, a literal-pool load for a table. Hoisted out of the loop, more of them than
         // the vector registers hold would spill and reload on every block.
@@ -344,7 +405,6 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         };
         for (at, inst) in native.insts.iter().enumerate() {
             let v = |x: u16| values[usize::from(x)];
-            let c = slot[at].unwrap_or(0);
             let value = match *inst {
                 // The bits below the stream's end: t = clamp(len - 64 i, 0, 64) ones, by two
                 // shifts so that t = 64 needs no shift by 64 (`block::within`). At a delay `d`,
@@ -435,27 +495,32 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 BlockInst::Xor(a, b) => f.ins().bxor(v(a), v(b)),
                 BlockInst::AndNot(a, b) => f.ins().band_not(v(a), v(b)),
                 BlockInst::Prev(a, k) => {
+                    // The top `k` of the bits the field keeps of `a`'s previous word.
+                    let field = &state.fields[state.top[usize::from(a)].expect("a looked-back value has a field")];
                     let up = f.ins().ishl_imm(v(a), i64::from(k));
-                    let halo = f.ins().ushr_imm(carries_in[c], 64 - i64::from(k));
-                    carries_out[c] = Some(v(a));
+                    let halo = read(&mut f, field, field.width - k, k);
                     f.ins().bor(up, halo)
                 }
                 BlockInst::Toggle(a) => {
                     // prefix XOR by six shift-XOR rounds (Cranelift has no carry-less multiply),
                     // then the parity carried in.
-                    let parity = carries_in[c];
+                    // The parity carried in: the top bit of the previous word, all ones or zero.
+                    let field = &state.fields[state.top[at].expect("a toggle has a field")];
+                    let bit = field.pos + field.width - 1;
+                    let parity = f.ins().ishl_imm(packed_in[field.word], i64::from(63 - bit));
+                    let parity = f.ins().sshr_imm(parity, 63);
                     let mut x = v(a);
                     for k in [1, 2, 4, 8, 16, 32] {
                         let up = f.ins().ishl_imm(x, k);
                         x = f.ins().bxor(x, up);
                     }
                     let y = f.ins().bxor(x, parity);
-                    carries_out[c] = Some(f.ins().sshr_imm(y, 63));
                     y
                 }
                 BlockInst::AfterOddRun(a) => {
                     // simdjson's find_escaped_branchless (`block::carry::after_odd_run`).
-                    let cin = carries_in[c];
+                    let flag = &state.fields[state.flag[at].expect("an after_odd_run has a field")];
+                    let cin = read(&mut f, flag, 0, 1);
                     let run = v(a);
                     let b = f.ins().band_not(run, cin);
                     let up = f.ins().ishl_imm(b, 1);
@@ -466,13 +531,16 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     let invert = f.ins().ishl_imm(sequences, 1);
                     let flipped = f.ins().bxor(even, invert);
                     let escaped = f.ins().band(flipped, follows);
-                    carries_out[c] = Some(f.ins().uextend(types::I64, overflow));
+                    let borrow = f.ins().uextend(types::I64, overflow);
+                    put(&mut f, &mut packed_out, &state.fields[state.flag[at].expect("a field")], borrow);
                     f.ins().band_not(escaped, run)
                 }
                 BlockInst::Fill(s, e) => {
                     // `block::carry::fill`: the carry into each bit of `s + (s | !e) + cin` is
                     // the fill coming into that byte.
-                    let cin = carries_in[c];
+                    // The borrow carried in: the previous word's top bit.
+                    let field = &state.fields[state.top[at].expect("a fill has a field")];
+                    let cin = read(&mut f, field, field.width - 1, 1);
                     let (start, end) = (v(s), v(e));
                     let b = f.ins().bor_not(start, end);
                     let sum = f.ins().iadd(start, b);
@@ -481,10 +549,14 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     let into = f.ins().bxor(into, b);
                     let open = f.ins().band_not(into, end);
                     let y = f.ins().bor(start, open);
-                    carries_out[c] = Some(f.ins().ushr_imm(y, 63));
                     y
                 }
             };
+            if let Some(k) = state.top[at] {
+                let field = state.fields[k];
+                let top = f.ins().ushr_imm(value, 64 - i64::from(field.width));
+                put(&mut f, &mut packed_out, &field, top);
+            }
             values.push(value);
         }
         let stride = 8 * native.outputs.len() as i64;
@@ -505,7 +577,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let next = f.ins().iadd_imm(i, 1);
         let more = f.ins().icmp(IntCC::UnsignedLessThan, next, blocks);
         let again: Vec<cranelift_codegen::ir::BlockArg> = std::iter::once(next.into())
-            .chain(carries_out.iter().map(|&c| c.expect("every carried word is written").into()))
+            .chain(packed_out.iter().map(|&c| c.expect("every carried word holds a field").into()))
             .chain(counts_out.iter().map(|&c| c.into()))
             .collect();
         let counted: Vec<cranelift_codegen::ir::BlockArg> = counts_out.iter().map(|&c| c.into()).collect();

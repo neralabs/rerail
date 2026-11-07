@@ -619,6 +619,22 @@ fn json_compiles_to_simdjsons_shape() {
     assert!(ops <= JSON_OPS && words <= JSON_CARRIED_WORDS, "json: {ops} operations (budget {JSON_OPS}), {words} carried words (budget {JSON_CARRIED_WORDS})");
 }
 
+/// JSON's carried state is bits (decision 0048): one per carried operation, and `k` per value a
+/// `prev` looks back on. The information that crosses a block boundary is about 18 bits (4 of
+/// lexical state: where in a string, number or literal, or between tokens; 14 of nesting: a
+/// depth to 13 and whether each open bracket is '{'), plus the bits the rules look back on. A
+/// ratchet, lowered as the compiler stops restating state.
+#[test]
+fn json_state_is_bits() {
+    let program = json_program();
+    let bits = super::block_tests::state_bits(&program.block_programs()[0]);
+    eprintln!("json: {bits} state bits (budget {JSON_STATE_BITS})");
+    assert!(bits <= JSON_STATE_BITS, "json: {bits} state bits (budget {JSON_STATE_BITS})");
+}
+
+/// JSON's state budget (a ratchet).
+const JSON_STATE_BITS: usize = 104;
+
 /// A token without `through` is its start byte alone, so its last byte is its start: no carry
 /// finds it. JSON has seven: `{ } [ ] , :` and `"`.
 #[test]
@@ -651,12 +667,15 @@ fn json_loop_keeps_values_in_registers() {
     let (stack, mvn) = super::block_tests::loop_costs(&lines);
     eprintln!("json loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
     assert_eq!(mvn, 0, "json's loop inverts vectors");
-    assert_eq!(super::block_tests::carried_params(&compiled.clif), super::block_tests::carried_words(&program.block_programs()[0]) + native.extracts.len());
+    // The state is packed: one carried word per 64 state bits (decision 0048).
+    let bits = super::block_tests::state_bits(&program.block_programs()[0]);
+    assert_eq!(super::block_tests::carried_params(&compiled.clif), bits.div_ceil(64) + native.extracts.len(), "json's carried state is not packed");
     assert!(lines.len() <= JSON_LOOP && stack <= JSON_LOOP_STACK, "json loop: {} instructions (budget {JSON_LOOP}), {stack} stack loads or stores (budget {JSON_LOOP_STACK})", lines.len());
 }
 
-/// JSON's loop budgets (ratchets): lower them as the program and the lowering improve, never
-/// raise them. The stack traffic is the spill of 78 carried words and their live values into
-/// 31 registers; the target is stage 1's 0.
-const JSON_LOOP: usize = 1915;
-const JSON_LOOP_STACK: usize = 405;
+/// JSON's loop budgets (ratchets): lower them as the program and the lowering improve. Packing
+/// the carried state (decision 0048) raised the instructions once, 1915 -> 1939, for 405 -> 164
+/// stack operations, at an equal or lower CPU time in every paired timing. The remaining stack
+/// traffic is live values in the body; the target is stage 1's 0.
+const JSON_LOOP: usize = 1939;
+const JSON_LOOP_STACK: usize = 164;
