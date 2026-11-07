@@ -22,6 +22,11 @@
 .decl op(n: node, s: symbol)
 .decl pkg(d: number, p: symbol)
 .input doc, node, child, field, text, op, pkg, kind, docof
+// Guests (decision 0055): parsed(s, "annotation", r) asks for string s's code, rooted at r; host_node(n, h): h is
+// the innermost host node over guest node n.
+.decl parsed(s: node, grammar: symbol, root: node)
+.decl host_node(n: node, h: node)
+.input parsed, host_node
 
 .decl scope(kind: symbol)
 scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
@@ -130,7 +135,9 @@ bound_in(s, x) :- ibind(s, x, _).
 
 // LEGB: from the nearest scope outwards, skipping class scopes, to the first that binds the name.
 .decl walk(n: node, x: symbol, s: node)
-walk(n, x, s) :- nameref(n, x), nearest(n, s, scope).
+walk(n, x, s) :- nameref(n, x), nearest(n, s, scope), !host_node(n, _).
+// A name in a guest (a quoted annotation's code) is looked up from the string that holds it.
+walk(n, x, s) :- nameref(n, x), host_node(n, h), nearest(h, s, scope).
 walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), nearest(s, p, fscope).
 .decl look(n: node, x: symbol, s: node)
 look(n, x, s) :- walk(n, x, s), bound_in(s, x).
@@ -238,10 +245,15 @@ anc(c, b) :- anc(c, m), base(m, b).
 // subclass (the closed world `self` already assumes), a builtin class's name a value of it, `None` None. Unions
 // (`A | B`, `Optional[A]`, `Union[A, B]`) are their members; a generic (`LazyResult[T]`, `list[int]`) is its class,
 // without arguments; `type[C]` is C's class objects; `Self` is the method's class. Any other member (a type
-// variable, `Any`, a `Protocol`, an external class, a quoted annotation) leaves the declaration open: its known
-// members are a lower bound.
+// variable, `Any`, a `Protocol`, an external class) leaves the declaration open: its known members are a lower
+// bound. A quoted annotation (`x: "Node"`, `list["Node"]`) is its code, parsed as an annotation (decision 0055).
 .decl ann(t: node, e: node)
 ann(t, e) :- kind(t, "type"), child(t, e, 0).
+// qann(s, e): string s is an annotation's whole expression, and e is its code's expression: the guest is a module
+// holding one statement, `(…)`, whose parentheses amem steps through.
+.decl qann(s: node, e: node)
+qann(s, e) :- kind(t, "type"), child(t, s, 0), kind(s, "string"), parsed(s, "annotation", m), child(m, x, 0),
+    kind(x, "expression_statement"), child(x, e, 0).
 .decl union_q(q: symbol)
 union_q("typing.Optional"). union_q("typing.Union"). union_q("typing_extensions.Optional"). union_q("typing_extensions.Union").
 .decl uhead(e: node)
@@ -253,12 +265,14 @@ amem(t, e) :- ann(t, e).
 amem(t, m) :- amem(t, e), kind(e, "binary_operator"), op(e, "|"), field(e, "left", m).
 amem(t, m) :- amem(t, e), kind(e, "binary_operator"), op(e, "|"), field(e, "right", m).
 amem(t, m) :- amem(t, e), kind(e, "parenthesized_expression"), child(e, m, 0).
+amem(t, r) :- amem(t, s), qann(s, r).
 amem(t, m) :- amem(t, e), kind(e, "union_type"), child(e, u, _), child(u, m, 0).
 amem(t, m) :- amem(t, e), uhead(e), kind(e, "generic_type"), child(e, p, 1), child(p, u, _), child(u, m, 0).
 amem(t, m) :- amem(t, e), uhead(e), kind(e, "subscript"), field(e, "subscript", m).
 .decl asplit(e: node)
 asplit(e) :- kind(e, "binary_operator"), op(e, "|").
 asplit(e) :- kind(e, "parenthesized_expression").
+asplit(s) :- qann(s, _).
 asplit(e) :- kind(e, "union_type").
 asplit(e) :- uhead(e).
 // A member that is not split further, and the name it is headed by (`LazyResult` in `LazyResult[T]`).
@@ -373,7 +387,8 @@ ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), kind(e, "identifier"),
 .decl attr_of(n: node, o: node, a: symbol)
 attr_of(n, o, a) :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a).
 .decl callee(c: node, e: node)
-callee(c, e) :- kind(c, "call"), field(c, "function", e).
+// A call in a guest (a quoted annotation's code) is not evaluated: only its names are read.
+callee(c, e) :- kind(c, "call"), field(c, "function", e), !host_node(c, _).
 // Qualified names: an imported name and attributes of one (`os.path.join`), whether or not the workspace defines it.
 .decl qn(n: node, q: symbol)
 qn(n, q) :- look(n, x, s), ibind(s, x, q).
@@ -435,14 +450,17 @@ pv(c, "super", k) :- callee(c, e), builtin_ref(e, "super"), nearest(c, f, fdef),
 // ---- unknown values -------------------------------------------------------------------------------------------
 // Positions whose value is read: what `vopen` is asked about.
 .decl vpos(n: node)
-vpos(e) :- callee(_, e).
-vpos(o) :- attr_of(_, o, _).
-vpos(r) :- asg(_, _, r, _).
-vpos(r) :- retval(_, r).
-vpos(e) :- dexpr(_, e).
-vpos(e) :- basex(_, e).
-vpos(a) :- posarg(_, _, a).
-vpos(v) :- pdefault(_, _, v).
+// vroot(e): where a value is read. A guest's (a quoted annotation's code) are not: only its names are read.
+.decl vroot(e: node)
+vroot(e) :- callee(_, e).
+vroot(o) :- attr_of(_, o, _).
+vroot(r) :- asg(_, _, r, _).
+vroot(r) :- retval(_, r).
+vroot(e) :- dexpr(_, e).
+vroot(e) :- basex(_, e).
+vroot(a) :- posarg(_, _, a).
+vroot(v) :- pdefault(_, _, v).
+vpos(e) :- vroot(e), !host_node(e, _).
 vpos(c) :- vpos(n), kind(n, "parenthesized_expression"), child(n, c, 0).
 vpos(c) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 0).
 vpos(c) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 2).

@@ -808,11 +808,10 @@ impl Batch {
             }
             docs.push(p);
         }
-        // The guests' rows, once every document is projected: a guest's host may be a guest after it.
-        if core {
-            for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
-                g.document(p, d, d.guest.as_deref(), withheld, &docs, projection.wants("host_node"), &mut string);
-            }
+        // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
+        // a program that declares its base relations itself (T's) reads guests as core.rr's do.
+        for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
+            g.document(p, d, d.guest.as_deref(), withheld, &docs, projection.wants("host_node"), &mut string);
         }
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
@@ -845,9 +844,9 @@ impl Batch {
             ("intval", pairs(&["n", "v"], &intval, [false, false])),
             ("op_t", pairs(&["n", "s"], &op_t, [false, true])),
         ];
+        relations.extend(g.relations(&atom));
         if core {
             relations.extend(c.relations(&atom));
-            relations.extend(g.relations(&atom));
         } else {
             relations.extend([
                 ("value", pairs(&["n", "s"], &value, [false, true])),

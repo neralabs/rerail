@@ -1021,13 +1021,18 @@ pub(crate) fn run_with_options(
             Some(slice) if !documents.is_empty() => {
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
                 let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::default());
+                // The slice's planner statistics: what it reads, measured once, in the first round's batch. A later
+                // round adds only the guests' rows, which are few beside the files' (each measurement sorts a column).
+                let mut measured: BTreeMap<String, Vec<(String, i64, i64, i64, i64)>> = BTreeMap::new();
                 for _ in 0..guests::DEPTH {
-                    // The slice's planner statistics: what it reads, measured in this round's batch.
                     let mut round = stats.clone();
                     for (rel, source) in &sources {
                         if slice_reads.contains(rel) {
-                            let measured = syntax::statistics(source.as_ref());
-                            round.measured(rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                            let m = measured.entry(rel.clone()).or_insert_with(|| {
+                                let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
+                                syntax::statistics(source.as_ref())
+                            });
+                            round.measured(rel, m.iter().cloned().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
                         }
                         modules.bind(&db, rel, Arc::clone(source))?;
                     }
@@ -1041,6 +1046,7 @@ pub(crate) fn run_with_options(
                         super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
                     }
                     docs.extend(new);
+                    let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
                     sources = syntax::with_nearest(&store, docs.clone(), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
                 }
                 host_of = std::mem::take(&mut made.host_of);
