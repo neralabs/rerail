@@ -677,7 +677,7 @@ pub(crate) fn run_with_options(
 
 
 /// The cross-file part's bounded rounds (`typing::cross_rounds`): `round` is the part with its hops reading
-/// `<rel>__prev`, a table in `x` that holds the previous round's rows (none in round 0). Each round's rows of the
+/// `<rel>__prev`, the previous round's rows held in memory (none in round 0). Each round's rows of the
 /// hop relations are digested; an unchanged digest ends the rounds (the fixpoint), as does round `K`. The last
 /// round's outcome is the part's.
 /// A relation's rows after a run: held by the engine (`kept`), or in its table.
@@ -695,15 +695,8 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
 fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
-    for rel in hops {
-        let cols: Vec<String> = (0..types(rel).len()).map(|i| format!("c{i}")).collect();
-        db.execute_batch(&format!(
-            "DROP TABLE IF EXISTS x.{rel}{p}; CREATE TABLE x.{rel}{p}({}, PRIMARY KEY ({})) WITHOUT ROWID",
-            cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "),
-            cols.join(", "),
-            p = cross_rounds::PREV
-        ))?;
-    }
+    // The previous round's rows of each hop relation (none before round 1), bound as `<rel>__prev` from memory.
+    let mut prev_rows: BTreeMap<String, Vec<Vec<i64>>> = hops.iter().map(|rel| (rel.clone(), Vec::new())).collect();
     // Round 0's previous rows: none, measured as such.
     let mut prev_totals = Totals::default();
     for rel in hops {
@@ -717,10 +710,11 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
     // fact `unconverged(1)`: its rules mark what that round still cannot decide as unknown.
     let pending_round = round.program.facts.contains_key(cross_rounds::UNCONVERGED);
     for r in 0..=k + 1 {
-        for rel in hops {
-            let prev = format!("{rel}{}", cross_rounds::PREV);
-            let source = component::table_source(db, "x", &prev).ok_or_else(|| Error::Plan(format!("x.{prev} is not a table of integers")))?;
-            modules.bind(db, &prev, source)?;
+        for (rel, rows) in &prev_rows {
+            let width = types(rel).len();
+            let columns = (0..width).map(|i| format!("c{i}")).collect();
+            let values = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+            modules.bind(db, &format!("{rel}{}", cross_rounds::PREV), component::columns_source(columns, values))?;
         }
         let mut st = stats.clone();
         prev_totals.apply(&mut st);
@@ -754,17 +748,11 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
             round.program.facts.get_mut(cross_rounds::UNCONVERGED).expect("declared").push(vec![front::Value::Int(1)]);
         }
         last = Some(digest);
-        db.execute_batch("BEGIN")?;
-        for (rel, rows) in &rows {
-            let prev = format!("{rel}{}", cross_rounds::PREV);
-            db.execute(&format!("DELETE FROM x.{prev}"), [])?;
-            let width = types(rel).len();
-            let mut ins = db.prepare(&format!("INSERT OR IGNORE INTO x.{prev} VALUES ({})", vec!["?"; width].join(", ")))?;
-            for row in rows {
-                ins.execute(rusqlite::params_from_iter(row.iter()))?;
-            }
+        for (rel, mut rows) in rows {
+            rows.sort_unstable();
+            rows.dedup();
+            prev_rows.insert(rel, rows);
         }
-        db.execute_batch("COMMIT")?;
         crate::code_rule_dsl::logic::native::forget_inputs(db);
     }
     unreachable!("round K returns")
