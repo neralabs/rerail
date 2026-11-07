@@ -16,6 +16,19 @@ import mutation
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_boundary_mutation_preserves_counts_and_cannot_hide_bridge_findings(self):
+        self.assertTrue(mutation.auxiliary_output('async_sync_boundary', dict(code='BS_COUNT')))
+        self.assertFalse(mutation.auxiliary_output('async_sync_boundary', dict(code='SYNC_WRAPS_ASYNC')))
+        self.assertFalse(mutation.auxiliary_output('async_sync_boundary', dict(code='ASYNC_WRAPS_SYNC')))
+        self.assertFalse(mutation.auxiliary_output('async_sync_boundary', dict(code='EXECUTOR_ESCAPE')))
+        source = 'Count(a, n) :- input(n).\n' + ''.join('bs_detect(c, "' + c + '", f, a, t) :- candidate(c).\n'
+            for c in ['SYNC_WRAPS_ASYNC', 'ASYNC_WRAPS_SYNC', 'EXECUTOR_ESCAPE'])
+        disabled = mutation.disable_policy('async_sync_boundary', source)
+        self.assertIn('Count(a, n) :- input(n).', disabled)
+        self.assertEqual(3, disabled.count(':- 1 = 0,'))
+        with self.assertRaises(ValueError):
+            mutation.disable_policy('async_sync_boundary', 'Count(a, n) :- input(n).')
+
     def test_positive_controls_keep_only_known_auxiliary_outputs(self):
         self.assertTrue(mutation.auxiliary_output('backend_coupling', dict(code='BC_CONFIG')))
         self.assertTrue(mutation.auxiliary_output('backend_coupling', dict(code='BC_CHECK')))
