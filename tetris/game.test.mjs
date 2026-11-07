@@ -5,9 +5,13 @@ import { sourceSpan } from './evaluation.mjs';
 import { sourceTokens } from './rr-source.mjs';
 import { sourceCatalog } from './sources.mjs';
 import { partitionWaves, waveAtPosition, frontierState } from './waves.mjs';
+import { readFile } from 'node:fs/promises';
 
-const engine = new Engine();
-after(() => engine.close());
+const engine = process.env.RERAIL_TEST_WASM === '1'
+  ? await (await import('./standalone/dist/wasm-engine.mjs')).WasmEngine.fromModule(
+    await WebAssembly.compile(await readFile(new URL('./standalone/dist/rerail-facts.wasm', import.meta.url))))
+  : new Engine();
+after(() => engine.close?.());
 const evaluate = async (state = '', event = 'timestep(0).', seed = 7) =>
   engine.evaluate(`${rules}\n${state}\n${event}\nentropy(${seed}).`);
 const initial = ({ k = 0, x = 3, y = 0, r = 0, score = 0, lines = 0, pieces = 0, mode = 'playing', seed = 1, clock = 0, timeMode = 'realtime', board = [] } = {}) => [

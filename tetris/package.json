@@ -4,8 +4,15 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "build:standalone": "node standalone/build.mjs",
     "start": "node server.mjs",
+    "preview:standalone": "python3 -m http.server 4320 --bind 127.0.0.1 --directory standalone/dist",
     "test": "node --test game.test.mjs",
-    "test:browser": "node browser-check.mjs"
+    "test:browser": "node browser-check.mjs",
+    "test:wasm": "RERAIL_TEST_WASM=1 node --test --test-reporter=tap game.test.mjs",
+    "test:standalone": "node standalone/browser-check.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

@@ -3,6 +3,50 @@
 A local falling block game. Rerail runs every game rule in [game.rr](game.rr).
 The browser sends events as facts and displays the resulting screen facts.
 
+## Standalone browser version
+
+Open [standalone/falling-facts.html](standalone/falling-facts.html) directly in your browser.
+This generated file contains the WASM engine, game, source browser, styles, and inspection tools.
+It needs no server or network connection. Each tab has its own game.
+
+To rebuild both standalone formats, run:
+
+```sh
+npm --prefix tetris install
+npm --prefix tetris run build:standalone
+```
+
+The build also writes a static site to `tetris/standalone/dist/`.
+Copy that folder to any static host, including a subdirectory.
+To preview it locally, run:
+
+```sh
+npm --prefix tetris run preview:standalone
+```
+
+Open <http://127.0.0.1:4320>.
+This preview serves files only. It runs no game logic.
+After its first complete load, the static site supports offline reloads through a service worker.
+The single HTML file works offline immediately.
+
+Rerail runs inside a dedicated Web Worker as a persistent WASI reactor.
+The same Rust planner, SQLite executor, rule cache, and trace observer evaluate every event.
+The worker receives keypress and timestep facts and returns screen facts and recorded evaluations.
+JavaScript handles transport, feedback, and visualization. All game behavior remains in `game.rr`.
+Manual time, change colors, live waves, replay, rule tooltips, and full source browsing work in both versions.
+
+The standalone build uses commit `b8657e81b` from the **More ergonomic rule syntax** worktree.
+It snapshots committed engine sources into an isolated build directory.
+It does not change that session's worktree.
+The build requires its documented WASI toolchain: Rust 1.95.0, the `wasm32-wasip1` target, and Homebrew LLVM/WASI libraries.
+Set `RERAIL_WASM_SOURCE` to select that worktree elsewhere.
+Set `RERAIL_WASM_REVISION` to select another committed revision.
+The WASI shim and rule sources are bundled locally. No CDN is used.
+
+Run the same engine checks against WASM with `npm --prefix tetris run test:wasm`.
+With the static preview running, use `npm --prefix tetris run test:standalone` for browser checks.
+Those checks also open the single HTML file with networking disabled.
+
 ## Play
 
 From the repository root, run:
