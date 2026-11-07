@@ -506,6 +506,12 @@ pub(crate) fn run_with_options(
     }
     // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0050).
     let located = crate::code_rule_dsl::typing::file_local::locate(&mut lowered.program);
+    // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again, and so
+    // are the relations over them, before the program splits.
+    let (remerged, reshared) = crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program);
+    if remerged > 0 {
+        crate::code_rule_dsl::logic::profile::decision("merged after the joins were pushed", || format!("{remerged} relations merged into an identical one ({reshared} classes shared across programs)"));
+    }
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     let memo_program = memo::program_digest(&split.local);
@@ -999,7 +1005,18 @@ pub(crate) fn run_with_options(
             rounds = cross_rounds::Rounds { run: 1, converged: true, rows: vec![] };
             super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?
         } else {
-            run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, &mut rounds)?
+            let got = run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, &mut rounds)?;
+            crate::code_rule_dsl::logic::profile::decision("cross-file rounds (typing::cross_rounds)", || {
+                format!(
+                    "{} hop relations ({}); {} rounds run, {}; hop rows per round {:?}",
+                    bounded.hops.len(),
+                    bounded.hops.iter().take(8).cloned().collect::<Vec<_>>().join(", "),
+                    rounds.run,
+                    if rounds.converged { "converged" } else { "NOT converged: chains crossing more files are cut" },
+                    rounds.rows
+                )
+            });
+            got
         };
         if wanted.contains("returns") {
             returns = held_rows(&db, &got, "returns", 2)?;
@@ -1116,6 +1133,7 @@ fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &
     let mut last = None;
     let k = cross_rounds::k();
     for r in 0..=k {
+        let _round = crate::code_rule_dsl::logic::profile::span(|| format!("round {r}"));
         for rel in hops {
             let prev = format!("{rel}{}", cross_rounds::PREV);
             let source = component::table_source(db, "x", &prev).ok_or_else(|| Error::Plan(format!("x.{prev} is not a table of integers")))?;
