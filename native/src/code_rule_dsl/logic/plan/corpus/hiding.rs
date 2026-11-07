@@ -81,7 +81,8 @@ impl Fact {
 pub(super) fn hide(prog: &mut Program, bound: u32) {
     // `kind`, `docof` and `precedes` are views of `node` and `child` the lowering writes as rules (`rr::lower`): they
     // are read as base relations, and their own rules are left whole.
-    let view = |rel: &str| VIEWS.contains(&rel) && !prog.inputs.iter().any(|i| i == rel);
+    let views: BTreeSet<String> = VIEWS.iter().filter(|r| !prog.inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
+    let view = |rel: &str| views.contains(rel);
     let base: BTreeSet<String> = prog
         .inputs
         .iter()
@@ -89,7 +90,6 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         .chain(VIEWS.iter().filter(|r| view(r)).map(|r| (*r).to_owned()))
         .filter(|r| !ENTRIES.iter().any(|(e, ..)| e == r))
         .collect();
-    let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !view(r)).collect();
     let locations = |rel: &str| -> Vec<usize> {
         let mut cols: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |c| c.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
         if let Some(c) = crate::code_rule_dsl::typing::file_local::document_column(rel)
@@ -100,28 +100,85 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         cols
     };
     let base_locations: BTreeMap<String, Vec<usize>> = base.iter().map(|r| (r.clone(), locations(r))).collect();
-    // What each derived relation's columns carry, to a fixpoint over the rules.
-    let mut carried: BTreeMap<String, Vec<Fact>> = derived.iter().map(|r| (r.clone(), vec![Fact::default(); prog.decls.get(r).map_or(0, Vec::len)])).collect();
+    // Each rule's seeds: a specialized copy's head column, scoped in its grammar.
+    let mut seeds: Vec<BTreeMap<String, Fact>> = vec![BTreeMap::new(); prog.rules.len()];
+    // A derived relation read with a scoped variable of a known grammar is specialized to it (decision 0058 §2, O98):
+    // `rr_in_<grammar>_<column>_<relation>`, its rules copied with that head column seeded, so a node set's kinds are
+    // the guest's grammar's and its guest rows are not bounded away. A kind set (`.kindset`) read by `nearest` over
+    // such a node is copied as `rr_in_<grammar>_<set>`, with its kinds named in that grammar. To a fixpoint: a copy reads relations too.
+    let mut made: BTreeSet<String> = BTreeSet::new();
+    let mut carried;
     loop {
+        carried = carry(prog, &base_locations, &seeds, &view);
+        let snapshot = prog.rules.clone();
+        let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
+        let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
+        let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
         let mut changed = false;
-        for rule in &prog.rules {
-            let facts = analyse(rule, &base_locations, &carried);
-            let Some(cols) = carried.get_mut(&rule.head.rel) else { continue };
-            for (c, t) in rule.head.args.iter().enumerate() {
-                if let (Term::Var(v), Some(slot)) = (t, cols.get_mut(c))
-                    && let Some(f) = facts.get(v)
-                {
-                    changed |= slot.join(f);
+        for (i, rule) in prog.rules.iter_mut().enumerate() {
+            if view(&rule.head.rel) {
+                continue;
+            }
+            let facts = analyse(rule, &base_locations, &carried, &seeds[i]);
+            let grammar_of = |v: &str| facts.get(v).filter(|f| f.scoped).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
+            for l in &mut rule.body {
+                if let Literal::Nearest { n, kindset, .. } = l {
+                    if let Some(g) = grammar_of(n)
+                        && !kindset.starts_with("rr_in_")
+                    {
+                        let name = format!("rr_in_{g}_{kindset}");
+                        if made.insert(name.clone()) {
+                            let label = dialect_label(&g);
+                            let kinds = prog.kindsets.get(kindset.as_str()).cloned().unwrap_or_default();
+                            kindsets.push((name.clone(), kinds.into_iter().map(|k| if qualified(&k).is_some() { k } else { format!("{label}:{k}") }).collect()));
+                        }
+                        *kindset = name;
+                        changed = true;
+                    }
+                    continue;
                 }
+                let a = match l {
+                    Literal::Atom(a) | Literal::Agg { atom: a, .. } => a,
+                    _ => continue,
+                };
+                let Some(cols) = carried.get(&a.rel) else { continue };
+                let spec = a.args.iter().enumerate().find_map(|(c, t)| match t {
+                    Term::Var(v) if !cols.get(c).is_some_and(|f| f.scoped) => grammar_of(v).map(|g| (c, g)),
+                    _ => None,
+                });
+                let Some((c, g)) = spec else { continue };
+                let name = format!("rr_in_{}_{c}_{}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"), a.rel);
+                if made.insert(name.clone()) {
+                    for r in snapshot.iter().filter(|r| r.head.rel == a.rel) {
+                        let mut copy = r.clone();
+                        copy.head.rel = name.clone();
+                        let mut seed = BTreeMap::new();
+                        if let Some(Term::Var(v)) = copy.head.args.get(c) {
+                            seed.insert(v.clone(), Fact { scoped: true, grammar: Some(g.clone()) });
+                        }
+                        copies.push((copy, seed));
+                    }
+                    if let Some(d) = prog.decls.get(&a.rel) {
+                        decls.push((name.clone(), d.clone()));
+                    }
+                }
+                a.rel = name;
+                changed = true;
             }
         }
+        for (rule, seed) in copies {
+            prog.rules.push(rule);
+            seeds.push(seed);
+        }
+        prog.decls.extend(decls);
+        prog.kindsets.extend(kindsets);
         if !changed {
             break;
         }
     }
     let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
-    for rule in prog.rules.iter_mut().filter(|r| !VIEWS.contains(&r.head.rel.as_str())) {
-        let facts = analyse(rule, &base_locations, &carried);
+    for (rule, seed) in prog.rules.iter_mut().zip(&seeds).filter(|(r, _)| !VIEWS.contains(&r.head.rel.as_str())) {
+        let facts = analyse(rule, &base_locations, &carried, seed);
         // Wildcards in an unscoped base atom's location columns become variables, so they can be bounded.
         let mut fresh = 0;
         let mut bounded: BTreeMap<String, bool> = BTreeMap::new();
@@ -214,9 +271,32 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     }
 }
 
-/// A rule's variables that are scoped, and their grammars.
-fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &BTreeMap<String, Vec<usize>>, carried: &BTreeMap<String, Vec<Fact>>) -> BTreeMap<String, Fact> {
-    let mut facts: BTreeMap<String, Fact> = BTreeMap::new();
+/// What each derived relation's columns carry, to a fixpoint over the rules.
+fn carry(prog: &Program, base: &BTreeMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool) -> BTreeMap<String, Vec<Fact>> {
+    let mut carried: BTreeMap<String, Vec<Fact>> =
+        prog.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(&r).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
+    loop {
+        let mut changed = false;
+        for (rule, seed) in prog.rules.iter().zip(seeds) {
+            let facts = analyse(rule, base, &carried, seed);
+            let Some(cols) = carried.get_mut(&rule.head.rel) else { continue };
+            for (c, t) in rule.head.args.iter().enumerate() {
+                if let (Term::Var(v), Some(slot)) = (t, cols.get_mut(c))
+                    && let Some(f) = facts.get(v)
+                {
+                    changed |= slot.join(f);
+                }
+            }
+        }
+        if !changed {
+            return carried;
+        }
+    }
+}
+
+/// A rule's variables that are scoped, and their grammars; `seed` holds what a specialized copy's head is.
+fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &BTreeMap<String, Vec<usize>>, carried: &BTreeMap<String, Vec<Fact>>, seed: &BTreeMap<String, Fact>) -> BTreeMap<String, Fact> {
+    let mut facts: BTreeMap<String, Fact> = seed.clone();
     let var = |t: Option<&Term>| match t {
         Some(Term::Var(v)) => Some(v.clone()),
         _ => None,
@@ -255,6 +335,8 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &BTreeMap<Stri
         let cols: Vec<usize> = match a.rel.as_str() {
             "tape_of" => vec![0, 1],
             "doc_root" => vec![0, 1],
+            // A node's parent is in its document (`tape(n, par, size, depth)`, the climbs' walk).
+            "tape" => vec![0, 1],
             r => base.get(r).cloned().unwrap_or_default(),
         };
         let vars: Vec<String> = cols.iter().filter_map(|&c| var(a.args.get(c))).collect();

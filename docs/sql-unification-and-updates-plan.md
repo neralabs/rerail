@@ -244,7 +244,8 @@ Editor patches, retained literal reference counts, and per-family document index
 ## Remove snapshot-wide metadata work
 
 The final-shape branch was merged at `ca76fe78f` before this change.
-The merge commit on this branch is `4a7998ff6`.
+The first merge commit on this branch is `4a7998ff6`.
+A subsequent merge includes `dde9f3dc4`, which adds the completed guest-hiding changes and the rule explorer.
 
 The previous warm edit recreated every fact family's document vector and planner estimates.
 It also rescanned all shared literal-type facts and copied unchanged document records into a new inventory.

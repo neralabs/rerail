@@ -1809,8 +1809,15 @@ texts, so they hit it most. A guest whose cache write fails is parsed without th
 (`guests.cache_failed`). Primary files use the same call and can fail the same way. The likely cause is a collector
 removing a source between `put_source` and `put_tape`; this is not investigated.
 
+The memo shares the store, and so the race. `value_documents_are_memoised_with_the_files_that_asked` passes alone.
+In a parallel `logic::rr::` run it sometimes fails, in one of two ways. Its first run's write fails on the same
+foreign key. Or its second run finds no memo rows, because another test's background collector deleted them as a
+dead plan's rows between the two runs. A test cannot take a store of its own, because `RERAIL_TAPE_CACHE` is read
+process-wide.
+
 **Closure:** the write is made atomic (source and tape in one transaction, or a collector that cannot remove a
 source a writer holds), with a test that runs parallel writers against one store; or the cache is made per run.
+A run can also name its store, so a test can hold one of its own.
 
 ## O96. Chunks that read value documents are not memoised
 
@@ -1821,12 +1828,18 @@ files whose rows asked for it needs the demand's provenance.
 **Closure:** value rows are attributed to the files that asked for them, with a test of a memo hit against a fresh
 run; or a measurement shows unmemoised value chunks cost too little to matter.
 
+**Closed (2026-11-07):** a value's rows are attributed to every file of its chunk that asked for it, and the split
+places a value's tape with the atom that gave its text (0058 §4). Test: `value_documents_are_memoised_with_the_files_that_asked`.
+
 ## O97. A combined run's programs and their guest bounds
 
 Each program of a combined run is bounded by its own `.guests` setting (decision 0058 §1), but all programs share
 one batch. No test runs a program with `.guests off` beside one without.
 
 **Closure:** a combined-run test where the two programs see different guests.
+
+**Closed (2026-11-07):** `embed` and `embed_value` are shared across a combined run's programs, so one batch makes
+the guests. Test: `combined_programs_see_guests_by_their_own_policy`.
 
 ## O98. Kind sets across grammars
 
@@ -1835,6 +1848,9 @@ one batch. No test runs a program with `.guests off` beside one without.
 §2); the sets are not.
 
 **Closure:** a kind set over a scoped variable is resolved in its grammar, with a test over a SQL guest.
+
+**Closed (2026-11-07):** derived relations and kind sets read over a scoped variable are specialized to its grammar
+(0058 §2). Test: `kind_sets_over_a_guest_are_its_grammars`.
 
 ## O99. Guests and hiding at scale
 
@@ -1845,3 +1861,37 @@ guests are still not these documents (O85).
 **Closure:** a full-corpus run with guests on and off, in CPU time, with the guests made and the distinct texts
 parsed.
 
+
+## O100. Normalized strings as native operations, then as transducers
+
+Decision 0058 §3's normalizer (`facts::vtab::syntax::normalized`) is a hand-written host scanner. Only the guest
+maker calls it. A rule reaches its text only through `str(n, v)`, and its source map not at all. Typing needs both:
+a quoted annotation's text, a decoded key, or SQL text whose nodes need places in the file. Each must run per chunk
+in native code, never in SQL and never per node per byte (see "String matching is chunked").
+
+Two steps:
+
+1. **A native operation.** A normalized string is an operation the engine runs natively, like `@parse`. It is a
+   relation of (literal, text, map) made per chunk, read by `str`, by guests and by rules. The language's decoder
+   and the map stay one, so `str` and a guest can never parse different texts.
+2. **A transducer.** Once the parser-generators work lands, the escape scanner and decoder become a side program
+   of the transducer `Program`, as `value_programs` are (`docs/parser-generators/12` §3). They then run on the
+   transducer's CPU and GPU paths, over the literal's bytes on the tape, and write the text and map as tape rows.
+   They are not a separate module. Each language's escapes are the program's tables, not code.
+
+**Closure:** rules read a literal's normalized text and map through a native operation, with a test against
+`str`. After parser-generators: the operation is a transducer side program, with the hand scanner's tests passing
+against it.
+
+## O101. A demand-lowered `.rr` program does not print back as itself
+
+`rr::parse` lowers `parsed(s, g, r)` (and `@parse`, `@splice`) into a demand: `rr_embed_req` and its context
+relations `rr_ctx<k>`. `print` writes those rules out, and the `parsed` atom stays in the rule's body. Read back,
+the printed program is lowered again, and gets a second context (`rr_ctx2`) and demand rule. The `.rdl` reader
+lowers no demand. `rdl_programs_translate_to_the_same_program` therefore skips `typing/programs/calls.rdl`, which
+reads `parsed` since its quoted annotations (C1). A run whose program text is printed, then read again, may do
+the extra demand's work twice.
+
+**Closure:** lowering a demand is idempotent: a printed program carries its demands as already made, and reading
+it back adds none. The skip is then removed. Or `.rdl` programs are removed (step 31), and the round-trip test
+stays for `.rr`.
