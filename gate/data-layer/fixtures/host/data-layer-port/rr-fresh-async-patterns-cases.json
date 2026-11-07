@@ -800,6 +800,27 @@
       }
     },
     {
+      "id": "duplicate-same-line",
+      "check": "async_patterns",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return (txn.select_one(), txn.select_one())\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "api/input.py"
+        },
+        "source": "async def work(txn, conn):\n    return (txn.select_one(), txn.select_one())\n",
+        "tree": {
+          "pythonAst": "async def work(txn, conn):\n    return (txn.select_one(), txn.select_one())\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
       "id": "query-parentheses",
       "check": "async_patterns",
       "entry": "analyze_source",
@@ -2480,6 +2501,48 @@
       }
     },
     {
+      "id": "async-gap-no-trigger",
+      "check": "async_patterns",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async\tdef f(txn):\n    txn.select_one()\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "api/input.py"
+        },
+        "source": "async\tdef f(txn):\n    txn.select_one()\n",
+        "tree": {
+          "pythonAst": "async\tdef f(txn):\n    txn.select_one()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "async-gap-comment-trigger",
+      "check": "async_patterns",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "# async def\nasync\tdef f(txn):\n    txn.select_one()\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "api/input.py"
+        },
+        "source": "# async def\nasync\tdef f(txn):\n    txn.select_one()\n",
+        "tree": {
+          "pythonAst": "# async def\nasync\tdef f(txn):\n    txn.select_one()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
       "id": "file-query-chain",
       "check": "async_patterns",
       "entry": "lint_file",
@@ -2631,6 +2694,38 @@
         {
           "path": "api/input.py",
           "source": "async def f(x=self.select_one()):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "api/input.py"
+        }
+      }
+    },
+    {
+      "id": "file-duplicate-same-line",
+      "check": "async_patterns",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return (txn.select_one(), txn.select_one())\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "api/input.py"
+        }
+      }
+    },
+    {
+      "id": "file-wrapped-call-function",
+      "check": "async_patterns",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return (txn.select_one)(Model)\n"
         }
       ],
       "arguments": {
@@ -3000,6 +3095,27 @@
       "arguments": {
         "filepath": {
           "path": "api/input.txt"
+        },
+        "source": "async def supplied(txn):\n    return txn.select_one()\n",
+        "tree": {
+          "pythonAst": "async def supplied(txn):\n    return txn.select_one()\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "path-api\\input.py",
+      "check": "async_patterns",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "api\\input.py",
+          "source": "async def supplied(txn):\n    return txn.select_one()\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "api\\input.py"
         },
         "source": "async def supplied(txn):\n    return txn.select_one()\n",
         "tree": {

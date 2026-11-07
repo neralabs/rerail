@@ -3,7 +3,7 @@
   "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "syntaxSource": {
     "branch": "jeremybarnes/final-rerail-shape",
-    "commit": "8ac817ae6ada74769c5eb5f1fc836659a053fa80",
+    "commit": "34544f6517b6486774fbb387fcea381d76b63bc0",
     "uncommitted": []
   },
   "legacyBaseline": "ce3669ddba89d09acec1094e006446a16a7b296d",
@@ -1379,7 +1379,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "sha256": "368e37102266736753bbdd9f27bf4f58badf9dfda9c9712ac0c32cf192846a34",
+      "sha256": "e64bdc5977ff502e8556822a2bb301fa0ea68a51e03bd1829ee0379f23f3cf32",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1553,7 +1553,7 @@
       "legacySha256": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "ruleSha256": "368e37102266736753bbdd9f27bf4f58badf9dfda9c9712ac0c32cf192846a34"
+      "ruleSha256": "e64bdc5977ff502e8556822a2bb301fa0ea68a51e03bd1829ee0379f23f3cf32"
     },
     {
       "check": "async_sync_boundary",
@@ -2351,11 +2351,16 @@
       "branch": "jeremybarnes/final-rerail-shape",
       "commit": "cbf255bb130afb7580bbae7b67b2d4a5f79b5ba2",
       "uncommitted": []
+    },
+    {
+      "branch": "jeremybarnes/final-rerail-shape",
+      "commit": "8ac817ae6ada74769c5eb5f1fc836659a053fa80",
+      "uncommitted": []
     }
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "8ac817ae6ada74769c5eb5f1fc836659a053fa80",
+    "upstreamCommit": "34544f6517b6486774fbb387fcea381d76b63bc0",
     "status": "Root Final shape engine with generic Boolean, Python AST, and canonical annotation text repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",

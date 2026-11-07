@@ -143,6 +143,8 @@ ap_name(n, @nfkc(name)) :- ap_native_enabled(), unparen(n, e), ast_name(e, name)
 ap_attr(n, obj, @nfkc(name)) :- ap_native_enabled(), unparen(n, e), kind(e, "attribute"), field(e, "object", obj), field(e, "attribute", nm), text(nm, name).
 .decl ap_call(n: node, fn: node)
 ap_call(n, fn) :- ap_native_enabled(), kind(n, "call"), field(n, "function", fn).
+.decl ap_call_expr(n: node, fn: node)
+ap_call_expr(n, fn) :- ap_native_enabled(), unparen(n, c), ap_call(c, fn).
 .decl ap_subscript_value(n: node, obj: node)
 ap_subscript_value(n, obj) :- ap_native_enabled(), unparen(n, e), kind(e, "subscript"), field(e, "value", obj).
 .decl ap_parameter(f: node, name: symbol)
@@ -201,9 +203,9 @@ ap_source_triggered(0) :- option("entryPoint", "analyze_source"), option("provid
 ap_call_doc(c, 0, path) :- option("entryPoint", "analyze_source"), ap_call(c, _), ap_document(0, path), ap_in_scope(0), ap_source_triggered(0).
 
 .decl ap_write_decorator(f: node)
-ap_write_decorator(f) :- ap_decorator(f, e), ap_call(e, fn), ap_attr(fn, _, "write_async").
+ap_write_decorator(f) :- ap_decorator(f, e), ap_call_expr(e, fn), ap_attr(fn, _, "write_async").
 .decl ap_read_decorator(f: node)
-ap_read_decorator(f) :- ap_decorator(f, e), ap_call(e, fn), ap_attr(fn, _, "read_async").
+ap_read_decorator(f) :- ap_decorator(f, e), ap_call_expr(e, fn), ap_attr(fn, _, "read_async").
 .decl ap_flags(f: node, write_: number, read_: number)
 ap_flags(f, 0, 0) :- ap_root_frame(f).
 ap_flags(f, 0, 0) :- ap_sync_frame(f).
@@ -224,13 +226,13 @@ ap_txn_name(f, name) :- ap_function(f, _, 1), ap_typed_parameter(f, name, ann), 
 .decl ap_receiver_root(e: node, name: symbol)
 ap_receiver_root(e, name) :- ap_name(e, name).
 ap_receiver_root(e, name) :- ap_attr(e, obj, _), ap_receiver_root(obj, name).
-ap_receiver_root(e, name) :- ap_call(e, fn), ap_receiver_root(fn, name).
+ap_receiver_root(e, name) :- ap_call_expr(e, fn), ap_receiver_root(fn, name).
 ap_receiver_root(e, name) :- ap_subscript_value(e, obj), ap_receiver_root(obj, name).
 .decl ap_query_chain(f: node, e: node)
-ap_query_chain(f, e) :- ap_function(f, _, 1), ap_call(e, fn), ap_attr(fn, obj, method), ap_query_method(method), ap_receiver_root(obj, root), ap_txn_name(f, root).
-ap_query_chain(f, e) :- ap_call(e, fn), ap_attr(fn, obj, _), ap_query_chain(f, obj).
+ap_query_chain(f, e) :- ap_function(f, _, 1), ap_call_expr(e, fn), ap_attr(fn, obj, method), ap_query_method(method), ap_receiver_root(obj, root), ap_txn_name(f, root).
+ap_query_chain(f, e) :- ap_call_expr(e, fn), ap_attr(fn, obj, _), ap_query_chain(f, obj).
 .decl ap_alias(f: node, name: symbol, kind: symbol, at: number)
-ap_alias(f, name, "session", i) :- ap_assignment(a, name, v), ap_scope(a, f), ap_function(f, _, 1), ap_order(a, i), ap_call(v, fn), ap_attr(fn, _, "session").
+ap_alias(f, name, "session", i) :- ap_assignment(a, name, v), ap_scope(a, f), ap_function(f, _, 1), ap_order(a, i), ap_call_expr(v, fn), ap_attr(fn, _, "session").
 ap_alias(f, name, "query", i) :- ap_assignment(a, name, v), ap_scope(a, f), ap_function(f, _, 1), ap_order(a, i), ap_query_chain(f, v).
 ap_alias(f, name, kind, i) :- ap_assignment(a, name, v), ap_scope(a, f), ap_function(f, _, 1), ap_order(a, i), ap_name(v, other), ap_alias(f, other, kind, j), j <= i.
 .decl ap_tracked_query(c: node, obj: node)
@@ -308,6 +310,7 @@ ParseWarning(@place("input.py", 1)) :- option("entryPoint", "lint_file"), option
 .violation MissingTree(at: span) code "AP_AST_REQUIRED" "AST tree is required; parsing is owned by the fact framework"
 MissingTree(@place("input.py", 1)) :- option("entryPoint", "analyze_source"), option("providedTree", "false"), ap_source_triggered(0).
 
+ap_parent(n, p) :- ap_graph_edge(p, _, n).
 .decl ap_graph_kind(n: node, kind: symbol)
 ap_graph_kind(n, kind) :- option_item("astKinds", n, kind).
 .decl ap_graph_edge(p: node, field: symbol, n: node)
@@ -330,6 +333,7 @@ ap_decorator(f, e) :- ap_graph_callable(f), ap_graph_edge(f, "decorator_list", e
 ap_name(n, name) :- ap_graph_kind(n, "Name"), option_item("astIds", n, name).
 ap_attr(n, obj, name) :- ap_graph_kind(n, "Attribute"), ap_graph_edge(n, "value", obj), option_item("astAttrs", n, name).
 ap_call(n, fn) :- ap_graph_kind(n, "Call"), ap_graph_edge(n, "func", fn).
+ap_call_expr(n, fn) :- ap_graph_kind(n, "Call"), ap_call(n, fn).
 ap_subscript_value(n, obj) :- ap_graph_kind(n, "Subscript"), ap_graph_edge(n, "value", obj).
 ap_parameter(f, name) :- ap_graph_callable(f), ap_graph_edge(f, "args", args), ap_graph_edge(args, _, arg),
     ap_graph_kind(arg, "arg"), option_item("astArgNames", arg, name).
@@ -349,4 +353,3 @@ ap_order(n, n) :- ap_graph_kind(n, _).
 ap_call_line(n, to_number(line)) :- ap_graph_kind(n, "Call"), option_item("astLines", n, line).
 ap_receiver_print(c, printed) :- option("entryPoint", "analyze_source"), ap_graph_kind(c, "Call"),
     sig_param(_, _, nm, _, _, ann, _), text(nm, name), prefix("call", name), c = to_number(@slice(name, 4, strlen(name))), annotation_text(ann, printed).
-ap_parent(n, p) :- ap_graph_edge(p, _, n).

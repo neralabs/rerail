@@ -3,6 +3,7 @@
 
 def supplied_ast():
     return r'''
+ap_parent(n, p) :- ap_graph_edge(p, _, n).
 .decl ap_graph_kind(n: node, kind: symbol)
 ap_graph_kind(n, kind) :- option_item("astKinds", n, kind).
 .decl ap_graph_edge(p: node, field: symbol, n: node)
@@ -14,9 +15,6 @@ ap_graph_ancestor(n, a) :- ap_graph_edge(p, _, n), ap_graph_ancestor(p, a).
 ap_graph_callable(n) :- ap_graph_kind(n, k), (k = "FunctionDef" ; k = "AsyncFunctionDef" ; k = "Lambda").
 ap_frame_node(n) :- ap_graph_callable(n).
 ap_frame_node(n) :- ap_graph_kind(n, "Module").
-ap_scope(n, n) :- ap_frame_node(n), ap_graph_kind(n, _).
-ap_scope(n, f) :- ap_graph_edge(p, _, n), ap_scope(p, f), !ap_frame_node(n).
-ap_outer_frame(f, p) :- ap_graph_callable(f), ap_graph_edge(parent, _, f), ap_scope(parent, p).
 ap_function(f, name, 1) :- ap_graph_kind(f, "AsyncFunctionDef"), option_item("astNames", f, name).
 ap_function(f, name, 0) :- ap_graph_kind(f, "FunctionDef"), option_item("astNames", f, name).
 ap_sync_frame(f) :- ap_graph_kind(f, "Lambda").
@@ -24,12 +22,11 @@ ap_sync_frame(f) :- ap_graph_kind(f, "FunctionDef").
 ap_root_frame(f) :- ap_graph_kind(f, "Module").
 ap_class(n, name) :- ap_graph_kind(n, "ClassDef"), option_item("astNames", n, name).
 ap_class_base(c, b) :- ap_graph_kind(c, "ClassDef"), ap_graph_edge(c, "bases", b).
-ap_in_class(n, c) :- ap_graph_edge(p, _, n), ap_class(p, _), c = p.
-ap_in_class(n, c) :- ap_graph_edge(p, _, n), !ap_class(p, _), ap_in_class(p, c).
 ap_decorator(f, e) :- ap_graph_callable(f), ap_graph_edge(f, "decorator_list", e).
 ap_name(n, name) :- ap_graph_kind(n, "Name"), option_item("astIds", n, name).
 ap_attr(n, obj, name) :- ap_graph_kind(n, "Attribute"), ap_graph_edge(n, "value", obj), option_item("astAttrs", n, name).
 ap_call(n, fn) :- ap_graph_kind(n, "Call"), ap_graph_edge(n, "func", fn).
+ap_call_expr(n, fn) :- ap_graph_kind(n, "Call"), ap_call(n, fn).
 ap_subscript_value(n, obj) :- ap_graph_kind(n, "Subscript"), ap_graph_edge(n, "value", obj).
 ap_parameter(f, name) :- ap_graph_callable(f), ap_graph_edge(f, "args", args), ap_graph_edge(args, _, arg),
     ap_graph_kind(arg, "arg"), option_item("astArgNames", arg, name).

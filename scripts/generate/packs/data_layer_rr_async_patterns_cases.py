@@ -21,6 +21,7 @@ def cases(source):
         add('connection-'+method,f'async def work():\n    return self._conn.{method}()\n')
     bodies={
       'query-chain': 'return txn.query(Model).filter(name="x").execute()',
+      'duplicate-same-line': 'return (txn.select_one(), txn.select_one())',
       'query-parentheses': 'return (((txn.query(Model)))).filter(name="x").execute()',
       'wrapped-call-function': 'return (txn.select_one)(Model)',
       'query-alias': 'query = txn.query(Model).filter(active=True)\nreturn query.execute()',
@@ -98,19 +99,21 @@ def cases(source):
       'nfkc-function':'async def 𝚠ork(txn):\n    return txn.select_one()\n',
       'unicode-splitlines':'# heading\x1c\nasync def f(self):\n    return self.select_one()\n',
       'no-trigger':'# source has no prefilter token\nx = 1\n',
+      'async-gap-no-trigger':'async\tdef f(txn):\n    txn.select_one()\n',
+      'async-gap-comment-trigger':'# async def\nasync\tdef f(txn):\n    txn.select_one()\n',
     }
     for name,code in patterns.items():add(name,code,path='impl/common/input.py' if name.startswith('impl-') else 'api/input.py')
     # Execute representative state and scope cases through the real file collector too.
     for identity in ['query-chain','query-parentheses','query-alias-copy','alias-before-seed','session-chained-target','class-keeps-async',
                      'lambda-clears-state','nested-inherits-decorator','decorator-entered-before-traversal','default-entered-before-traversal',
-                     'api-abstract-name','nested-class-resets-abstract','api-class-decorator','fallback-marker','executor-wrapper','unicode-splitlines']:
+                     'duplicate-same-line','wrapped-call-function','api-abstract-name','nested-class-resets-abstract','api-class-decorator','fallback-marker','executor-wrapper','unicode-splitlines']:
         row=next(row for row in rows if row['id']==identity);add('file-'+identity,row['arguments']['source'],row['files'][0]['path'],entry='lint_file')
     positive='async def supplied(txn):\n    return txn.select_one()\n'
     for identity,actual,tree in [('given-other-source','async def actual():\n    pass\n',positive),('given-empty','async def actual():\n    pass\n',''),
                                 ('given-invalid-source','async def broken(:\n',positive),('given-offset','# async def\n','\n'*7+positive),
                                 ('given-trigger-absent','x = 1\n',positive),('given-fallback-source','# ASYNC_FALLBACK: async def\n',positive)]:
         add(identity,actual,tree=tree)
-    for path in ['other/input.py','myapi/input.py','api/test_input.py','api/tests/input.py','api/__pycache__/input.py','conform/input.py','api/input.txt']:
+    for path in ['other/input.py','myapi/input.py','api/test_input.py','api/tests/input.py','api/__pycache__/input.py','conform/input.py','api/input.txt',r'api\input.py']:
         add('path-'+path,positive,path=path)
     for identity,code in [('missing-tree-triggered',positive),('missing-tree-clean','x = 1\n')]:
         rows.append(dict(id=identity,check='async_patterns',entry='analyze_source',files=[],arguments=dict(filepath=dict(path='api/input.py'),source=code)))
@@ -128,6 +131,12 @@ def main():
     for path in ['api/input.py','impl/common/input.py','impl/sqlite/input.py','impl/other/input.py','conform/input.py','l2050_transaction/input.py',
                  'api/test_input.py','api/test/input.py','api/tests/input.py','api/tmp/input.py','api/venv/input.py','myapi/input.py']:
         reports.append(dict(id='scope-'+path,check='async_patterns',files=[dict(path=path,source=positive)]))
+    for identity,workspace,path,text in [
+        ('root-exclusion','test_context','impl/common/input.py',positive),
+        ('root-api-fallback','api','impl/common/input.py','class MyQuery:\n    async def f(self):\n        return x.to_thread(work)\n'),
+        ('root-impl-executor','impl','api/input.py','# _wrap_for_executor\nloop.run_in_executor(None, work)\n'),
+    ]:
+        reports.append(dict(id=identity,check='async_patterns',workspaceName=workspace,files=[dict(path=path,source=text)]))
     args.reporters.write_text(json.dumps(dict(format='rerail.rr-plugin-reporter-cases/v1',cases=reports),indent=2,ensure_ascii=True)+'\n');print(len(rows),len(reports))
 
 

@@ -382,6 +382,16 @@
       ]
     },
     {
+      "id": "duplicate-same-line",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async def work(txn, conn):\n    return (txn.select_one(), txn.select_one())\n"
+        }
+      ]
+    },
+    {
       "id": "query-parentheses",
       "check": "async_patterns",
       "files": [
@@ -1182,6 +1192,26 @@
       ]
     },
     {
+      "id": "async-gap-no-trigger",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "async\tdef f(txn):\n    txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "async-gap-comment-trigger",
+      "check": "async_patterns",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "# async def\nasync\tdef f(txn):\n    txn.select_one()\n"
+        }
+      ]
+    },
+    {
       "id": "scope-api/input.py",
       "check": "async_patterns",
       "files": [
@@ -1298,6 +1328,39 @@
         {
           "path": "myapi/input.py",
           "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "root-exclusion",
+      "check": "async_patterns",
+      "workspaceName": "test_context",
+      "files": [
+        {
+          "path": "impl/common/input.py",
+          "source": "async def work(txn):\n    return txn.select_one()\n"
+        }
+      ]
+    },
+    {
+      "id": "root-api-fallback",
+      "check": "async_patterns",
+      "workspaceName": "api",
+      "files": [
+        {
+          "path": "impl/common/input.py",
+          "source": "class MyQuery:\n    async def f(self):\n        return x.to_thread(work)\n"
+        }
+      ]
+    },
+    {
+      "id": "root-impl-executor",
+      "check": "async_patterns",
+      "workspaceName": "impl",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "# _wrap_for_executor\nloop.run_in_executor(None, work)\n"
         }
       ]
     }

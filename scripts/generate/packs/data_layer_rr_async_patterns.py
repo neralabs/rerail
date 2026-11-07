@@ -49,6 +49,8 @@ ap_name(n, @nfkc(name)) :- ap_native_enabled(), unparen(n, e), ast_name(e, name)
 ap_attr(n, obj, @nfkc(name)) :- ap_native_enabled(), unparen(n, e), kind(e, "attribute"), field(e, "object", obj), field(e, "attribute", nm), text(nm, name).
 .decl ap_call(n: node, fn: node)
 ap_call(n, fn) :- ap_native_enabled(), kind(n, "call"), field(n, "function", fn).
+.decl ap_call_expr(n: node, fn: node)
+ap_call_expr(n, fn) :- ap_native_enabled(), unparen(n, c), ap_call(c, fn).
 .decl ap_subscript_value(n: node, obj: node)
 ap_subscript_value(n, obj) :- ap_native_enabled(), unparen(n, e), kind(e, "subscript"), field(e, "value", obj).
 .decl ap_parameter(f: node, name: symbol)
@@ -107,9 +109,9 @@ ap_source_triggered(0) :- option("entryPoint", "analyze_source"), option("provid
 ap_call_doc(c, 0, path) :- option("entryPoint", "analyze_source"), ap_call(c, _), ap_document(0, path), ap_in_scope(0), ap_source_triggered(0).
 
 .decl ap_write_decorator(f: node)
-ap_write_decorator(f) :- ap_decorator(f, e), ap_call(e, fn), ap_attr(fn, _, "write_async").
+ap_write_decorator(f) :- ap_decorator(f, e), ap_call_expr(e, fn), ap_attr(fn, _, "write_async").
 .decl ap_read_decorator(f: node)
-ap_read_decorator(f) :- ap_decorator(f, e), ap_call(e, fn), ap_attr(fn, _, "read_async").
+ap_read_decorator(f) :- ap_decorator(f, e), ap_call_expr(e, fn), ap_attr(fn, _, "read_async").
 .decl ap_flags(f: node, write_: number, read_: number)
 ap_flags(f, 0, 0) :- ap_root_frame(f).
 ap_flags(f, 0, 0) :- ap_sync_frame(f).
@@ -130,13 +132,13 @@ ap_txn_name(f, name) :- ap_function(f, _, 1), ap_typed_parameter(f, name, ann), 
 .decl ap_receiver_root(e: node, name: symbol)
 ap_receiver_root(e, name) :- ap_name(e, name).
 ap_receiver_root(e, name) :- ap_attr(e, obj, _), ap_receiver_root(obj, name).
-ap_receiver_root(e, name) :- ap_call(e, fn), ap_receiver_root(fn, name).
+ap_receiver_root(e, name) :- ap_call_expr(e, fn), ap_receiver_root(fn, name).
 ap_receiver_root(e, name) :- ap_subscript_value(e, obj), ap_receiver_root(obj, name).
 .decl ap_query_chain(f: node, e: node)
-ap_query_chain(f, e) :- ap_function(f, _, 1), ap_call(e, fn), ap_attr(fn, obj, method), ap_query_method(method), ap_receiver_root(obj, root), ap_txn_name(f, root).
-ap_query_chain(f, e) :- ap_call(e, fn), ap_attr(fn, obj, _), ap_query_chain(f, obj).
+ap_query_chain(f, e) :- ap_function(f, _, 1), ap_call_expr(e, fn), ap_attr(fn, obj, method), ap_query_method(method), ap_receiver_root(obj, root), ap_txn_name(f, root).
+ap_query_chain(f, e) :- ap_call_expr(e, fn), ap_attr(fn, obj, _), ap_query_chain(f, obj).
 .decl ap_alias(f: node, name: symbol, kind: symbol, at: number)
-ap_alias(f, name, "session", i) :- ap_assignment(a, name, v), ap_scope(a, f), ap_function(f, _, 1), ap_order(a, i), ap_call(v, fn), ap_attr(fn, _, "session").
+ap_alias(f, name, "session", i) :- ap_assignment(a, name, v), ap_scope(a, f), ap_function(f, _, 1), ap_order(a, i), ap_call_expr(v, fn), ap_attr(fn, _, "session").
 ap_alias(f, name, "query", i) :- ap_assignment(a, name, v), ap_scope(a, f), ap_function(f, _, 1), ap_order(a, i), ap_query_chain(f, v).
 ap_alias(f, name, kind, i) :- ap_assignment(a, name, v), ap_scope(a, f), ap_function(f, _, 1), ap_order(a, i), ap_name(v, other), ap_alias(f, other, kind, j), j <= i.
 .decl ap_tracked_query(c: node, obj: node)
@@ -192,9 +194,7 @@ ap_visible(c, code, message, fallback, rank) :- ap_issue(c, code, message, fallb
 ap_visible(c, code, message, 0, rank) :- ap_issue(c, code, message, 0, rank), !option("entryPoint", _).
 '''
     for code in ['ASYNC001','ASYNC002','ASYNC004','ASYNC005','ASYNC006','ASYNC007','ASYNC008']:
-        text+=f'.violation Async{code}(at: span, context: symbol, fallback: number, ordinal: number, rank: number) code {q(code)} "{{message}}" parameters(message: symbol)\n'
-        # Message parameters belong in the finding's typed head, as the modern reader requires.
-        text=text.replace(f'.violation Async{code}(at: span, context: symbol, fallback: number, ordinal: number, rank: number) code {q(code)} "{{message}}" parameters(message: symbol)',f'.violation Async{code}(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code {q(code)} "{{message}}"')
+        text+=f'.violation Async{code}(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code {q(code)} "{{message}}"\n'
         text+=f'Async{code}(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, {q(code)}, message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal).\n'
     text+=r'''
  .violation Excluded(at: span) code "AP_EXCLUDED" "excluded"
@@ -206,8 +206,4 @@ ParseWarning(@place("input.py", 1)) :- option("entryPoint", "lint_file"), option
 .violation MissingTree(at: span) code "AP_AST_REQUIRED" "AST tree is required; parsing is owned by the fact framework"
 MissingTree(@place("input.py", 1)) :- option("entryPoint", "analyze_source"), option("providedTree", "false"), ap_source_triggered(0).
 '''
-    graph=supplied_ast()
-    graph=graph.replace('ap_scope(n, n) :- ap_frame_node(n), ap_graph_kind(n, _).\nap_scope(n, f) :- ap_graph_edge(p, _, n), ap_scope(p, f), !ap_frame_node(n).\nap_outer_frame(f, p) :- ap_graph_callable(f), ap_graph_edge(parent, _, f), ap_scope(parent, p).\n','')
-    graph=graph.replace('ap_in_class(n, c) :- ap_graph_edge(p, _, n), ap_class(p, _), c = p.\nap_in_class(n, c) :- ap_graph_edge(p, _, n), !ap_class(p, _), ap_in_class(p, c).\n','')
-    graph+='ap_parent(n, p) :- ap_graph_edge(p, _, n).\n'
-    return text+graph
+    return text+supplied_ast()

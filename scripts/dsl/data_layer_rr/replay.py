@@ -55,11 +55,13 @@ def result(record, diagnostics):
     raise ValueError(f"No full DTO adapter for {record['check']}; this is a failure, never a skipped event")
 
 
-def execute_native(engine, rule, files, options, sources=None):
+def execute_native(engine, rule, files, options, sources=None, workspace_name='corpus'):
     sources = sources or {}
     with tempfile.TemporaryDirectory(prefix='rerail-rr-replay-') as temporary:
         root = Path(temporary)
-        corpus = root / 'corpus'
+        if Path(workspace_name).name != workspace_name or workspace_name in {'', '.', '..'}:
+            raise ValueError('Invalid fixture workspace name')
+        corpus = root / workspace_name
         corpus.mkdir()
         for file in files:
             path = Path(file['path'])

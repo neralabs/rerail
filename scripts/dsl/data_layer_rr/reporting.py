@@ -54,7 +54,7 @@ def run(args):
     for index, case in selected:
         if native:
             rule = args.rule_root / (case['check'].replace('_', '-') + '.rr')
-            result = execute_native(engine, rule, case['files'], {})
+            result = execute_native(engine, rule, case['files'], {}, workspace_name=case.get('workspaceName', 'corpus'))
             report['sourceDetectorModules'] = [name for name in sys.modules if name.startswith('scripts.lint_')]
             if report['sourceDetectorModules']:
                 raise ValueError('The native reporter imported source detectors')
@@ -86,6 +86,8 @@ def run(args):
                 native_rows = sorted(native_rows, key=lambda r: (r['path'], r['parameters']['ordinal'], r['parameters']['witness']))
             if case['check'] == 'conn_or_txn_union':
                 native_rows = sorted(native_rows, key=lambda r: (r['path'], r['parameters'].get('ordinal', -1)))
+            if case['check'] == 'async_patterns':
+                native_rows = sorted(native_rows, key=lambda r: (r['path'], r['parameters']['ordinal'], r['parameters']['rank']))
             actual = [dict(linter_name=identity.removeprefix(prefix).replace('-', '_'), code=r['code'],
                 path=r['path'], line=r['line'], message=r['message'],
                 severity=severities.get(r['clause'], 'info' if modes == ['log'] else 'hard-fail')) for r in native_rows]
@@ -94,6 +96,12 @@ def run(args):
         else:
             with tempfile.TemporaryDirectory(prefix='rr-source-report-') as temporary:
                 root = Path(temporary)
+                if 'workspaceName' in case:
+                    name = case['workspaceName']
+                    if Path(name).name != name or name in {'', '.', '..'}:
+                        raise ValueError('Invalid fixture workspace name')
+                    root = root / name
+                    root.mkdir()
                 for file in case['files']:
                     path = root / file['path']
                     if path.is_absolute() and not path.is_relative_to(root) or '..' in Path(file['path']).parts:
@@ -118,7 +126,7 @@ def run(args):
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
         if native and case['check'] not in {'removed_compat_surfaces', 'serverplan_grammar_surface', 'conn_or_txn_union'}:
-            last = {'backend_type_strings': 'code', 'error_handling': 'message', 'no_api_root_imports': 'message', 'connection_caches': 'message', 'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'unresolved_forward_refs': 'message', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code'}[case['check']]
+            last = {'backend_type_strings': 'code', 'error_handling': 'message', 'no_api_root_imports': 'message', 'connection_caches': 'message', 'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'unresolved_forward_refs': 'message', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code', 'async_patterns': 'code'}[case['check']]
             actual.sort(key=lambda row: (row['path'], row['line'], row[last], *([row['message']] if case['check'] == 'hnsw_architecture' else [])))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)
         if native:
