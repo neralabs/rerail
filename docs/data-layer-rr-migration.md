@@ -11,9 +11,10 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its baseline is Final rerail shape
-`879486272cd1b44b3567320c85847ba0fd19a918`. That branch already merged the earlier migration fixes.
-Its engine, frontend, build files, and dependency locks replace the former root engine without local overrides.
-The sibling's uncommitted guest-language work is not part of this baseline.
+`ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5`. That branch includes the earlier migration and regex fixes.
+The merge commit `00997cf1c` takes its engine, frontend, libraries, build files, and locks exactly.
+The only local native repair normalizes Boolean contexts created after demand planning (`25b580262`).
+Uncommitted sibling work is not part of this baseline.
 
 The nested `.rerail/rr-migration-20261106/engine` checkout is retired. Do not develop or build there.
 Existing receipts retain their historical engine hashes. They do not certify the current engine.
@@ -41,7 +42,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **66 target drafts and 34 absent translations**. None has full acceptance yet.
+The current inventory contains **67 target drafts and 33 absent translations**. None has full acceptance yet.
 Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
 Reader success is a syntax milestone. It is not rule completion.
 
@@ -737,3 +738,41 @@ The manifest remains at 66 drafts and 34 absent translations; full migration acc
 
 - [All original assertions and their positive control](../gate/data-layer/fixtures/host/data-layer-port/rr-error-handling-native-direct-contracts.json.gz).
 - [Red/green cases, complete supplemental reports, selective controls, and structure comparisons](../gate/data-layer/fixtures/host/data-layer-port/rr-error-handling-native-supplemental-contracts.json.gz).
+
+
+## 2026-11-07 — Backend type strings and the next Final shape merge
+
+Final shape advanced to `ca76fe78f`; merge `00997cf1c` adopts its committed resolutions.
+It already includes the regex occurrence capability, so the local duplicate tests were removed in favor of its version.
+The root engine and libraries match that parent exactly before the generic Boolean-context repair.
+
+The backend-type rule passes all **148 original cases and 182 assertion sites**, with no excluded or skipped cases.
+The recorder now captures helper calls too: 62 file API returns, 27 skip-predicate returns, and 33 discovery returns.
+All 122 complete values match the source. Four shared native configuration calls supply the constant assertions.
+The 42 cases without an individual native call remain executed: 27 consume shared native configuration; nine check passive DTO storage; six check host interfaces.
+The receipt identifies each case and its assertion sites. Python never runs the detector, skip predicate, or file-selection predicate during native acceptance.
+
+All 97 supplemental APIs pass: 79 detector cases, including 59 positives, and 18 helper cases.
+All 78 configured reporter cases pass, including 56 positives.
+The original positive assertion rejects a disabled detector. Six separate reporter controls reject each disabled BT000–BT005 output.
+Full DTOs preserve columns, stripped 80-character snippets, message precedence, source pattern order, duplicate occurrences, and all helper results.
+Word normalization retains Python Unicode word boundaries without extending the engine's regex dialect.
+
+This port exposed a generic planner regression. Demand planning generated zero-column `pre_*` contexts after SQL normalization.
+Those contexts produced invalid table definitions or empty SELECT lists, including on empty configuration batches.
+The regression test fails on the committed Final shape build. Repair `25b580262` applies physical presence-column normalization to new Boolean contexts.
+The new regression and existing Boolean set tests pass after that repair.
+
+The fixed root CLI hash is `7b9a2694bad1eeff…` (the complete hash is in the build receipt).
+All 67 drafts pass its reader. The four API-import original cases, five error-handling original cases, and 36 long-source reporter cases also pass.
+All 46 tooling tests and both gate format tests pass.
+
+The broader reader suite reports 51 passes, one failure, and two upstream ignored report/writer tests.
+The failure is `typing/programs/calls.rdl` guest-demand round-trip equivalence, reproduced before and after the local repair.
+The sibling's uncommitted work identifies it as O101. This branch records the failure; it does not mark the full engine suite green.
+Nine simplifier tests and six file-local tests pass; one upstream benchmark remains ignored.
+Associated global and persistent-workspace acceptance remain required. The inventory is 67 drafts and 33 absent translations; full migration acceptance stays false.
+
+- [Complete original assertions and positive control](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-native-direct-contracts.json.gz).
+- [API/reporter cases, assertion provenance, and six selective controls](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-native-supplemental-contracts.json.gz).
+- [Final shape merge, Boolean regression, builds, and integration checks](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-ca76-merge.json.gz).

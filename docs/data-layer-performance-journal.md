@@ -8081,3 +8081,34 @@ An alternative uses existing Datalog functors. Normalize Python-word/Rust-nonwor
 The prototype compares all eight source patterns over 18 strings, with at least one source-positive match for every pattern. Every occurrence, ordinal, character start/end, and original matched text agrees with the source. It includes combining marks, superscript digits, join controls, adjacent matches, and nested membership text. This is a focused representation proof, not completed rule acceptance. No engine change or new Linear issue was needed.
 
 [Source recording and regex prototype](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-restart-survey.json.gz). Next: write the full rule and native API/helper adapters, then execute all 148 original cases and fresh positive/negative contracts. The migration inventory remains 66 drafts and 34 absent translations.
+
+
+## 2026-11-07 — Backend-type port and Final shape ca76 integration
+
+The previous delivery made concrete progress on error-handling and established the backend regex representation. This delivery adopts Final shape `ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5`, then implements the backend-type scanner and public helpers in `.rr`.
+
+Merge `00997cf1c` takes the upstream engine and shared libraries exactly. Final shape already merged the occurrence producer. The merge removes the duplicated local test copies and preserves the gate policies and receipts. Uncommitted sibling code remains owned there.
+
+The initial metadata batch failed before pytest assertions: demand planning created a zero-column `pre_*` relation after the initial SQL normalization. The full rule produced an invalid zero-column table; a minimal public rule produced an empty SELECT list. Test commit `d04372704` captures this shape. The test fails on the unchanged modern engine. Repair `25b580262` normalizes new Boolean demand contexts before SQL emission, preserving existing physical columns. The regression covers both true and false results on an empty corpus and now passes. This is the only local native delta, plus its test.
+
+| Contract | Evidence |
+| --- | --- |
+| Original backend-type suite | All 148 cases and 182 assertion sites pass; no excluded or skipped cases |
+| Complete public API returns | 122 match exactly: 62 file APIs, 27 skip predicates, 33 file-discovery returns |
+| Shared native constants | Four configuration batches, one per assertion shard; all three constant collections come from the rule |
+| Cases without a per-case native call | 27 shared native configuration cases, nine passive DTO cases, six host interface cases; every case and assertion site identified |
+| Fresh APIs | 97 pass: 79 detector cases with 59 positives, plus 18 helper cases |
+| Configured reporter | 78 pass, including 56 positives |
+| Positive mutation controls | Original positive test and all six selectively disabled BT000–BT005 reporter outputs reject the mutation |
+| Integration refresh | 67 drafts parse; four API-import and five error-handling original cases pass; all 36 long-source reporter cases pass |
+| Authoring checks | 46 Python tooling tests and two gate format tests pass |
+
+The full suite recording previously omitted helper returns. The recorder now captures them, normalizes their paths against the actual test fixture, and preserves complete values. Recorder metadata calls unwrap recording wrappers so they cannot appear as extra public calls. Native acceptance forbids source detector/helper execution. The original CLI argument parsing and result printing run through native detector and file-discovery adapters. No original test body was rewritten for this linter.
+
+The regex translation uses two typed string transformations to preserve Python's Unicode word class. All eight patterns then run through the existing batched occurrence producer. Original text supplies captures, snippets, and columns. Message classification follows the matched text and source branch precedence, including BT000 whitespace cases and cross-pattern precedence. Native helpers preserve the source file finder's inclusion of hidden paths and directories named `*.py`, deduplication, Path ordering, and raw substring skip tests.
+
+The final engine is the root headless CLI with hash `7b9a2694bad1eeff…`. Build wall times, separate from execution: initial CLI 97 seconds; standard unit build 182 seconds; red regression build 59.70 seconds; repaired unit build 54.66 seconds; repaired CLI build 25.41 seconds. Native execution commands remain bounded at 115 seconds. No whole-repository cold benchmark was run.
+
+The broader rule-reader suite has **51 passes, one failure, two upstream ignored report/writer tests**. The failure is the calls.rdl guest-demand roundtrip, with extra request/context declarations. It also fails on the frozen pre-repair binary. The sibling's uncommitted changes track this as O101; they were not imported or used to hide the failure. The full library inventory test was not repeated after its previous two command-limit timeouts. Nine simplifier and six file-local tests pass; one upstream benchmark remains ignored.
+
+Evidence: [original assertions](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-native-direct-contracts.json.gz), [supplemental cases and assertion provenance](../gate/data-layer/fixtures/host/data-layer-port/rr-backend-type-strings-native-supplemental-contracts.json.gz), and [modern-engine integration and Boolean TDD](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-ca76-merge.json.gz). Associated global and persistent-workspace contracts remain outstanding. The inventory remains 67 drafts and 33 absent translations; no full migration acceptance is claimed.
