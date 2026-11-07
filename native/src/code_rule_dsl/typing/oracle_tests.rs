@@ -696,6 +696,8 @@ fn benchmark_python_calls_program_corpus() {
     let _ = std::fs::remove_dir_all(&out);
     let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
     let mut examples: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    // `RERAIL_PYTHON_CALLS_DUMP`: each call's category, `path:line<TAB>category<TAB>jedi`, to compare two runs.
+    let mut dump = String::new();
     for corpus in recording["corpora"].as_array().unwrap() {
         for (path, records) in corpus["records"].as_object().unwrap() {
             for record in records.as_array().unwrap() {
@@ -709,6 +711,7 @@ fn benchmark_python_calls_program_corpus() {
                 }
                 if open.contains(&k) {
                     *tally.entry("program unknown, jedi decided").or_default() += 1;
+                    dump += &format!("{path}:{}\tunknown\t{decided:?}\n", record[2]);
                     continue;
                 }
                 *tally.entry("both decided").or_default() += 1;
@@ -737,6 +740,7 @@ fn benchmark_python_calls_program_corpus() {
                     "program another definition"
                 };
                 *tally.entry(what).or_default() += 1;
+                dump += &format!("{path}:{}\t{what}\t{decided:?}\n", record[2]);
                 if what != "agree" {
                     let list = examples.entry(what).or_default();
                     if list.len() < 12 {
@@ -745,6 +749,9 @@ fn benchmark_python_calls_program_corpus() {
                 }
             }
         }
+    }
+    if let Ok(path) = std::env::var("RERAIL_PYTHON_CALLS_DUMP") {
+        std::fs::write(path, dump).unwrap();
     }
     for (what, n) in &tally {
         println!("{n:>8}  {what}");

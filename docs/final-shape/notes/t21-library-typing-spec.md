@@ -247,6 +247,41 @@ Each step is scored against the Jedi corpus on the same 84 files, and its cost m
 5. **A second language's `env.rr` and `modules.rr`** (TypeScript: `.d.ts` is the same shape), as the test that
    the blueprint is generic.
 
+## 6a. Checkpoint: step 1 measured (2026-11-07)
+
+Built: E1–E4 (`corpus/world.rs`, `rerail.env`/`--env`), `python/env.rr`, `python/modules.rr` (typeshed's `stdlib`
+with `VERSIONS`, and `builtins`), and the stub conventions in `calls.rr` that the score asked for first:
+`@overload` (transparent, overloads do not shadow each other), generic and special-form bases, and module-level
+`x: T` in a stub.
+
+On the 84 files (dl-small), mypy's typeshed, debug build, against Jedi 0.19.2 (8,882 calls, 1,445 Jedi leaves
+undecided):
+
+| run | documents | rounds | agree | program unknown, Jedi decided | CPU |
+|---|---|---|---|---|---|
+| no typeshed, k = 4 | 84 | 6, pending | 5,477 | 1,548 | 10 s |
+| typeshed, k = 4 | 263 | 6, pending | 5,457 | 1,568 | 39 s |
+| no typeshed, k = 12 | 84 | 7, converged | 5,821 | 1,204 | 14 s |
+| typeshed, k = 12 | 263 | 10, converged | 5,802 | 1,223 | 104 s |
+
+No run names a wrong definition; 412 calls get no edge where Jedi names one, in every run.
+
+What it says:
+- **Convergence, not the library, moved the score.** At k = 4 the pending round leaves every target-less call
+  unknown. Converged, the standard library is a wash so far: 1,208 calls reach a stub, and the unknowns are 19
+  more, not fewer.
+- **The library's ceiling here is about 308 calls.** Of the 1,204 unknowns at convergence, Jedi names a workspace
+  function for 743 and a workspace class for 153. Only 308 are external: `ContextVar` methods (94), `str` and
+  `list` methods (71), `Path` (54), `Mapping` (25), `IO`, `Logger`, … The §2.3 estimate of about 760 was too high
+  for this corpus.
+- **Cost is the rounds over library documents.** 263 documents take 7.5× the CPU of 84, almost all of it in the
+  final run's local and cross parts (discovery is about 6 s). E5 (library rows as a derivation) and E6 (the
+  per-document cutoff) are what make this affordable; E6 also lets k rise.
+
+Next, in that order: literal values as instances of `builtins` classes (`"".join`, `[].append`), the per-call
+difference between the two converged runs (which calls the stubs decide, which they un-decide, and why), then E5
+and E6.
+
 ## 7. Open questions
 
 - **Rounds over library documents.** The typeshed closure does not converge by k = 4 either. Should the library
