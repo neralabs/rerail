@@ -1392,6 +1392,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "within" => &[&["n"], &["a"]],
         "span_within" => &[&["inner"], &["outer"]],
         "doc" | "pkg" | "syntax_error" => &[&["d"]],
+        "workspace_root" => &[&["path"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &[&["n"], &["a"]],

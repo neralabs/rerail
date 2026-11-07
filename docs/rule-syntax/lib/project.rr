@@ -1,0 +1,4 @@
+// Run metadata. The root retains the caller's spelling, including symlinks and lexical parent components.
+// One row per run, even for an empty corpus. This input does not scan or resolve the filesystem.
+.decl workspace_root(path: symbol)
+.input workspace_root

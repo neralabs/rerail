@@ -1379,7 +1379,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "sha256": "e64bdc5977ff502e8556822a2bb301fa0ea68a51e03bd1829ee0379f23f3cf32",
+      "sha256": "50d0edb59f5e671e7eb99a8b6e3bf5add3538f5717d750a1461cf08da3445682",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1390,6 +1390,11 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/project.rr",
+      "origin": "authored",
+      "sha256": "21da3d336a87ad7a7a22706f04a9e9d28f5d5b382163d13c6a1d4e59d286f629"
     }
   ],
   "rules": [
@@ -1553,7 +1558,7 @@
       "legacySha256": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "ruleSha256": "e64bdc5977ff502e8556822a2bb301fa0ea68a51e03bd1829ee0379f23f3cf32"
+      "ruleSha256": "50d0edb59f5e671e7eb99a8b6e3bf5add3538f5717d750a1461cf08da3445682"
     },
     {
       "check": "async_sync_boundary",

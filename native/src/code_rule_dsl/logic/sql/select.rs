@@ -135,7 +135,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         // The repository inputs (`facts::repository`).
         "option" => &["name", "v"],
         "option_item" => &["name", "i", "v"],
-        "file" => &["path"],
+        "file" | "workspace_root" => &["path"],
         "package" => &["dir", "name"],
         "package_field" => &["dir", "key", "v"],
         "package_for" => &["path", "dir"],

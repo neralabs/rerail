@@ -8,7 +8,7 @@ def async_patterns(source,target,header):
     original=module(source,'async_patterns');q=json.dumps
     text=header('async_patterns',target)
     text=re.sub(r'^\.scope exclude .*$', '.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"',text,flags=re.M)
-    text+='#include "python/print.rr"\n'
+    text+='#include "python/print.rr"\n#include "project.rr"\n'
     for rel,values in [('ap_write',original.SYNC_WRITE_METHODS),('ap_read',original.SYNC_READ_METHODS),('ap_internal',original.SYNC_INTERNAL_IO_METHODS),('ap_connection',original.SYNC_CONNECTION_METHODS),('ap_metadata',original.SYNC_POLYMORPHIC_METADATA_METHODS),('ap_transaction',original.ALL_SYNC_TRANSACTION_METHODS)]:
         text+=f'.decl {rel}(name: symbol, async_name: symbol)\n'+''.join(f'{rel}({q(k)}, {q(v)}).\n' for k,v in sorted(values.items()))
     for rel,values in [('ap_param_name',original.TRANSACTION_PARAM_NAMES),('ap_param_type',original.TRANSACTION_TYPE_NAMES),('ap_query_method',original.QUERY_SOURCE_METHODS),('ap_exclude_pattern',original.EXCLUDE_PATTERNS),('ap_scan_root',original.SCAN_PATHS),('ap_trigger',original.SOURCE_TRIGGERS)]:
@@ -87,7 +87,7 @@ ap_hidden(d) :- path_part(d, p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "_
 ap_source_triggered(d) :- source(d, sp), text(sp, text), ap_trigger(trigger), contains(trigger, text).
 .decl ap_path(d: number, path: symbol)
 ap_path(d, path) :- ap_document(d, _), option("originalPath", path).
-ap_path(d, path) :- ap_document(d, path), !option("originalPath", _).
+ap_path(d, cat(root, "/", path)) :- ap_document(d, path), !option("originalPath", _), workspace_root(root).
 .decl ap_excluded_path(path: symbol)
 ap_excluded_path(path) :- ap_path(_, path), ap_exclude_pattern(pattern), contains(pattern, path).
 ap_excluded_path(path) :- option("originalPath", path), ap_exclude_pattern(pattern), contains(pattern, path).
