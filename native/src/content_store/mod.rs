@@ -593,6 +593,8 @@ pub struct ContentStore {
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
     working_set: working_set::WorkingSet,
+    /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
+    holder: parking_lot::Mutex<Option<(String, i64)>>,
     #[cfg(test)]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(test)]
@@ -647,6 +649,7 @@ impl ContentStore {
             // A store just created replaces any atoms this process held for a file at its path.
             atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
             working_set: working_set::WorkingSet::default(),
+            holder: parking_lot::Mutex::new(None),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
             #[cfg(test)]

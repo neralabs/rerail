@@ -229,7 +229,7 @@ Tests (`logic/rr/tests.rs`, and the normalizer's own):
 
 ## Open
 
-- O95: the shared tape cache's race.
+- O95 (the shared tape cache's race) is closed: a source and its tape are stored in one transaction.
 - O96, O97 and O98 are closed (see the tests above).
 - O99: guests and hiding on the 9,010-file repository, in CPU time.
 - O100: normalized strings as native operations that rules read, and later as a transducer side program.

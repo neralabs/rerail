@@ -85,6 +85,13 @@ pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::Conte
 
 /// [`build_cached`] for a caller that has already stored the file's source as `known`: it is not hashed or looked up again.
 pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<Built, String> {
+    build_cached_source(file, cache, known).map(|(built, _)| built)
+}
+
+/// [`build_cached_as`], with the source's id as the store holds it after the build. A parsed tape is stored with its
+/// source in one transaction (O95), so a source collected since the caller resolved `known` is stored again, under a
+/// new id; `None` when the file did not parse and its source is not known.
+pub(crate) fn build_cached_source(file: &FileInput, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<(Built, Option<crate::content_store::SourceId>), String> {
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeImage};
     use crate::code_rule_dsl::workspace::grammar_version;
@@ -95,18 +102,18 @@ pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::Co
     let e = |e: crate::content_store::StoreError| e.to_string();
     let bytes = file.source.as_bytes();
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
-    let source_id = match known {
-        Some(id) => id,
+    // The source as the store has it, when it has it: a new one is stored with its tape below.
+    let mut source_id = match known {
+        Some(id) => Some(id),
         None => {
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
-            let hash = HashKey::sha256(bytes);
-            match cache.source_by_hash(hash).map_err(e)? {
-                Some(id) => id,
-                None => cache.put_source_hashed(bytes, hash, &[]).map_err(e)?,
-            }
+            cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)?
         }
     };
-    let stored = cache.tape_by_source(source_id, tag, gv, fv).map_err(e)?;
+    let stored = match source_id {
+        Some(id) => cache.tape_by_source(id, tag, gv, fv).map_err(e)?,
+        None => None,
+    };
     drop(lookup);
     let grammar = tape::Grammar::new(language)?;
     let primary = match stored.and_then(|id| cache.get_tapes_bulk(&[id]).ok()?.remove(&id)) {
@@ -119,14 +126,15 @@ pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::Co
             // Its own work: the source prepared for the parser (tree-sitter and the encoding charge their own).
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source.len() as u64);
             let Some(image) = TapeImage::parse(&grammar, &file.source, &|| false) else {
-                return Ok(Built::Unparsed);
+                return Ok((Built::Unparsed, source_id));
             };
             let image = image?;
             drop(parse);
             let _store = crate::code_rule_dsl::logic::profile::span(|| "tape store".into());
             let tape = image.primary.to_bytes()?;
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
-            cache.put_tape(source_id, tag, gv, fv, &tape).map_err(e)?;
+            let (id, _) = cache.put_source_and_tape(bytes, HashKey::sha256(bytes), tag, gv, fv, &tape).map_err(e)?;
+            source_id = Some(id);
             image.primary
         }
     };
@@ -139,7 +147,7 @@ pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::Co
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = from_tape(&doc, lines)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
-    Ok(Built::Facts(facts))
+    Ok((Built::Facts(facts), source_id))
 }
 
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {

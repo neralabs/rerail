@@ -3,7 +3,7 @@
 use super::rows::{generation, intern_string};
 use super::snapshots::GIT_TREE_BATCH_ENTRIES;
 use super::{
-    CapacityState, CollectionReport, ContentStore, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
+    CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
     StoreCapacity, StoreError, StoreResult, TapeId,
 };
 use rusqlite::{OptionalExtension, Params, Transaction, TransactionBehavior, params};
@@ -56,7 +56,60 @@ impl ContentStore {
         Ok(())
     }
 
+    /// From now on, each source this handle stores (`put_source`, `put_source_and_tape`) or finds through
+    /// [`Self::held_source_by_hash`] is pinned for `owner` until unix second `lease_until`, in the transaction that
+    /// stores or finds it (O95). A run's sources are live only once its manifest names them; held, a collector
+    /// running meanwhile cannot take them, or their tapes' and memo rows' sources, from under it.
+    /// `release_pins(owner)` ends the hold.
+    pub fn hold_sources(&self, owner: &str, lease_until: i64) -> StoreResult<()> {
+        if owner.is_empty() || lease_until <= 0 {
+            return Err(StoreError::Invalid("object pin is invalid".to_owned()));
+        }
+        *self.holder.lock() = Some((owner.to_owned(), lease_until));
+        Ok(())
+    }
+
+    /// Pins `source` under this handle's holder, if it has one, in `transaction`.
+    pub(super) fn pin_held(&self, transaction: &rusqlite::Transaction<'_>, source: SourceId) -> StoreResult<()> {
+        self.pin_held_object(transaction, OBJECT_SOURCE, source.0)
+    }
+
+    /// Pins `tape` under this handle's holder, if it has one, in `transaction`: a run's tapes stay until its manifest
+    /// makes them live, so the next run does not parse them again.
+    pub(super) fn pin_held_tape(&self, transaction: &rusqlite::Transaction<'_>, tape: TapeId) -> StoreResult<()> {
+        self.pin_held_object(transaction, OBJECT_TAPE, tape.0)
+    }
+
+    fn pin_held_object(&self, transaction: &rusqlite::Transaction<'_>, kind: i64, id: i64) -> StoreResult<()> {
+        let Some((owner, lease_until)) = self.holder.lock().clone() else { return Ok(()) };
+        let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
+        transaction
+            .prepare_cached(
+                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
+                 ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
+            )?
+            .execute(params![kind, id, owner_id, lease_until])?;
+        Ok(())
+    }
+
+    /// The source whose SHA-256 is `hash`, pinned under the holder in the same transaction when the handle has one.
+    pub fn held_source_by_hash(&self, hash: HashKey) -> StoreResult<Option<SourceId>> {
+        if self.holder.lock().is_none() {
+            return self.source_by_hash(hash);
+        }
+        self.immediate_transaction(|transaction| {
+            let found = super::objects::source_id_by_hash(transaction, hash)?;
+            if let Some(source) = found {
+                self.pin_held(transaction, source)?;
+            }
+            Ok(found)
+        })
+    }
+
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
+        if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
+            *self.holder.lock() = None;
+        }
         let connection = self
             .connection
             .lock()

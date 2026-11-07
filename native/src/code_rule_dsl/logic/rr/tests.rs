@@ -608,10 +608,11 @@ fn normalized(mut p: front::Program) -> front::Program {
 }
 
 /// A lowered `.rr` program without the requests its lowering derives (`rr_embed_req` for `parsed`, decision 0055;
+/// `rr_parse_req`, `rr_splice_req` for tape operations, 0058;
 /// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read: an `.rdl` program
 /// asks for nothing, and the requests change no relation the program derives.
 fn without_requests(mut p: front::Program) -> front::Program {
-    let mut gone: BTreeSet<String> = ["rr_embed_req"].into_iter().map(str::to_owned).chain(super::WORLD.iter().map(|(_, d)| (*d).to_owned())).collect();
+    let mut gone: BTreeSet<String> = ["rr_embed_req", "rr_parse_req", "rr_splice_req"].into_iter().map(str::to_owned).chain(super::WORLD.iter().map(|(_, d)| (*d).to_owned())).collect();
     loop {
         p.rules.retain(|r| !gone.contains(&r.head.rel));
         let read: BTreeSet<&str> = p.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
@@ -635,11 +636,6 @@ fn error_name(e: &Error) -> String {
 fn rdl_programs_translate_to_the_same_program() {
     let mut failures = Vec::new();
     for (name, text, path) in authored() {
-        // O101: a program that reads `parsed` lowers it to a demand in `.rr` (decision 0055) and not in `.rdl`, and
-        // printing it lowers the demand again. calls.rdl reads `parsed` since its quoted annotations (C1).
-        if name.ends_with("typing/programs/calls.rdl") {
-            continue;
-        }
         let rr = match translate(&text) {
             Ok(rr) => rr,
             Err(e) => {
@@ -1728,4 +1724,29 @@ outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
     let [within, outer] = <[Vec<String>; 2]>::try_from(guests_run("sqlkindset", &[("a.py", py)], rule, &["enclosing", "outer"])).unwrap();
     assert_eq!(within, ["users\trelation"], "the set names SQL's `relation` over the guest");
     assert_eq!(outer, ["function_definition"], "and Python's kinds over the file");
+}
+
+/// O101: a program whose reads make demands (`parsed`, `@parse`, `@splice`, `file_line`) prints back as itself.
+/// The printed text declares the demands it was lowered with, so reading it makes none again.
+#[test]
+fn a_program_with_demands_prints_back_as_itself() {
+    let text = r#"
+.decl q(s: node, x: symbol)
+q(s, x) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), str(s, x).
+.decl ann(s: node, r: node)
+ann(s, r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl fixed(x: symbol)
+fixed(x) :- q(_, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), t2 = @parse("sql", "accounts"), t3 = @splice(t, n, t2), x = @unparse(t3).
+.decl lines(i: number)
+lines(i) :- file_line("setup.cfg", i, _).
+.output ann, fixed, lines
+"#;
+    let once = parse(text).unwrap();
+    let printed = print(&once).unwrap();
+    let twice = parse(&printed).unwrap();
+    assert!(difference(&once, &twice).is_none(), "{:?}", difference(&once, &twice));
+    assert_eq!(print(&twice).unwrap(), printed);
+    for demand in ["rr_embed_req", "rr_parse_req", "rr_splice_req", "rr_file_req"] {
+        assert!(once.decls.contains_key(demand), "{demand} is made");
+    }
 }
