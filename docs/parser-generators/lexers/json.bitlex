@@ -191,11 +191,14 @@ tree json {
   # Bracket depth, after each byte.
   scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 100000
 
-  # The first solid byte after a ':'; a string's closing quote whose next solid byte is ':', and
-  # its opening quote (the fact carried back over the string).
+  # The first solid byte after a ':', and after a '{' or ','.
   mask after_colon = fill(prev(code & colon), prev(solid)) & solid
-  mask key_end     = closing & next(back_fill(code & colon, solid))
-  mask key_quote   = opening & back_fill(key_end, closing)
+  mask after_open  = fill(prev(code & (lbrace | comma)), prev(solid)) & solid
+
+  # A key is known from what comes before it, as in simdjson's stage 2: a string that opens
+  # inside an object, right after its '{' or a ','. Its closing quote ends the key.
+  mask key_quote   = opening & after_open & depth.frame(code & lbrace)
+  mask key_end     = closing & prev(fill(key_quote, closing))
 
   mask value_start = (code & (lbrace | lbracket)) | (opening & ~key_quote) | wstart
   mask value_end   = (code & (rbrace | rbracket)) | (closing & ~key_end) | lasts(word)
