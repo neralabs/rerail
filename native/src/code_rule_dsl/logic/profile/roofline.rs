@@ -83,7 +83,13 @@ impl Unit {
 
 /// Nanoseconds per unit at the roof, by unit (`None`: no roof). On a thread of the highest quality of service, so
 /// that on a machine with performance and efficiency cores it runs where the engine's busy threads do.
+/// Measured once per process: a run that makes runs (`corpus::world`'s rounds) writes a profile per run.
 pub(super) fn calibrate() -> BTreeMap<Unit, Option<f64>> {
+    static ROOFS: std::sync::OnceLock<BTreeMap<Unit, Option<f64>>> = std::sync::OnceLock::new();
+    ROOFS.get_or_init(measure).clone()
+}
+
+fn measure() -> BTreeMap<Unit, Option<f64>> {
     std::thread::spawn(|| {
         #[cfg(target_os = "macos")]
         unsafe {
