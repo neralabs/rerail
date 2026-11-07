@@ -17,11 +17,16 @@ eh_hidden(d) :- doc(d, _, _), option_item("pathParts", _, p), (p = "tests" ; p =
 .decl eh_framework_hidden(d: number)
 eh_framework_hidden(d) :- path_part(d, p),
     (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
-.decl eh_path(d: number, path: symbol)
-eh_path(d, path) :- doc(d, _, _), option("entryPoint", "scan_file_content"), option("relativePath", path),
-    option("filename", filename), suffix(".py", filename), !eh_hidden(d),
-    !option("outsideRoot", "true"), !option("relativeRoot", "true"), option("providedSource", provided),
+.decl eh_read(d: number)
+eh_read(d) :- doc(d, _, _), option("entryPoint", "scan_file_content"),
+    option("filename", filename), suffix(".py", filename), option("isFile", "true"), !eh_hidden(d),
+    option("providedSource", provided),
     (contains("logger.warning", provided) ; contains("logger.error", provided) ; contains("txn.commit", provided)).
+.violation ReadFailure(at: span) code "EH_READ_ERROR" "Source file could not be read"
+ReadFailure(@place(path, 1)) :- eh_read(d), doc(d, path, _), option("readError", "true").
+.decl eh_path(d: number, path: symbol)
+eh_path(d, path) :- eh_read(d), option("relativePath", path),
+    !option("outsideRoot", "true"), !option("readError", "true").
 eh_path(d, path) :- doc(d, path, _), !option("entryPoint", _), !eh_hidden(d), !eh_framework_hidden(d),
     file_name(d, filename), suffix(".py", filename), eh_dir(_, dir), prefix(cat(dir, "/"), path).
 .decl eh_active(d: number, path: symbol)

@@ -928,6 +928,56 @@
           "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
         }
       ]
+    },
+    {
+      "id": "annotation_commit",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "x: \"txn.commit()\"\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation_and_real_commit",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "def f():\n    x: \"txn.commit()\"\n    txn.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "multiline_parenthesized_commit",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "(\n    txn.commit()\n)\n"
+        }
+      ]
+    },
+    {
+      "id": "backslash_bare_raise",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise \\\n        # comment\n"
+        }
+      ]
+    },
+    {
+      "id": "backslash_logger",
+      "check": "error_handling",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# logger.error\ntry:\n    work()\nexcept Exception:\n    logger.\\\n        error(\"bad\")\n    raise\n"
+        }
+      ]
     }
   ]
 }

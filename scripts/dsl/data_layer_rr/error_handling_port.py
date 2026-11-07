@@ -30,17 +30,21 @@ def scan(suite, entry, module, arguments):
     except ValueError:
         relative = actual
         options['outsideRoot'] = 'true'
-    if not root.is_absolute():
-        options['relativeRoot'] = 'true'
     options.update(relativePath=relative.as_posix(), pathParts=list(relative.parts))
-    files = []
+    options['isFile'] = str(actual.is_file()).lower()
+    read_error = None
     try:
-        source = actual.read_text()
-    except (OSError, UnicodeError):
-        pass
-    else:
-        files.append(dict(path='input.py', source=source))
-    rows = suite.native('error_handling', entry, files, options)
+        source = actual.read_text(encoding='utf-8')
+    except (OSError, UnicodeError) as error:
+        read_error = error
+        options['readError'] = 'true'
+        source = ''
+    rows = suite.native('error_handling', entry, [dict(path='input.py', source=source)], options)
+    failures = [row for row in rows if row['code'] == 'EH_READ_ERROR']
+    if failures:
+        if len(failures) != 1 or len(rows) != 1 or read_error is None:
+            raise AssertionError('Invalid native error-handling read failure')
+        raise read_error
     if any(row['code'] != 'EH001' for row in rows):
         raise AssertionError('Unexpected native error-handling diagnostic')
     rows.sort(key=lambda row: (row['parameters']['ordinal'], row['parameters']['witness']))

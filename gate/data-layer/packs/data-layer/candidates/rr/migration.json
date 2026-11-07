@@ -1289,10 +1289,18 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/error-handling.rr",
-      "sha256": "2d34f25cd124820349e2f6860794fbf935a93ae148d6ce03e5e814f9fe2b4fc0",
+      "sha256": "ed5602f1117e84050084ccbb7ed7e159085a8813b58687f68bdf9a4bd438ccd8",
       "origin": "authored",
       "upstreamPath": "scripts/lint_error_handling.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "importedSha256": "2d34f25cd124820349e2f6860794fbf935a93ae148d6ce03e5e814f9fe2b4fc0",
+      "repairs": [
+        {
+          "before": "2d34f25cd124820349e2f6860794fbf935a93ae148d6ce03e5e814f9fe2b4fc0",
+          "after": "ed5602f1117e84050084ccbb7ed7e159085a8813b58687f68bdf9a4bd438ccd8",
+          "reason": "Preserve relative roots and gate source-read errors in native Datalog after source-derived edge-case failures"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
@@ -1542,7 +1550,7 @@
       "legacySha256": "3bbdc70fb1ffb9552218b98d02ff5663c28b57c99d09c34fa2742dc6f80dbe33",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/error-handling.rr",
-      "ruleSha256": "2d34f25cd124820349e2f6860794fbf935a93ae148d6ce03e5e814f9fe2b4fc0"
+      "ruleSha256": "ed5602f1117e84050084ccbb7ed7e159085a8813b58687f68bdf9a4bd438ccd8"
     },
     {
       "check": "module_level_caches",

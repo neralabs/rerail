@@ -2023,6 +2023,190 @@
         },
         "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise\n"
       }
+    },
+    {
+      "id": "invalid_utf8_gate_clean",
+      "check": "error_handling",
+      "entry": "scan_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "bytesHex": "fffe"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "root": {
+          "path": "."
+        },
+        "source": "clean"
+      }
+    },
+    {
+      "id": "invalid_utf8_wrong_suffix",
+      "check": "error_handling",
+      "entry": "scan_file_content",
+      "files": [
+        {
+          "path": "impl/a.pyi",
+          "bytesHex": "fffe"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.pyi"
+        },
+        "root": {
+          "path": "."
+        },
+        "source": "logger.error"
+      }
+    },
+    {
+      "id": "invalid_utf8_tests",
+      "check": "error_handling",
+      "entry": "scan_file_content",
+      "files": [
+        {
+          "path": "impl/tests/a.py",
+          "bytesHex": "fffe"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/tests/a.py"
+        },
+        "root": {
+          "path": "."
+        },
+        "source": "logger.error"
+      }
+    },
+    {
+      "id": "invalid_utf8_outside_root",
+      "check": "error_handling",
+      "entry": "scan_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "bytesHex": "fffe"
+        },
+        {
+          "path": "nested/keep",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "root": {
+          "path": "nested"
+        },
+        "source": "logger.error"
+      }
+    },
+    {
+      "id": "annotation_commit",
+      "check": "error_handling",
+      "entry": "scan_file_content",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "x: \"txn.commit()\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "api/l8000_admin/tools/a.py"
+        },
+        "root": {
+          "path": "."
+        },
+        "source": "x: \"txn.commit()\"\n"
+      }
+    },
+    {
+      "id": "annotation_and_real_commit",
+      "check": "error_handling",
+      "entry": "scan_file_content",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "def f():\n    x: \"txn.commit()\"\n    txn.commit()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "api/l8000_admin/tools/a.py"
+        },
+        "root": {
+          "path": "."
+        },
+        "source": "def f():\n    x: \"txn.commit()\"\n    txn.commit()\n"
+      }
+    },
+    {
+      "id": "multiline_parenthesized_commit",
+      "check": "error_handling",
+      "entry": "scan_file_content",
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/a.py",
+          "source": "(\n    txn.commit()\n)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "api/l8000_admin/tools/a.py"
+        },
+        "root": {
+          "path": "."
+        },
+        "source": "(\n    txn.commit()\n)\n"
+      }
+    },
+    {
+      "id": "backslash_bare_raise",
+      "check": "error_handling",
+      "entry": "scan_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise \\\n        # comment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "root": {
+          "path": "."
+        },
+        "source": "try:\n    work()\nexcept Exception:\n    logger.error(\"bad\")\n    raise \\\n        # comment\n"
+      }
+    },
+    {
+      "id": "backslash_logger",
+      "check": "error_handling",
+      "entry": "scan_file_content",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# logger.error\ntry:\n    work()\nexcept Exception:\n    logger.\\\n        error(\"bad\")\n    raise\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "impl/a.py"
+        },
+        "root": {
+          "path": "."
+        },
+        "source": "# logger.error\ntry:\n    work()\nexcept Exception:\n    logger.\\\n        error(\"bad\")\n    raise\n"
+      }
     }
   ]
 }
