@@ -10,6 +10,11 @@ export const sessionResponseSchema = z.object({
   hud: z.object({
     activeRuleCount: z.number().int().nonnegative().nullable(),
     steeringCount: z.number().int().nonnegative().nullable(),
+    // Optional: a footer reader may meet a daemon from before overlays, which sends none.
+    overlays: z.array(z.string()).optional()
+      .describe("Labels of the rule overlays in force in the session's checkout, e.g. worktree while its .rerail/rules holds rules."),
+    awaitingApproval: z.number().int().nonnegative().nullable().optional()
+      .describe("How many rules and packs that are on run in Log in the session's checkout, waiting for a person's approval; null when the rule count is not current."),
   }),
   audit: createSelectSchema(audits)
     .pick({ workspaceRoot: true, scope: true, mode: true, status: true })

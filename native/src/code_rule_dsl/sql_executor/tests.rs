@@ -1,4 +1,5 @@
 use super::*;
+mod documents;
 mod recovery;
 mod updates;
 
@@ -328,7 +329,10 @@ fn unsupported_lattices_fail_explicitly_and_query_created_symbols_survive_close(
     let failure = executor
         .lower(unsupported.into(), "python".into())
         .unwrap_err();
-    assert!(failure.reason.contains("register SQL operations"), "{failure}");
+    assert!(
+        failure.reason.contains("register SQL operations"),
+        "{failure}"
+    );
     assert!(
         executor
             .query("SELECT 1; SELECT 2".into(), None, None)

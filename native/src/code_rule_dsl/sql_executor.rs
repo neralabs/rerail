@@ -15,9 +15,11 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
+mod documents;
 mod indexes;
 mod live;
 mod maintenance;
+mod overlay;
 mod reductions;
 mod updates;
 use super::logic::sql::lattices;
@@ -59,6 +61,7 @@ pub struct CodeRuleSqlExecutor {
     input_shapes: BTreeMap<String, (usize, Option<Vec<String>>)>,
     mutable_inputs: BTreeSet<String>,
     live_inputs: BTreeMap<String, Arc<live::Live>>,
+    documents: Option<documents::Documents>,
 }
 
 #[napi]
@@ -83,6 +86,7 @@ impl CodeRuleSqlExecutor {
             input_shapes: BTreeMap::new(),
             mutable_inputs: BTreeSet::new(),
             live_inputs: BTreeMap::new(),
+            documents: None,
         })
     }
 
@@ -90,30 +94,22 @@ impl CodeRuleSqlExecutor {
     /// Build everything before replacing bindings; a malformed/unparsed file fails the call.
     #[napi]
     pub fn bind_snapshot(&mut self, snapshot_json: String) -> Result<()> {
-        let (snapshot, _) = super::eval::parse_snapshot(&snapshot_json, false)?;
-        let mut seen = BTreeSet::new();
-        let mut documents = Vec::new();
-        for file in &snapshot.files {
-            if !seen.insert(&file.path) {
-                return Err(error(format!("duplicate snapshot path: {}", file.path)));
-            }
-            let facts = match core::build_cached(file, &self.store).map_err(error)? {
-                Built::Facts(facts) if !facts.syntax_errors => facts,
-                _ => return Err(error(format!("{}: core facts are incomplete", file.path))),
-            };
-            let key = self.store.intern_atoms(&[&file.path]).map_err(error)?[0];
-            documents.push(syntax::Document {
-                key,
-                path: file.path.clone(),
-                core: String::new(),
-                digest: [0; 32],
-                facts: Arc::new(facts),
-                guest: None,
-            });
-        }
-        let sources =
-            syntax::shaped(&self.store, documents, &syntax::Projection::core()).map_err(error)?;
-        self.replace_sources(sources)
+        let (docs, _) = documents::prepare(&self.store, &snapshot_json, None)?;
+        let sources = documents::sources(&self.store, &docs)?;
+        self.replace_sources(sources.into_iter().collect())?;
+        self.documents = Some(docs);
+        Ok(())
+    }
+
+    /// Maintain retained SQL results across a complete replacement snapshot. Only changed
+    /// files rebuild native facts; additions and removals use the same atomic delta scheduler.
+    #[napi]
+    pub fn apply_snapshot(
+        &mut self,
+        snapshot_json: String,
+        max_waves: Option<u32>,
+    ) -> Result<String> {
+        self.change_snapshot(snapshot_json, max_waves)
     }
 
     /// Bind current core facts from the database, without source files or a new snapshot.
@@ -142,7 +138,12 @@ impl CodeRuleSqlExecutor {
         let sources = syntax::shaped(&self.store, documents.clone(), &syntax::Projection::core())
             .map_err(error)?;
         syntax::fresh(&self.store, &documents).map_err(error)?;
-        self.replace_sources(sources)
+        self.replace_sources(
+            sources
+                .into_iter()
+                .map(|(n, s)| (n.to_owned(), s))
+                .collect(),
+        )
     }
 
     /// Bind integer or symbol facts, including rows emitted by a native AST matcher.
@@ -159,6 +160,14 @@ impl CodeRuleSqlExecutor {
             types: Option<Vec<String>>,
         }
         let input: Input = serde_json::from_str(&relation_json).map_err(error)?;
+        if self.documents.is_some()
+            && self.inputs.contains_key(&input.name)
+            && !self.mutable_inputs.contains(&input.name)
+        {
+            return Err(error(
+                "native snapshot families cannot be replaced with bindRelation",
+            ));
+        }
         let logical_arity = input.columns.len();
         if self
             .input_shapes
@@ -326,7 +335,7 @@ impl CodeRuleSqlExecutor {
         let arities: BTreeMap<_, _> = program
             .decls
             .iter()
-            .map(|(name, _)| (name.clone(), program::logical_arity(&program,name)))
+            .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
             .collect();
         let emitted = self.compile(program, &dialect)?;
         serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program, "logical_arities":arities,"indexes":indexes::wanted(&emitted)}))
@@ -458,17 +467,20 @@ impl CodeRuleSqlExecutor {
         &self.db
     }
 
-    fn replace_sources(&mut self, sources: Vec<(&'static str, Arc<dyn Source>)>) -> Result<()> {
+    fn replace_sources(&mut self, sources: Vec<(String, Arc<dyn Source>)>) -> Result<()> {
         self.clear_results()?;
         self.db.remove_bindings().map_err(error)?;
         self.inputs.clear();
+        self.documents = None;
         self.input_shapes.clear();
         self.mutable_inputs.clear();
         self.live_inputs.clear();
+        self.db
+            .bind_many(sources.iter().map(|(n, s)| (n.as_str(), s.clone())))
+            .map_err(error)?;
         for (name, source) in sources {
             self.input_shapes
                 .insert(name.to_owned(), (source.columns().len(), None));
-            self.db.bind(name, Arc::clone(&source)).map_err(error)?;
             self.inputs.insert(name.to_owned(), source);
         }
         Ok(())
@@ -479,7 +491,7 @@ impl CodeRuleSqlExecutor {
             if let Some((arity, types)) = self.input_shapes.get(name)
                 && let Some(cols) = program.decls.get(name)
             {
-                if program::logical_arity(&program,name) != *arity {
+                if program::logical_arity(&program, name) != *arity {
                     return Err(error(format!(
                         "{name}: input logical arity differs from its declaration"
                     )));
@@ -646,7 +658,7 @@ impl CodeRuleSqlExecutor {
         let arities: BTreeMap<_, _> = program
             .decls
             .iter()
-            .map(|(name, _)| (name.clone(), program::logical_arity(&program,name)))
+            .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
             .collect();
         let emitted = self.compile(program, dialect)?;
         let indexes = indexes::wanted(&emitted);

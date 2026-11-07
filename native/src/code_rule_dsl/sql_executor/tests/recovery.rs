@@ -22,6 +22,43 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
         e.set_limits(json!({"max_steps":200_000_000}).to_string())
             .unwrap();
         e.run(program.into(), "python".into(), None).unwrap();
+        if output == "call_target" {
+            let snapshot=json!({"files":corpus.iter().map(|(p,s)|json!({"path":p,"source":s,"language":"python"})).collect::<Vec<_>>()}).to_string();
+            let (snapshot, _) =
+                super::super::super::eval::parse_snapshot(&snapshot, false).unwrap();
+            let docs = snapshot
+                .files
+                .iter()
+                .map(|f| {
+                    let Built::Facts(facts) = core::build_cached(f, &e.store).unwrap() else {
+                        panic!()
+                    };
+                    syntax::Document {
+                        key: e.store.intern_atoms(&[&f.path]).unwrap()[0],
+                        path: f.path.clone(),
+                        core: String::new(),
+                        digest: [0; 32],
+                        facts: Arc::new(facts),
+                        guest: None,
+                    }
+                })
+                .collect();
+            let reference = syntax::shaped(&e.store, docs, &syntax::Projection::core()).unwrap();
+            let actual = rows(&e, "SELECT * FROM call_target ORDER BY c0,c1");
+            e.replace_sources(
+                reference
+                    .into_iter()
+                    .map(|(n, s)| (n.to_owned(), s))
+                    .collect(),
+            )
+            .unwrap();
+            e.run(program.into(), "python".into(), None).unwrap();
+            assert_eq!(
+                actual,
+                rows(&e, "SELECT * FROM call_target ORDER BY c0,c1"),
+                "sharded facts must match the original batch"
+            );
+        }
         assert_eq!(
             rows(&e, &format!("SELECT count(*) FROM {output}")),
             json!([[count]])
@@ -377,22 +414,49 @@ fn both_sql_entry_points_share_custom_lattices_and_logical_zero_arity_outputs() 
 
 #[test]
 fn frontend_boolean_units_preserve_logical_arity_and_round_trip() {
-    let (_dir,mut e)=executor();
-    e.bind_relation(json!({"name":"flag","columns":[],"rows":[[]]}).to_string()).unwrap();
-    let text=".decl flag()\n.input flag\n.decl copied()\ncopied() :- flag().\n.decl ordinary(rr_unit:number)\nordinary(7).\n.output copied,ordinary\n";
-    let parsed=rr::parse(text).unwrap();let printed=rr::print(&parsed).unwrap();let again=rr::parse(&printed).unwrap();
-    assert_eq!(parsed.nullary,again.nullary);assert_eq!(parsed.decls,again.decls);assert_eq!(parsed.rules,again.rules);
-    let lower:Value=serde_json::from_str(&e.lower(text.into(),"python".into()).unwrap()).unwrap();
-    assert_eq!(lower["logical_arities"]["flag"],0);assert_eq!(lower["logical_arities"]["copied"],0);assert_eq!(lower["logical_arities"]["ordinary"],1);
-    e.run(text.into(),"python".into(),None).unwrap();assert_eq!(rows(&e,"SELECT * FROM ordinary"),json!([[7]]));
-    e.apply_changes(json!([{"name":"flag","delete":[[]]}]).to_string(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT count(*) FROM copied"),json!([[0]]));
+    let (_dir, mut e) = executor();
+    e.bind_relation(json!({"name":"flag","columns":[],"rows":[[]]}).to_string())
+        .unwrap();
+    let text = ".decl flag()\n.input flag\n.decl copied()\ncopied() :- flag().\n.decl ordinary(rr_unit:number)\nordinary(7).\n.output copied,ordinary\n";
+    let parsed = rr::parse(text).unwrap();
+    let printed = rr::print(&parsed).unwrap();
+    let again = rr::parse(&printed).unwrap();
+    assert_eq!(parsed.nullary, again.nullary);
+    assert_eq!(parsed.decls, again.decls);
+    assert_eq!(parsed.rules, again.rules);
+    let lower: Value =
+        serde_json::from_str(&e.lower(text.into(), "python".into()).unwrap()).unwrap();
+    assert_eq!(lower["logical_arities"]["flag"], 0);
+    assert_eq!(lower["logical_arities"]["copied"], 0);
+    assert_eq!(lower["logical_arities"]["ordinary"], 1);
+    e.run(text.into(), "python".into(), None).unwrap();
+    assert_eq!(rows(&e, "SELECT * FROM ordinary"), json!([[7]]));
+    e.apply_changes(json!([{"name":"flag","delete":[[]]}]).to_string(), None)
+        .unwrap();
+    assert_eq!(rows(&e, "SELECT count(*) FROM copied"), json!([[0]]));
 }
 
 #[test]
 fn combined_corpus_programs_keep_boolean_output_metadata_after_renaming() {
-    let dir=tempfile::tempdir().unwrap();let root=dir.path().join("src");std::fs::create_dir(&root).unwrap();std::fs::write(root.join("a.py"),"x=1\n").unwrap();
-    let text=".decl seed(n:number)\nseed(1).\n.decl flag()\nflag() :- seed(1).\n.output flag\n";
-    crate::code_rule_dsl::tools::logic(&[text.into(),text.into()],&root,None,&dir.path().join("out"),"",false,1024).unwrap();
-    for name in ["p0_flag","p1_flag"]{assert_eq!(std::fs::read_to_string(dir.path().join(format!("out/{name}.csv"))).unwrap(),"\n");}
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("a.py"), "x=1\n").unwrap();
+    let text = ".decl seed(n:number)\nseed(1).\n.decl flag()\nflag() :- seed(1).\n.output flag\n";
+    crate::code_rule_dsl::tools::logic(
+        &[text.into(), text.into()],
+        &root,
+        None,
+        &dir.path().join("out"),
+        "",
+        false,
+        1024,
+    )
+    .unwrap();
+    for name in ["p0_flag", "p1_flag"] {
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(format!("out/{name}.csv"))).unwrap(),
+            "\n"
+        );
+    }
 }

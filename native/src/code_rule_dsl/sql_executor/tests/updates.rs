@@ -341,3 +341,57 @@ fn nonlinear_recursion_and_simultaneous_multi_input_deletions_keep_set_semantics
     );
     assert_eq!(rows(&e, "SELECT * FROM pair"), json!([[1, 3]]));
 }
+
+#[test]
+fn old_input_overlays_cover_simultaneous_self_join_and_cross_program_deletions() {
+    let (_dir, mut e) = executor();
+    edge(&mut e, json!([[1, 2], [2, 3], [3, 4], [4, 5]]));
+    e.run(CLOSURE.into(), "python".into(), None).unwrap();
+    let downstream = ".decl reach(a:number,b:number)\n.input reach\n.decl pair(a:number,c:number)\npair(a,c) :- reach(a,b), reach(b,c).\n.output pair\n";
+    e.run(downstream.into(), "python".into(), None).unwrap();
+    change(
+        &mut e,
+        json!([{"name":"edge","delete":[[1,2],[2,3]],"insert":[[2,4]]}]),
+    );
+    let (_cold_dir, mut cold) = executor();
+    edge(&mut cold, json!([[2, 4], [3, 4], [4, 5]]));
+    cold.run(CLOSURE.into(), "python".into(), None).unwrap();
+    cold.run(downstream.into(), "python".into(), None).unwrap();
+    assert_eq!(reachable(&e), reachable(&cold));
+    assert_eq!(
+        rows(&e, "SELECT * FROM pair ORDER BY c0,c1"),
+        rows(&cold, "SELECT * FROM pair ORDER BY c0,c1")
+    );
+    assert_eq!(
+        rows(
+            &e,
+            "SELECT name FROM pragma_module_list WHERE name LIKE '__rr_old_input_%'"
+        ),
+        json!([])
+    );
+}
+
+#[test]
+fn sparse_warm_deletion_has_a_bounded_sql_budget_on_large_native_inputs() {
+    let (_dir, mut e) = executor();
+    edge(
+        &mut e,
+        json!(
+            (0..100_000)
+                .map(|i| vec![i * 2, i * 2 + 1])
+                .collect::<Vec<_>>()
+        ),
+    );
+    e.run(CLOSURE.into(), "python".into(), None).unwrap();
+    change(
+        &mut e,
+        json!([{"name":"edge","insert":[[500_000,500_001]]}]),
+    );
+    e.set_limits("{\"max_steps\":10000}".into()).unwrap();
+    change(
+        &mut e,
+        json!([{"name":"edge","delete":[[500_000,500_001]]}]),
+    );
+    e.set_limits("{}".into()).unwrap();
+    assert_eq!(rows(&e, "SELECT count(*) FROM reach"), json!([[100000]]));
+}
