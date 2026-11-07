@@ -546,7 +546,6 @@ pub(crate) fn run_with_options(
             return discover(programs, &prog, root, t_facts, out, modes, binding, chunk_nodes, typing, options);
         }
     }
-    let world_facts = options.get("worldFacts").and_then(|v| v.as_str()).unwrap_or("").to_owned();
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     // The main thread's CPU (the chunk builder's is its own, below) and the process's peak RSS.
     let main_usage = || { let (u, s) = thread_usage(); (u, s, usage().2) };
@@ -574,7 +573,10 @@ pub(crate) fn run_with_options(
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }
-    let mut prog = combine(programs, &world_facts)?;
+    let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
+    let mut prog = combine(programs, "")?;
+    drop(combining);
+    world::add_facts(&mut prog, options.get("worldFacts"));
     if world_round.as_deref() == Some("discover") {
         prog.outputs = world::requests(&prog);
     }
@@ -647,15 +649,18 @@ pub(crate) fn run_with_options(
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            prog = combine(programs, &format!("{world_facts}\n{facts}"))?;
+            prog = combine(programs, &facts)?;
+            world::add_facts(&mut prog, options.get("worldFacts"));
             add_bridged(&mut prog);
         }
         declared = d;
     }
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     external_inputs(&mut prog, root)?;
-    // Guest requests (decision 0055) are outputs, so the file-local part keeps the rules that make them.
-    for rel in guests::LIBRARY.iter().copied().chain(guests::DEMANDS) {
+    // Guest requests (decision 0055) are outputs, so the file-local part keeps the rules that make them; a round of
+    // `world` derives only its own requests.
+    let discovering = world_round.as_deref() == Some("discover");
+    for rel in guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|_| !discovering) {
         if prog.rules.iter().any(|r| r.head.rel == rel) && !prog.outputs.iter().any(|o| o == rel) {
             prog.outputs.push(rel.to_owned());
         }
@@ -700,6 +705,7 @@ pub(crate) fn run_with_options(
     statements.enter("stats");
     // Only the rules an output reads, directly or through other rules: a rule that includes a library runs the part
     // of it the rule uses, not all of it (T's front prunes the same way).
+    let preparing = crate::code_rule_dsl::logic::profile::span(|| "prune, simplify, demand".into());
     prog = front::prune(prog);
     // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
     crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
@@ -708,9 +714,12 @@ pub(crate) fn run_with_options(
     if !demanded.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
     }
+    drop(preparing);
     // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
     let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
+    let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
+    drop(lowering);
     let sets = lowered.transduce_nearest();
     // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
     let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut lowered.program);
@@ -728,7 +737,10 @@ pub(crate) fn run_with_options(
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     let memo_program = memo::program_digest(&split.local);
-    let memoised = tapes.is_some() && t.is_none() && unlocated.is_empty() && !prog.decls.contains_key("declared_ret") && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off");
+    // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
+    // after pruning is not memoised (a round of `world` does not read them).
+    let reads_declared = prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| a.rel == "declared_ret");
+    let memoised = tapes.is_some() && t.is_none() && unlocated.is_empty() && !reads_declared && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off");
     crate::code_rule_dsl::logic::profile::decision("per-file memo", || match (&located, memoised) {
         (_, true) => format!("each file's file-local rows are memoised under its content, path and the run's plan; {} relations given a document column", located.as_ref().map_or(0, Vec::len)),
         (Err(blocked), _) => format!("off: rows of {blocked:?} name no document"),
@@ -1471,7 +1483,9 @@ pub(crate) fn run_with_options(
         let node_columns = &node_columns[rel];
         let mut decoded: Vec<String> = lines
             .iter()
-            .filter(|row| library_keys.is_empty() || !row.split('\t').enumerate().any(|(i, v)| node_columns.contains(&i) && v.parse::<i64>().is_ok_and(|v| library_keys.contains(&(v >> 32)))))
+            // A row about a loaded document (its first node is one) is not the corpus's; a corpus row may name a
+            // loaded document's node (a call's target in a stub).
+            .filter(|row| library_keys.is_empty() || node_columns.first().is_none_or(|c| !row.split('\t').nth(*c).and_then(|v| v.parse::<i64>().ok()).is_some_and(|v| library_keys.contains(&(v >> 32)))))
             .map(|row| {
                 row.split('\t')
                     .enumerate()

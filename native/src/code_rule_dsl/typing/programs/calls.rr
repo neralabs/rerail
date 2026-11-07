@@ -20,13 +20,27 @@
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl str(n: node, s: symbol)
+.decl value(n: node, s: symbol)
+.decl op_at(n: node, i: number, s: symbol)
 .decl pkg(d: number, p: symbol)
-.input doc, node, child, field, text, op, pkg, kind, docof
+.input doc, node, child, field, text, op, op_at, name, str, value, pkg, kind, docof
 // Guests (decision 0055): parsed(s, "annotation", r) asks for string s's code, rooted at r; host_node(n, h): h is
 // the innermost host node over guest node n.
 .decl parsed(s: node, grammar: symbol, root: node)
 .decl host_node(n: node, h: node)
 .input parsed, host_node
+// Libraries (t21): the run's settings, the file system the library rules read, and the documents they load. The
+// rules are Python's (python/modules.rr, which reads python/env.rr): an import resolved into typeshed's standard
+// library loads that stub as a document named by its module, so the program reads it as it reads a workspace file.
+.decl env(key: symbol, value: symbol)
+.decl dir_entry(dir: symbol, name: symbol, is_dir: number)
+.decl file_line(path: symbol, i: number, text: symbol)
+.decl load(path: symbol, module: symbol, grammar: symbol, role: symbol)
+.decl loaded(path: symbol, module: symbol, grammar: symbol, role: symbol)
+#include "python/modules.rr"
+#include "python/conditions.rr"
 
 .decl scope(kind: symbol)
 scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
@@ -47,10 +61,10 @@ modname(m, q) :- modnode(d, m), doc(d, _, q).
 .decl nameref(n: node, x: symbol)
 nameref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n).
 .decl rdefn(s: node, x: symbol, f: node)
-rdefn(s, x, f) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
-rdefn(s, x, f) :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
+rdefn(s, x, f) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope), !py_dead_at(f).
+rdefn(s, x, f) :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope), !py_dead_at(f).
 .decl rasg(s: node, x: symbol, r: node, a: node)
-rasg(s, x, r, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r), nearest(a, s, scope).
+rasg(s, x, r, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r), nearest(a, s, scope), !py_dead_at(a).
 .decl param(f: node, x: symbol, i: number)
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), child(p, id, 0), kind(id, "identifier"), text(id, x).
@@ -73,28 +87,28 @@ rotgt(s, x) :- tgt(t), kind(t, "identifier"), text(t, x), nearest(t, s, scope).
 
 // Imports, per scope: `ibind(s, x, q)` binds x to the qualified name q; `ifrom` also keeps the module and name.
 .decl impmod(i: node, m: symbol)
-impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m).
+impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m), !py_dead_at(i).
 impmod(i, p) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
-    child(mn, pre, 0), text(pre, "."), !child(mn, _, 1), docof(i, d), pkg(d, p), p != "".
+    child(mn, pre, 0), text(pre, "."), !child(mn, _, 1), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
 impmod(i, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
-    child(mn, pre, 0), text(pre, "."), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p), p != "".
+    child(mn, pre, 0), text(pre, "."), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
 .decl rifrom(s: node, x: symbol, m: symbol, y: symbol)
 rifrom(s, y, m, y) :- impmod(i, m), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope).
 rifrom(s, a, m, y) :- impmod(i, m), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, y),
     field(x, "alias", al), text(al, a), nearest(i, s, scope).
 .decl ribind(s: node, x: symbol, q: symbol)
 ribind(s, x, @dot(m, y)) :- rifrom(s, x, m, y).
-ribind(s, t, t) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), child(n, c, 0), text(c, t), nearest(i, s, scope).
+ribind(s, t, t) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), child(n, c, 0), text(c, t), nearest(i, s, scope), !py_dead_at(i).
 ribind(s, a, m) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, m),
-    field(x, "alias", al), text(al, a), nearest(i, s, scope).
+    field(x, "alias", al), text(al, a), nearest(i, s, scope), !py_dead_at(i).
 // Two dots or more: `..` is the package's parent (`from .. import x` in `pkg.sub.deep` is `pkg`), one level up per dot.
 .decl updots(t: symbol, k: number)
 updots("..", 1). updots("...", 2). updots("....", 3).
 impmod(i, q) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
-    child(mn, pre, 0), text(pre, t), updots(t, k), !child(mn, _, 1), docof(i, d), pkg(d, p), q = @pkg_up(p, k), q != "".
+    child(mn, pre, 0), text(pre, t), updots(t, k), !child(mn, _, 1), docof(i, d), pkg(d, p), q = @pkg_up(p, k), q != "", !py_dead_at(i).
 impmod(i, @dot(q, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
     child(mn, pre, 0), text(pre, t), updots(t, k), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p),
-    q = @pkg_up(p, k), q != "".
+    q = @pkg_up(p, k), q != "", !py_dead_at(i).
 // A relative import the facts cannot place (more dots than packages, or outside a package): what it binds is unknown.
 .decl irel_open(i: node)
 irel_open(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"), !impmod(i, _).
@@ -162,8 +176,16 @@ asgstmt(a, st) :- kind(st, "expression_statement"), child(st, a, 0), kind(a, "as
 .decl sbinds(s: node, x: symbol, st: node)
 sbinds(s, x, st) :- defn(s, x, f), defstmt(f, st), stmt(st, s).
 sbinds(s, x, st) :- asg(s, x, _, a), asgstmt(a, st), stmt(st, s).
+// An `@overload` def does not replace an earlier one: a stub's overloads are all the name's (their union is its
+// type), and a later def that is not an overload (the implementation) replaces them all. Read from the decorator's
+// own name, not its import: what a name is depends on what is live, which depends on this.
+.decl ovlstmt(st: node)
+ovlstmt(st) :- kind(st, "decorated_definition"), child(st, dc, _), kind(dc, "decorator"), child(dc, e, 0), text(e, "overload").
+ovlstmt(st) :- kind(st, "decorated_definition"), child(st, dc, _), kind(dc, "decorator"), child(dc, e, 0), kind(e, "attribute"),
+    field(e, "attribute", a), text(a, "overload").
 .decl shadowed(st: node)
-shadowed(st) :- sbinds(s, x, st), sbinds(s, x, st2), st2 > st.
+shadowed(st) :- sbinds(s, x, st), sbinds(s, x, st2), st2 > st, !ovlstmt(st2).
+shadowed(st) :- sbinds(s, x, st), sbinds(s, x, st2), st2 > st, !ovlstmt(st).
 .decl live_def(s: node, x: symbol, f: node)
 live_def(s, x, f) :- defn(s, x, f), defstmt(f, st), !shadowed(st).
 .decl live_asg(s: node, x: symbol, r: node)
@@ -177,9 +199,20 @@ dexpr(f, e) :- kind(dd, "decorated_definition"), field(dd, "definition", f), chi
 transparent_q("abc.abstractmethod"). transparent_q("typing.final"). transparent_q("typing.override").
 transparent_q("typing.no_type_check"). transparent_q("typing_extensions.final"). transparent_q("typing_extensions.override").
 transparent_q("functools.wraps"). transparent_q("functools.total_ordering"). transparent_q("dataclasses.dataclass").
+// The decorators stubs use (t21 §2.4): each gives back what it decorates, as a type checker reads it.
+transparent_q("typing.overload"). transparent_q("typing_extensions.overload"). transparent_q("typing.type_check_only").
+transparent_q("typing_extensions.deprecated"). transparent_q("warnings.deprecated"). transparent_q("typing.runtime_checkable").
+transparent_q("typing_extensions.runtime_checkable"). transparent_q("typing_extensions.type_check_only").
+transparent_q("typing_extensions.disjoint_base"). transparent_q("typing.disjoint_base").
 .decl transparent(e: node)
 transparent(e) :- qn(e, q), transparent_q(q).
 transparent(e) :- kind(e, "call"), field(e, "function", g), qn(g, q), transparent_q(q).
+// One defined in the module that uses it (typing.pyi's own `@overload`), by its qualified name: syntactic, as what
+// a name is depends on the decorators.
+// ownq(e, q): identifier e, as a name of its own module (`typing.overload` in typing.pyi).
+.decl ownq(e: node, q: symbol)
+ownq(e, q) :- kind(e, "identifier"), text(e, x), docof(e, d), doc(d, _, m), q = @dot(m, x).
+transparent(e) :- ownq(e, q), transparent_q(q).
 transparent(e) :- builtin_ref(e, "staticmethod").
 transparent(e) :- builtin_ref(e, "classmethod").
 .decl opaque_dec(f: node, e: node)
@@ -329,7 +362,15 @@ pclosed(f, x) :- pann(f, x, t), !aopen(t).
 // values are read through `look` alone, and a stub's parameters are never read.
 .decl pread(f: node, x: symbol)
 pread(f, x) :- pann(f, x, _), look(_, x, f).
-bv(f, x, "inst", s) :- pann(f, x, t), pread(f, x), ainst(t, c), sub(c, s).
+// uinst: ainst cut to the annotations these rules read (a library's stubs annotate `str` thousands of times; a new
+// subclass of it looks up only these).
+.decl uann(t: node)
+uann(t) :- pann(f, x, t), pread(f, x).
+uann(t) :- cann(c, x, t), cread(c, x).
+uann(t) :- mann(_, _, t).
+.decl uinst(t: node, c: node)
+uinst(t, c) :- uann(t), ainst(t, c).
+bv(f, x, "inst", s) :- pann(f, x, t), pread(f, x), uinst(t, c), sub(c, s).
 bv(f, x, "cls", s) :- pann(f, x, t), pread(f, x), acls(t, c), sub(c, s).
 bv(f, x, "inst", s) :- pann(f, x, t), pread(f, x), aleaf(t, m), aself(m), method(f, c), sub(c, s).
 bv(f, x, k, v) :- pdefault(f, x, d), pv(d, k, v).
@@ -355,16 +396,25 @@ tv(c, "decl", m) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf
 // Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
 .decl cann(c: node, x: symbol, t: node)
 cann(c, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", t), nearest(a, c, scope),
-    kind(c, "class_definition").
+    kind(c, "class_definition"), !py_dead_at(a).
 bound_in(c, x) :- cann(c, x, _).
 // A class attribute's, only where it is read: through `found` (a name a lookup reads), or by name in the class
 // body (`look`).
 .decl cread(c: node, x: symbol)
 cread(c, x) :- cann(c, x, _), need_name(x).
 cread(c, x) :- cann(c, x, _), look(_, x, c).
-bv(c, x, "inst", s) :- cann(c, x, t), cread(c, x), ainst(t, k), sub(k, s).
+bv(c, x, "inst", s) :- cann(c, x, t), cread(c, x), uinst(t, k), sub(k, s).
 bv(c, x, "cls", s) :- cann(c, x, t), cread(c, x), acls(t, k), sub(k, s).
 tbv(c, x, "decl", m) :- cann(c, x, t), aleaf(t, m), dtype(m, _).
+// A stub's module-level declaration, `x: T` with no value (`patch: _patcher`), binds x to a T (t21 §2.4). In a `.py`
+// file it binds nothing.
+.decl stubdoc(d: number)
+stubdoc(d) :- doc(d, p, _), suffix(".pyi", p).
+.decl mann(m: node, x: symbol, t: node)
+mann(m, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", t),
+    !field(a, "right", _), nearest(a, m, scope), kind(m, "module"), docof(a, d), stubdoc(d), !py_dead_at(a).
+bv(m, x, "inst", s) :- mann(m, x, t), uinst(t, k), sub(k, s).
+bv(m, x, "cls", s) :- mann(m, x, t), acls(t, k), sub(k, s).
 // An attribute declared closed: assignments elsewhere (`self.x = ...`) conform to it.
 .decl adeclared(c: node, a: symbol)
 adeclared(c, a) :- need_attr(c, a), found(c, a, at), cann(at, a, t), !aopen(t).
@@ -399,14 +449,38 @@ qv(q, "mod", m) :- modname(m, q).
 qv(@dot(q, x), k, v) :- modname(m, q), bv(m, x, k, v).
 .decl isqmod(q: symbol)
 isqmod(q) :- modname(_, q).
+// `from n import *` at a module's top level: the module binds each public name of n it does not bind itself
+// (`collections.abc` is `_collections_abc`'s names). Only the names asked of it (`wantx`), so no name is made.
+.decl star_from(m: node, n: symbol)
+star_from(m, n) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"), nearest(i, m, scope),
+    modname(m, _), py_import(i, n).
+.decl starmod(q: symbol, m: node)
+starmod(q, m) :- star_from(m, _), modname(m, q).
+.decl wantx(m: node, x: symbol)
+wantx(m, y) :- starmod(q, m), rifrom(_, _, q, y), !rbound(m, y).
+wantx(m, a) :- starmod(q, m), qn(o, q), attr_of(_, o, a), !rbound(m, a).
+wantx(m2, x) :- wantx(m, x), star_from(m, n), modname(m2, n), star_from(m2, _), !rbound(m2, x).
+.decl starx(m: node, x: symbol, m2: node)
+starx(m, x, m2) :- wantx(m, x), !prefix("_", x), star_from(m, n), modname(m2, n).
+bv(m, x, k, v) :- starx(m, x, m2), bv(m2, x, k, v).
 
 // Binding values: what name x of scope s may hold.
 .decl bv(s: node, x: symbol, k: symbol, v: node)
 bv(s, x, "fn", f) :- live_def(s, x, f), kind(f, "function_definition"), !opaque_dec(f, _).
 bv(s, x, "cls", c) :- live_def(s, x, c), kind(c, "class_definition").
-bv(s, x, "fn", f) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), retparam(g, 0, _).
-bv(s, x, k, v) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), !ident_dec(g), retval(g, r), pv(r, k, v).
-bv(s, x, "fn", f) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), ident_dec(g).
+// decfn(f, g): f's one decorator is function g; decval(f, k, v): what g returns, f's value. Made first, so each
+// join starts from the few decorated definitions, not from every expression that names g.
+.decl decfn(f: node, g: node)
+decfn(f, g) :- dec1(f, e), pv(e, "fn", g).
+.decl decval(f: node, k: symbol, v: node)
+decval(f, k, v) :- decfn(f, g), !ident_dec(g), retval(g, r), pv(r, k, v).
+// A decorator that returns its argument keeps the definition, a function or a class.
+.decl defk(f: node, k: symbol)
+defk(f, "fn") :- kind(f, "function_definition").
+defk(f, "cls") :- kind(f, "class_definition").
+bv(s, x, k, f) :- live_def(s, x, f), decfn(f, g), retparam(g, 0, _), defk(f, k).
+bv(s, x, k, v) :- live_def(s, x, f), decval(f, k, v).
+bv(s, x, k, f) :- live_def(s, x, f), decfn(f, g), ident_dec(g), defk(f, k).
 bv(s, x, k, v) :- live_asg(s, x, r), pv(r, k, v).
 bv(s, x, k, v) :- ibind(s, x, q), qv(q, k, v).
 // `self` (the first parameter of a method that is not static) and `cls` (of a class method) are late bound.
@@ -446,6 +520,23 @@ pv(c, k, v) :- callee(c, e), pv(e, "fn", f), !isasync(f), !isgen(f), fret(f, k, 
 fret(f, k, v) :- retval(f, r), pv(r, k, v).
 pv(c, k, v) :- callee(c, e), pv(e, "fn", f), !method(f, _), retparam(f, i, _), posarg(c, i, a), pv(a, k, v).
 pv(c, "super", k) :- callee(c, e), builtin_ref(e, "super"), nearest(c, f, fdef), method(f, k).
+// The standard library's `builtins`, where a run loads it (t21): a builtin name is that module's binding of the name
+// (`super` keeps its own value above), and a literal is an instance of its builtins class. Not `object`: every class
+// is one, so a value declared `object` is any instance at all, which is no knowledge (and every class's rows).
+// Each with its qualified name made first (`bq`, `litq`), so the join with `qv` is on that name.
+.decl bq(n: node, q: symbol)
+bq(n, q) :- builtin_ref(n, x), x != "super", x != "object", q = @dot("builtins", x).
+pv(n, k, v) :- bq(n, q), qv(q, k, v).
+.decl lit_cls(kind: symbol, q: symbol)
+lit_cls("integer", "builtins.int"). lit_cls("float", "builtins.float"). lit_cls("string", "builtins.str").
+lit_cls("concatenated_string", "builtins.str"). lit_cls("true", "builtins.bool"). lit_cls("false", "builtins.bool").
+lit_cls("list", "builtins.list"). lit_cls("list_comprehension", "builtins.list"). lit_cls("dictionary", "builtins.dict").
+lit_cls("dictionary_comprehension", "builtins.dict"). lit_cls("set", "builtins.set"). lit_cls("set_comprehension", "builtins.set").
+lit_cls("tuple", "builtins.tuple").
+.decl litq(n: node, q: symbol)
+litq(n, q) :- vpos(n), kind(n, k), lit_cls(k, q), !bytes_lit(n).
+litq(n, "builtins.bytes") :- bytes_lit(n).
+pv(n, "inst", c) :- litq(n, q), qv(q, "cls", c).
 
 // ---- unknown values -------------------------------------------------------------------------------------------
 // Positions whose value is read: what `vopen` is asked about.
@@ -482,9 +573,25 @@ iattr(c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o
 .decl extb(e: node)
 extb(e) :- basex(_, e), qn(e, q), !qknown(q).
 extb(e) :- basex(_, e), builtin_ref(e, _).
+// A typing special form as a base (`Generic[T]`, `Protocol`, `TypedDict`): no class to read, and none needed, as the
+// members are the class's own. In typeshed these are values (`Generic: type[_Generic]`), so they are named here.
+.decl special_base_q(q: symbol)
+special_base_q("typing.Generic"). special_base_q("typing.Protocol"). special_base_q("typing.TypedDict").
+special_base_q("typing_extensions.Generic"). special_base_q("typing_extensions.Protocol").
+special_base_q("typing_extensions.TypedDict").
+// A generic class as a base, `K[T]` (`os.PathLike[str]`, `Mapping[K, V]`): the class K.
+.decl gbase(e: node, k: node)
+gbase(e, k) :- basex(_, e), kind(e, "subscript"), field(e, "value", g), pv(g, "cls", k).
+base(c, b) :- basex(c, e), gbase(e, b).
+.decl special_base(e: node)
+special_base(e) :- basex(_, e), qn(e, q), special_base_q(q).
+special_base(e) :- basex(_, e), kind(e, "subscript"), field(e, "value", g), qn(g, q), special_base_q(q).
+special_base(e) :- basex(_, e), ownq(e, q), special_base_q(q).
+special_base(e) :- basex(_, e), kind(e, "subscript"), field(e, "value", g), ownq(g, q), special_base_q(q).
+extb(e) :- special_base(e).
 .decl base_open(c: node)
-base_open(c) :- basex(c, e), vopen(e).
-base_open(c) :- basex(c, e), !pv(e, "cls", _), !extb(e).
+base_open(c) :- basex(c, e), vopen(e), !special_base(e), !gbase(e, _).
+base_open(c) :- basex(c, e), !pv(e, "cls", _), !extb(e), !gbase(e, _).
 .decl attr_open(c: node, a: symbol)
 attr_open(c, a) :- need_attr(c, a), found(c, a, at), bopen(at, a).
 attr_open(c, a) :- need_attr(c, a), anc(c, b), base_open(b).
@@ -507,8 +614,8 @@ bopen(s, x) :- ifrom(s, x, m, _), isqmod(m), ibind(s, x, q), !qknown(q).
 bopen(s, x) :- live_def(s, x, f), opaque_dec(f, _), !dec1(f, _).
 bopen(s, x) :- live_def(s, x, f), dec1(f, e), !pv(e, "fn", _).
 bopen(s, x) :- live_def(s, x, f), dec1(f, e), vopen(e).
-bopen(s, x) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), !ident_dec(g), retval(g, r), !retparam(g, 0, r), vopen(r).
-bopen(s, x) :- live_def(s, x, f), dec1(f, e), pv(e, "fn", g), !ident_dec(g), !retval(g, _).
+bopen(s, x) :- live_def(s, x, f), decfn(f, g), !ident_dec(g), retval(g, r), !retparam(g, 0, r), vopen(r).
+bopen(s, x) :- live_def(s, x, f), decfn(f, g), !ident_dec(g), !retval(g, _).
 // A property's value is what its getter returns.
 bopen(s, x) :- live_def(s, x, f), dexpr(f, e), builtin_ref(e, "property").
 .decl selfparam(f: node, i: number)

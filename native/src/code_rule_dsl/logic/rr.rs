@@ -105,7 +105,8 @@ impl LibraryFile {
 /// reused while every file it read hashes the same, so only an edit to a file it read (or a
 /// file appearing where an include looked) reads and lowers it again.
 /// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
-const LIBRARY_DERIVED: [&str; 2] = ["embed", "embed_value"];
+/// And the documents they load (t21 E2).
+const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 
 pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
@@ -201,8 +202,16 @@ fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
         Ok(())
     }
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
-    // `core.rr` is every program's prelude (the base relations and built-ins), included or not.
-    visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new())?;
+    // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
+    // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries
+    // read only the relations both shapes have.
+    let t_shape = read(&path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
+        .0
+        .iter()
+        .any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
+    if !t_shape {
+        visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new())?;
+    }
     let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
     visit(path, &mut out, &mut read_files, &mut seen)?;
     Ok((out, read_files))
