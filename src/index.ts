@@ -78,7 +78,6 @@ export {
   type CodeRuleDslCompare,
   type CodeRuleDslDocument,
   type CodeRuleDslEvidenceQuery,
-  type CodeRuleDslFileQuery,
   type CodeRuleDslRelation,
   type CodeRuleDslViolationAnchor,
   type CodeRuleDslViolationSpec,

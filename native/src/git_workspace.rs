@@ -22,6 +22,13 @@ use std::{
 };
 
 const BUILTIN_IGNORE: &[u8] = b".git/\nnode_modules/\ntarget/\ntmp/\n__pycache__/\n";
+/// The extensions of the files the host evaluates (`SOURCE_LANGUAGES` in
+/// code-rule-languages.ts): dialect sources and the text files regex clauses read.
+const SOURCE_SUFFIXES: &[&str] = &[
+    "bash", "cjs", "css", "cts", "html", "js", "json", "jsx", "md", "mdx", "mjs", "mts", "php",
+    "py", "pyi", "rs", "rst", "scss", "sh", "sql", "toml", "ts", "tsx", "txt", "vue", "yaml",
+    "yml", "zsh",
+];
 const STATUS_EXCLUDES: &[&str] = &[
     ":(glob,exclude)**/.git/**",
     ":(glob,exclude)**/node_modules/**",
@@ -138,13 +145,10 @@ impl fmt::Display for DiscoveryError {
 
 impl std::error::Error for DiscoveryError {}
 
-/// Open `relative_path` below `root` as a regular file without following symlinks, returning it
-/// with its metadata as opened.
+/// Read `relative_path` below `root` without following symlinks, refusing a file larger than
+/// `max_bytes` with `ErrorKind::FileTooLarge` before reading it.
 #[cfg(unix)]
-fn open_anchored(
-    root: &Path,
-    relative_path: &str,
-) -> std::io::Result<(std::fs::File, std::fs::Metadata)> {
+fn read_anchored(root: &Path, relative_path: &str, max_bytes: u64) -> std::io::Result<Vec<u8>> {
     let mut directory = std::fs::File::open(root)?;
     let parts = Path::new(relative_path).components().collect::<Vec<_>>();
     for component in &parts[..parts.len().saturating_sub(1)] {
@@ -178,19 +182,11 @@ fn open_anchored(
     if descriptor < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    let file = unsafe { std::fs::File::from_raw_fd(descriptor) };
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
+    let mut file = unsafe { std::fs::File::from_raw_fd(descriptor) };
+    let before = file.metadata()?;
+    if !before.is_file() {
         return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
     }
-    Ok((file, metadata))
-}
-
-/// Read `relative_path` below `root` without following symlinks, refusing a file larger than
-/// `max_bytes` with `ErrorKind::FileTooLarge` before reading it.
-#[cfg(unix)]
-fn read_anchored(root: &Path, relative_path: &str, max_bytes: u64) -> std::io::Result<Vec<u8>> {
-    let (mut file, before) = open_anchored(root, relative_path)?;
     if before.len() > max_bytes {
         return Err(std::io::Error::from(std::io::ErrorKind::FileTooLarge));
     }
@@ -210,67 +206,17 @@ fn read_anchored(root: &Path, relative_path: &str, max_bytes: u64) -> std::io::R
     Ok(bytes)
 }
 
-/// Read at most the first `prefix_bytes` of `relative_path` below `root`, without following
-/// symlinks.
-#[cfg(unix)]
-fn read_anchored_prefix(
-    root: &Path,
-    relative_path: &str,
-    prefix_bytes: u64,
-) -> std::io::Result<Vec<u8>> {
-    let (file, metadata) = open_anchored(root, relative_path)?;
-    let mut bytes = Vec::with_capacity(metadata.len().min(prefix_bytes).try_into().unwrap_or(0));
-    file.take(prefix_bytes).read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-/// The path of `relative_path` below `root`, refused where it resolves outside `root`.
 #[cfg(not(unix))]
-fn anchored_path(root: &Path, relative_path: &str) -> std::io::Result<PathBuf> {
+fn read_anchored(root: &Path, relative_path: &str, max_bytes: u64) -> std::io::Result<Vec<u8>> {
     let root = root.canonicalize()?;
     let path = root.join(relative_path).canonicalize()?;
     if !path.starts_with(&root) {
         return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
     }
-    Ok(path)
-}
-
-#[cfg(not(unix))]
-fn read_anchored(root: &Path, relative_path: &str, max_bytes: u64) -> std::io::Result<Vec<u8>> {
-    let path = anchored_path(root, relative_path)?;
     if std::fs::metadata(&path)?.len() > max_bytes {
         return Err(std::io::Error::from(std::io::ErrorKind::FileTooLarge));
     }
     std::fs::read(path)
-}
-
-#[cfg(not(unix))]
-fn read_anchored_prefix(
-    root: &Path,
-    relative_path: &str,
-    prefix_bytes: u64,
-) -> std::io::Result<Vec<u8>> {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    std::fs::File::open(anchored_path(root, relative_path)?)?
-        .take(prefix_bytes)
-        .read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-/// Refuse a workspace source path that is absolute or holds an empty or `..` component.
-fn check_source_path(relative_path: &str) -> std::io::Result<()> {
-    if relative_path.starts_with('/')
-        || relative_path
-            .split('/')
-            .any(|part| part == ".." || part.is_empty())
-    {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "invalid workspace source path",
-        ));
-    }
-    Ok(())
 }
 
 fn discovery_error(context: &str, error: impl fmt::Display) -> DiscoveryError {
@@ -316,6 +262,17 @@ fn hash_key(id: &gix::hash::oid) -> Result<HashKey, DiscoveryError> {
     }
 }
 
+fn source_path(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            SOURCE_SUFFIXES
+                .iter()
+                .any(|suffix| suffix.eq_ignore_ascii_case(extension))
+        })
+}
+
 struct IgnoreRules {
     mandatory: gix::ignore::Search,
     workspace: gix::ignore::Search,
@@ -329,25 +286,21 @@ fn load_ignore(
     case: gix::ignore::glob::pattern::Case,
 ) -> Result<IgnoreRules, DiscoveryError> {
     let mut mandatory = gix::ignore::Search::default();
-    mandatory
-        .add_patterns_buffer(
-            BUILTIN_IGNORE,
-            worktree.join(".rerailignore.defaults"),
-            Some(worktree),
-            gix::ignore::search::Ignore::default(),
-        )
-        .map_err(|error| discovery_error("cannot load the built-in ignore rules", error))?;
+    mandatory.add_patterns_buffer(
+        BUILTIN_IGNORE,
+        worktree.join(".rerailignore.defaults"),
+        Some(worktree),
+        gix::ignore::search::Ignore::default(),
+    );
     let mut workspace = gix::ignore::Search::default();
     let path = worktree.join(".rerailignore");
     match std::fs::read(&path) {
-        Ok(bytes) => workspace
-            .add_patterns_buffer(
-                &bytes,
-                path,
-                Some(worktree),
-                gix::ignore::search::Ignore::default(),
-            )
-            .map_err(|error| discovery_error("cannot load .rerailignore", error))?,
+        Ok(bytes) => workspace.add_patterns_buffer(
+            &bytes,
+            path,
+            Some(worktree),
+            gix::ignore::search::Ignore::default(),
+        ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(discovery_error("cannot read .rerailignore", error)),
     }
@@ -444,7 +397,7 @@ fn visit_tree(
             )?;
         } else if entry.mode.is_commit() {
             nested_paths.insert(path);
-        } else if entry.mode.is_blob() && !ignored(ignore, &path) {
+        } else if entry.mode.is_blob() && source_path(&path) && !ignored(ignore, &path) {
             base_files.push(BaseFile {
                 path,
                 blob: target,
@@ -617,32 +570,19 @@ impl GitWorkspace {
     /// with `ErrorKind::FileTooLarge`. The bytes carry no Git identity: publication hashes them
     /// against the committed blob only when the path is clean (`source_alias`).
     pub fn read_source(&self, relative_path: &str, max_bytes: u64) -> std::io::Result<Vec<u8>> {
-        check_source_path(relative_path)?;
+        if !source_path(relative_path)
+            || relative_path.starts_with('/')
+            || relative_path
+                .split('/')
+                .any(|part| part == ".." || part.is_empty())
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid workspace source path",
+            ));
+        }
         read_anchored(&self.worktree_root, relative_path, max_bytes)
     }
-
-    /// Read at most the first `prefix_bytes` of a source under the same path rules as
-    /// `read_source`, as a test of a file too large to read whole.
-    pub fn read_source_prefix(
-        &self,
-        relative_path: &str,
-        prefix_bytes: u64,
-    ) -> std::io::Result<Vec<u8>> {
-        check_source_path(relative_path)?;
-        read_anchored_prefix(&self.worktree_root, relative_path, prefix_bytes)
-    }
-}
-
-/// Whether `gix::discover` failed because no repository encloses the path, rather than because one could not be read.
-pub(crate) fn is_no_repository(error: &gix::Error) -> bool {
-    matches!(
-        error.downcast_any_ref::<gix::discover::upwards::Error>(),
-        Some(
-            gix::discover::upwards::Error::NoGitRepository { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinCeiling { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinFs { .. }
-        )
-    )
 }
 
 /// Discover one repository without an external `git` process.
@@ -652,10 +592,13 @@ pub(crate) fn is_no_repository(error: &gix::Error) -> bool {
 pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
     let repository = gix::discover(root).map_err(|error| {
         let message = format!("cannot discover Git repository: {error}");
-        if is_no_repository(&error) {
-            DiscoveryError::NoRepository(message)
-        } else {
-            DiscoveryError::Failed(message)
+        match error {
+            gix::discover::Error::Discover(
+                gix::discover::upwards::Error::NoGitRepository { .. }
+                | gix::discover::upwards::Error::NoGitRepositoryWithinCeiling { .. }
+                | gix::discover::upwards::Error::NoGitRepositoryWithinFs { .. },
+            ) => DiscoveryError::NoRepository(message),
+            _ => DiscoveryError::Failed(message),
         }
     })?;
     let worktree = repository
@@ -727,7 +670,7 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
         }) = &item
         {
             let source = path_string(source_location)?;
-            if !ignored(&ignore, &source) {
+            if source_path(&source) && !ignored(&ignore, &source) {
                 flags.entry(source).or_default().staged = true;
             }
         }
@@ -964,7 +907,9 @@ mod tests {
         for (path, contents) in files {
             std::fs::write(root.join(path), contents).unwrap();
         }
-        run_git(root, &["add", "."]);
+        let mut paths = vec!["add", "--"];
+        paths.extend(files.iter().map(|(path, _)| *path));
+        run_git(root, &paths);
         run_git(root, &["commit", "-m", "initial"]);
     }
 
@@ -1356,23 +1301,19 @@ mod tests {
     #[test]
     fn rerailignore_uses_gitignore_negation() {
         let mut workspace = gix::ignore::Search::default();
-        workspace
-            .add_patterns_buffer(
-                b"generated/\n!generated/keep.py\n!tmp/keep.py\n",
-                ".rerailignore",
-                None,
-                gix::ignore::search::Ignore::default(),
-            )
-            .expect("the patterns parse");
+        workspace.add_patterns_buffer(
+            b"generated/\n!generated/keep.py\n!tmp/keep.py\n",
+            ".rerailignore",
+            None,
+            gix::ignore::search::Ignore::default(),
+        );
         let mut mandatory = gix::ignore::Search::default();
-        mandatory
-            .add_patterns_buffer(
-                BUILTIN_IGNORE,
-                ".rerailignore.defaults",
-                None,
-                gix::ignore::search::Ignore::default(),
-            )
-            .expect("the patterns parse");
+        mandatory.add_patterns_buffer(
+            BUILTIN_IGNORE,
+            ".rerailignore.defaults",
+            None,
+            gix::ignore::search::Ignore::default(),
+        );
         let rules = IgnoreRules {
             mandatory,
             workspace,

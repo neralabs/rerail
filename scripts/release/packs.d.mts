@@ -25,9 +25,7 @@ export function releasePacks(
   tags: readonly string[],
   steps: {
     publish(file: string, distTag: string): { ok: boolean; output: string };
-    assertPublic(name: string, version: string): Promise<void>;
-    readNext(name: string): Promise<string | null>;
-    distTag(name: string, version: string, tag: string): void;
+    assertRestricted(name: string): Promise<void>;
     tag(tag: string): void;
     log(line: string): void;
   },
@@ -54,15 +52,8 @@ export function planPromotions(
 export function promotePacks(
   promotions: readonly { name: string; version: string; hold?: boolean; release?: boolean }[],
   tags: readonly string[],
-  steps: {
-    promote(name: string, version: string): void;
-    hold(name: string, version: string): void;
-    release(name: string): void;
-    readNext(name: string): Promise<string | null>;
-    distTag(name: string, version: string, tag: string): void;
-    log(line: string): void;
-  },
-): Promise<{ promoted: { name: string; version: string }[]; failures: string[] }>;
+  steps: { promote(name: string, version: string): void; hold(name: string, version: string): void; release(name: string): void; log(line: string): void },
+): string[];
 export function syncPackLockfile<Lock extends { packages: Record<string, { version?: string }> }>(lock: Lock, packs: readonly ReleasePack[]): Lock;
 export function gateFailures(report: GateReport, ids: readonly string[], checkCount: number): string[];
 export function packIds(args: readonly string[], packs?: readonly ReleasePack[]): string[];

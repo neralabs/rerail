@@ -1,0 +1,221 @@
+kind($n, $k)	node(_, $n, $k, _, _)	[]	15832
+basex($c, $e)	kind($c, "class_definition")	[]	33
+attr_of($n, $o, $a)	kind($n, "attribute")	[]	1829
+docof($n, $d)	node($d, $n, _, _, _)	[]	15832
+modnode($d, $m)	node($d, $m, "module", _, _)	[]	10
+decl($s, $x, $m)	kind($g, "global_statement")	[["nearest($g, $s, scope)", "climb"]]	61
+decl($s, $x, $p)	kind($g, "nonlocal_statement")	[["nearest($g, $s, scope)", "climb"], ["nearest($s, $p, fscope)", "climb"]]	18
+rasg($s, $x, $r, $a)	kind($a, "assignment")	[["nearest($a, $s, scope)", "climb"]]	1425
+rdefn($s, $x, $f)	kind($f, "function_definition")	[["nearest($f, $s, scope)", "climb"]]	436
+rdefn($s, $x, $f)	kind($f, "class_definition")	[["nearest($f, $s, scope)", "climb"]]	33
+impmod($i, $m)	kind($i, "import_from_statement")	[]	28
+impmod($i, $p)	kind($mn, "relative_import")	[]	4
+impmod($i, @cat($p, $m))	text($pre, ".")	[]	5
+rifrom($s, $y, $m, $y)	impmod($i, $m)	[["nearest($i, $s, scope)", "climb"]]	40
+rifrom($s, $a, $m, $y)	kind($x, "aliased_import")	[["nearest($i, $s, scope)", "climb"]]	12
+ribind($s, $x, @cat($m, $y))	rifrom($s, $x, $m, $y)	[]	13
+ribind($s, $t, $t)	kind($i, "import_statement")	[["nearest($i, $s, scope)", "climb"]]	70
+ribind($s, $a, $m)	kind($x, "aliased_import")	[["nearest($i, $s, scope)", "climb"]]	12
+irel_open($i)	kind($mn, "relative_import")	[]	5
+tgt($l)	kind($a, "assignment")	[]	1278
+tgt($l)	kind($a, "augmented_assignment")	[]	70
+tgt($l)	kind($a, "for_statement")	[]	45
+tgt($l)	kind($a, "for_in_clause")	[]	9
+tgt($l)	kind($a, "named_expression")	[]	7
+tgt($l)	kind($l, "as_pattern_target")	[]	18
+tgt($c)	tgt($t)	[]	8902
+tgt($c)	kind($t, "as_pattern_target")	[]	118
+rotgt($s, $x)	tgt($t)	[["nearest($t, $s, scope)", "climb"]]	4955
+rotgt($s, $y)	irel_open($i)	[["nearest($i, $s, scope)", "climb"]]	1
+rotgt($s, $a)	irel_open($i)	[["nearest($i, $s, scope)", "climb"]]	1
+rbound($s, $x)	rdefn($s, $x, _)	[]	161
+rbound($s, $x)	rasg($s, $x, _, _)	[]	467
+rbound($s, $x)	rotgt($s, $x)	[]	100
+rbound($s, $x)	ribind($s, $x, _)	[]	44
+home($s, $x, $s)	rbound($s, $x)	[]	616
+home($s, $x, $t)	decl($s, $x, $t)	[]	5
+asg($t, $x, $r, $a)	rasg($s, $x, $r, $a)	[]	939
+defn($t, $x, $f)	rdefn($s, $x, $f)	[]	323
+ibind($t, $x, $q)	ribind($s, $x, $q)	[]	88
+otgt($t, $x)	rotgt($s, $x)	[]	200
+param($f, $x, $i)	field($f, "parameters", $ps)	[]	2427
+param($f, $x, $i)	field($f, "parameters", $ps)	[]	1267
+bound_in($s, $x)	defn($s, $x, _)	[]	161
+bound_in($s, $x)	asg($s, $x, _, _)	[]	467
+bound_in($f, $x)	param($f, $x, _)	[]	408
+bound_in($s, $x)	otgt($s, $x)	[]	100
+bound_in($s, $x)	ibind($s, $x, _)	[]	44
+nameref($n, $x)	kind($n, "identifier")	[]	7333
+walk($n, $x, $s)	nameref($n, $x)	[["nearest($n, $s, scope)", "climb"]]	44883
+walk($n, $x, $p)	walk($n, $x, $s)	[["nearest($s, $p, fscope)", "climb"]]	6699
+miss($n, $x)	kind($m, "module")	[]	248
+star($s)	kind($w, "wildcard_import")	[["nearest($i, $s, scope)", "climb"]]	6
+builtin_ref($n, $x)	miss($n, $x)	[]	1597
+dexpr($f, $e)	kind($dc, "decorator")	[]	19
+classmeth($f)	dexpr($f, $e)	[]	17
+look($n, $x, $s)	bound_in($s, $x)	[]	2024
+qn($n, $q)	ibind($s, $x, $q)	[]	89
+qn($n, @cat($q, $a))	qn($o, $q)	[]	3001
+transparent($e)	qn($e, $q)	[]	1042
+transparent($e)	qn($g, $q)	[]	774
+transparent($e)	builtin_ref($e, "staticmethod")	[]	7
+transparent($e)	builtin_ref($e, "classmethod")	[]	7
+opaque_dec($f, $e)	dexpr($f, $e)	[]	9
+nopaque($f, $k)	opaque_dec($f, _)	[]	4
+dec1($f, $e)	opaque_dec($f, $e)	[]	10
+isstatic($f)	dexpr($f, $e)	[]	17
+asgstmt($a, $st)	kind($a, "assignment")	[]	1254
+defstmt($f, $f)	kind($f, "function_definition")	[]	148
+defstmt($f, $f)	kind($f, "class_definition")	[]	14
+defstmt($f, $st)	kind($st, "decorated_definition")	[]	18
+stmt($st, $s)	kind($s, "module")	[]	45
+stmt($st, $s)	kind($s, "function_definition")	[]	365
+stmt($st, $s)	kind($s, "class_definition")	[]	33
+sbinds($s, $x, $st)	defn($s, $x, $f)	[]	659
+sbinds($s, $x, $st)	asg($s, $x, _, $a)	[]	1870
+shadowed($st)	sbinds($s, $x, $st2)	[]	744
+live_asg($s, $x, $r)	asg($s, $x, $r, $a)	[]	467
+live_asg($s, $x, $r)	asgstmt($a, $st)	[]	1213
+live_def($s, $x, $f)	defstmt($f, $st)	[]	337
+method($f, $c)	kind($f, "function_definition")	[["nearest($f, $c, scope)", "climb"]]	1457
+modname($m, $q)	modnode($d, $m)	[]	28
+retval($f, $r)	kind($rs, "return_statement")	[["nearest($rs, $f, fscope)", "climb"]]	447
+retparam($f, $i, $r)	retval($f, $r)	[]	320
+callee($c, $e)	kind($c, "call")	[]	1521
+isasync($f)	op($f, "async")	[]	1
+isgen($f)	kind($y, "yield")	[["nearest($y, $f, fscope)", "climb"]]	750
+posarg($c, $i, $a)	kind($as, "argument_list")	[]	1654
+base($c, $b)	pv($e, "cls", $b)	[]	3001
+bv($s, $x, "fn", $f)	kind($f, "function_definition")	[]	295
+bv($s, $x, "cls", $c)	kind($c, "class_definition")	[]	40
+bv($s, $x, "fn", $f)	dec1($f, $e)	[]	67
+bv($s, $x, $k, $v)	dec1($f, $e)	[]	15013
+bv($s, $x, $k, $v)	pv($r, $k, $v)	[]	3001
+bv($s, $x, $k, $v)	qv($q, $k, $v)	[]	3484
+bv($f, $x, "inst", $s)	param($f, $x, 0)	[]	5124
+bv($f, $x, "cls", $s)	classmeth($f)	[]	1
+found($c, $a, $c)	need_attr($c, $a)	[]	2014
+found($c, $a, $x)	need_attr($c, $a)	[]	1501501
+need_attr($c, $a)	pv($o, "cls", $c)	[]	3001
+need_attr($c, $a)	pv($o, "inst", $c)	[]	3001
+need_attr($b, $a)	pv($o, "super", $c)	[]	1004001
+need_attr($c, "__init__")	pv($e, "cls", $c)	[]	3001
+need_attr($c, "__call__")	pv($e, "inst", $c)	[]	3001
+need_attr($b, $a)	need_attr($c, $a)	[]	501501
+pv($n, $k, $v)	bv($s, $x, $k, $v)	[]	2054
+pv($n, $k, $v)	qv($q, $k, $v)	[]	5437
+pv($n, $k, $v)	pv($o, "cls", $c)	[]	3004001
+pv($n, $k, $v)	pv($o, "inst", $c)	[]	3004001
+pv($n, $k, $v)	bv($at, $a, $k, $v)	[]	14508384
+pv($n, $k, $v)	kind($n, "parenthesized_expression")	[]	2028
+pv($n, $k, $v)	kind($n, "conditional_expression")	[]	522
+pv($n, $k, $v)	kind($n, "conditional_expression")	[]	522
+pv($n, $k, $v)	pv($c, $k, $v)	[]	2137
+pv($n, $k, $v)	pv($c, $k, $v)	[]	2137
+pv($n, $k, $v)	pv($c, $k, $v)	[]	2137
+pv($n, $k, $v)	kind($n, "named_expression")	[]	297
+pv($c, "inst", $k)	pv($e, "cls", $k)	[]	3001
+pv($c, $k, $v)	pv($e, "fn", $f)	[]	358319
+pv($c, $k, $v)	retparam($f, $i, _)	[]	7510
+pv($c, "super", $k)	builtin_ref($e, "super")	[["nearest($c, $f, fdef)", "climb"]]	96
+qv($q, "mod", $m)	modname($m, $q)	[]	10
+qv(@cat($q, $x), $k, $v)	bv($m, $x, $k, $v)	[]	3001
+sub($c, $c)	kind($c, "class_definition")	[]	14
+sub($c, $s)	base($s, $m)	[]	1002001
+anc($c, $c)	kind($c, "class_definition")	[]	14
+anc($c, $b)	anc($c, $m)	[]	3001
+qknown($q)	qv($q, _, _)	[]	85
+extb($e)	basex(_, $e)	[]	31
+extb($e)	basex(_, $e)	[]	31
+ifrom($t, $x, $m, $y)	rifrom($s, $x, $m, $y)	[]	25
+isqmod($q)	modname(_, $q)	[]	10
+selfparam($f, 0)	method($f, _)	[]	83
+ext_base_up($c)	extb($e)	[]	23
+ext_attr($n)	ext_base_up($c)	[]	79
+ext_attr($n)	ext_base_up($c)	[]	79
+ext_attr($n)	base($k, $c)	[]	61
+vpos($e)	callee(_, $e)	[]	726
+vpos($o)	attr_of(_, $o, _)	[]	824
+vpos($r)	asg(_, _, $r, _)	[]	467
+vpos($r)	retval(_, $r)	[]	159
+vpos($e)	dexpr(_, $e)	[]	9
+vpos($e)	basex(_, $e)	[]	11
+vpos($a)	posarg(_, _, $a)	[]	907
+vpos($c)	kind($n, "parenthesized_expression")	[]	77
+vpos($c)	kind($n, "conditional_expression")	[]	21
+vpos($c)	kind($n, "conditional_expression")	[]	21
+vpos($c)	kind($n, "boolean_operator")	[]	760
+vpos($c)	kind($n, "assignment")	[]	1396
+vpos($c)	kind($n, "named_expression")	[]	8
+iattr($c, $a)	pv($o, "inst", $c)	[]	1076
+iattr($c, $a)	pv($o, "cls", $c)	[]	1076
+attr_open($c, $a)	found($c, $a, $at)	[]	316
+attr_open($c, $a)	anc($c, $b)	[]	333
+attr_open($c, $a)	iattr($b, $a)	[]	428
+attr_open($c, $a)	need_attr($c, $a)	[]	176
+base_open($c)	basex($c, $e)	[]	31
+base_open($c)	basex($c, $e)	[]	11
+bopen($s, $x)	otgt($s, $x)	[]	100
+bopen($f, $x)	param($f, $x, $i)	[]	408
+bopen($s, $x)	live_asg($s, $x, $r)	[]	1393
+bopen($s, $x)	ifrom($s, $x, $m, _)	[]	31
+bopen($s, $x)	ifrom($s, $x, $m, _)	[]	28
+bopen($s, $x)	opaque_dec($f, _)	[]	7
+bopen($s, $x)	dec1($f, $e)	[]	7
+bopen($s, $x)	dec1($f, $e)	[]	16
+bopen($s, $x)	dec1($f, $e)	[]	12
+bopen($s, $x)	dec1($f, $e)	[]	9
+bopen($s, $x)	dexpr($f, $e)	[]	18
+qopen(@cat($q, $x))	bopen($m, $x)	[]	3001
+vopen($n)	vpos($n)	[]	9388
+vopen($n)	bopen($s, $x)	[]	2160
+vopen($n)	miss($n, $x)	[]	455
+vopen($n)	qn($n, $q)	[]	1736
+vopen($n)	isqmod($q)	[]	205
+vopen($n)	attr_of($n, $o, _)	[]	4116
+vopen($n)	attr_of($n, $o, _)	[]	3293
+vopen($n)	pv($o, "cls", $c)	[]	1821
+vopen($n)	pv($o, "inst", $c)	[]	1821
+vopen($n)	base($c, $b)	[]	104
+vopen($n)	pv($o, "super", $c)	[]	1821
+vopen($n)	pv($o, "fn", _)	[]	1301
+vopen($n)	ext_attr($n)	[]	81
+vopen($n)	kind($n, "parenthesized_expression")	[]	81
+vopen($n)	kind($n, "conditional_expression")	[]	22
+vopen($n)	kind($n, "conditional_expression")	[]	22
+vopen($n)	kind($n, "boolean_operator")	[]	1398
+vopen($n)	kind($n, "assignment")	[]	1513
+vopen($n)	kind($n, "named_expression")	[]	8
+vopen($c)	callee($c, $e)	[]	3626
+vopen($c)	callee($c, $e)	[]	1088
+vopen($c)	isasync($f)	[]	14
+vopen($c)	isgen($f)	[]	155
+vopen($c)	retval($f, $r)	[]	1252
+vopen($c)	retparam($f, $i, _)	[]	65
+vopen($c)	retparam($f, $i, _)	[]	75
+vopen($c)	retparam($f, _, _)	[]	90
+vopen($c)	pv($e, "inst", _)	[]	1301
+vopen($c)	pv($e, "mod", _)	[]	1301
+call_open($c)	callee($c, $e)	[]	2176
+call_open($c)	attr_open($k, "__init__")	[]	12
+call_open($c)	attr_open($k, "__call__")	[]	12
+call_open($c)	pv($e, "mod", _)	[]	781
+call_open($c)	pv($e, "super", _)	[]	781
+call_target($c, $f)	pv($e, "fn", $f)	[]	781
+call_target($c, $f)	bv($at, "__init__", "fn", $f)	[]	3
+call_target($c, $f)	bv($at, "__call__", "fn", $f)	[]	3
+in_await($c)	kind($w, "await")	[]	2
+owner($c, $f)	kind($c, "call")	[["nearest($c, $f, fdef)", "climb"]]	9207
+calls($f, $g)	call_target($c, $g)	[]	769
+calls_open($f)	call_open($c)	[]	724
+open_sync($f)	calls_open($f)	[]	79
+open_sync($f)	calls($f, $g)	[]	423
+dq($f, @cat($m, $x))	modname($s, $m)	[]	74
+blocks($f)	qn($e, $q)	[]	2430
+blocks($f)	dq($g, $q)	[]	755
+reach_sync($f)	blocks($f)	[]	1
+reach_sync($f)	calls($f, $g)	[]	423
+async_open($c)	isasync($a)	[]	17
+async_open($c)	isasync($a)	[]	13
+chain_step($f, $g)	reach_sync($f)	[]	1
+finding("ASYNC_BLOCKING", $c)	reach_sync($g)	[]	1

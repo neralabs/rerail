@@ -12,7 +12,6 @@ describe("engine service session concurrency", () => {
   it("does not let one opening agent session block another", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
     const socketPath = join(root, "engine.sock");
-    const engine = { socketPath };
     startTestRepository(root, join(root, "rerail.sqlite"));
     const blockedOpened = Promise.withResolvers<void>();
     const gate = Promise.withResolvers<void>();
@@ -43,21 +42,21 @@ describe("engine service session concurrency", () => {
     });
     const requests: Array<Promise<readonly AdapterDelivery[]>> = [];
     try {
-      const blockedStart = ingestEngineEvent(engine, {
+      const blockedStart = ingestEngineEvent(socketPath, {
         kind: "session-start",
         eventId: "blocked-start",
         session: { host: "claude-code", sessionId: "blocked", cwd: root },
       });
       requests.push(blockedStart);
       await blockedOpened.promise;
-      const independentStart = ingestEngineEvent(engine, {
+      const independentStart = ingestEngineEvent(socketPath, {
         kind: "session-start",
         eventId: "independent-start",
         session: { host: "claude-code", sessionId: "independent", cwd: root },
       });
       requests.push(independentStart);
       await expect(independentStart).resolves.toEqual([]);
-      await expect(ingestEngineEvent(engine, {
+      await expect(ingestEngineEvent(socketPath, {
         kind: "user-prompt",
         eventId: "independent-prompt",
         sessionId: "independent",
@@ -67,7 +66,7 @@ describe("engine service session concurrency", () => {
       ]);
       gate.resolve();
       await expect(blockedStart).resolves.toEqual([]);
-      await expect(ingestEngineEvent(engine, {
+      await expect(ingestEngineEvent(socketPath, {
         kind: "user-prompt",
         eventId: "blocked-prompt",
         sessionId: "blocked",

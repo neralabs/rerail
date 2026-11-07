@@ -1,19 +1,16 @@
 /**
  * The page's rule setting writes: rules on or off, a whole rule pack on or off, and whether a rule pack's rules honour
  * linter suppression comments. Each change is one `PUT /api/repository/settings` per folder and setting it writes,
- * owned by this worktree or the repository (`owner(packId)`, given the pack the change is to, when it is to one pack),
- * sent in click order. The page shows the change at once; after a failed write it puts back what nothing saved and reads
- * the rules in full, so it ends on what the daemon holds. `toast` and `invalidate` are the page's.
+ * owned by this worktree or the repository (`owner()`), sent in click order. The page shows the change at once; after a
+ * failed write it puts back what nothing saved and reads the rules in full, so it ends on what the daemon holds.
+ * `toast` and `invalidate` are the page's.
  */
 import { send } from "./api.js";
 import { data } from "./state.js";
 import { inPack, packSettingDecides } from "./derive.js";
 import { captureScope, inScope, refetch, refreshNow } from "./poll.js";
-import { failed as failedText } from "./format.js";
 
 const SETTINGS = "/api/repository/settings";
-/** A failed write's toast when the action names no failure of its own. */
-const SAVE_FAILED = "Couldn’t save";
 
 /**
  * How long one setting write waits for the daemon. A write it never answers then fails like any other, so the writes
@@ -77,13 +74,11 @@ export function settingWrites({ toast, invalidate, owner }) {
   /**
    * Send `puts` (`{ folder, targets, setting }` each) in order, and show the change on `rules` at once with `show`.
    * The repository, owner and rows are fixed when the action starts: switching repository mid-save writes nothing there.
-   * `label` is the toast once saved; `failed` begins the toast when a write fails, before the error. `packId` is the one
-   * pack the change is to, which decides its owner.
    */
-  async function save(puts, rules, show, label, failed = SAVE_FAILED, packId = undefined) {
+  async function save(puts, rules, show, label) {
     if (puts.length === 0) return;
     const scope = captureScope();
-    const by = owner(packId);
+    const by = owner();
     const before = new Map(rules.map(r => [r, { ...r }]));
     for (const r of rules) show(r);
     const shown = new Map(rules.map(r => [r, { ...r }]));
@@ -113,25 +108,22 @@ export function settingWrites({ toast, invalidate, owner }) {
       // A write that saved may decide folders below it: only the reload says what holds where.
       if (saved === 0) for (const r of rules) undo(r, before.get(r), shown.get(r));
       refetch("rules");
-      toast(failedText(failed, failure));
+      toast(`Could not save: ${failure.message}`);
     }
     invalidate();
     refreshNow();
   }
 
   /** Switch rules on or off, at every folder each is added at. */
-  function setEnabled(ids, enabled, label, failed) {
+  function setEnabled(ids, enabled, label) {
     const rules = storedRules(ids);
-    // Rules all present through one pack are a change to that pack's rules.
-    const packs = new Set(rules.map(r => (r.source?.kind === "pack" ? r.source.id : null)));
-    const packId = packs.size === 1 ? [...packs][0] ?? undefined : undefined;
-    return save(writesOf(ruleTargets(rules), { on: enabled }), rules, r => { r.enabled = enabled; }, label, failed, packId);
+    return save(writesOf(ruleTargets(rules), { on: enabled }), rules, r => { r.enabled = enabled; }, label);
   }
 
   /** Switch every rule of pack `packId` on or off (`packSwitchWrites`). */
-  function setPackEnabled(packId, enabled, label, failed) {
+  function setPackEnabled(packId, enabled, label) {
     const rules = [...data.rules.values()].filter(r => inPack(r, packId));
-    return save(packSwitchWrites(packId, enabled), rules, r => { r.enabled = enabled; }, label, failed, packId);
+    return save(packSwitchWrites(packId, enabled), rules, r => { r.enabled = enabled; }, label);
   }
 
   /**
@@ -139,12 +131,12 @@ export function settingWrites({ toast, invalidate, owner }) {
    * folders of the pack's rules its setting decides: not where a setting that outranks it decides, by owner, folder
    * depth, or a rule's own setting at the same owner and folder.
    */
-  function setPackSuppressions(packId, suppressions, label, failed) {
-    const by = owner(packId);
+  function setPackSuppressions(packId, suppressions, label) {
+    const by = owner();
     const decides = state => packSettingDecides(state, packId, by, data.checkout?.checkoutPath);
     const rules = [...data.rules.values()].filter(r => r.folderStates.some(decides));
     const folders = byFolder(packFolders(packId).map(folder => [folder, { kind: "pack", id: packId }]));
-    return save(writesOf(folders, { suppressions }), rules, showSuppressions(suppressions, decides, decider(by, "pack")), label, failed, packId);
+    return save(writesOf(folders, { suppressions }), rules, showSuppressions(suppressions, decides, decider(by, "pack")), label);
   }
 
   return { setEnabled, setPackEnabled, setPackSuppressions };

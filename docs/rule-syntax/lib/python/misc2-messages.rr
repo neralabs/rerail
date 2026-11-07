@@ -1,0 +1,86 @@
+// python/misc2-messages: message strings built at the call site, as Ruff's flake8-errmsg (EM) and flake8-gettext
+// (INT) rules read them: what kind of expression a call's first argument is, which calls translate, and which
+// expression is raised.
+//
+// Interface
+//   msg_arg(c, i, a)        a is call c's i-th positional argument as Ruff's `args` list, parentheses off. A `*xs`
+//                           takes a position: `f(*xs, "m")` has no row for "m"
+//   msg_form(a, k)          what a builds: "str" (a str literal, adjacent ones joined), "bytes", "fstr" (an
+//                           f-string, or adjacent literals one of which is), "format" (`<e>.format(…)`, any e) or
+//                           "printf" (`<str literal> % …`). t-strings are none of these.
+//   msg_literal(e)          e is a literal as Ruff's is_literal_expr: str, bytes, number, True/False, None, `...`
+//   msg_len(a, n)           a "str" or "bytes" literal has n bytes of value (Ruff counts bytes, as Rust's len)
+//   msg_raised_call(r, c)   raise statement r raises the call c (`raise E(…)`, not its `from` cause)
+//   msg_typing_cast(f)      f resolves to typing.cast or typing_extensions.cast
+//   msg_gettext(c)          c calls a translation function (INT): a plain name in `flake8-gettext.function-names` (default `_`,
+//                           `gettext`, `ngettext`), `builtins.<one of them>`, or gettext.gettext / gettext.ngettext
+//
+// Python and Ruff background
+//   - Ruff's tree has no parentheses, so `raise E(("m"))` passes the literal "m".
+//   - A gettext callee is first tested by its spelling: `_` is a translation call even after `def _(m): …`.
+//     Only a qualified name needs the import, and at module level the import must come first: Ruff resolves
+//     names in source order there.
+//
+//   raise ValueError("bad value")               msg_raised_call(<raise>, <call>), msg_form(<"bad value">, "str")
+//   raise ValueError(f"bad {x}")                msg_form(<f"…">, "fstr")
+//   raise ValueError("bad {}".format(x))        msg_form(<"…".format(x)>, "format"); msg_literal(<"bad {}">)
+//   _("Hello, %s!" % name)                      msg_gettext(<call>), msg_form(<"…" % name>, "printf")
+//   from gettext import gettext as tr; tr(f"{n}")   msg_gettext(<call>): tr resolves to gettext.gettext
+#include "python/ruff.rr"
+#include "python/exceptions.rr"
+
+// ---- arguments and their forms ----------------------------------------------------------------------------------
+.decl msg_arg(c: node, i: number, a: node)
+msg_arg(c, i, a) :- ruff_arg(c, i, x), unparen(x, a).
+
+.decl msg_form(a: node, k: symbol)
+msg_form(a, "str") :- msg_str_lit(a).
+msg_form(a, "bytes") :- bytes_lit(a).
+msg_form(a, "fstr") :- fstring(a).
+msg_form(a, "format") :- kind(a, "call"), field(a, "function", f), attr_of(f, _, "format").
+msg_form(a, "printf") :- kind(a, "binary_operator"), op(a, "%"), field(a, "left", l), unparen(l, m),
+    msg_str_lit(m).
+// msg_str_lit(m): a str literal: a plain (or raw, or u) string, or adjacent ones that all are.
+.decl msg_str_lit(m: node)
+msg_str_lit(m) :- kind(m, "string"), string_form(m, "str").
+msg_str_lit(m) :- kind(m, "concatenated_string"),
+    count : { child(m, s, _), !kind(s, "comment"), !string_form(s, "str") } = 0.
+
+.decl msg_literal(e: node)
+msg_literal(e) :- unparen(e, m), (msg_str_lit(m) ; bytes_lit(m)).
+msg_literal(e) :- unparen(e, m), kind(m, k), msg_literal_kind(k).
+.decl msg_literal_kind(k: symbol)
+msg_literal_kind("integer"). msg_literal_kind("float"). msg_literal_kind("true"). msg_literal_kind("false").
+msg_literal_kind("none"). msg_literal_kind("ellipsis").
+
+.decl msg_len(a: node, n: number)
+msg_len(a, n) :- kind(a, "string"), (msg_str_lit(a) ; bytes_lit(a)), value(a, v), n = strlen(v).
+msg_len(a, n) :- kind(a, "concatenated_string"), (msg_str_lit(a) ; bytes_lit(a)),
+    n = sum strlen(v) : { child(a, s, _), kind(s, "string"), value(s, v) }.
+
+// ---- raises (EM) ----------------------------------------------------------------------------------------------
+.decl msg_raised_call(r: node, c: node)
+msg_raised_call(r, c) :- exc_raise(r, c), kind(c, "call").
+.decl msg_typing_cast(f: node)
+msg_typing_cast(f) :- ruff_qual(f, q), (q = "typing.cast" ; q = "typing_extensions.cast").
+
+// ---- translation calls (INT) ------------------------------------------------------------------------------------
+// msg_gettext_name(x): the configured names, Ruff's `function-names` (which replaces the default) plus
+// `extend-function-names`.
+.decl msg_gettext_name(x: symbol)
+msg_gettext_name(x) :- option_item("flake8-gettext.function-names", _, x).
+msg_gettext_name(x) :- option_item("flake8-gettext.extend-function-names", _, x).
+msg_gettext_name(x) :- !msg_names_set(), (x = "_" ; x = "gettext" ; x = "ngettext").
+.decl msg_names_set()
+msg_names_set() :- option_item("flake8-gettext.function-names", _, _).
+
+.decl msg_gettext(c: node)
+msg_gettext(c) :- kind(c, "call"), field(c, "function", f), unparen(f, m), kind(m, "identifier"), text(m, x),
+    msg_gettext_name(x).
+msg_gettext(c) :- kind(c, "call"), field(c, "function", f), ruff_qual(f, q), msg_import_seen(f),
+    ( split_dot(q, "builtins", x), msg_gettext_name(x) ; q = "gettext.gettext" ; q = "gettext.ngettext" ).
+// msg_import_seen(f): the import that names f's root is visible at f: inside a def any import of the module is
+// (the body runs later), at module level only one written before f.
+.decl msg_import_seen(f: node)
+msg_import_seen(f) :- unparen(f, m), (chain_root(m, r) ; kind(m, "identifier"), r = m),
+    look(r, x, s), binding(s, x, b, "import"), (b < r ; scope_node(r, s2), !kind(s2, "module")).

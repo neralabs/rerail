@@ -1,0 +1,26 @@
+.policy "typescript-eslint-no-dynamic-delete" revision 2
+.description "Avoid delete with a computed key in TypeScript; use a Map or Set for dynamic keys instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   in_chain(x); and from eslint-a-common, deparen(e, x)
+#include "tsx/eslint-a-expressions.rr"
+//   literal_type(e, t)
+
+// typescript-eslint's no-dynamic-delete: `delete o[k]` where k is not a constant key. A string or number
+// literal and a negative number literal are constant. Reported at the key.
+//   delete o[key]       delete o[`a`]     delete o[f()]       → reported at the key
+//   delete o["a"]       delete o[0]       delete o[-1]        fine
+//   delete o?.[key]     fine: the argument is a ChainExpression, not a member
+.violation no_dynamic_delete(at: node) code "@typescript-eslint/no-dynamic-delete"
+    "Do not delete dynamically computed property keys; use a Map and its delete() method."
+    suppress eslint "@typescript-eslint/no-dynamic-delete"
+    suppress oxlint "no-dynamic-delete"
+no_dynamic_delete(k) :- kind(u, "unary_expression"), op(u, "delete"), field(u, "argument", a), deparen(a, m),
+    kind(m, "subscript_expression"), !in_chain(m), field(m, "index", i), deparen(i, k), !constant_key(k).
+
+.decl constant_key(k: node)  // isAcceptableIndexExpression
+constant_key(k) :- literal_type(k, "string") ; literal_type(k, "number").
+constant_key(k) :- kind(k, "unary_expression"), op(k, "-"), field(k, "argument", a), literal_type(a, "number").

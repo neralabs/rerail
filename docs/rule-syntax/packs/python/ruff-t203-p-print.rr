@@ -1,0 +1,24 @@
+.policy "ruff-t203-p-print" revision 2
+.description "Use a logger instead of pprint; pretty-printed output can leak sensitive data and cannot be configured by clients."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff T203 (flake8-print): a call of `pprint.pprint`. Output meant for users goes to `sys.stdout` or
+// `sys.stderr`, so those (and `stream=None`) are reported too; a call writing to any other `stream=` is not.
+// Reported at the callee. (Ruff's fix deletes the statement, unsafely; none here.)
+//   pprint.pprint("Hello, world!")                 ← T203
+//   pprint("Hello", stream=sys.stdout)             ← T203, after `from pprint import pprint`
+//   pprint.pprint("Hello, world!", stream=fp)      not reported
+//   pprint.pformat("Hello, world!")                not reported
+#include "python/ruff.rr"
+
+.violation T203(at: node) code "T203"
+    "Log the value through `logging` (`pprint.pformat` keeps the layout), or remove this call if it was debug output; leave it where the program's job is to write to the terminal."
+    suppress ruff "T203"
+T203(f) :- call_q(c, "pprint.pprint"), field(c, "function", f), !pprint_elsewhere(c).
+
+// pprint_elsewhere(c): c passes `stream=` a value other than None, sys.stdout or sys.stderr.
+.decl pprint_elsewhere(c: node)
+pprint_elsewhere(c) :- call_kwarg(c, "stream", v), unparen(v, m), !kind(m, "none"), !ruff_qual(m, "sys.stdout"),
+    !ruff_qual(m, "sys.stderr").

@@ -1,0 +1,242 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-serverplan-name-inference",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer serverplan_name_inference at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2060_query_builder/**/*.py",
+      "l2070_batching/**/*.py",
+      "impl/common/l2070_server_plan/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "column-shape",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "has": {
+                  "regex": "^(?:==|!=)$",
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "regex": "column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\)"
+              },
+              {
+                "layout": {
+                  "line": "['\"](?:count|deleted_count|ok|message|__exists|__result)['\"]"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPNI001",
+        "anchor": "witness.span",
+        "message": "column shape selects semantic behavior"
+      }
+    },
+    {
+      "id": "reference-parse",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "regex": "^(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "regex": "^['\"](?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)['\"]$"
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "arguments"
+                }
+              },
+              {
+                "layout": {
+                  "line": "ref[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\("
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPNI002",
+        "anchor": "witness.span",
+        "message": "reference text selects semantic behavior"
+      }
+    },
+    {
+      "id": "reference-synthesis",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "regex": "^(?:get|pop|setdefault)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "nthChild": 1
+                      },
+                      {
+                        "regex": "^f['\"][^\\n]*?\\{[^}]*ref[^}]*\\}[^\\n]*?(?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)"
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "arguments"
+                }
+              },
+              {
+                "layout": {
+                  "line": "ref[^\\n]*?\\.(?:get|pop|setdefault)\\s*\\("
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPNI003",
+        "anchor": "witness.span",
+        "message": "semantic reference is synthesized from text"
+      }
+    },
+    {
+      "id": "column-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "regex": "^(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "layout": {
+                  "line": "column[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\("
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "(?:^|/)sql_column_type_hints\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SPNI004",
+        "anchor": "witness.span",
+        "message": "SQL type is inferred from column spelling"
+      }
+    }
+  ]
+}

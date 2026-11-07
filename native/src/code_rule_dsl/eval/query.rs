@@ -27,6 +27,8 @@ pub(crate) enum WitnessError {
     TransformLimit,
 }
 
+pub(crate) type Output<'a> = RefCell<&'a mut dyn FnMut(Witness) -> Witness>;
+
 type WitnessResult<T> = std::result::Result<T, WitnessError>;
 
 #[cfg(test)]
@@ -54,6 +56,15 @@ pub(crate) fn witness_from_match<D: Doc>(
     language: GrammarDialect,
     violation: Option<&ViolationSpec>,
 ) -> WitnessResult<Witness> {
+    witness_from_match_to(file, matched, language, violation, None)
+}
+fn witness_from_match_to<D: Doc>(
+    file: &FileInput,
+    matched: &NodeMatch<'_, D>,
+    language: GrammarDialect,
+    violation: Option<&ViolationSpec>,
+    output: Option<&Output<'_>>,
+) -> WitnessResult<Witness> {
     let groups = violation.map_or_else(Vec::new, |violation| {
         violations::node_groups(violation, language, matched.get_node())
     });
@@ -61,7 +72,10 @@ pub(crate) fn witness_from_match<D: Doc>(
     let env = regrouped(matched, violation, sets, || false)?
         .pop()
         .flatten();
-    witness_with_groups(file, matched, language, violation, &groups, env)
+    witness_with_groups(file, matched, language, violation, &groups, env).map(|w| match output {
+        Some(out) => (out.borrow_mut())(w),
+        None => w,
+    })
 }
 
 /// The witnesses one match reports under `violation.each`: one, or one per match of a regex group
@@ -77,7 +91,22 @@ pub(crate) fn witnesses_from_match<D: Doc>(
     violation: &ViolationSpec,
     room: usize,
     cancelled: impl Fn() -> bool,
+    keep: impl FnMut(&mut Witness) -> bool,
+) -> WitnessResult<Vec<Witness>> {
+    witnesses_from_match_to(
+        file, matched, language, violation, room, cancelled, keep, None,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn witnesses_from_match_to<D: Doc>(
+    file: &FileInput,
+    matched: &NodeMatch<'_, D>,
+    language: GrammarDialect,
+    violation: &ViolationSpec,
+    room: usize,
+    cancelled: impl Fn() -> bool,
     mut keep: impl FnMut(&mut Witness) -> bool,
+    output: Option<&Output<'_>>,
 ) -> WitnessResult<Vec<Witness>> {
     let mut kept = Vec::new();
     // The sets are transformed and built a batch at a time, each batch as large as the room
@@ -88,6 +117,9 @@ pub(crate) fn witnesses_from_match<D: Doc>(
             let mut witness =
                 witness_with_groups(file, matched, language, Some(violation), groups, env)?;
             if keep(&mut witness) {
+                if let Some(output) = output {
+                    witness = (output.borrow_mut())(witness);
+                }
                 kept.push(witness);
             }
         }
@@ -234,10 +266,24 @@ fn witness_with_groups<'t, D: Doc>(
     let span = |range: Range<usize>| place.span(place.range(range));
     let node_span = |node: &Node<'t, D>| place.span(place.node(node));
     let mut captures = BTreeMap::new();
-    let mut variables = matched
-        .get_env()
-        .get_matched_variables()
-        .collect::<Vec<_>>();
+    let input_only = violation.is_some_and(|v| v.input_only);
+    let anchor = violation.and_then(|v| match &v.anchor {
+        crate::code_rule_dsl::model::Anchor::Capture(name) => Some(name.as_str()),
+        _ => None,
+    });
+    let wanted = |name: &str| !input_only || anchor == Some(name);
+    let mut variables = if !input_only || anchor.is_some() {
+        matched
+            .get_env()
+            .get_matched_variables()
+            .filter(|v| match v {
+                MetaVariable::Capture(name, _) | MetaVariable::MultiCapture(name) => wanted(name),
+                _ => !input_only,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     variables.sort_by_key(meta_name);
     for variable in variables {
         match variable {
@@ -264,28 +310,31 @@ fn witness_with_groups<'t, D: Doc>(
         }
     }
     let node = matched.get_node();
-    for (name, _, range) in groups {
+    for (name, _, range) in groups.iter().filter(|(name, _, _)| wanted(name)) {
         captures
             .entry(name.clone())
             .or_insert_with(|| vec![span(range.clone())]);
     }
     let regrouped = regrouped.map(|env| NodeMatch::new(node.clone(), env));
     let matched = regrouped.as_ref().unwrap_or(matched);
-    let (message, fix) = violation.map_or((None, None), |violation| {
-        violations::ast_output(violation, language, matched, groups, &place)
-    });
+    let (message, fix) = violation
+        .filter(|v| !v.input_only)
+        .map_or((None, None), |violation| {
+            violations::ast_output(violation, language, matched, groups, &place)
+        });
     let mut captures = Captures::from_spans(captures);
     if let Some(violation) = violation.filter(|violation| !violation.project.is_empty()) {
-        captures.set_projection(Some(super::evidence::project(
+        captures.set_typed_projection(super::evidence::project(
             &violation.project,
             file,
             matched,
             groups,
-        )));
+        ));
     }
     Ok(Witness {
+        sql_violation: None,
         path: file.path.clone(),
-        span: Some(node_span(node)),
+        span: node_span(node),
         captures,
         message,
         fix,
@@ -316,6 +365,29 @@ pub(crate) fn evaluate_query(
     violation: Option<&ViolationSpec>,
     util_limit: &mut Option<(String, UtilLimit)>,
 ) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
+    evaluate_query_to(
+        query, snapshot, _bindings, scope, metrics, limits, decision, partial, violation,
+        util_limit, None,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) fn evaluate_query_to(
+    query: &Query,
+    snapshot: &Snapshot,
+    _bindings: &BTreeMap<String, &Map<String, Value>>,
+    scope: &CodeRuleScope,
+    metrics: &mut Metrics,
+    limits: &Limits,
+    decision: bool,
+    partial: &mut BTreeMap<String, String>,
+    violation: Option<&ViolationSpec>,
+    util_limit: &mut Option<(String, UtilLimit)>,
+    output: Option<&Output<'_>>,
+) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
+    if output.is_some() && !matches!(query, Query::Ast { .. }) {
+        return Err(invalid("streamed relational inputs require an AST query"));
+    }
+    let _projections = crate::code_rule_dsl::violations::projection::Scope::enter();
     let leaf = Leaf {
         snapshot,
         scope,
@@ -326,7 +398,9 @@ pub(crate) fn evaluate_query(
     }
     let mut witnesses = Vec::new();
     for file in &snapshot.files {
-        match leaf.file(query, file, metrics, decision, violation, util_limit)? {
+        match leaf.file_to(
+            query, file, metrics, decision, violation, util_limit, output,
+        )? {
             FileStep::Skipped => {}
             FileStep::Failed(unread) => {
                 return Ok(Err(Incomplete {
@@ -352,7 +426,7 @@ pub(crate) fn evaluate_query(
     Ok(Ok(witnesses))
 }
 
-/// What one file contributes to a regex, AST or file query.
+/// What one file contributes to a regex or AST query.
 enum FileStep {
     /// The query does not read the file: it is outside the scope, or no grammar of it applies.
     Skipped,
@@ -378,7 +452,7 @@ struct Leaf<'a> {
 }
 
 impl<'a> Leaf<'a> {
-    /// One file of a regex, AST or file `query`.
+    /// One file of a regex or AST `query`.
     fn file(
         self,
         query: &Query,
@@ -388,38 +462,70 @@ impl<'a> Leaf<'a> {
         violation: Option<&ViolationSpec>,
         util_limit: &mut Option<(String, UtilLimit)>,
     ) -> Result<FileStep> {
+        self.file_to(query, file, metrics, decision, violation, util_limit, None)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn file_to(
+        self,
+        query: &Query,
+        file: &FileInput,
+        metrics: &mut Metrics,
+        decision: bool,
+        violation: Option<&ViolationSpec>,
+        util_limit: &mut Option<(String, UtilLimit)>,
+        output: Option<&Output<'_>>,
+    ) -> Result<FileStep> {
         if !self.scope.matches(&file.path) {
             return Ok(FileStep::Skipped);
         }
         let mut witnesses = Vec::new();
         match query {
-            Query::Regex { regex, source } => {
-                // A leading byte order mark ESLint strips is no text a regex reads (`regex_haystack`).
-                let (haystack, offset) = crate::code_rule_dsl::query::regex_haystack(source, file);
-                // A path match lies in no source text: its witness has no span.
-                let lines = matches!(source, RegexSource::Content).then(|| {
-                    LineTable::new(
-                        &file.source,
-                        file_language(file)
-                            .map(Terminators::of)
-                            .unwrap_or(Terminators::Eslint),
-                    )
-                });
-                let span = |start: usize, end: usize| {
-                    lines
-                        .as_ref()
-                        .map(|lines| lines.span(start + offset, end + offset))
+            Query::Regex {
+                regex,
+                source,
+                options,
+            } => {
+                if options
+                    .paths
+                    .as_ref()
+                    .is_some_and(|paths| !paths.matches(&file.path))
+                {
+                    return Ok(FileStep::Skipped);
+                }
+                let haystack = match source {
+                    RegexSource::Content => &file.source,
+                    RegexSource::Path => &file.path,
                 };
-                let (matches, complete) = crate::code_rule_dsl::query::regex_matches(
-                    regex,
-                    source,
+                let lines = LineTable::new(
                     haystack,
+                    file_language(file)
+                        .map(Terminators::of)
+                        .unwrap_or(Terminators::Eslint),
+                );
+                let span = |start, end| lines.span(start, end);
+                let (matches, complete) = crate::code_rule_dsl::query::regex_query_matches(
+                    regex,
+                    haystack,
+                    options,
                     self.limits.max_witnesses.saturating_add(1),
                 );
-                for range in matches {
+                for matched in matches {
+                    let range = matched.range;
+                    let offset = matched.context.start;
+                    let context = &haystack[matched.context];
+                    let span = |start, end| {
+                        let mut result = span(offset + start, offset + end);
+                        if let Some(line) = matched.line {
+                            result.start_line = line;
+                            result.end_line = line;
+                            result.start_column = start;
+                            result.end_column = end;
+                        }
+                        result
+                    };
                     let (start, end) = (range.start, range.end);
                     let found = regex
-                        .captures_at(haystack, start)
+                        .captures_at(context, start)
                         .expect("a regex match has captures");
                     assert_eq!(found.get(0).expect("whole match").range(), start..end);
                     metrics.witnesses += 1;
@@ -427,6 +533,7 @@ impl<'a> Leaf<'a> {
                         && violation.is_none_or(|violation| violation.fix.is_none())
                     {
                         witnesses.push(Witness {
+                            sql_violation: None,
                             path: file.path.clone(),
                             span: span(start, end),
                             captures: Captures::default(),
@@ -454,21 +561,6 @@ impl<'a> Leaf<'a> {
                     witnesses,
                     partial: None,
                     decided: false,
-                })
-            }
-            Query::File => {
-                metrics.witnesses += 1;
-                Ok(FileStep::Read {
-                    witnesses: vec![Witness {
-                        path: file.path.clone(),
-                        span: None,
-                        captures: Captures::default(),
-                        message: None,
-                        fix: None,
-                        ignored: false,
-                    }],
-                    partial: None,
-                    decided: decision,
                 })
             }
             Query::Ast { matchers, .. } => {
@@ -503,7 +595,20 @@ impl<'a> Leaf<'a> {
                 // (`SyntaxErrors::of_doc`): a Blade view reads the template's too.
                 let errors = SyntaxErrors::of_doc(&doc);
                 let target = ast_grep_core::AstGrep::doc(doc);
-                if !errors.is_empty() {
+                // A whole-file syntax gate (`invalid_syntax`) reads only files with, or only
+                // files without, syntax errors, and reads those errors as content.
+                if grammar
+                    .invalid_syntax
+                    .is_some_and(|invalid| invalid == errors.is_empty())
+                {
+                    return Ok(FileStep::Read {
+                        witnesses,
+                        partial: None,
+                        decided: false,
+                    });
+                }
+                let gated = grammar.invalid_syntax.is_none();
+                if gated && !errors.is_empty() {
                     // A file the parser did not read is not read by any clause, sound or not.
                     if let SyntaxReading::Unread(detail) = errors.reading(&lines, file.source.len())
                     {
@@ -521,14 +626,15 @@ impl<'a> Leaf<'a> {
                 };
                 // A file the query's file gates exclude matches nothing, errors or not, as
                 // `run_clause` reads it without them.
-                if !read.is_empty() && !FileGates::new(file, target.root()).admit(grammar) {
+                if gated && !read.is_empty() && !FileGates::new(file, target.root()).admit(grammar)
+                {
                     return Ok(FileStep::Read {
                         witnesses,
                         partial: None,
                         decided: false,
                     });
                 }
-                if read.incomplete(grammar) {
+                if gated && read.incomplete(grammar) {
                     return Ok(FileStep::Failed(None));
                 }
                 // A file read around syntax errors in any of its documents reports the first
@@ -539,11 +645,23 @@ impl<'a> Leaf<'a> {
                             .iter()
                             .flat_map(|guests| guests.iter().map(|guest| guest.doc.clone())),
                     )
+                    .filter(|_| gated)
                     .map(|doc| SyntaxErrors::of_doc(&doc))
                     .find(|errors| !errors.is_empty())
                     .map(|errors| match errors.reading(&lines, file.source.len()) {
                         SyntaxReading::Partial(message) | SyntaxReading::Unread(message) => message,
                     });
+                // Admission must also bypass matching; an omitted SQL plan is not a request
+                // to fall back to a full root walk for a known-empty file.
+                if !grammar.admits_source(&file.source, read, &mut rustc_hash::FxHashMap::default())
+                    || !FileGates::new(file, target.root()).admit(grammar)
+                {
+                    return Ok(FileStep::Read {
+                        witnesses,
+                        partial,
+                        decided: false,
+                    });
+                }
                 let mut util_work = self.limits.max_visited_nodes;
                 let _scopes =
                     FileScopeSlot::install(Vec::new(), file.module.clone(), errors.hide_bindings())
@@ -561,6 +679,7 @@ impl<'a> Leaf<'a> {
                     self.scope.honours_suppressions_at(&file.path),
                     &mut util_work,
                     &mut witnesses,
+                    output,
                 )? {
                     FileOutcome::Continue | FileOutcome::Stopped => false,
                     FileOutcome::Decided => true,
@@ -744,31 +863,196 @@ enum FileOutcome {
     Limit(UtilLimit),
 }
 
-/// A file's tape, as the workspace stores it, and its line table; `None` where the parser stopped
-/// at a limit before it read the file (Forte's nesting depth or step budget).
-pub(super) fn file_tape(
+#[derive(Clone)]
+struct CachedTape {
+    language: GrammarDialect,
+    source: Arc<String>,
+    doc: crate::code_rule_dsl::tape::TapeDoc,
+    lines: Arc<LineTable>,
+}
+
+#[derive(Default)]
+struct TapeCache {
+    active: bool,
+    entry: Option<CachedTape>,
+}
+
+thread_local! {
+    static EVALUATION_TAPE: RefCell<TapeCache> = RefCell::new(TapeCache::default());
+}
+
+pub(crate) struct TapeCacheSlot(bool);
+
+impl TapeCacheSlot {
+    pub(crate) fn install() -> Self {
+        let outer = EVALUATION_TAPE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let outer = !cache.active;
+            cache.active = true;
+            outer
+        });
+        Self(outer)
+    }
+
+    // Read by P's relational workspace path (test-only, open item O18).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn seed(
+        language: GrammarDialect,
+        file: &FileInput,
+        image: &crate::code_rule_dsl::tape::FileImage,
+    ) -> Result<()> {
+        let (doc, lines) = restore_file_tape(language, file, image)?;
+        cache_tape(language, file, &doc, &lines);
+        Ok(())
+    }
+}
+
+impl Drop for TapeCacheSlot {
+    fn drop(&mut self) {
+        if self.0 {
+            EVALUATION_TAPE.with(|cache| *cache.borrow_mut() = TapeCache::default());
+        }
+    }
+}
+
+/// A file's tape, as the workspace stores it, and its line table, reused only within the current
+/// evaluation; `None` where the parser stopped at a limit before it read the file (Forte's
+/// nesting depth or step budget).
+pub(in crate::code_rule_dsl) fn file_tape(
     language: GrammarDialect,
     file: &FileInput,
 ) -> Result<Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)>> {
+    if let Some(cached) = EVALUATION_TAPE.with(|cache| {
+        cache
+            .borrow()
+            .entry
+            .as_ref()
+            .filter(|cached| {
+                cached.language == language && Arc::ptr_eq(&cached.source, &file.source)
+            })
+            .cloned()
+    }) {
+        return Ok(Some((cached.doc, cached.lines)));
+    }
     use crate::code_rule_dsl::tape;
     let never = || false;
+    let grammar_span = crate::code_rule_dsl::logic::profile::span(|| "tape grammar".into());
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
+    drop(grammar_span);
     let Some(image) = tape::TapeImage::parse(&tape_grammar, &file.source, &never) else {
         return Ok(None);
     };
     let image = image.map_err(invalid)?;
+    let restore = crate::code_rule_dsl::logic::profile::span(|| "tape restore".into());
+    let (doc, lines) = restore_file_tape(language, file, &image)?;
+    drop(restore);
+    cache_tape(language, file, &doc, &lines);
+    Ok(Some((doc, lines)))
+}
+
+fn cache_tape(
+    language: GrammarDialect,
+    file: &FileInput,
+    doc: &crate::code_rule_dsl::tape::TapeDoc,
+    lines: &Arc<LineTable>,
+) {
+    EVALUATION_TAPE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.active {
+            cache.entry = Some(CachedTape {
+                language,
+                source: Arc::clone(&file.source),
+                doc: doc.clone(),
+                lines: Arc::clone(lines),
+            });
+        }
+    });
+}
+
+fn restore_file_tape(
+    language: GrammarDialect,
+    file: &FileInput,
+    image: &crate::code_rule_dsl::tape::FileImage,
+) -> Result<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)> {
+    use crate::code_rule_dsl::tape;
+    let never = || false;
+    let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
     let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
     #[cfg(test)]
     crate::code_rule_dsl::matcher::note_line_table_construction();
     let doc = tape::TapeDoc::restore_with_lines(
         Arc::clone(&file.source),
         tape_grammar,
-        &image,
+        image,
         Arc::clone(&lines),
         &never,
     )
     .map_err(invalid)?;
-    Ok(Some((doc, lines)))
+    Ok((doc, lines))
+}
+
+/// W's stateless evaluation walks every root; P's selects them from its anchor corpus (the
+/// `p-anchor-corpus` path below, open item O20).
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+fn anchor_roots(
+    _target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+    _grammar: &GrammarMatcher,
+    _bound: usize,
+    _path: &str,
+) -> Option<Arc<[u32]>> {
+    None
+}
+
+/// Selects candidate ordinals through the same postings used by workspace ingestion. Incomplete
+/// indexes retain the existing bounded root walk. Kind-only queries also use SQL postings.
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+fn anchor_roots(
+    target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+    grammar: &GrammarMatcher,
+    bound: usize,
+    path: &str,
+) -> Option<Arc<[u32]>> {
+    use crate::code_rule_dsl::matcher::p_anchors::{plan_for, sql::FileAnchorIndex};
+    let anchors = plan_for(grammar);
+    if !anchors.needs_index() {
+        return None;
+    }
+    #[cfg(feature = "code-rule-profile")]
+    let timer = crate::code_rule_dsl::profile::PhaseTimer::start(
+        crate::code_rule_dsl::profile::Phase::Index,
+    );
+    let index = FileAnchorIndex::build_at(
+        target,
+        &[&anchors],
+        bound,
+        crate::code_rule_dsl::budget::matcher_budget_exhausted,
+        path,
+    );
+    #[cfg(feature = "code-rule-profile")]
+    {
+        drop(timer);
+        crate::code_rule_dsl::profile::record_index(
+            index.len(),
+            index.estimated_bytes(),
+            index.complete(),
+        );
+    }
+    selected_roots(&index, &anchors)
+}
+
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+fn selected_roots(
+    index: &crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex<
+        '_,
+        crate::code_rule_dsl::tape::TapeDoc,
+    >,
+    anchors: &Arc<crate::code_rule_dsl::matcher::p_anchors::AnchorPlan>,
+) -> Option<Arc<[u32]>> {
+    #[cfg(feature = "code-rule-profile")]
+    let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
+        crate::code_rule_dsl::profile::Phase::Selection,
+    );
+    index.selected(anchors)
 }
 
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
@@ -788,12 +1072,19 @@ fn evaluate_file_clause(
     honour_suppressions: bool,
     util_work: &mut usize,
     witnesses: &mut Vec<Witness>,
+    output: Option<&Output<'_>>,
 ) -> Result<FileOutcome> {
     use crate::code_rule_dsl::json::invalid;
     use crate::code_rule_dsl::matcher::{Stopped, enumerate, node_at, run_clause, with_file_memo};
     let count = target.root().get_doc().transducer_len();
     let place = InFile::tape(target.root().get_doc());
     let visited = metrics.visited_nodes;
+    let selected = anchor_roots(
+        &target,
+        grammar,
+        limits.max_visited_nodes.saturating_sub(visited),
+        &file.path,
+    );
     let each = violation.and_then(|violation| violation.each.as_deref());
     let mut outcome = FileOutcome::Continue;
     let result = with_file_memo(&target, || {
@@ -801,7 +1092,7 @@ fn evaluate_file_clause(
         run_clause(
             &target,
             grammar,
-            None,
+            selected.as_deref(),
             limits.max_visited_nodes.saturating_sub(visited),
             util_work,
             |node, first, work| {
@@ -819,7 +1110,9 @@ fn evaluate_file_clause(
                         }
                         *work = crate::code_rule_dsl::matcher::end_clause().0;
                     }
-                    if errors.meets(&place.place(matched.get_node())) {
+                    if grammar.invalid_syntax != Some(true)
+                        && errors.meets(&place.place(matched.get_node()))
+                    {
                         return Ok(true);
                     }
                     let matched_node = matched.get_node();
@@ -838,7 +1131,7 @@ fn evaluate_file_clause(
                         true
                     };
                     let found = match violation.filter(|_| each.is_some()) {
-                        Some(violation) => witnesses_from_match(
+                        Some(violation) => witnesses_from_match_to(
                             file,
                             &matched,
                             grammar.language,
@@ -846,15 +1139,22 @@ fn evaluate_file_clause(
                             (limits.max_witnesses + 1).saturating_sub(metrics.witnesses),
                             || false,
                             keep,
+                            output,
                         ),
-                        None => witness_from_match(file, &matched, grammar.language, violation)
-                            .map(|mut witness| {
-                                if keep(&mut witness) {
-                                    vec![witness]
-                                } else {
-                                    Vec::new()
-                                }
-                            }),
+                        None => witness_from_match_to(
+                            file,
+                            &matched,
+                            grammar.language,
+                            violation,
+                            output,
+                        )
+                        .map(|mut witness| {
+                            if keep(&mut witness) {
+                                vec![witness]
+                            } else {
+                                Vec::new()
+                            }
+                        }),
                     };
                     let found = match found {
                         Ok(found) => found,
@@ -925,20 +1225,10 @@ pub(crate) fn grammar_matcher<'a>(
 /// Whether a matcher's `when` and `file` gates hold for `file`, whose module system its path and
 /// manifest decide where they do (`source_type`).
 fn applies(grammar: &GrammarMatcher, file: &FileInput, source_type: Option<SourceType>) -> bool {
-    let source_type = if grammar.package_type_gate {
-        Some(SourceType::by_package_type(&file.path, file.package_type()))
-    } else {
-        source_type
-    };
     grammar.applies
         && grammar.may_apply_to(source_type)
         && grammar.file.as_ref().is_none_or(|condition| {
-            condition.holds(
-                &file.path,
-                file.module.as_deref(),
-                file.package.as_deref(),
-                &file.source,
-            )
+            condition.holds(&file.path, file.module.as_deref(), file.package.as_deref())
         })
 }
 
@@ -956,4 +1246,30 @@ pub(crate) fn document_matcher<'a>(
             && grammar.language == language
             && applies(grammar, file, source_type)
     })
+}
+
+#[cfg(test)]
+mod tape_cache_tests {
+    use super::*;
+
+    #[test]
+    fn a_scoped_evaluation_reuses_its_tape_and_rejects_an_edited_source() {
+        let language = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let mut file = FileInput::new(
+            "a.py".into(),
+            "python".into(),
+            Arc::new("def first(): pass\n".into()),
+            None,
+            None,
+            "test",
+        )
+        .unwrap();
+        let _slot = TapeCacheSlot::install();
+        let (_, first) = file_tape(language, &file).unwrap().unwrap();
+        let (_, same) = file_tape(language, &file).unwrap().unwrap();
+        assert!(Arc::ptr_eq(&first, &same));
+        file.source = Arc::new("def second(): pass\n".into());
+        let (_, edited) = file_tape(language, &file).unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&first, &edited));
+    }
 }

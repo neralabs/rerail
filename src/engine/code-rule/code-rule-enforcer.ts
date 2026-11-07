@@ -12,7 +12,6 @@ import {
   type NativeCodeRuleDslWorkspace,
   type NativeGitIgnoreMatcher,
   type NativePackageFacts,
-  type NativePackageFactsReader,
   type NativeRepositoryIndexOptions,
 } from "../native/native.js";
 import type { CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
@@ -56,9 +55,7 @@ import { compareDeterministicStrings } from "../stable-json.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
-import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
-import { binaryPrefix } from "./binary-prefix.js";
-import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
+import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
 export { SOURCE_LANGUAGES };
 
@@ -89,17 +86,13 @@ export const IGNORED_DIRECTORIES = new Set([
   "target",
   "vendor",
 ]);
-/**
- * A repository index honours the walk's bounds, ignored directories and source languages, and skips an unlisted file
- * named like a secret as `workspaceLanguage` does; the lane adds Git's ignores.
- */
+/** A repository index honours the walk's bounds, ignored directories and source languages; the lane adds Git's ignores. */
 const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts" | "followGitignore"> = {
   maxFiles: AUDIT_MAX_FILES,
   maxSourceBytes: AUDIT_MAX_SOURCE_BYTES,
   maxFileBytes: MAX_SOURCE_BYTES,
   ignoredDirectories: [...IGNORED_DIRECTORIES],
   sourceLanguages: Object.fromEntries(SOURCE_LANGUAGES),
-  sourceNames: Object.fromEntries(SOURCE_NAMES),
 };
 const sourceSpanSchema = z.strictObject({
   startByte: z.number().int().nonnegative(),
@@ -200,7 +193,7 @@ const repositoryIndexChunkSchema = z.strictObject({
 });
 const storedEditSchema = z.object({
   path: z.string(),
-  language: z.enum([...new Set([...SOURCE_LANGUAGES.values(), ...SOURCE_NAMES.values(), UNLISTED_TEXT_LANGUAGE])] as [CodeRuleSourceLanguage, ...CodeRuleSourceLanguage[]]),
+  language: z.enum([...new Set(SOURCE_LANGUAGES.values())] as [CodeRuleSourceLanguage, ...CodeRuleSourceLanguage[]]),
   generatedText: z.string().optional(),
   previousText: z.string().optional(),
   previousReadError: z.string().optional(),
@@ -275,32 +268,16 @@ function generatedRanges(previousText: string, generatedText: string): ByteRange
   return ranges;
 }
 
-/**
- * Whether an ai-output edit generated `violation`: its span meets a generated range. A violation with no span is about
- * the whole file (a `file.path` match, a `file` query), which the edit generated only by creating the file.
- */
-function generatedBy(violation: CodeRuleViolation, ranges: readonly ByteRange[], created: boolean): boolean {
-  if (violation.span === undefined) return created;
+function intersectsGeneratedRange(violation: CodeRuleViolation, ranges: readonly ByteRange[]): boolean {
+  if (violation.span === undefined) return false;
   const { startByte, endByte } = violation.span;
   return ranges.some(({ start, end }) =>
     startByte === endByte ? start <= startByte && startByte <= end : startByte < end && start < endByte,
   );
 }
 
-/** The label of a listed file (`sourceLanguageOfPath`); undefined for an unlisted one, which only text-reading rules read. */
 export function languageFor(path: string): CodeRuleSourceLanguage | undefined {
-  return sourceLanguageOfPath(path);
-}
-
-/**
- * The label `workspace` reads `path` with: a listed file's own where some code rule's scope holds it, an unlisted
- * file's `UNLISTED_TEXT_LANGUAGE` where a code rule that reads text has it in scope; undefined where no rule reads it.
- * An unlisted file named like a secret (`sensitiveByName`) is no source at all, read by no rule, as if binary.
- */
-function workspaceLanguage(workspace: NativeCodeRuleDslWorkspace, path: string): CodeRuleSourceLanguage | undefined {
-  const language = languageFor(path);
-  if (language !== undefined) return workspace.acceptsPath(path) ? language : undefined;
-  return workspace.acceptsTextPath(path) && !sensitiveByName(path) ? UNLISTED_TEXT_LANGUAGE : undefined;
+  return languageOfPath(SOURCE_LANGUAGES, path);
 }
 
 /**
@@ -317,19 +294,16 @@ export function modulePath(label: CodeRuleSourceLanguage, absolute: string): str
 export type SourceFileFacts = { module?: string | string[]; package?: NativePackageFacts };
 
 /**
- * One walk's manifest reads: whether each folder lies within the root (`folderWithinRoot`), the native reader that reads
- * each manifest and its folder's ignore files once (opened on first use, for the walk's one root), and the server graphs
- * of the packages, by folder (each requested once, so concurrent readers share one walk; `null` for a package with no
- * graph).
+ * The manifests one walk read, by language and directory, and the server graphs of their packages, by folder (each
+ * requested once, so concurrent readers share one walk; `null` for a package with no graph).
  */
 export type SourceFactsCache = {
-  folders: Map<string, boolean>;
-  reader?: NativePackageFactsReader;
+  packages: Map<string, NativePackageFacts | null>;
   serverGraphs: Map<string, Promise<ReadonlySet<string> | null>>;
 };
 
 export function sourceFactsCache(): SourceFactsCache {
-  return { folders: new Map(), serverGraphs: new Map() };
+  return { packages: new Map(), serverGraphs: new Map() };
 }
 
 /** A source whose text the host holds rather than disk: the edit being applied, or a draft's sample (no text: deleted). */
@@ -338,15 +312,14 @@ export type SourceOverlay = { path: string; source?: string | undefined };
 /**
  * The facts every ingestion path sends with the file at `path` below `root`: its module (`modulePath`), and its nearest
  * `package.json`, never above `root` (none without one, or where the file's folder resolves outside `root`), whose
- * `type` decides an ECMA file's module system and which `file.package` and `file.jsxRuntime` conditions read, with
- * whether npm publishes the file (`published`, from the manifest's `files` and `main` and its folder's `.npmignore` or
- * `.gitignore` on disk); the engine sends none for a family that reads no manifest. With `serverGraph` (a code rule
- * reads `file.package.serverGraph`), a file whose manifest names `next` also carries whether it is in its Next app's
- * server module graph, walked on disk off the JS thread once per package and cache, `overlay`'s text standing in for
- * its file's; a package with no graph (an entry unreadable, or past the walk's bounds) gives its files no
- * `serverGraph`, so neither value holds. The engine derives all of them; native repository indexing derives the same
- * values itself. `cache` keeps one walk's manifests and graphs, so one cache serves one root and one overlay. The facts
- * depend on the path, the files on disk and `overlay` only, never on the file's own text.
+ * `type` decides an ECMA file's module system and which `file.package` and `file.jsxRuntime` conditions read; the
+ * engine sends none for a family that reads no manifest. With `serverGraph` (a code rule reads
+ * `file.package.serverGraph`), a file whose manifest names `next` also carries whether it is in its Next app's server
+ * module graph, walked on disk off the JS thread once per package and cache, `overlay`'s text standing in for its
+ * file's; a package with no graph (an entry unreadable, or past the walk's bounds) gives its files no `serverGraph`, so
+ * neither value holds. The engine derives all of them; native repository indexing derives the same values itself.
+ * `cache` keeps one walk's manifests and graphs, so one cache serves one overlay. The facts depend on the path, the
+ * files on disk and `overlay` only, never on the file's own text.
  */
 export async function sourceFileFacts(
   root: string,
@@ -359,19 +332,14 @@ export async function sourceFileFacts(
   const binding = loadNativeBinding();
   const absolute = resolve(root, path);
   const module = modulePath(language, absolute);
-  let facts: NativePackageFacts | null = null;
-  if (binding.readsPackageManifests(language)) {
-    const folder = posix.dirname(path);
-    let within = cache?.folders.get(folder);
-    if (within === undefined) {
-      within = folderWithinRoot(root, path);
-      cache?.folders.set(folder, within);
-    }
-    if (within)
-      facts =
-        cache === undefined
-          ? binding.packageFacts(language, absolute, root)
-          : (cache.reader ??= new binding.PackageFactsReader(root)).facts(language, absolute);
+  const key = `${language}\0${posix.dirname(path)}`;
+  let facts = cache?.packages.get(key);
+  if (facts === undefined) {
+    facts =
+      binding.readsPackageManifests(language) && folderWithinRoot(root, path)
+        ? binding.packageFacts(language, absolute, root)
+        : null;
+    cache?.packages.set(key, facts);
   }
   if (facts !== null && serverGraph && facts.dependencies.includes("next")) {
     let members = cache?.serverGraphs.get(facts.folder);
@@ -405,16 +373,6 @@ function folderWithinRoot(root: string, path: string): boolean {
 function manifestDirectory(path: string): string | undefined {
   if (path === "package.json") return "";
   return path.endsWith("/package.json") ? path.slice(0, -"/package.json".length) : undefined;
-}
-
-/**
- * The folder whose package a `.npmignore` or `.gitignore` path decides the publication of (`""` at the root), as the
- * engine names them (`ignore_file_directory`, case-sensitive); undefined for any other path.
- */
-function ignoreFileDirectory(path: string): string | undefined {
-  const name = posix.basename(path);
-  if (name !== ".npmignore" && name !== ".gitignore") return undefined;
-  return path === name ? "" : path.slice(0, -name.length - 1);
 }
 
 /**
@@ -645,23 +603,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /**
    * Where a code rule has an AST clause in a family that reads manifests (ECMA), a `package.json` is accepted whatever
    * the code rules' scopes: it gives the ECMA sources below it their `package`, so an edit of it alone refreshes the
-   * sources already applied (`#apply`). So are a `.npmignore` or `.gitignore`, which decide with its `files` which of
-   * those sources npm publishes (`package.published`), and a `tsconfig.json`-style project configuration, whose
-   * `jsxImportSource` and import aliases (`paths`, `baseUrl`) those `package` facts read, and, where a code rule reads
-   * Next server module graphs, any source a manifest reads, since its imports move other sources in or out of a graph,
-   * and any file in an `app/` folder, which may make a root `app/` (hiding `src/app/`) present. Without such a rule,
-   * the scopes alone decide. An unlisted file (no `languageFor`) is accepted only in the scope of a code rule that reads
-   * text, never when it is named like a secret (`sensitiveByName`), and never before the workspace opens. Whatever they
-   * say, a path Git ignores is refused while the lane follows `.gitignore`.
+   * sources already applied (`#apply`). So is a `tsconfig.json`-style project configuration, whose `jsxImportSource`
+   * and import aliases (`paths`, `baseUrl`) those `package` facts read, and, where a code rule reads Next server module
+   * graphs, any source a manifest reads, since its imports move other sources in or out of a graph, and any file in an
+   * `app/` folder, which may make a root `app/` (hiding `src/app/`) present. Without such a rule, the scopes alone
+   * decide. Whatever they say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
     const language = languageFor(path);
     const workspace = (this.#replacement ?? this.#workspace)?.workspace;
-    if (language === undefined)
-      return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path) && !this.ignoresPath(path, false);
-    const graphInput = loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
+    const graphInput = language !== undefined && (loadNativeBinding().readsPackageManifests(language) || inAppFolder(path));
     return (
-      (((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&
+      language !== undefined &&
+      (((manifestDirectory(path) !== undefined || isModuleConfig(path)) &&
         (workspace?.readsPackageManifests() ?? true)) ||
         (workspace?.readsServerGraph() === true && graphInput) ||
         (workspace?.acceptsPath(path) ?? true)) &&
@@ -973,12 +927,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     let storage: Promise<boolean>;
     try {
       for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable, JSON.stringify(codeRule.placement));
-      // Import targets resolve against the files below the workspace root that the workspace does not hold.
-      workspace.setRoot(this.#workspaceRoot);
       const attachStartedAt = performance.now();
-      // The store is a cache every checkout shares, kept on disk: a file named like one holding secrets never goes into it.
-      const secretNames = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
-      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
+      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
         this.#timingLog?.(
           `rerail: repository storage ${attached ? "attached" : "not attached"} in ${Math.round(performance.now() - attachStartedAt)} ms (discovery ${Math.round(discoveryMilliseconds)} ms, publication ${Math.round(publicationMilliseconds)} ms)\n`,
         );
@@ -1253,9 +1203,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined || base.previousReadError !== undefined)
       return pathViolations;
     const ranges = generatedRanges(base.previousText ?? "", edit.generatedText);
-    // A new file has no earlier text and no error reading one.
-    const created = base.previousText === undefined;
-    return pathViolations.filter((violation) => generatedBy(violation, ranges, created));
+    return pathViolations.filter((violation) => intersectsGeneratedRange(violation, ranges));
   }
   /**
    * A repository-scope audit of a Git checkout runs the native repository index on the audit
@@ -1622,7 +1570,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       nested.reached.push(path);
       return false;
     }
-    return entry.isFile() && workspaceLanguage(workspace, path) !== undefined;
+    return entry.isFile() && languageFor(path) !== undefined && workspace.acceptsPath(path);
   }
 
   async #readAuditFile(
@@ -1634,20 +1582,18 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     failures: AuditFailure[],
     facts: SourceFactsCache,
   ): Promise<WorkspaceFile | undefined> {
-    const language = workspaceLanguage(workspace, path);
-    if (!info.isFile() || language === undefined || seen.has(path) || this.ignoresPath(path, false)) return undefined;
+    const language = languageFor(path);
+    if (!info.isFile() || language === undefined || !workspace.acceptsPath(path) || seen.has(path) || this.ignoresPath(path, false))
+      return undefined;
     seen.add(path);
     if (info.size > MAX_SOURCE_BYTES) {
-      // An oversize unlisted file is binary, skipped without a failure, when its first bytes hold a NUL byte.
-      if (languageFor(path) === undefined && await binaryPrefix(absolute)) return undefined;
       failures.push(failure("source", "budget-exceeded", "Source exceeds the per-file byte budget", path, "read"));
       return undefined;
     }
     const source = await readFile(absolute);
     if (this.#closing) return undefined;
     if (source.includes(0)) {
-      // An unlisted file holding a NUL byte is binary, no text file: skipped without a failure.
-      if (languageFor(path) !== undefined) failures.push(failure("source", "source-incomplete", BINARY_SOURCE_MESSAGE, path, "read"));
+      failures.push(failure("source", "source-incomplete", BINARY_SOURCE_MESSAGE, path, "read"));
       return undefined;
     }
     return {
@@ -1719,14 +1665,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   /**
    * Applies `edit` with the facts its file has on disk now. As the workspace keeps the `package` a host sent rather
-   * than derive one from a `package.json` it holds, an edit of a `package.json`, of a `.npmignore` or `.gitignore`, or
-   * of a `tsconfig.json`-style project configuration (created, changed or deleted) sends again each source applied below
-   * it whose family reads manifests and whose `package` that changes, but one whose own edit is still queued;
-   * `repackaged` holds their applied edits. Where a code rule reads Next server module graphs, an edit of a source in a
-   * package naming `next` does the same for the package's sources, whose membership (`package.serverGraph`) the edit
-   * may change. A source's facts depend on its path and disk only (with the edit's text standing in for its file's), so
-   * only a source whose facts changed is read back. One facts cache serves the call, so each package's graph is walked
-   * once.
+   * than derive one from a `package.json` it holds, an edit of a `package.json` or a `tsconfig.json`-style project
+   * configuration (created, changed or deleted) sends again each source applied below it whose family reads manifests
+   * and whose `package` that changes, but one whose own edit is still queued; `repackaged` holds their applied edits.
+   * Where a code rule reads Next server module graphs, an edit of a source in a package naming `next` does the same for
+   * the package's sources, whose membership (`package.serverGraph`) the edit may change. A source's facts depend on its
+   * path and disk only (with the edit's text standing in for its file's), so only a source whose facts changed is read
+   * back. One facts cache serves the call, so each package's graph is walked once.
    *
    * `pass` is the facts cache a workspace replacement shares while it applies every applied source again: graphs read
    * on disk once for the whole pass, every source gets its facts from it so none needs sending again, and global
@@ -1757,19 +1702,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const repackaged: CodeRuleEdit[] = [];
     // A project configuration may be another package's base (`extends`), so its edit rechecks every applied source.
     const manifest = manifestDirectory(edit.path);
-    const ignoreFile = ignoreFileDirectory(edit.path);
     const directory =
       pass !== undefined
         ? undefined
         : manifest !== undefined
           ? this.#manifestEditFolder(manifest, serverGraph)
-          : ignoreFile !== undefined
-            ? ignoreFile
-            : isModuleConfig(edit.path)
-              ? ""
-              : serverGraph
-                ? this.#serverGraphFolder(edit)
-                : undefined;
+          : isModuleConfig(edit.path)
+            ? ""
+            : serverGraph
+              ? this.#serverGraphFolder(edit)
+              : undefined;
     if (directory !== undefined)
       for (const [path, sent] of packages) {
         const stored = this.#applied.get(path);
@@ -1927,11 +1869,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const recorded = provenance.find(entry => entry.ruleId === ruleId);
       return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
     };
-    // Paths are judged in the workspace they are relative to, so a file that links to a secret is judged as one.
-    const boundary = checkoutPathBoundary(this.#workspaceRoot);
-    const secret = new Set(violations.flatMap(({ path, mode }) =>
-      path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
-    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path));
+    const steer = buildSteer(steerable, trigger, sourceOf);
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,

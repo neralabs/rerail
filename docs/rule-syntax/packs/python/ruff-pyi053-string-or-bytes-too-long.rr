@@ -1,0 +1,39 @@
+.policy "ruff-pyi053-string-or-bytes-too-long" revision 2
+.description "Replace string and bytes literals longer than 50 characters in stub files with an ellipsis; type checkers ignore default values, so a literal that long is an implementation detail."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI053 (flake8-pyi), stubs only: a str or bytes literal whose value is longer than 50 characters
+// (adjacent literals joined; an f-string counts its written contents). Not reported in a type context
+// (annotations, `Literal[…]` included), for a string that is a whole statement (a docstring, or any bare
+// string), as an argument of `@warnings.deprecated(…)` / `typing_extensions.deprecated`, or in a module-level
+// `__all__` assignment (0.16.9; 0.15.7 reports those).
+//   x = "aaaa…a"       (51 a's)   ← PYI053
+#include "python/typing.rr"
+
+.violation PYI053(at: node) code "PYI053" "Replace this literal with `...`: it is longer than 50 characters, and a stub only needs the type, so the full value is an implementation detail."
+    suppress ruff "PYI053"
+PYI053(s) :- long_literal(s), in_stub(s), !in_annotation(s), !stmt_string(s), !deprecated_message(s),
+    !in_dunder_all(s).
+// long_literal(s): the value's 51st character exists.
+.decl long_literal(s: node)
+long_literal(s) :- (plain_str(s, v) ; string_form(s, "bytes"), value(s, v)), !inside_concat(s), @slice(v, 50, 51) != "".
+long_literal(s) :- fstring(s), kind(s, "string"), !inside_concat(s), fstring_body(s, v), @slice(v, 50, 51) != "".
+.decl fstring_body(s: node, v: symbol)  // an f-string's text inside its quotes
+fstring_body(s, v) :- child(s, a, 0), kind(a, "string_start"), text(a, q0), child(s, z, _), kind(z, "string_end"),
+    text(z, q1), text(s, t), v = @slice(t, strlen(q0), 0 - strlen(q1)).
+.decl inside_concat(s: node)
+inside_concat(s) :- child(c, s, _), kind(c, "concatenated_string").
+// in_annotation(s): a type context, or inside a Literal or Annotated that is in one.
+.decl in_annotation(s: node)
+in_annotation(s) :- type_ctx(s).
+in_annotation(s) :- type_ctx(l), (typing_subscript(l, "Literal") ; typing_subscript(l, "Annotated")), within(s, l).
+.decl stmt_string(s: node)
+stmt_string(s) :- doc_stmt(_, s).
+// deprecated_message(s): s is an argument, positional or keyword, of `warnings.deprecated(…)` or
+// `typing_extensions.deprecated(…)`.
+.decl deprecated_message(s: node)
+deprecated_message(s) :- kind(c, "call"), field(c, "function", f), sym_of(f, q),
+    (q = "warnings.deprecated" ; q = "typing_extensions.deprecated"), field(c, "arguments", al), child(al, a, _),
+    (unparen(a, s) ; kind(a, "keyword_argument"), field(a, "value", v), unparen(v, s)).

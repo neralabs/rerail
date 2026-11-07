@@ -1,15 +1,9 @@
 # examplelint 1.0.0
 
-License: MIT; [`LICENSE`](LICENSE) is its licence; examplelint is a test fixture standing in for a real tool.
+Upstream: examplelint 1.0.0, a test fixture standing in for a real tool. License: MIT; [`LICENSE`](LICENSE) is its licence.
 
-## Source
+Paths are relative to the pack directory.
 
-| Repository | Tag | Commit | Licence |
-|---|---|---|---|
-| https://example.com/examplelint | `v1.0.0` | `0000000000000000000000000000000000000000` | MIT |
-
-## Taken from it
-
-| Pack paths | Upstream paths | How |
+| File | Upstream path | Copy |
 |---|---|---|
-| `upstream/examplelint/fixtures/**` | `tests/*.py` | verbatim |
+| `upstream/examplelint/fixtures/asserts.py` | `tests/asserts.py` | verbatim |

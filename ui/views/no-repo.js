@@ -3,20 +3,24 @@
  * so it asks for one, listing every repository Rerail has seen with what it holds.
  */
 import { h, setContent, icon } from "../dom.js";
+import { fmt, plural } from "../format.js";
 import { data } from "../state.js";
 import { invalidate } from "../shell.js";
 import { loadRepoRuleCounts } from "../repo-rules.js";
-import { repoHint, repoMeta, repoOption } from "../render/repos.js";
+import { repoMeta, repoOption } from "../render/repos.js";
 
 export const needs = [];
 
+const NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+
 function note(seen) {
   return h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
-    h("b", null, "No repo selected."),
+    h("b", null, "No repo selected. Rerail’s dashboard shows one repo at a time."),
     seen === 0
       ? h("p", null, "Rerail has not seen a repo on this computer yet. Open a coding agent in one of your repos and type ",
         h("span.mono", null, "/rerail-start"), " there; the repo then shows here.")
-      : h("p", null, "Pick a repo below, or type ", h("span.mono", null, "/rerail-manage"), " in a session in it.")));
+      : h("p", null, `Open a coding agent in one of your repos and come here from there, or pick a repo below. Rerail has seen ${NUMBER_WORDS[seen] ?? fmt(seen)} ${plural(seen, "repo")} on this computer; a new one is set up the same way, with `,
+        h("span.mono", null, "/rerail-start"), " in a coding agent session there.")));
 }
 
 /** The poll whose repository list the rule counts were last read for. */
@@ -37,6 +41,6 @@ export function render(root) {
     data.loaded ? note(list.length) : null,
     list.length === 0 ? (data.loaded ? null : h("div.list", null, h("div.empty", null, h("p", null, "Loading…"))))
       : h("section.group", null,
-        h("div.ghead", null, h("h2", null, "Repos"), h("p", null, repoHint())),
-        h("div.list.repolist", { role: "listbox", "aria-label": "Repos" }, list.map(repo => repoOption(repo, false))))));
+        h("div.ghead", null, h("h2", null, "Repos Rerail has seen"), h("p", null, "One repo at a time. Pick one to see its rules and history.")),
+        h("div.list.repolist", { role: "listbox", "aria-label": "Repos Rerail has seen" }, list.map(repo => repoOption(repo, false))))));
 }

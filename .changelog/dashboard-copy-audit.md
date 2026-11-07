@@ -1,1 +1,0 @@
-The dashboard's copy is shorter and says only what Rerail knows: Steered no longer claims a fix, a Block rule says it steers in this release, and Clear history says running sessions keep recording. A rule whose pack is not added offers Open pack, and empty states read true with every rule off.

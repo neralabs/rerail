@@ -18,13 +18,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// The constraint forms a clause other than a define holds.
+#[cfg(not(test))]
 pub(super) const CLAUSE_KINDS: [&str; 4] = ["forbid", "require_each", "budget", "llm"];
+/// Tests also compile P's relational clauses (`residency::admission::relational`, open item O18).
+#[cfg(test)]
+pub(super) const CLAUSE_KINDS: [&str; 5] = ["forbid", "require_each", "budget", "relational", "llm"];
 
 /// Each language's shared utilities, by id.
 pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>>;
 
 /// What the document's defines hold: shared utilities and options.
-pub(super) struct Defines<'a> {
+pub(in crate::code_rule_dsl) struct Defines<'a> {
     pub(super) utils: SharedUtils<'a>,
     pub(super) options: Options,
 }
@@ -63,7 +67,7 @@ pub(super) fn collect_defines<'a>(
         let body = object(define, &define_path)?;
         reject_unknown(
             body,
-            &["language", "utils", "options", "config"],
+            &["language", "utils", "options", "config", "report_when"],
             &define_path,
         )?;
         let language = body
@@ -81,11 +85,14 @@ pub(super) fn collect_defines<'a>(
             .transpose()?;
         // Options and their configuration were read before the document was resolved.
         let Some(utils) = body.get("utils") else {
-            if body.contains_key("options") || body.contains_key("config") {
+            if body.contains_key("options")
+                || body.contains_key("config")
+                || body.contains_key("report_when")
+            {
                 continue;
             }
             return Err(invalid(format!(
-                "{define_path} must hold utils, options or config"
+                "{define_path} must hold utils, options, config or report_when"
             )));
         };
         let Some(language) = language else {
@@ -147,7 +154,11 @@ fn check_dialects<'u>(
     // utility settle it there.
     let ignored = std::cell::RefCell::new(BTreeSet::new());
     // A shared utility's `calls` terms are the calling queries' (their seeds carry its rule).
-    let calls = crate::code_rule_dsl::calls::CallsCollector::new(String::new(), false);
+    let calls = crate::code_rule_dsl::calls::CallsCollector::new(
+        String::new(),
+        false,
+        capabilities.limits.max_regex_pattern_bytes,
+    );
     let new_table = || {
         Arc::new(UtilTable::new(
             utils.keys().cloned().collect(),
@@ -386,7 +397,7 @@ mod tests {
             ),
             (
                 json!([{ "id": "d", "define": {} }, rule]),
-                "/clauses/0/define must hold utils, options or config",
+                "/clauses/0/define must hold utils, options, config or report_when",
             ),
             (
                 json!([{ "id": "d", "define": { "language": "typescript", "utils": {}, "rules": {} } }, rule]),

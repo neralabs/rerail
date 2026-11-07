@@ -1,0 +1,21 @@
+.policy "react-jsx-no-comment-textnodes" revision 2
+.description "Put comments in JSX children inside braces; written bare, they render as text."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/jsx-no-comment-textnodes: JSX text with a line that starts with `//` or `/*` is a comment the author
+// meant to hide, but React renders it. Written inside braces it is a real comment.
+//   <div>// hello</div>             reported, at the text
+//   <div>{/* hello */}</div>        not reported
+//   <a href="//x">                  not: attribute values are not text children
+#include "tsx/react.rr"
+
+.violation comment_text(at: node)
+    code "react/jsx-no-comment-textnodes"
+    "Comments inside children section of tag should be placed inside braces"
+    suppress eslint "react/jsx-no-comment-textnodes"
+    suppress oxlint "jsx-no-comment-textnodes"
+    suppress biome "lint/suspicious/noCommentText"
+// The rule's regex is /^\s*\/(\/|\*)/m: any line of the text, after blanks.
+comment_text(t) :- kind(t, "jsx_text"), match("(?s)(.*\\n)?[ \\t\\r\\f\\v]*/[/*].*", t), docof(t, d), react_doc(d).

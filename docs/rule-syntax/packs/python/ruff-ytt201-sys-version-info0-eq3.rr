@@ -1,0 +1,18 @@
+.policy "ruff-ytt201-sys-version-info0-eq3" revision 2
+.description "Compare sys.version_info against a tuple instead of testing whether its major version equals 3; the test breaks on a future major version."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff YTT201 (flake8-2020): `sys.version_info[0] == 3` or `!= 3`, which flips on Python 4.
+//   sys.version_info[0] == 3      ← YTT201 (eq message)
+//   version_info[0] != 3          ← YTT201 (not-eq message), after `from sys import version_info`
+//   sys.version_info[0] >= 3      not reported
+#include "python/misc2-version.rr"
+
+.violation YTT201(at: node, msg: symbol) code "YTT201" "{msg}"
+    suppress ruff "YTT201"
+YTT201(l, "Replace `sys.version_info[0] == 3` with `sys.version_info >= (3,)`; the equality is false on Python 4 and later.") :-
+    ytt_single_cmp(_, l, "==", r), ytt_info_index(l, "0"), ruff_int(r, "3").
+YTT201(l, "Replace `sys.version_info[0] != 3` with `sys.version_info < (3,)`; the inequality is true on Python 4 and later.") :-
+    ytt_single_cmp(_, l, "!=", r), ytt_info_index(l, "0"), ruff_int(r, "3").

@@ -84,9 +84,8 @@ pub(super) fn restore_complete_results(
 }
 
 /// The stored per-file result encoding. A stored result of any other version is a cache miss.
-/// A marked witness (`Witness::ignored`) carries `"ignored": true`; another omits the key. A
-/// witness without a span (`Witness::span`) omits `span`.
-const LOCAL_RESULT_VERSION: u64 = 4;
+/// A marked witness (`Witness::ignored`) carries `"ignored": true`; another omits the key.
+const LOCAL_RESULT_VERSION: u64 = 3;
 
 /// A stored local result as `encode_local_result` writes it, borrowing its witnesses. Fields are
 /// in key order, as a JSON object of the same keys serializes.
@@ -106,8 +105,7 @@ struct WitnessEncoding<'a> {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     ignored: bool,
     message: &'a Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    span: Option<&'a Span>,
+    span: &'a Span,
 }
 
 fn serialize_witnesses<S: serde::Serializer>(
@@ -119,7 +117,7 @@ fn serialize_witnesses<S: serde::Serializer>(
         fix: &witness.fix,
         ignored: witness.ignored,
         message: &witness.message,
-        span: witness.span.as_ref(),
+        span: &witness.span,
     }))
 }
 
@@ -203,11 +201,9 @@ pub(super) fn decode_local_result(
         .iter()
         .map(|witness| {
             Some(Witness {
+                sql_violation: None,
                 path: path.to_owned(),
-                span: match witness.get("span") {
-                    None => None,
-                    Some(span) => Some(Span::deserialize(span).ok()?),
-                },
+                span: Span::deserialize(witness.get("span")?).ok()?,
                 captures: Captures::from_value(witness.get("captures")?)?,
                 message: witness
                     .get("message")
@@ -365,8 +361,8 @@ pub(super) fn restore_persisted_file(
                 index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
                 kind_tokens: kinds
                     .iter()
-                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(kind))
-                    .collect(),
+                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(matcher.language, kind))
+                    .collect::<Option<_>>()?,
             })
         })
         .collect::<Option<Vec<_>>>();
@@ -518,7 +514,7 @@ fn engine_build_id() -> &'static str {
 const GRAMMAR_BUILD_ID: &str = env!("RERAIL_GRAMMAR_BUILD_ID");
 
 /// The stored tapes' grammar version column: the grammar build identity as a positive integer.
-pub(super) fn grammar_version() -> i64 {
+pub(in crate::code_rule_dsl) fn grammar_version() -> i64 {
     i64::from_str_radix(&GRAMMAR_BUILD_ID[..15], 16).expect("grammar build identity is hex")
 }
 

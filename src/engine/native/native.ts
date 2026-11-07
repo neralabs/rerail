@@ -18,12 +18,6 @@ export interface ModelFingerprint {
   kernelFormatVersion: number;
 }
 
-/** What `verifyModelFiles` found: `problem` and `file` are absent where every file matches `manifest.json`. */
-export interface NativeModelCheck {
-  problem?: "missing" | "unreadable" | "invalid-manifest" | "checksum-mismatch" | null;
-  file?: string | null;
-}
-
 export interface NativeRuleInput {
   id: string;
   /** Similarity rules only: the text samples are compared against. */
@@ -88,6 +82,8 @@ export type CodeRuleDslSourceFormat = "json" | "yaml";
 export type CodeRuleDslEvaluationMode = "decision" | "report";
 
 export interface NativeCompiledCodeRuleDsl {
+  /** Diagnostic availability depends on the installed addon version. Uses the normal compiler. */
+  candidateFrontierAudit?(): string;
   canonicalJson(): string;
   /** Whether a repository-relative path is inside the code rule's scope; the matcher evaluation uses. */
   inScope(path: string): boolean;
@@ -97,8 +93,6 @@ export interface NativeCompiledCodeRuleDsl {
   openEditor(snapshotJson: string): NativeCodeRuleDslEditor;
   /** Whether the code rule reads `file.package.serverGraph`, so hosts send `package.serverGraph`. */
   readsServerGraph(): boolean;
-  /** Whether the code rule reads text: some clause, however nested, is a `regex` or `file` query, so files no language lists are read for it. */
-  readsText(): boolean;
 }
 
 export interface NativeCodeRuleDslEditor {
@@ -120,16 +114,6 @@ export interface NativeStorageAttachment {
 }
 
 /**
- * The names `enableStorageAsync` keeps out of the content store (`SENSITIVE_FILE_NAMES` and `SENSITIVE_FOLDER_NAMES`
- * in path-boundary.ts): `files` match a path's last segment and `folders` any segment on the way, as `sensitiveByName`
- * reads them.
- */
-export interface NativeSecretNames {
-  files: readonly string[];
-  folders: readonly string[];
-}
-
-/**
  * The bytes of violations a host reads a whole result in per `resultPageAsync` page. Small, since a page is held three
  * times while it is read (the JSON, its parse, its validated copy) and V8 keeps what it grew to: 256 KiB pages read
  * django's 15.5k violations (6.8 MB) with 40 MiB less peak RSS than one 8 MiB page.
@@ -139,10 +123,9 @@ export const RESULT_PAGE_BYTES = 256 * 1024;
 export interface NativeCodeRuleDslWorkspace {
   /**
    * Attaches the content store at `storePath` (see `contentStorePath`) to the repository containing `root`; the
-   * binding never chooses a store itself and refuses an empty path. A file `secretNames` names is evaluated but never
-   * written to the store (not its source, syntax trees or results): it stays in the workspace's memory instead.
+   * binding never chooses a store itself and refuses an empty path.
    */
-  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames): Promise<NativeStorageAttachment>;
+  enableStorageAsync(root: string, storePath: string): Promise<NativeStorageAttachment>;
   /**
    * `placement`, when given, is a JSON `CodeRulePlacement` (repository-model.ts): this workspace runs the code rule per folder
    * at the entry's mode (`null` is off there), and a linter's suppression comment silences its violations there unless the
@@ -151,8 +134,6 @@ export interface NativeCodeRuleDslWorkspace {
    */
   addCodeRule(compiled: NativeCompiledCodeRuleDsl, placement?: string): void;
   acceptsPath(path: string): boolean;
-  /** Whether `path` is in the scope of a code rule that reads text (as `acceptsPath`, over those rules only): an unlisted file is read only then. */
-  acceptsTextPath(path: string): boolean;
   /** Whether a code rule reads `file.package.serverGraph`, so hosts send `package.serverGraph`. */
   readsServerGraph(): boolean;
   /**
@@ -176,12 +157,6 @@ export interface NativeCodeRuleDslWorkspace {
   /** The referenced node as JSON; throws when the reference's file version is no longer current. */
   resolveNodeReference(reference: string): string;
   setDocumentResidencyLimit(bytes: number): void;
-  /**
-   * The absolute folder on disk the workspace's paths are relative to: `importTarget` resolution reads the files below
-   * it the workspace does not hold (installed packages, files outside every scope), and nothing above it. Without one,
-   * targets resolve among the files the workspace holds.
-   */
-  setRoot(root: string): void;
   close(): void;
 }
 
@@ -193,8 +168,6 @@ export interface NativeRepositoryIndexOptions {
   ignoredDirectories: string[];
   /** The file label of each evaluated extension, keyed lowercase with its dot (`.py` → `python`). */
   sourceLanguages: Record<string, string>;
-  /** The file label of each file evaluated by its whole name, keyed lowercase (`.npmignore` → `text`); wins over `sourceLanguages`. */
-  sourceNames?: Record<string, string>;
   /** Folders below the workspace root that are checkouts judged by their own rules: not walked, only reported. */
   nestedCheckouts: string[];
   /** Leave out what Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`); never a tracked file. */
@@ -217,11 +190,8 @@ export interface NativeGitIgnoreMatcher {
  * `bin` targets relative to `folder`; `nodeVersion` the configured Node range (`engines.node`, else
  * `devEngines.runtime`'s `node` entry), a valid npm range (a `package` with any other is malformed); `dependencies`
  * every dependency name of any kind; `jsxImportSource` the `compilerOptions.jsxImportSource` of the `tsconfig.json`
- * (else `jsconfig.json`) beside it; `private` is `true` where the manifest's `private` is. `serverGraph`, which a host
- * sends only where a code rule reads it and the manifest names `next`, is whether the file is in its Next app's server
- * module graph (`serverGraphAsync` below). `published`, the file's own fact (`packageFacts` sends it, `nearestPackage`
- * does not), is whether npm publishes the file, as eslint-plugin-n reads the manifest's `files` and `main` and its
- * folder's `.npmignore`, else (without `files`) its `.gitignore`.
+ * (else `jsconfig.json`) beside it. `serverGraph`, which a host sends only where a code rule reads it and the manifest
+ * names `next`, is whether the file is in its Next app's server module graph (`serverGraphAsync` below).
  */
 export interface NativePackageFacts {
   folder: string;
@@ -230,14 +200,7 @@ export interface NativePackageFacts {
   nodeVersion?: string;
   dependencies: string[];
   jsxImportSource?: string;
-  private?: boolean;
   serverGraph?: boolean;
-  published?: boolean;
-}
-
-/** One walk's `packageFacts` for the files below the root it was opened for, each manifest and ignore file read once. */
-export interface NativePackageFactsReader {
-  facts(label: string, absolute: string): NativePackageFacts | null;
 }
 
 /**
@@ -281,6 +244,42 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
 }
 
+/** A policy document for the first slice: its name (the file stem), source and format. */
+export interface NativeSlicePolicy {
+  name: string;
+  source: string;
+  format: CodeRuleDslSourceFormat;
+}
+
+/** An editor's unsaved source for `path` (relative to the directory, `/` separators); the file may not exist yet. */
+export interface NativeSliceBuffer {
+  path: string;
+  source: string;
+}
+
+/**
+ * The first slice over one content store (docs/final-shape/06-first-slice.md): the pack's lowered Python `ast`
+ * clauses, kept between runs. `audit` and `apply` return JSON: `findings` ({rule, code, path, line}), `coverage`
+ * ({rule, path, coverage, reason?}), `evaluated` paths, `rerun` derivations and the `changed` families.
+ */
+export interface NativeCodeRuleSlice {
+  clauses(): number;
+  /**
+   * A cold audit of `scope` at `directory` as `observer` sees it: `"directory"` (default, the working tree's
+   * snapshot, with `buffers` over it) or `"head"` (the `HEAD` tree of its Git checkout; no buffers).
+   */
+  audit(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
+  /** `scope` at `directory` as `observer` sees it, evaluating only the documents that changed since the last run. */
+  apply(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
+  /** The lowered rules as `rir` (list step 18): programs and label tables, with `fused` the packs and groups, with `setplan` the set plan. */
+  dump(fused?: boolean | null, setplan?: boolean | null): string;
+}
+
+export interface NativeCodeRuleSliceConstructor {
+  /** Opens the store at `storePath` and lowers `policies` for `backend` (`"cpu"` or `"metal"`). */
+  new (storePath: string, policies: NativeSlicePolicy[], capabilitiesJson: string, backend: "cpu" | "metal"): NativeCodeRuleSlice;
+}
+
 /** An OS advisory lock (`flock` / `LockFileEx`) the OS drops when the holding process exits, however it exits. */
 export interface NativeExclusiveFileLock {
   /** Unlocks and closes the file before process exit; later calls do nothing. */
@@ -289,8 +288,6 @@ export interface NativeExclusiveFileLock {
 
 export interface NativeBinding {
   health(): NativeHealth;
-  /** Checks the model directory against its `manifest.json` (each file's SHA-256) without loading the model. */
-  verifyModelFiles(modelPath: string): NativeModelCheck;
   nativeMemoryProfile(): string;
   processSessionId(pid: number): number | null;
   /** The module a file of dialect `label` carries as `module`, from the package markers on disk; null where its family names no modules or the file is outside a package. */
@@ -321,16 +318,23 @@ export interface NativeBinding {
   validateRegex(pattern: string): void;
   /** Windows only: start a detached process that inherits only NUL stdin and the appended log file; returns its pid. */
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
-  /** The content-store file name this binary's store schema owns (`content-v1.sqlite` at store floor 1). */
+  /** The content-store file name this binary's store schema owns (`content-v3.sqlite` at store floor 3). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
   /** Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git worktree. */
   openGitIgnoreMatcher(root: string): NativeGitIgnoreMatcher | null;
   ConversationEngine: NativeConversationEngineConstructor;
-  PackageFactsReader: new (root: string) => NativePackageFactsReader;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
   CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;
+  CodeRuleSlice: NativeCodeRuleSliceConstructor;
+  /**
+   * `policies` lowered and dumped as `rir` without a store (`rerail engine dump`): every clause, or only `clause`
+   * (`policy/clause` or a clause id); `fused` adds the packs and groups, `setplan` the set plan.
+   */
+  dumpRir(policies: NativeSlicePolicy[], capabilitiesJson: string, clause?: string | null, fused?: boolean | null, setplan?: boolean | null): string;
+  /** Every `program` block of `text` assembled through the verifier and dumped again (`rerail engine asm`); throws the first refusal. */
+  assembleRir(text: string): string;
 }
 
 const require = createRequire(import.meta.url);

@@ -6,7 +6,7 @@
  */
 import { h, setContent, icon, searchIcon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { awaitingApproval, categoryLabel, inPack, isRerailPack, isWorktreePack, MODE_LABEL, packSuppressions, publisherLabel } from "../derive.js";
+import { categoryLabel, inPack, packSuppressions } from "../derive.js";
 import { data, ui, isAttached, keptPacks, reviewing, repoName } from "../state.js";
 import { SHEET_FILTER_AT, sheetRules } from "../pack-model.js";
 import { changeOwner } from "../shell.js";
@@ -16,35 +16,30 @@ const packOn = pack => (reviewing() ? keptPacks().includes(pack.id) : isAttached
 
 /** Remove pack's question, in place: the whole pack goes, its history stays. */
 function removeQuestion(pack) {
-  const repo = repoName() || "this repo";
+  const n = pack.rules.length, repo = repoName() || "this repo";
   return h("span.rmask", { role: "alertdialog", "aria-label": `Remove ${pack.name}?` },
-    h("span", null, `Remove ${pack.name} from ${repo}? History is kept.`),
+    h("span", null, `Remove ${n === 1 ? "the 1 rule" : `all ${fmt(n)} rules`} in ${pack.name} from ${repo}? ${n === 1 ? "It goes" : "They go"} off and the pack returns to Rule packs. History is kept.`),
     h("button.btn.sm.danger", { "data-act": "removepack", "data-i": pack.id }, "Remove"),
     h("button.btn.sm.ghost.link", { "data-act": "cancelremove" }, "Cancel"));
 }
 
 /**
- * Remove pack, which asks once in place before it acts; `quiet` draws it as a muted link that turns red on hover (the
- * catalog), else as the sheet's red button. The pack page draws its own outline button and shows only the question.
- * The worktree's own rules are no attachment to remove: the files in its `.rerail/rules` decide them.
+ * Remove pack, which asks once in place before it acts; `quiet` draws it as a muted link that turns red on hover (a
+ * list of packs, the pack page), else as the sheet's red button.
  */
 export function removePackControl(pack, quiet = false) {
-  if (isWorktreePack(pack)) return null;
   if (ui.removeAsk === pack.id) return removeQuestion(pack);
-  return h(`button.btn.sm.danger${quiet ? ".quiet" : ""}`, { "data-act": "removepack", "data-i": pack.id }, "Remove pack");
+  return h(`button.btn.sm.danger${quiet ? ".quiet" : ""}`, { "data-act": "removepack", "data-i": pack.id, title: "Its rules go off and the pack returns to Rule packs" }, "Remove pack");
 }
 
 /** Add pack while the pack is not on here; else Remove pack (`removePackControl`). */
 export function packAction(pack, { solid = false, quiet = false } = {}) {
-  if (!packOn(pack) && !isWorktreePack(pack)) return h(`button.btn.sm${solid ? ".solid" : ""}`, { "data-act": "addpack", "data-i": pack.id }, icon("plus"), "Add pack");
+  if (!packOn(pack)) return h(`button.btn.sm${solid ? ".solid" : ""}`, { "data-act": "addpack", "data-i": pack.id }, icon("plus"), "Add pack");
   return removePackControl(pack, quiet);
 }
 
-/**
- * The pack's category as people read it, e.g. "Language" or "Framework", and for a third party's pack who publishes
- * it: "Language · By @acme".
- */
-export const packKind = pack => (isRerailPack(pack) ? categoryLabel(pack.category) : `${categoryLabel(pack.category)} · ${publisherLabel(pack)}`);
+/** The pack's category as people read it, e.g. "Language" or "Framework". */
+export const packKind = pack => categoryLabel(pack.category);
 
 /** The design's short marks for packs whose name or id does not shorten well. */
 const PACK_LETTERS = { javascript: "JS", typescript: "TS", css: "CSS", complexity: "C6" };
@@ -54,8 +49,9 @@ const monogram = pack => PACK_LETTERS[pack.id] ?? pack.id.replace(/[^a-z0-9]/giu
 
 export const packIcon = pack => h("span.picon", { "aria-hidden": "true" }, h(`span.ltr${monogram(pack).length > 2 ? ".l3" : ""}`, null, monogram(pack)));
 
+const MODE_NAME = { log: "Log", steer: "Steer", block: "Block" };
 /** How a pack rule starts once added: its mode, and "off" for a rule the pack adds switched off. */
-const startsAs = rule => `${MODE_LABEL[rule.mode] ?? rule.mode}${rule.on ? "" : " · off"}`;
+const startsAs = rule => `${MODE_NAME[rule.mode] ?? rule.mode}${rule.on ? "" : " · off"}`;
 
 /** Once the pack is added: whether its rules here honour suppression comments, and the pack's switch for them. */
 function suppressionsLine(pack, suppressions) {
@@ -91,22 +87,11 @@ function renderHead(pack, on) {
       h("span.grow"), on ? null : packAction(pack, { solid: true }))]);
 }
 
-/** While the pack waits for a person's approval: what that means, and Approve for what this version ships. */
-function approvalLine(pack) {
-  if (!awaitingApproval(pack)) return null;
-  const { kind, id, digest } = pack.approval.subject;
-  return h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
-    h("b", null, "Waits for approval."),
-    h("p", null, "Rerail did not publish this version, so its rules run in Log, steering no one, until a person approves what it ships. Read what its rules tell the coding agent first."),
-    h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approve", "data-i": id, "data-kind": kind, "data-digest": digest }, "Approve"))));
-}
-
 function renderIntro(pack, on, suppressions) {
-  setContent(sheet.intro, JSON.stringify(["intro", pack.id, on, suppressions, pack.approval ?? null]), () => [
-    approvalLine(pack),
+  setContent(sheet.intro, JSON.stringify(["intro", pack.id, on, suppressions]), () => [
     h("p.pintro", null, pack.covers, " ", on
-      ? "Turn its rules on or off on its page in the menu."
-      : "Adding it gives its rules a page in the menu. Each rule starts as listed below."),
+      ? `Its rules are on its page in the menu; turn them on or off there.`
+      : "Add it and its rules get a page of their own in the menu, each in Log or Steer as listed below. A rule marked off arrives off. Nothing else changes."),
     suppressionsLine(pack, suppressions)]);
 }
 
@@ -128,7 +113,7 @@ export function renderPackPanel(root, pack) {
   const on = packOn(pack), added = isAttached(pack);
   // Every rule the pack added in some folder: a rule may also be added on its own elsewhere, and that folder comes first.
   const present = [...data.rules.values()].filter(r => inPack(r, pack.id));
-  const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present, pack.id, changeOwner(pack.id), data.checkout?.checkoutPath) : null;
+  const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present, pack.id, changeOwner(), data.checkout?.checkoutPath) : null;
   renderHead(pack, on);
   renderIntro(pack, on, suppressions);
   sheet.filter.hidden = pack.rules.length <= SHEET_FILTER_AT;

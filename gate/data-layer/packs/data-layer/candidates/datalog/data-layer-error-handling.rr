@@ -1,0 +1,40 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.input doc, node, child, text, name, line, syntax_error
+.decl k0(kind: symbol)
+k0("expression_statement").
+.decl k1(kind: symbol)
+k1("module").
+.decl in_scope(d: number)
+.decl m17(n: node)
+.decl m2(n: node)
+.decl m3(n: node)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("services/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+m2(n) :- node(_, n, "identifier", _, _).
+m2(n) :- node(_, n, "call", _, _).
+m2(n) :- node(_, n, "attribute", _, _).
+m2(n) :- node(_, n, "string", _, _).
+m2(n) :- node(_, n, "integer", _, _).
+m2(n) :- node(_, n, "none", _, _).
+m3(n) :- child(n, v1, _), m2(v1).
+m17(n) :- node(_, n, "module", _, _), node(v10, n, _, _, _), node(v10, v11, _, _, _), name(v11, v12), (contains("logger.error", v12) ; contains("logger.warning", v12) ; contains("txn.commit", v12)).
+m17(n) :- inside(n, v13, k1), node(_, v13, "module", _, _), node(v14, v13, _, _, _), node(v14, v15, _, _, _), name(v15, v16), (contains("logger.error", v16) ; contains("logger.warning", v16) ; contains("txn.commit", v16)).
+violation("data-layer-error-handling", "admin-commit", "EH001", p, l) :- node(_, n, "call", _, _), node(_, n, "call", _, _), child(n, v5, 0), node(_, v5, "attribute", _, _), child(v5, v6, 0), node(_, v6, "identifier", _, _), text(v6, "txn"), child(v5, v7, 1), node(_, v7, "identifier", _, _), text(v7, "commit"), !child(v5, _, 2), child(n, v8, 1), node(_, v8, "argument_list", _, _), !child(v8, _, 0), !child(n, _, 2), inside(n, v9, k0), node(_, v9, "expression_statement", _, _), m17(n), doc(d, p, m), prefix("api/l8000_admin/tools", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+.output violation

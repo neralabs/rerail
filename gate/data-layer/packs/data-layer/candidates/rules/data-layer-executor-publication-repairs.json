@@ -1,0 +1,83 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-executor-publication-repairs",
+  "revision": 1,
+  "mode": "block",
+  "description": "Producer publication metadata remains outside the executor. Source: nera-data-layer 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2070_batching/executor.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "cte_output_columns",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "_cte_output_columns",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "executor_publication_repair",
+        "anchor": "witness.span",
+        "message": "Executor references producer-owned _cte_output_columns"
+      }
+    },
+    {
+      "id": "cte_column_type_hints",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "_cte_column_type_hints",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "executor_publication_repair",
+        "anchor": "witness.span",
+        "message": "Executor references producer-owned _cte_column_type_hints"
+      }
+    },
+    {
+      "id": "publication_contract_cache",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "_publication_contract_cache",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "executor_publication_repair",
+        "anchor": "witness.span",
+        "message": "Executor references producer-owned _publication_contract_cache"
+      }
+    },
+    {
+      "id": "cte_publication_contract_cache",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "_cte_publication_contract_cache",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "executor_publication_repair",
+        "anchor": "witness.span",
+        "message": "Executor references producer-owned _cte_publication_contract_cache"
+      }
+    }
+  ]
+}

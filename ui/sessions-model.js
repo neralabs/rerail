@@ -224,7 +224,7 @@ export const resumeCommand = s => {
   const name = HOST_NAME[s.host] ?? s.host, cd = `cd ${sq(s.cwd)} && `;
   if (s.host === "claude-code") return { name, cmd: `${cd}claude --resume ${sq(s.sessionId)}` };
   if (s.host === "codex") return { name, cmd: `${cd}codex resume ${sq(s.sessionId)}` };
-  return { name, cmd: null, cwd: s.cwd };
+  return { name, cmd: null, how: `Open ${name} in ${s.cwd} and find this conversation in its history. Session id: ${s.sessionId}` };
 };
 
 /**

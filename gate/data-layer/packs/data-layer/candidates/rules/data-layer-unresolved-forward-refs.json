@@ -1,0 +1,447 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-unresolved-forward-refs",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer unresolved_forward_refs at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "api/**/*.py",
+      "impl/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "inspection",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "attribute",
+                    "pattern": "$ANNOTATION"
+                  },
+                  {
+                    "has": {
+                      "kind": "identifier",
+                      "regex": "^(?:annotation)$",
+                      "stopBy": "neighbor",
+                      "field": "attribute"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "identifier",
+                          "regex": "^(?:f)$"
+                        },
+                        {
+                          "kind": "identifier",
+                          "regex": "(?i:field_info|_info$)"
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "subscript"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "attribute"
+                                  },
+                                  {
+                                    "has": {
+                                      "kind": "identifier",
+                                      "regex": "^(?:model_fields)$",
+                                      "stopBy": "neighbor",
+                                      "field": "attribute"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "value"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "object"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "argument_list"
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "has": {
+                                  "any": [
+                                    {
+                                      "kind": "identifier",
+                                      "regex": "^(?:get_type_hints|issubclass|get_args|get_origin|TypeAdapter|isinstance)$"
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "attribute"
+                                        },
+                                        {
+                                          "has": {
+                                            "kind": "identifier",
+                                            "regex": "^(?:get_type_hints|issubclass|get_args|get_origin|TypeAdapter|isinstance)$",
+                                            "stopBy": "neighbor",
+                                            "field": "attribute"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "call"
+                                        },
+                                        {
+                                          "has": {
+                                            "kind": "identifier",
+                                            "regex": "^(?:str)$",
+                                            "stopBy": "neighbor",
+                                            "field": "function"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "call"
+                                        },
+                                        {
+                                          "has": {
+                                            "kind": "identifier",
+                                            "regex": "^(?:isinstance)$",
+                                            "stopBy": "neighbor",
+                                            "field": "function"
+                                          }
+                                        },
+                                        {
+                                          "arguments": {
+                                            "signature": [
+                                              "first",
+                                              "second",
+                                              "/"
+                                            ],
+                                            "bind": {
+                                              "SAFE_TYPE": "second"
+                                            },
+                                            "mode": "syntactic"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "pattern": "$SAFE_TYPE"
+                                                },
+                                                {
+                                                  "any": [
+                                                    {
+                                                      "kind": "identifier",
+                                                      "regex": "^(?:str|ForwardRef|TypeVar)$"
+                                                    },
+                                                    {
+                                                      "all": [
+                                                        {
+                                                          "kind": "tuple"
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "kind": "identifier",
+                                                            "regex": "^(?:str|ForwardRef|TypeVar)$",
+                                                            "stopBy": "neighbor"
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ],
+                                              "stopBy": "neighbor"
+                                            },
+                                            "stopBy": "neighbor",
+                                            "field": "arguments"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "comparison_operator"
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "kind": "none",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "has": {
+                                "regex": "^(?:is|is not)$",
+                                "stopBy": "neighbor"
+                              }
+                            },
+                            {
+                              "all": [
+                                {
+                                  "has": {
+                                    "regex": "^(?:==|!=)$",
+                                    "stopBy": "neighbor"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "kind": "identifier",
+                                    "regex": "^[A-Z]",
+                                    "not": {
+                                      "nthChild": 1
+                                    },
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^(?:get)$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:subtype_annotations|hints|type_hints|class_annotations|resolved_annotations|resolved_hints)$"
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "identifier",
+                                        "pattern": "$DICT"
+                                      },
+                                      {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "function_definition"
+                                            },
+                                            {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "assignment"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "pattern": "$DICT",
+                                                      "stopBy": "neighbor",
+                                                      "field": "left"
+                                                    }
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "all": [
+                                                        {
+                                                          "kind": "call"
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "any": [
+                                                              {
+                                                                "kind": "identifier",
+                                                                "regex": "^(?:get_type_hints)$"
+                                                              },
+                                                              {
+                                                                "all": [
+                                                                  {
+                                                                    "kind": "attribute"
+                                                                  },
+                                                                  {
+                                                                    "has": {
+                                                                      "kind": "identifier",
+                                                                      "regex": "^(?:get_type_hints)$",
+                                                                      "stopBy": "neighbor",
+                                                                      "field": "attribute"
+                                                                    }
+                                                                  }
+                                                                ]
+                                                              }
+                                                            ],
+                                                            "stopBy": "neighbor",
+                                                            "field": "function"
+                                                          }
+                                                        }
+                                                      ],
+                                                      "stopBy": "neighbor",
+                                                      "field": "right"
+                                                    }
+                                                  }
+                                                ],
+                                                "stopBy": "end"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": {
+                                            "kind": "function_definition"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      },
+                      {
+                        "arguments": {
+                          "signature": [
+                            "key",
+                            "default",
+                            "/"
+                          ],
+                          "bind": {
+                            "DEFAULT": "default"
+                          },
+                          "mode": "syntactic"
+                        }
+                      },
+                      {
+                        "has": {
+                          "has": {
+                            "all": [
+                              {
+                                "pattern": "$DEFAULT"
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "compare": {
+                                      "left": "DEFAULT",
+                                      "op": "eq",
+                                      "right": "ANNOTATION",
+                                      "text": "node"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "pattern": "$ANNOTATION",
+                                      "stopBy": "end"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "arguments"
+                        }
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "unresolved_forward_ref",
+        "anchor": "witness.span",
+        "message": "Resolve FieldInfo.annotation with get_type_hints before type inspection, or use the resolved-hints fallback."
+      }
+    }
+  ]
+}

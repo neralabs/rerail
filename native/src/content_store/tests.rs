@@ -9,7 +9,6 @@ use super::*;
 use rusqlite::limits::Limit;
 use rusqlite::params;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fs;
 use std::io::Cursor;
 use std::sync::Arc;
 use std::thread;
@@ -26,13 +25,13 @@ fn temporary_database(label: &str) -> std::path::PathBuf {
     ))
 }
 
-fn store(label: &str) -> (std::path::PathBuf, ContentStore) {
+pub(super) fn store(label: &str) -> (std::path::PathBuf, ContentStore) {
     let path = temporary_database(label);
     let store = ContentStore::open(&path).unwrap();
     (path, store)
 }
 
-fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
+pub(super) fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
     CandidateCatalogIdentity::new(
         HashKey::sha256(label.as_bytes()),
         HashKey::sha256(b"grammar-set"),
@@ -43,7 +42,7 @@ fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
 }
 
 /// Publishes `id` as a complete empty Git tree, so a snapshot may use it as its root.
-fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
+pub(super) fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
     store
         .put_git_trees_bulk(&[GitTree {
             id,
@@ -214,6 +213,75 @@ fn hash_lookup_index_contains_only_algorithm_and_first_lane() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     assert_eq!(columns, vec!["algorithm_id", "lane0"]);
+}
+
+#[test]
+fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_, store) = store("bulk-sources");
+    let requests = (0..257)
+        .map(|i| {
+            let source = format!("source {i} π").into_bytes();
+            let id = store.put_source(&source, &[]).unwrap();
+            (id, HashKey::sha256(&source))
+        })
+        .collect::<Vec<_>>();
+    let executed = AtomicUsize::new(0);
+    unsafe extern "C" fn trace(
+        _: u32,
+        state: *mut std::ffi::c_void,
+        _: *mut std::ffi::c_void,
+        _: *mut std::ffi::c_void,
+    ) -> i32 {
+        // SAFETY: the counter remains alive until the callback is removed.
+        unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let connection = store.connection.lock().unwrap();
+    // SAFETY: the connection and counter live through the synchronous batch reads below.
+    unsafe {
+        rusqlite::ffi::sqlite3_trace_v2(
+            connection.handle(),
+            rusqlite::ffi::SQLITE_TRACE_STMT,
+            Some(trace),
+            (&executed as *const AtomicUsize).cast_mut().cast(),
+        );
+    }
+    drop(connection);
+    let mut duplicated = requests.clone();
+    duplicated.push(requests[0]);
+    let sources = store
+        .get_sources_by_hash_bulk(&duplicated, 100_000)
+        .unwrap();
+    assert_eq!(sources.len(), 257);
+    assert_eq!(executed.load(Ordering::Relaxed), 3);
+    for (id, hash) in &requests {
+        assert_eq!(HashKey::sha256(&sources[id]), *hash);
+    }
+    let warm = store
+        .get_sources_by_hash_bulk(&duplicated, 100_000)
+        .unwrap();
+    assert_eq!(warm, sources);
+    assert_eq!(
+        executed.load(Ordering::Relaxed),
+        3,
+        "warm immutable source frames need no SQL"
+    );
+    assert!(store.get_sources_by_hash_bulk(&requests, 1).is_err());
+    assert!(
+        store
+            .get_sources_by_hash_bulk(
+                &[requests[0], (requests[0].0, HashKey::sha256(b"wrong"))],
+                100_000
+            )
+            .is_err()
+    );
+    assert!(store.get_sources_by_hash_bulk(&[], 0).unwrap().is_empty());
+    let connection = store.connection.lock().unwrap();
+    // SAFETY: remove the callback before the counter goes out of scope.
+    unsafe {
+        rusqlite::ffi::sqlite3_trace_v2(connection.handle(), 0, None, std::ptr::null_mut());
+    }
 }
 
 #[test]
@@ -2683,71 +2751,4 @@ fn a_single_language_tape_writes_no_document_rows() {
         .query_row("SELECT count(*) FROM file_documents", [], |row| row.get(0))
         .unwrap();
     assert_eq!(rows, 0);
-}
-
-#[cfg(unix)]
-fn mode_of(path: &std::path::Path) -> u32 {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::symlink_metadata(path)
-        .unwrap()
-        .permissions()
-        .mode()
-        & 0o777
-}
-
-#[cfg(unix)]
-fn set_mode(path: &std::path::Path, mode: u32) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
-}
-
-#[cfg(unix)]
-#[test]
-fn a_new_store_and_the_wal_beside_it_are_private_to_their_user() {
-    let root = temporary_database("private-new").with_extension("d");
-    let folder = root.join("cache");
-    let path = folder.join(STORE_FILE_NAME);
-    drop(ContentStore::open(&path).unwrap());
-    assert_eq!(mode_of(&folder), 0o700);
-    assert_eq!(mode_of(&path), 0o600);
-    // The store is in WAL mode; SQLite creates the WAL with the database file's mode.
-    let writer = Connection::open(&path).unwrap();
-    writer
-        .execute_batch("CREATE TABLE private_probe (x)")
-        .unwrap();
-    let mut wal = path.as_os_str().to_owned();
-    wal.push("-wal");
-    assert_eq!(mode_of(std::path::Path::new(&wal)), 0o600);
-    drop(writer);
-    std::fs::remove_dir_all(&root).unwrap();
-}
-
-#[cfg(unix)]
-#[test]
-fn opening_a_store_others_can_read_takes_their_access_away() {
-    let folder = temporary_database("private-existing").with_extension("d");
-    let path = folder.join(STORE_FILE_NAME);
-    drop(ContentStore::open(&path).unwrap());
-    set_mode(&folder, 0o755);
-    set_mode(&path, 0o644);
-    let store = ContentStore::open(&path).unwrap();
-    assert_eq!(mode_of(&folder), 0o700);
-    assert_eq!(mode_of(&path), 0o600);
-    drop(store);
-    std::fs::remove_dir_all(&folder).unwrap();
-}
-
-#[cfg(unix)]
-#[test]
-fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
-    let root = temporary_database("private-symlink").with_extension("d");
-    let elsewhere = root.join("elsewhere");
-    std::fs::create_dir_all(&elsewhere).unwrap();
-    set_mode(&elsewhere, 0o755);
-    let linked = root.join("linked");
-    std::os::unix::fs::symlink(&elsewhere, &linked).unwrap();
-    drop(ContentStore::open(&linked.join(STORE_FILE_NAME)).unwrap());
-    assert_eq!(mode_of(&elsewhere), 0o755);
-    assert_eq!(mode_of(&elsewhere.join(STORE_FILE_NAME)), 0o600);
-    std::fs::remove_dir_all(&root).unwrap();
 }

@@ -1,0 +1,15 @@
+.policy "ruff-d419-empty-docstring" revision 2
+.description "Write a summary in every Python docstring or remove it; an empty docstring documents nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D419 (pydocstyle): a docstring whose body is only whitespace.
+//   def f():
+//       """   """          ← D419
+#include "python/docstrings.rr"
+
+.violation D419(at: node) code "D419"
+    "Write a one-line summary of what this module, class or function does in the docstring, or delete the empty docstring."
+    suppress ruff "D419"
+D419(s) :- doc_body(s, b), match("\\s*", b).

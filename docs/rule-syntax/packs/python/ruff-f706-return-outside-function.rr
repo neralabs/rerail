@@ -1,0 +1,15 @@
+.policy "ruff-f706-return-outside-function" revision 2
+.description "Keep return inside a function; at module level or directly in a class body it is a Python syntax error."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F706 (pyflakes): `return` in a class body or at module level. CPython rejects the file.
+//   class C: return 1        ← F706
+//   def f(): return 1        not reported
+#include "python/pyflakes.rr"
+//   run_scope(n, s, k)  the scope n runs in; a statement's is the def, class or module whose body holds it
+
+.violation F706(at: node) code "F706" "`return` statement outside of a function/method"
+    suppress ruff "F706"
+F706(r) :- kind(r, "return_statement"), run_scope(r, _, k), k != "function".

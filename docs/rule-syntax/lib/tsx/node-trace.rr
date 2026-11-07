@@ -1,0 +1,93 @@
+// tsx/node-trace: the uses of a Node.js built-in module that eslint-plugin-n's ReferenceTracker rules report
+// (prefer-global/*, prefer-promises/*, prefer-node-protocol, prefer-import/assert-strict, no-deprecated-api), in
+// the plugin's legacy mode: CommonJS require(), process.getBuiltinModule(), and ESM imports and re-exports. The
+// tracing itself is values.rr's; this library sets up its tables for a rule's trace map and sorts the uses by form.
+//
+// What a rule gets from this library:
+//   trace_module(m)          the rule traces built-in module m: "m" loads it, and "node:m" where Node has that
+//                            name (isBuiltin; the plugin's extendTraceMapWithNodePrefix) (the rule's fact)
+//   trace_member(m, x)       the rule traces member x of m (a dotted path: "promises.readFile"; the rule's fact)
+//   trace_global(g)          the rule traces the global g (the rule's fact)
+//   module_use(at, m, x, f)  at uses member x of module m (x "" for the module itself) in form f:
+//                              "require"     require("m") or process.getBuiltinModule("m"), for the module itself
+//                              "esm"         an import or export … from "m" declaration, for the module itself
+//                              "member"      o.x or o["x"] where o is the module (also through aliases)
+//                              "destructured" a key of a destructuring pattern of the module: const { x } = …
+//                              "specifier"   import { x } from "m", export { x } from "m"
+//                              "export_all"  export * from "m", which re-exports every member
+//                              "call", "new" a call or `new` of the member, aliases included
+//   global_use(at, g)        at reads the global g (a reference no declaration shadows, or globalThis.g)
+//   module_global(g, m, x)   the global g is module m's member x (x "" for the module itself; the rule's fact);
+//                            it sets up the three tables above
+//   prefer_global_use(at, msg)   n/prefer-global/*: with the rule's option "always" (the default) each use of m's
+//                            x, with option "never" each use of the global g, and the message for it
+//
+// Examples:
+//   n/prefer-global/buffer      require("buffer").Buffer            module_use(…, "buffer", "Buffer", "member")
+//   n/prefer-global/console     import c from "node:console"        module_use(…, "console", "", "esm")
+//   n/prefer-promises/fs        fs.readFile(p, cb)                  module_use(…, "fs", "readFile", "call")
+//
+// The CommonJS require is the global one (values.rr: a CommonJS file's, by package type); process is a global in
+// every file, as the policies declare it.
+//
+// Builds on tsx/values (api_use, export_all, node_module, node_global, api_known, module_load) and tsx/node
+// (builtin_spec).
+
+#include "tsx/node.rr"   // builtin_spec; values.rr
+
+.decl trace_module(m: symbol)
+.decl trace_member(m: symbol, x: symbol)
+.decl trace_global(g: symbol)
+// The tables values.rr follows. (Other rules' tables may add rows; the uses below only ask for what is traced.)
+node_module(m, m) :- trace_module(m).
+node_module(cat("node:", m), m) :- trace_module(m), builtin_spec(cat("node:", m)).
+api_known(@qname(m, x)) :- trace_path(m, x).
+.decl trace_path(m: symbol, x: symbol)  // a traced member and each path above it: "promises.readFile", "promises"
+trace_path(m, x) :- trace_member(m, x).
+trace_path(m, p) :- trace_path(m, x), match("(?<p>.+)\\.[^.]+", x).
+node_global("require"). node_global("process"). node_global("global"). node_global("globalThis").
+node_global(g) :- trace_global(g).
+
+.decl module_use(at: node, m: symbol, x: symbol, form: symbol)
+module_use(c, m, "", "require") :- api_use(c, s, "load"), kind(c, "call_expression"), node_module(s, m),
+    trace_module(m).
+module_use(i, m, "", "esm") :- api_use(i, s, "load"), !kind(i, "call_expression"), node_module(s, m), trace_module(m).
+module_use(n, m, x, f) :- api_use(n, p, "read"), trace_member(m, x), p = @qname(m, x), kind(n, k), read_form(k, f).
+module_use(e, m, x, "export_all") :- export_all(e, m), trace_member(m, x), !contains(".", x).
+module_use(c, m, x, how) :- api_use(c, p, how), (how = "call" ; how = "new"), trace_member(m, x), p = @qname(m, x).
+.decl read_form(k: symbol, f: symbol)
+read_form("member_expression", "member"). read_form("subscript_expression", "member").
+read_form("shorthand_property_identifier_pattern", "destructured"). read_form("pair_pattern", "destructured").
+read_form("object_assignment_pattern", "destructured").
+read_form("import_specifier", "specifier"). read_form("export_specifier", "specifier").
+
+.decl global_use(at: node, g: symbol)
+// A global the file assigns is not followed (values.rr's env_written), though `globalThis.g` still is, as in
+// ReferenceTracker, which checks isModifiedGlobal only on the variable it starts from.
+global_use(r, g) :- api_use(r, g, "read"), trace_global(g).
+
+
+// prefer_global_use(at, msg): n/prefer-global/*'s check, for the rule's module_global rows.
+.decl module_global(g: symbol, m: symbol, x: symbol)
+trace_module(m) :- module_global(_, m, _).
+trace_member(m, x) :- module_global(_, m, x), x != "".
+trace_global(g) :- module_global(g, _, _).
+.decl prefer_global_use(at: node, msg: symbol)
+prefer_global_use(n, msg) :- !option("option", "never"), module_global(g, m, x), module_use(n, m, x, f),
+    prefer_says(g, m, x, f, msg).
+prefer_global_use(n, cat(cat(cat("Use require(\"", m), "\")"), cat(cat(o, " instead of the global "), cat(g, ".")))) :-
+    option("option", "never"), module_global(g, m, x), global_use(n, g), (x = "", o = "" ; x != "", o = cat(".", x)).
+.decl prefer_says(g: symbol, m: symbol, x: symbol, form: symbol, msg: symbol)
+prefer_says(g, m, "", "require", cat(cat(cat("Use the global ", g), " instead of requiring the "), cat(m, " module."))) :-
+    module_global(g, m, "").
+prefer_says(g, m, "", "esm", cat(cat(cat("Use the global ", g), " instead of importing or re-exporting the "),
+    cat(m, " module."))) :- module_global(g, m, "").
+prefer_says(g, m, x, "member", cat(cat(cat("Use the global ", g), " instead of reading "),
+    cat(cat(x, " from the "), cat(m, " module.")))) :- module_global(g, m, x), x != "".
+prefer_says(g, m, x, "destructured", cat(cat(cat("Drop ", x), " from this destructuring and use the global "),
+    cat(g, " instead."))) :- module_global(g, m, x), x != "".
+prefer_says(g, m, x, "specifier", cat(cat(cat("Remove ", x), " from this import or export and use the global "),
+    cat(g, " instead."))) :- module_global(g, m, x), x != "".
+prefer_says(g, m, x, "export_all", cat(cat(cat("Re-export only the names you need from the ", m), " module; "),
+    w)) :- module_global(g, m, x), x != "", (x = g, w = cat(x, " is already a global.") ;
+    x != g, w = cat(cat(cat("its ", x), " is the global "), cat(g, "."))).

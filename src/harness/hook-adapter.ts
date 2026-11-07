@@ -1,16 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
 import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } from "../engine/adapter-contract.js";
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
-import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
-import { scrubSecrets } from "../engine/secret-scrub.js";
-import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 
 export type HookInput = Record<string, unknown>;
 export type HookOutput = Record<string, unknown>;
@@ -70,44 +67,37 @@ function errno(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-/** The steers held at `path`; a symlink on the way to it under `.rerail` is refused (`readLedgerFile`). */
 export async function readPending(path: string): Promise<AdapterDelivery[]> {
-  const text = await readLedgerFile(path, dirname(path));
-  if (text === undefined) return [];
-  const parsed = JSON.parse(text) as unknown;
-  if (!Array.isArray(parsed)) throw new Error("Pending delivery state must be an array");
-  return parsed
-    .filter((value): value is Omit<AdapterDelivery, "rules"> & { rules?: unknown } => {
-      if (value === null || typeof value !== "object") return false;
-      const delivery = value as Partial<AdapterDelivery>;
-      return typeof delivery.sessionId === "string"
-        && delivery.requested !== undefined
-        && RULE_MODES.includes(delivery.requested)
-        && steers(delivery.requested)
-        && typeof delivery.mechanism === "string"
-        && typeof delivery.content === "string"
-        && Array.isArray(delivery.ruleIds)
-        && delivery.ruleIds.every(id => typeof id === "string");
-    })
-    // A steer held before deliveries carried their rules, or with rules that are not, shows no line.
-    .map(delivery => ({ ...delivery, rules: Array.isArray(delivery.rules) ? delivery.rules.filter(isSteerRule) : [] }));
-}
-
-/**
- * Deliveries as a pending file holds them: each one's content scrubbed of secrets (`scrubSecrets`), as the session
- * ledger stores a delivery. The caller keeps the original, so a steer delivered now carries its text whole; one held
- * for a later event goes out as it was written here.
- */
-function pendingForDisk(deliveries: readonly AdapterDelivery[]): AdapterDelivery[] {
-  return deliveries.map(delivery => {
-    const content = scrubSecrets(delivery.content);
-    return content === delivery.content ? delivery : { ...delivery, content };
-  });
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    if (!Array.isArray(parsed)) throw new Error("Pending delivery state must be an array");
+    return parsed
+      .filter((value): value is Omit<AdapterDelivery, "rules"> & { rules?: unknown } => {
+        if (value === null || typeof value !== "object") return false;
+        const delivery = value as Partial<AdapterDelivery>;
+        return typeof delivery.sessionId === "string"
+          && delivery.requested !== undefined
+          && RULE_MODES.includes(delivery.requested)
+          && steers(delivery.requested)
+          && typeof delivery.mechanism === "string"
+          && typeof delivery.content === "string"
+          && Array.isArray(delivery.ruleIds)
+          && delivery.ruleIds.every(id => typeof id === "string");
+      })
+      // A steer held before deliveries carried their rules, or with rules that are not, shows no line.
+      .map(delivery => ({ ...delivery, rules: Array.isArray(delivery.rules) ? delivery.rules.filter(isSteerRule) : [] }));
+  } catch (error) {
+    if (errno(error, "ENOENT")) return [];
+    throw error;
+  }
 }
 
 export async function persistPending(path: string, deliveries: readonly AdapterDelivery[]): Promise<void> {
   if (deliveries.length === 0) return;
-  await writeLedgerFile(path, dirname(path), JSON.stringify(pendingForDisk([...(await readPending(path)), ...deliveries])));
+  await mkdir(join(path, ".."), { recursive: true });
+  const temporary = `${path}.${process.pid}`;
+  await writeFile(temporary, JSON.stringify([...(await readPending(path)), ...deliveries]), { mode: 0o600 });
+  await rename(temporary, path);
 }
 
 export async function takePending(path: string): Promise<AdapterDelivery[]> {
@@ -121,30 +111,10 @@ export async function replacePending(path: string, deliveries: readonly AdapterD
     await rm(path, { force: true });
     return;
   }
-  await writeLedgerFile(path, dirname(path), JSON.stringify(pendingForDisk(deliveries)));
-}
-
-/**
- * A pending file's text as `rerail scrub` rewrites it: each entry's `content` scrubbed of secrets, every other part of
- * the file as it was; undefined when nothing changes or the text is not a JSON array.
- */
-export function scrubbedPendingText(text: string): string | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(parsed)) return undefined;
-  let changed = false;
-  const scrubbed = parsed.map((entry: unknown) => {
-    if (entry === null || typeof entry !== "object" || !("content" in entry) || typeof entry.content !== "string") return entry;
-    const content = scrubSecrets(entry.content);
-    if (content === entry.content) return entry;
-    changed = true;
-    return { ...entry, content };
-  });
-  return changed ? JSON.stringify(scrubbed) : undefined;
+  await mkdir(join(path, ".."), { recursive: true });
+  const temporary = `${path}.${process.pid}`;
+  await writeFile(temporary, JSON.stringify(deliveries), { mode: 0o600 });
+  await rename(temporary, path);
 }
 
 export async function routeDeliveries(
@@ -232,7 +202,7 @@ async function reclaimDeadOwner(path: string): Promise<boolean> {
   }
 }
 
-async function acquireLock(path: string, serializedOwner: string, deadline: number, label: string): Promise<void> {
+async function acquireLock(path: string, serializedOwner: string, deadline: number, sessionId: string): Promise<void> {
   for (;;) {
     try {
       await writeFile(path, serializedOwner, { flag: "wx", mode: 0o600 });
@@ -240,7 +210,7 @@ async function acquireLock(path: string, serializedOwner: string, deadline: numb
     } catch (error) {
       if (!errno(error, "EEXIST")) throw error;
       if (await reclaimDeadOwner(path)) continue;
-      if (Date.now() >= deadline) throw new Error(`Timed out waiting for session lock: ${label}`);
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for session lock: ${sessionId}`);
       await delay(10);
     }
   }
@@ -260,27 +230,11 @@ export async function withSessionLock<T>(
   sessionId: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  return withLockFile(sessionFile(storageRoot, host, "locks", sessionId, "lock"), sessionId, operation);
-}
-
-/**
- * Runs `operation` holding the lock a hook holds for the session whose held steers are `pendingFile`
- * (`<storageRoot>/<host>-pending/<digest>.json`, `pendingPath`): the same `<storageRoot>/<host>-locks/<digest>.lock`,
- * so rewriting the file races no hook of that session.
- */
-export async function withPendingFileLock<T>(pendingFile: string, operation: () => Promise<T>): Promise<T> {
-  const folder = basename(dirname(pendingFile));
-  const host = /^(.+)-pending$/.exec(folder)?.[1];
-  const digest = /^([0-9a-f]{64})\.json$/.exec(basename(pendingFile))?.[1];
-  if (host === undefined || digest === undefined) throw new Error(`Not a pending steer file: ${pendingFile}`);
-  return withLockFile(join(dirname(dirname(pendingFile)), `${host}-locks`, `${digest}.lock`), digest, operation);
-}
-
-async function withLockFile<T>(path: string, label: string, operation: () => Promise<T>): Promise<T> {
-  await makeLedgerFolder(dirname(path));
+  const path = sessionFile(storageRoot, host, "locks", sessionId, "lock");
+  await mkdir(join(path, ".."), { recursive: true });
   const owner: LockOwner = { pid: process.pid, token: randomUUID() };
   const serializedOwner = JSON.stringify(owner);
-  await acquireLock(path, serializedOwner, Date.now() + 30_000, label);
+  await acquireLock(path, serializedOwner, Date.now() + 30_000, sessionId);
   try {
     const result = await operation();
     await releaseLock(path, serializedOwner);
@@ -334,30 +288,14 @@ export function launchedDirectly(moduleUrl: string): boolean {
   return launchedPath !== undefined && realpathSync(fileURLToPath(moduleUrl)) === realpathSync(resolve(launchedPath));
 }
 
-/**
- * A hook the recorded-first fallback started on an older `node` from PATH, once the node set-up recorded was gone,
- * does nothing and says so in one line on stderr, which the coding agents keep out of the session: a hook must never
- * break it.
- */
-export async function serveHook(
-  run: (input: HookInput) => Promise<HookOutput>,
-  streams: HookStreams = process,
-  nodeVersion: string = process.versions.node,
-): Promise<void> {
+export async function serveHook(run: (input: HookInput) => Promise<HookOutput>, streams: HookStreams = process): Promise<void> {
   let output: HookOutput = {};
   let serialized = "{}\n";
   try {
     const parsed = JSON.parse(await readStdin(streams.stdin)) as unknown;
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Hook stdin must be a JSON object");
-    if (Number.parseInt(nodeVersion, 10) >= REQUIRED_NODE_MAJOR) {
-      output = await run(parsed as HookInput);
-      serialized = `${JSON.stringify(output)}\n`;
-    } else {
-      streams.stderr.write(
-        `rerail hook: Rerail needs Node ${REQUIRED_NODE_MAJOR} or newer and this is Node ${nodeVersion}, so it is off in this session. `
-          + `Put Node ${REQUIRED_NODE_MAJOR} or newer first on PATH, then run rerail install --refresh.\n`,
-      );
-    }
+    output = await run(parsed as HookInput);
+    serialized = `${JSON.stringify(output)}\n`;
   } catch (error) {
     output = {};
     streams.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);

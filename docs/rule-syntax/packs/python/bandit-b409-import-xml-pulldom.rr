@@ -1,0 +1,18 @@
+.policy "bandit-b409-import-xml-pulldom" revision 2
+.description "Avoid importing xml.dom.pulldom to parse XML; it is open to XML attacks, so use defusedxml."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B409 (its B001 blacklist): an import of xml.dom.pulldom or a name in it.
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+//   import xml.dom.pulldom                      B409
+//   from xml.dom import pulldom as p            B409
+//   import xml.dom                              not reported
+//   importlib.import_module("xml.dom.pulldom")  B409: a call that imports a listed module (exactly)
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B409(at: node) code "B409"
+    "xml.dom.pulldom parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B409"
+B409(n) :- blacklisted(n, "B409").

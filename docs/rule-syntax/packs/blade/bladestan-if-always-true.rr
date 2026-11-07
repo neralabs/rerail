@@ -1,0 +1,19 @@
+.policy "bladestan-if-always-true" revision 2
+.description "Remove if conditions in Blade templates that are always true from values the template itself sets; the check is redundant or hides a bug."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/values.rr"
+//   blade_code(n)            n is in the compiled PHP;  php_if_const(i, c, b)  `if (c)` is always b
+
+// Bladestan's if.alwaysTrue: PHPStan's IfConstantConditionRule (level 4) over the PHP the template compiles to.
+// An @if whose condition is always true from what the template itself sets:
+//   @if(true) … @endif                                  reported, at the condition
+//   @php $show = 1; @endphp  @if($show) … @endif        reported: $show has one write, before the @if
+//   @if($user) … @endif                                 not reported: view data is unknown
+//   @unless(false)   @isset($a)   @if($a === 1)         not reported: `!`, isset and comparisons are other rules'
+// As for PHP (php/values): no types are read, a `/** @var */` right above the if overrides, and a trait's body
+// is left alone.
+.violation if_always_true(at: node) code "if.alwaysTrue" "If condition is always true."
+if_always_true(c) :- php_if_const(i, c, "true"), blade_code(i), !inside(i, _, "trait_declaration").

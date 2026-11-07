@@ -54,7 +54,7 @@ fn optional_outward_captures(
                 names.extend(pattern.defined_vars().into_iter().map(str::to_owned));
             }
         }
-        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Compare(_) | AstMatcher::Never => {
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Compare(_) | AstMatcher::Never => {
         }
         AstMatcher::Semantic(semantic) => {
             semantic::optional_outward_captures(semantic, under_any, outward, memo, names)
@@ -145,7 +145,7 @@ fn sound(
         // A value reads the node's own text, like a regex; a builtin name is a value only in a
         // file without syntax errors, so an error region cannot hide the binding that shadows it.
         // Arguments read the call's own argument list, inside the witness, as its pattern does.
-        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
+        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
             true
         }
         AstMatcher::Semantic(semantic) => {
@@ -243,7 +243,7 @@ fn utility_sound(
 fn leaves_witness(matcher: &AstMatcher, memo: &mut UtilitySummary<usize, bool>) -> bool {
     match matcher {
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Never => false,
@@ -389,6 +389,11 @@ impl SyntaxErrors {
 
     pub(super) fn is_empty(&self) -> bool {
         self.regions.is_empty()
+    }
+
+    /// The merged regions, by start.
+    pub(super) fn regions(&self) -> &[Range<usize>] {
+        &self.regions
     }
 
     /// Whether any of the file ranges a node stands for meets a region (`overlaps`).

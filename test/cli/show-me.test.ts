@@ -252,6 +252,6 @@ describe("the demo rule", () => {
         passed: [{ path: SHOW_ME_FILE, content: SHOW_ME_FIXED }, { path: "src/greeting.js", content: "export const g = \"Hello, world\";\n" }],
       },
     }), repo);
-    expect(report).toMatchObject({ ok: true, valid: true, repository: { matches: [] } });
+    expect(report).toMatchObject({ ok: true, valid: true, repository: { matches: 0 } });
   });
 });

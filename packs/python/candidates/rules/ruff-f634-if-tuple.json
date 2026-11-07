@@ -1,0 +1,103 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f634-if-tuple",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't use a tuple as an if or elif condition; a non-empty tuple is always true, so the branch always runs.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "if-tuple",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "non-empty-tuple": {
+              "any": [
+                {
+                  "kind": "tuple",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "non-empty-tuple"
+                  }
+                }
+              ]
+            },
+            "branch-test": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^(if|elif)$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "if_statement"
+                      },
+                      {
+                        "kind": "elif_clause"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "branch-test"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "tuple",
+            "all": [
+              {
+                "matches": "non-empty-tuple"
+              },
+              {
+                "matches": "branch-test"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F634",
+        "message": "Replace this tuple condition with the intended boolean expression; a non-empty tuple is always true.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F634"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

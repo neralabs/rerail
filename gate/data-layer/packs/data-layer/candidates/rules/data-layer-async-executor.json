@@ -1,0 +1,54 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-async-executor",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer async_executor at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/sqlite/**/*.py",
+      "impl/postgres/**/*.py",
+      "impl/mariadb/**/*.py",
+      "impl/doltdb/**/*.py",
+      "impl/mongodb/**/*.py",
+      "impl/neo4j/**/*.py",
+      "impl/l1595_llm_cache/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**",
+      "impl/common/**",
+      "impl/read_through/**",
+      "impl/sqlite/native_async_wrapper.py",
+      "impl/sqlite/connection.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "executor",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "run_in_executor\\s*\\(",
+          "lines": {
+            "first": true,
+            "exclude": [
+              "#\\s*noqa:\\s*async-executor"
+            ],
+            "terminators": "lf"
+          }
+        }
+      },
+      "violation": {
+        "code": "run_in_executor",
+        "anchor": "witness.span",
+        "message": "Use native async operations instead of run_in_executor() in backend implementations."
+      }
+    }
+  ]
+}

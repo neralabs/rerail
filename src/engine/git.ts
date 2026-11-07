@@ -1,188 +1,24 @@
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
-import { posix, win32 } from "node:path";
+import { existsSync } from "node:fs";
 
-/** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
-export interface GitSearch {
-  platform: NodeJS.Platform;
-  home: string;
-  /** The `PATH` value, undefined when unset. */
-  path: string | undefined;
-  /** The folder Rerail runs in, normally inside the repository a coding agent works on; undefined once deleted. */
-  cwd: string | undefined;
-}
-
-/**
- * Where Git is looked for, in order: each `PATH` entry Rerail can trust, then the usual install locations, so a Git
- * the person put first on `PATH` (MacPorts, mise, a build of their own) is the one Rerail runs. Rerail runs Git from
- * hooks in whatever environment the coding agent started in, inside repositories it does not trust, so a `PATH` entry
- * a repository could control is skipped: a relative one (which includes the current folder), one inside the
- * repository Rerail runs in (direnv's `PATH_add`), and one inside a `node_modules` folder (`node_modules/.bin`). Rerail
- * resolves the absolute path itself and runs that, so Windows never looks in the current folder first. "The repository
- * Rerail runs in" is the nearest folder above the current one with a `.git`: an entry inside an outer checkout (around
- * a nested worktree or submodule), or any repository when Rerail runs from outside it (a daemon keeps the Git it found
- * where it started), is not skipped. The fixed locations come after `PATH`: the system ones, then the per-user installs
- * whose path only the person's account decides (Git for Windows installed for one user, scoop's Git, Linuxbrew's, a
- * Nix profile's), built from the account's home, never from the environment: `LOCALAPPDATA` can be set by a
- * repository as easily as PATH.
- */
-export function gitCandidates(
-  search: GitSearch = { platform: process.platform, home: accountHome(), path: process.env.PATH, cwd: currentFolder() },
-  probe: GitPathProbe = machine,
-): string[] {
-  return [...new Set([...pathCandidates(search, probe), ...installLocations(search.platform, search.home)])];
-}
-
-/** The current folder, or undefined when it was deleted under the process (`process.cwd()` throws `ENOENT`). */
-function currentFolder(): string | undefined {
-  try {
-    return process.cwd();
-  } catch {
-    return undefined;
-  }
-}
-
-/** What {@link gitCandidates} asks of the disk; tests pass their own. */
-export interface GitPathProbe {
-  exists(path: string): boolean;
-  /** The path with every symlink resolved, or the path itself when it cannot be resolved. */
-  realpath(path: string): string;
-}
-
-function installLocations(platform: NodeJS.Platform, home: string): string[] {
-  if (platform === "win32") {
-    return [
-      String.raw`C:\Program Files\Git\cmd\git.exe`,
-      String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
-      win32.join(home, "AppData", "Local", "Programs", "Git", "cmd", "git.exe"),
-      win32.join(home, "scoop", "apps", "git", "current", "cmd", "git.exe"),
-    ];
-  }
-  return [
-    "/usr/bin/git",
-    "/usr/local/bin/git",
-    "/opt/homebrew/bin/git",
-    "/home/linuxbrew/.linuxbrew/bin/git",
-    "/run/current-system/sw/bin/git",
-    posix.join(home, ".nix-profile", "bin", "git"),
-  ];
-}
-
-function pathCandidates(search: GitSearch, probe: GitPathProbe): string[] {
-  if (search.path === undefined) return [];
-  const windows = search.platform === "win32";
-  const paths = windows ? win32 : posix;
-  const repository = search.cwd === undefined ? undefined : enclosingRepository(paths.resolve(search.cwd), paths, probe);
-  // By the path as written and with symlinks resolved, both sides: macOS's /var is /private/var, and a link in the
-  // repository can point out of it.
-  const repositoryForms = repository === undefined ? [] : [repository, probe.realpath(repository)];
-  return search.path
-    .split(windows ? ";" : ":")
-    // Windows allows a quoted entry, which cmd.exe and CreateProcess unquote.
-    .map(entry => windows ? entry.replace(/^"(.*)"$/, "$1") : entry)
-    .filter(entry => (windows ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(entry) : entry.startsWith("/"))
-      && !entry.split(/[\\/]/).some(part => (windows ? part.toLowerCase() : part) === "node_modules")
-      && ![paths.resolve(entry), probe.realpath(paths.resolve(entry))]
-        .some(form => repositoryForms.some(folder => within(folder, form, paths))))
-    .map(entry => paths.join(entry, windows ? "git.exe" : "git"));
-}
-
-/** The nearest folder at or above `folder` that holds a `.git` entry, read from disk without running Git. */
-function enclosingRepository(folder: string, paths: typeof posix, probe: GitPathProbe): string | undefined {
-  for (let current = folder; ; current = paths.dirname(current)) {
-    if (probe.exists(paths.join(current, ".git"))) return current;
-    if (paths.dirname(current) === current) return undefined;
-  }
-}
-
-function within(folder: string, path: string, paths: typeof posix): boolean {
-  const relative = paths.relative(folder, path);
-  return relative === "" || (relative !== ".." && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative));
-}
-
-/**
- * The account's own home, not `HOME`: the install's health check runs Rerail with a scratch `HOME`, and it must find
- * the same Git as the person's sessions do. An account without a user database entry (a container's arbitrary uid)
- * falls back to `HOME`.
- */
-function accountHome(): string {
-  try {
-    return userInfo().homedir;
-  } catch {
-    return homedir();
-  }
-}
+/** Where a system Git is looked for; PATH is deliberately not consulted. */
+const GIT_CANDIDATES: readonly string[] = process.platform === "win32"
+  ? [String.raw`C:\Program Files\Git\cmd\git.exe`, String.raw`C:\Program Files (x86)\Git\cmd\git.exe`]
+  : ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"];
 
 export class GitUnavailableError extends Error {
-  /** Every path Rerail looked for Git at. */
-  readonly looked: readonly string[];
-
-  constructor(looked: readonly string[]) {
-    super(`Git is not installed where Rerail looks for it: ${looked.join(", ")}`);
+  constructor() {
+    super("Git is not installed in a supported system location");
     this.name = "GitUnavailableError";
-    this.looked = looked;
   }
 }
 
-let probed: { path: string | undefined; looked: readonly string[] } | undefined;
-
-/** What {@link gitInstalled} asks of the machine; tests pass their own. */
-export interface GitProbe {
-  exists(path: string): boolean;
-  /** Whether `path` is a regular file (through symlinks) this process may execute, as a shell requires. */
-  runnable(path: string): boolean;
-  /** The developer folder `xcode-select` points at, or undefined when none is set. */
-  developerDir(): string | undefined;
-}
-
-const machine: GitProbe & GitPathProbe = {
-  exists: existsSync,
-  runnable(path) {
-    try {
-      // Windows has no execute bit (X_OK checks existence there); a git.exe that is a file is what it runs.
-      if (!statSync(path).isFile()) return false;
-      accessSync(path, constants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  },
-  realpath(path) {
-    try {
-      return realpathSync.native(path);
-    } catch {
-      return path;
-    }
-  },
-  developerDir() {
-    // Without DEVELOPER_DIR, which overrides the answer and which a repository's environment could set.
-    const selected = spawnSync("/usr/bin/xcode-select", ["-p"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" } });
-    return selected.status === 0 ? selected.stdout.trim() : undefined;
-  },
-};
-
-/**
- * Whether `path` is a Git that runs: a regular file this process may execute, so a folder named `git` or a `git`
- * without its execute bit is passed over, as a shell passes over them. On macOS `/usr/bin/git` is always there, a stub
- * that runs the Git of Apple's developer tools, and without them opens the Command Line Tools installer instead; so it
- * counts only when the Command Line Tools are installed, or an Xcode `xcode-select` points at carries Git.
- */
-export function gitInstalled(path: string, platform: NodeJS.Platform = process.platform, probe: GitProbe = machine): boolean {
-  if (!probe.runnable(path)) return false;
-  if (platform !== "darwin" || path !== "/usr/bin/git") return true;
-  if (probe.exists("/Library/Developer/CommandLineTools/usr/bin/git")) return true;
-  const developerDir = probe.developerDir();
-  return developerDir !== undefined && probe.exists(posix.join(developerDir, "usr", "bin", "git"));
-}
+let probed: { path: string | undefined } | undefined;
 
 /** The system Git, probed once per process; throws {@link GitUnavailableError} when none is installed. */
 export function gitExecutable(): string {
-  if (probed === undefined) {
-    const looked = gitCandidates();
-    probed = { path: looked.find(path => gitInstalled(path)), looked };
-  }
-  if (probed.path === undefined) throw new GitUnavailableError(probed.looked);
+  probed ??= { path: GIT_CANDIDATES.find(existsSync) };
+  if (probed.path === undefined) throw new GitUnavailableError();
   return probed.path;
 }
 

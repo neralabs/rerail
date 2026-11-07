@@ -1,0 +1,352 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-prefer-node-protocol",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Load Node.js built-in modules with the node: prefix, such as node:fs, when the project's Node versions support it; it marks them as built-ins npm packages can't shadow.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "require",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "package": {
+              "nodeVersion": {
+                "subsetOf": "^14.18.0 || >=16.0.0"
+              }
+            }
+          },
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "^(?:assert|assert/strict|async_hooks|buffer|child_process|cluster|console|crypto|dgram|diagnostics_channel|dns|dns/promises|events|fs|fs/promises|http2|http|https|inspector|inspector/promises|module|net|os|path|path/posix|path/win32|perf_hooks|process|querystring|readline|readline/promises|repl|stream|stream/promises|stream/web|stream/consumers|string_decoder|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
+            },
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "not": {
+                "has": {
+                  "nthChild": {
+                    "position": 2,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              "inside": {
+                "field": "arguments",
+                "kind": "call_expression",
+                "not": {
+                  "has": {
+                    "kind": "optional_chain"
+                  }
+                },
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^require$"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-node-protocol",
+        "message": "Prefer `node:<module>` over `<module>`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-node-protocol"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-builtin-module",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "^(?:assert|assert/strict|async_hooks|buffer|child_process|cluster|console|crypto|dgram|diagnostics_channel|dns|dns/promises|events|fs|fs/promises|http2|http|https|inspector|inspector/promises|module|net|os|path|path/posix|path/win32|perf_hooks|process|querystring|readline|readline/promises|repl|stream|stream/promises|stream/web|stream/consumers|string_decoder|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
+            },
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "field": "arguments",
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^getBuiltinModule$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "object",
+                            "any": [
+                              {
+                                "kind": "identifier",
+                                "regex": "^process$"
+                              },
+                              {
+                                "kind": "member_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "object",
+                                      "kind": "identifier",
+                                      "regex": "^globalThis$"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "property",
+                                      "kind": "property_identifier",
+                                      "regex": "^process$"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "kind": "subscript_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "object",
+                                      "kind": "identifier",
+                                      "regex": "^globalThis$"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "index",
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "has": {
+                                            "kind": "string_fragment",
+                                            "regex": "^process$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "not": {
+                                            "has": {
+                                              "kind": "template_substitution"
+                                            }
+                                          },
+                                          "has": {
+                                            "kind": "string_fragment",
+                                            "regex": "^process$"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "subscript_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "index",
+                            "any": [
+                              {
+                                "kind": "string",
+                                "has": {
+                                  "kind": "string_fragment",
+                                  "regex": "^getBuiltinModule$"
+                                }
+                              },
+                              {
+                                "kind": "template_string",
+                                "not": {
+                                  "has": {
+                                    "kind": "template_substitution"
+                                  }
+                                },
+                                "has": {
+                                  "kind": "string_fragment",
+                                  "regex": "^getBuiltinModule$"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^process$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-node-protocol",
+        "message": "Prefer `node:<module>` over `<module>`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-node-protocol"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import-export-source",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "package": {
+              "nodeVersion": {
+                "subsetOf": "^12.20.0 || >=14.13.1"
+              }
+            }
+          },
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "^(?:assert|assert/strict|async_hooks|buffer|child_process|cluster|console|crypto|dgram|diagnostics_channel|dns|dns/promises|events|fs|fs/promises|http2|http|https|inspector|inspector/promises|module|net|os|path|path/posix|path/win32|perf_hooks|process|querystring|readline|readline/promises|repl|stream|stream/promises|stream/web|stream/consumers|string_decoder|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
+            },
+            "inside": {
+              "field": "source",
+              "any": [
+                {
+                  "kind": "import_statement"
+                },
+                {
+                  "kind": "export_statement"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-node-protocol",
+        "message": "Prefer `node:<module>` over `<module>`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-node-protocol"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import-expression",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "package": {
+              "nodeVersion": {
+                "subsetOf": "^12.20.0 || >=14.13.1"
+              }
+            }
+          },
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "^(?:assert|assert/strict|async_hooks|buffer|child_process|cluster|console|crypto|dgram|diagnostics_channel|dns|dns/promises|events|fs|fs/promises|http2|http|https|inspector|inspector/promises|module|net|os|path|path/posix|path/win32|perf_hooks|process|querystring|readline|readline/promises|repl|stream|stream/promises|stream/web|stream/consumers|string_decoder|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
+            },
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "field": "arguments",
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "import"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-node-protocol",
+        "message": "Prefer `node:<module>` over `<module>`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-node-protocol"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

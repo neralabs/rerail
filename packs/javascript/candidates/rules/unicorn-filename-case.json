@@ -1,0 +1,52 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "unicorn-filename-case",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name JavaScript files in kebab-case, ignoring leading underscores and dots; consistent names are easier to find and import.",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "case",
+      "forbid": {
+        "regex": {
+          "source": "file.path",
+          "pattern": "(?:^|/)[._]*(?:[^/]*[A-Z ]|[^/._][^/]*_)[^/]*$"
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "unicorn/filename-case",
+        "message": "Rename this file to kebab-case, for example cart-total.js."
+      }
+    }
+  ]
+}

@@ -1,1 +1,0 @@
-A rule pack on disk that the packs folder's `package.json` does not list (one npm brought in for another package) is reported as left out, with why, rather than loaded; a missing or broken `package.json` is reported as such rather than as no packs installed. `GET /api/rule-packs` refuses query parameters it does not know.

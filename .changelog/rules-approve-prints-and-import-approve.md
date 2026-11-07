@@ -1,1 +1,0 @@
-`rerail rules approve <id>` prints the content it approves first, `rerail rules import <file> --approve` approves your own exported rules as it imports them, and `/rerail` says how many rules wait for approval. A coding agent's edited copy of a By Rerail rule switches the original off only once you approve the copy ([approval](docs/rule-scoping.md#approval)).

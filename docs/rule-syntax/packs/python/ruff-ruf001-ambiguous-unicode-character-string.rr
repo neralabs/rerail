@@ -1,0 +1,33 @@
+.policy "ruff-ruf001-ambiguous-unicode-character-string" revision 2
+.description "Replace look-alike Unicode characters in strings with the ASCII characters they imitate; they make text read differently from what it is."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF001: a look-alike character (Ruff's confusables with an ASCII representant) in a str, f- or
+// t-string's literal text, not in a docstring (RUF002) or bytes. Which characters and words count: see the
+// table file. An annotation that is itself a string (`y: "…"`) is skipped where annotations are deferred: in
+// a stub, with `from __future__ import annotations`, or when the code targets Python 3.14+ (option
+// pythonVersion). A string inside an annotation, as in `Literal["…"]`, is still reported.
+//   x = "𝐁ad string"      ← RUF001 at 𝐁: a bold B in an ASCII word
+//   x = "Русский"         not reported: a Russian word
+#include "python/typing.rr"
+#include "python/ruff.rr"
+#include "../packs/python/ruff-ruf001-ambiguous-unicode-character-string.confusables.rr"
+
+.violation RUF001(at: span, ch: symbol) code "RUF001"
+    "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
+    suppress ruff "RUF001"
+RUF001(c, x) :- confusable_text(p), confusable_char(p, c), text(c, x).
+
+confusable_text(p) :- kind(p, "string_content"), child(s, p, _), kind(s, "string"), !string_form(s, "bytes"),
+    !doc_part(s), !deferred_annotation(s), !in_string_ann(s), !parsed_in(_, s).
+// Ruff reads a string annotation as a type definition, and skips it and the strings in its tree:
+//   x: '''Literal["ﮨ"]'''      not reported (in_string_ann, parsed_in from python/names)
+.decl doc_part(s: node)
+doc_part(s) :- docstring(_, e), (s = e ; kind(e, "concatenated_string"), child(e, s, _)).
+.decl deferred_annotation(s: node)
+deferred_annotation(s) :- ann_root(a), child(a, e, 0), unparen(e, m), (s = m ; kind(m, "concatenated_string"), child(m, s, _)),
+    kind(s, "string"), (in_stub(s) ; targets(14) ; docof(s, d), future_annotations_in(d)).
+.decl future_annotations_in(d: number)
+future_annotations_in(d) :- kind(i, "future_import_statement"), within(n, i), text(n, "annotations"), docof(i, d).

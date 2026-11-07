@@ -1,0 +1,17 @@
+.policy "bandit-b310-urllib-urlopen" revision 2
+.description "Restrict URLs passed to urllib's urlopen, urlretrieve, and URLopener to expected schemes; file: and custom schemes can expose local files."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B310 (its B001 blacklist): a call to urllib.request's urlopen, urlretrieve, URLopener or FancyURLopener, or
+// to six.moves' copies of them.
+//   import urllib.request; urllib.request.urlopen(url)     B310
+//   from six.moves.urllib.request import urlretrieve; urlretrieve(url)   B310
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B310(at: node) code "B310"
+    "Audit URL opening for permitted schemes; file or custom schemes may be unexpected."
+    suppress nosec "B310"
+B310(n) :- blacklisted(n, "B310").

@@ -1,0 +1,21 @@
+.policy "ruff-perf402-manual-list-copy" revision 2
+.description "Use list or extend to copy an iterable into a list instead of appending items one by one in a for loop."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PERF402 (perflint): a (synchronous) for loop whose whole body is `L.append(x)` (or `L.insert(x)`) of
+// the loop variable x itself, where L is a list (its only binding is one, python/misc2-perf): the loop copies
+// the iterable. Reported at the call.
+//   result = []
+//   for x in items: result.append(x)       ← PERF402: `result = list(items)` or `result.extend(items)`
+//   for x in items: result.append(x + 1)   not reported here: PERF401
+#include "python/misc2-perf.rr"
+//   perf_for, perf_body, perf_call_stmt, perf_method_call, perf_only_binding, perf_list_site
+
+.violation PERF402(at: node, l: node) code "PERF402"
+    "Copy the iterable in one step: `{l}.extend(<iterable>)`, or `{l} = list(<iterable>)` if `{l}` is a fresh empty list; keep the loop if code after it reads the loop variable."
+    suppress ruff "PERF402"
+PERF402(c, o) :- perf_for(f, t, _), !op(f, "async"), kind(t, "identifier"), text(t, x), perf_body(f, st, test),
+    unset(test), perf_call_stmt(st, c), perf_method_call(c, o, m, a), (m = "append" ; m = "insert"),
+    kind(a, "identifier"), text(a, x), kind(o, "identifier"), !text(o, x), perf_only_binding(o, site), perf_list_site(site).

@@ -1,0 +1,208 @@
+// tsx/modules: directive prologues, strict mode, and the shape of import declarations.
+// JavaScript and TypeScript, as ESLint's core rules see them (ESTree), read off the tree-sitter tape.
+//
+// What a rule gets from this library:
+//   program(d, p)                p is the root node of document d
+//   scope_stmt(s, st, i)         st is the i-th statement of scope s (a program or a function body)
+//   directive(s, d, text)        d is a directive of scope s: "use strict", "use client", "use asm", …
+//   use_strict(s, d, i)          d is the i-th "use strict" at the head of s, as ESLint's strict rule counts
+//   simple_params(f)             f's parameters are plain names: no defaults, patterns or rest
+//   fn_region(f, r)              r holds f's own code: f itself, or a method's parameters and body
+//   strict_scope(s)              the code of s runs in strict mode (directive, module, class, inherited)
+//   source_type(d, t)            document d is a "module", "commonjs" or "script"
+//   import_decl(i)               i is an import declaration (`import … from "m"`, `import "m"`)
+//   import_member(i, m, k, x)    m is the k-th name i binds, in source order; x is its local name
+//   first_local(i, x)            x is the first local name i binds (sort-imports sorts declarations by it)
+//   import_syntax(i, s)          "none" | "all" | "multiple" | "single", as sort-imports classifies i
+//   import_prev(i, p, gap)       p is the import declaration just before i, with gap lines between them
+//   import_group(i, g)           g is the first import of i's group: imports with no line between them
+//   deparen(e, x)                x is expression e without its parentheses (and comments inside them): ((a)) is a
+//
+// Builds on tsx/names (import_binding: every name an import binds, with its local name) and on core.
+#include "tsx/names.rr"
+
+
+.decl program(d: number, p: node)
+program(d, p) :- kind(p, "program"), docof(p, d).
+
+// ---- statements and directives ---------------------------------------------------------------------------------
+// function_kind: the nodes that have their own parameters and body. `class A { m() {} }`: m is a
+// method_definition, and ESTree's FunctionExpression for it is the same node here.
+.decl function_kind(k: symbol)
+function_kind("function_declaration"). function_kind("function_expression"). function_kind("arrow_function").
+function_kind("generator_function"). function_kind("generator_function_declaration").
+function_kind("method_definition").
+// stmt_list(s, b): the statements of scope s are b's children: the program itself, or a function's `{ … }`.
+// `x => x + 1` has no block, so no statements and no directives.
+.decl stmt_list(s: node, b: node)
+stmt_list(p, p) :- kind(p, "program").
+stmt_list(f, b) :- kind(f, k), function_kind(k), field(f, "body", b), kind(b, "statement_block").
+// scope_stmt(s, st, i): comments (`//`, `/* */`, `<!--`) and the `#!/usr/bin/env node` line are not statements, so they do not count.
+// `"use strict"; // why` then `f();` gives i = 0 and 1.
+.decl scope_stmt(s: node, st: node, i: number)
+scope_stmt(s, st, i) :- stmt_list(s, b), child(b, st, _), !not_stmt(st),
+    i = count : { child(b, o, _), !not_stmt(o), o < st }.
+.decl not_stmt(n: node)
+not_stmt(n) :- kind(n, "comment").
+not_stmt(n) :- kind(n, "html_comment").
+not_stmt(n) :- kind(n, "hash_bang_line").
+
+// string_stmt(st, l, bare): statement st is only a string literal l; bare = 1 without parentheses.
+// `"use strict";` is bare; `("use strict");` is not, and is no directive (ECMAScript), though ESTree has no
+// node for the parentheses, so ESLint's strict rule still counts it.
+.decl string_stmt(st: node, l: node, bare: number)
+string_stmt(st, l, 1) :- kind(st, "expression_statement"), child(st, l, 0), kind(l, "string").
+string_stmt(st, l, 0) :- kind(st, "expression_statement"), child(st, e, 0), kind(e, "parenthesized_expression"),
+    deparen(e, l), kind(l, "string").
+// deparen(e, x): tree-sitter keeps `(a)` as a parenthesized_expression holding a; ESTree has just a, so ESLint's
+// `node.test.type` sees through any number of them. A comment may sit inside, `( /* why */ a)`, and is not the
+// expression. TypeScript's `(a as T)` keeps its as_expression.
+//   if ((!a)) …        the condition deparens to `!a`
+.decl deparen(e: node, x: node)
+deparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expression".
+deparen(e, x) :- kind(e, "parenthesized_expression"), child(e, c, _), !not_stmt(c), deparen(c, x).
+
+
+// directive(s, d, text): the directive prologue, as ECMAScript defines it: the leading statements of s that
+// are bare string literals. text is as written, without quotes ("use strict", "use client"); so
+// 'use\x20strict' is no Use Strict Directive (the spec compares the raw text).
+//   "use client"; "use strict"; f();    two directives;  f() ends the prologue
+//   f(); "use strict";                  none: a string after a statement is just an expression
+.decl directive(s: node, d: node, text: symbol)
+directive(s, d, x) :- scope_stmt(s, d, i), string_stmt(d, l, 1), str(l, x),
+    count : { scope_stmt(s, o, j), j < i, !string_stmt(o, _, 1) } = 0.
+// use_strict(s, d, i): ESLint's strict rule reads the leading run of "use strict" statements only, and stops
+// at the first other statement, another directive included. It compares the value, so 'use\x20strict' counts. i numbers the run from 0, so i > 0 is a repeat.
+//   "use strict"; "use strict";         i = 0 and 1
+//   "use asm"; "use strict";            none (ESLint stops at "use asm"; ECMAScript would count it)
+.decl use_strict(s: node, d: node, i: number)
+use_strict(s, d, i) :- scope_stmt(s, d, i), us_stmt(d),
+    count : { scope_stmt(s, o, j), j < i, !us_stmt(o) } = 0.
+.decl us_stmt(st: node)
+us_stmt(st) :- string_stmt(st, l, _), value(l, "use strict").
+
+// simple_params(f): every parameter is a plain name (ESLint's isSimpleParameterList). A function with
+// defaults, destructuring or a rest parameter may not contain "use strict" (a SyntaxError since ES2016).
+//   function f(a, b) {}  arrow x => x  m(a?: T) {}     simple
+//   function f(a = 1) {}  ({ a }) => a  (...xs) => xs   not simple
+.decl simple_params(f: node)
+simple_params(f) :- kind(f, k), function_kind(k), count : { param(f, p), !plain_param(p) } = 0.
+.decl param(f: node, p: node)
+param(f, p) :- field(f, "parameters", ps), child(ps, p, _), !not_stmt(p).
+// plain_param(p): JavaScript's bare identifier; TypeScript's `a: T`, `a?: T` or `this: T`, with no default.
+// A parameter property `constructor(private a)` is plain here; typescript-eslint makes it a TSParameterProperty.
+.decl plain_param(p: node)
+plain_param(p) :- kind(p, "identifier").
+plain_param(p) :- kind(p, k), (k = "required_parameter" ; k = "optional_parameter"), field(p, "pattern", x),
+    (kind(x, "identifier") ; kind(x, "this")), !field(p, "value", _).
+
+// ---- strict mode -----------------------------------------------------------------------------------------------
+// strict_scope(s): s is a program, function or class body whose code is strict. Strict code comes from a
+// "use strict" directive, a module (always strict), a class (class bodies are always strict), the parser's
+// impliedStrict, or an enclosing strict scope:
+//   class A { m() { function g() {} } }    the class body, m and g are strict
+.decl strict_scope(s: node)
+strict_scope(p) :- program(d, p), source_type(d, "module").
+strict_scope(p) :- program(_, p), option("impliedStrict", "true").
+strict_scope(s) :- directive(s, _, "use strict").
+strict_scope(c) :- kind(c, "class_body").
+strict_scope(f) :- fn_region(f, _), nearest(f, r, region), code_region(r, s), strict_scope(s).
+// fn_region(f, r): r is where f's own code is. A method's computed name is not: in
+//   ({ [(function () {})()]() {} })    the inner function is outside the method m, in m's surroundings.
+// So a method's regions are its parameters and body; any other function is its own region.
+.decl fn_region(f: node, r: node)
+fn_region(f, f) :- kind(f, k), function_kind(k), k != "method_definition".
+fn_region(m, r) :- kind(m, "method_definition"), (field(m, "parameters", r) ; field(m, "body", r)).
+.decl fn_code(r: node)  // a node set for inside/nearest: "within some function's own code"
+fn_code(r) :- fn_region(_, r).
+// code_region(r, s): r is a node whose descendants are code of scope s: a function region, a program, a class body.
+.decl code_region(r: node, s: node)
+code_region(r, f) :- fn_region(f, r).
+code_region(p, p) :- kind(p, "program").
+code_region(c, c) :- kind(c, "class_body").
+.decl region(r: node)
+region(r) :- code_region(r, _).
+
+// ---- module or script ------------------------------------------------------------------------------------------
+// source_type(d, t): the module system ESLint parses the file with, decided as the engine does for a policy
+// that leaves sourceType to the file (SourceType::of_file):
+//   1. option("sourceType", t), when the policy sets it, for every file;
+//   2. .cjs/.cts are CommonJS; .mjs/.mts, .d.ts and every other extension but .js/.jsx/.ts are modules;
+//   3. a .js, .jsx or .ts file follows its nearest package.json's `type` ("module" or "commonjs"), and is a
+//      module with no package.json at all (ESLint's default config);
+//   4. under a package.json with no valid `type`, Node's syntax detection: a module if the file has
+//      module syntax (module_syntax, below), else CommonJS.
+// Nothing gives "script" unless the option does: ESLint's flat config only has "module" and "commonjs" defaults.
+.decl source_type(d: number, t: symbol)
+source_type(d, t) :- program(d, _), option("sourceType", t).
+source_type(d, t) :- program(d, _), !option("sourceType", _), by_file(d, t).
+.decl by_file(d: number, t: symbol)
+by_file(d, t) :- program(d, _), doc(d, f, _), ext_type(e, t), suffix(e, f).
+by_file(d, "module") :- program(d, _), doc(d, f, _), !typed_ext(d), !pkg_ext(f).
+by_file(d, t) :- governed(d, f), package_for(f, dir), package_field(dir, "type", t), pkg_type(t).
+by_file(d, "module") :- governed(d, f), !package_for(f, _).
+by_file(d, t) :- governed(d, f), package_for(f, dir), !valid_type(dir),
+    (module_syntax(d), t = "module" ; !module_syntax(d), t = "commonjs").
+.decl ext_type(e: symbol, t: symbol)
+ext_type(".mjs", "module"). ext_type(".mts", "module"). ext_type(".d.ts", "module").
+ext_type(".cjs", "commonjs"). ext_type(".cts", "commonjs").
+.decl typed_ext(d: number)
+typed_ext(d) :- doc(d, f, _), ext_type(e, _), suffix(e, f).
+.decl pkg_ext(f: symbol)  // the extensions a package.json `type` decides
+pkg_ext(f) :- doc(_, f, _), (suffix(".js", f) ; suffix(".jsx", f) ; suffix(".ts", f)).
+.decl governed(d: number, f: symbol)
+governed(d, f) :- program(d, _), doc(d, f, _), !typed_ext(d), pkg_ext(f).
+.decl pkg_type(t: symbol)
+pkg_type("module"). pkg_type("commonjs").
+.decl valid_type(dir: symbol)
+valid_type(dir) :- package_field(dir, "type", t), pkg_type(t).
+// module_syntax(d): a top-level import or export that only parses in a module. TypeScript's erased forms
+// (`import type`, `export type`, exported interfaces and type aliases, `declare`) and its CommonJS forms
+// (`import x = require(…)`, `export =`) do not count. Node also counts `import.meta`, a top-level await and
+// a top-level const/let/class named require, module, exports, __dirname or __filename; those are left out.
+.decl module_syntax(d: number)
+module_syntax(d) :- program(d, p), child(p, s, _), import_decl(s), !op(s, "type").
+module_syntax(d) :- program(d, p), child(p, s, _), kind(s, "export_statement"), !op(s, "type"), !op(s, "="),
+    count : { field(s, "declaration", x), erased(x) } = 0.
+.decl erased(x: node)
+erased(x) :- kind(x, k), (k = "interface_declaration" ; k = "type_alias_declaration" ; k = "ambient_declaration").
+
+// ---- import declarations ---------------------------------------------------------------------------------------
+// import_decl(i): an ESTree ImportDeclaration. TypeScript's `import x = require("m")` is a different node
+// (TSImportEqualsDeclaration), so it is left out; `import type { T } from "m"` is in.
+.decl import_decl(i: node)
+import_decl(i) :- kind(i, "import_statement"), count : { child(i, c, _), kind(c, "import_require_clause") } = 0.
+// import_member(i, m, k, x): the names i binds, in order, as ESTree's `specifiers` lists them. m is the node
+// names.rr links the binding to: the import_clause for a default, the namespace_import, or the specifier.
+//   import D, { b as c, a } from "m"   (clause, 0, "D"), (spec b, 1, "c"), (spec a, 2, "a")
+//   import * as NS from "m"            (ns, 0, "NS")
+//   import "m"                         no rows
+.decl import_member(i: node, m: node, k: number, x: symbol)
+import_member(i, m, k, x) :- import_decl(i), import_binding(m, x, _, _), nearest(m, i, "import_statement"),
+    k = count : { import_binding(o, _, _, _), nearest(o, i, "import_statement"), o < m }.
+.decl first_local(i: node, x: symbol)
+first_local(i, x) :- import_member(i, _, 0, x).
+// import_syntax(i, s): ESLint's usedMemberSyntax. "all" only when the namespace comes first, so
+// `import D, * as NS from "m"` is "multiple".
+.decl import_syntax(i: node, s: symbol)
+import_syntax(i, "none") :- import_decl(i), !import_member(i, _, _, _).
+import_syntax(i, "all") :- import_member(i, m, 0, _), kind(m, "namespace_import").
+import_syntax(i, s) :- import_member(i, m, 0, _), !kind(m, "namespace_import"),
+    n = count : { import_member(i, _, _, _) }, (n = 1, s = "single" ; n > 1, s = "multiple").
+
+// import_prev(i, p, gap): p is the import declaration right before i in the file, in traversal order, so an
+// import inside `declare module "m" { … }` follows the one above the block, as in ESLint. gap is the number
+// of lines strictly between p's last line and i's first (ESLint's getNumberOfLinesBetween). A blank line, a
+// comment or another statement between them makes gap > 0; two imports on one line have gap 0.
+.decl import_prev(i: node, p: node, gap: number)
+import_prev(i, p, g) :- import_decl(i), docof(i, d), visit_index(i, vi),
+    j = max j2 : { import_decl(o), docof(o, d), visit_index(o, j2), j2 < vi },
+    import_decl(p), docof(p, d), visit_index(p, j), line(i, a), end_line(p, b), g = max(a - b - 1, 0).
+// import_group(i, g): imports separated by no line form a group; g is its first import.
+//   import a from "a";             group of a
+//   import b from "b";             group of a
+//                                  (blank line)
+//   import c from "c";             group of c
+.decl import_group(i: node, g: node)
+import_group(i, i) :- import_decl(i), !import_prev(i, _, 0).
+import_group(i, g) :- import_prev(i, p, 0), import_group(p, g).

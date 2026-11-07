@@ -15,7 +15,6 @@ export {
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,
-  STEER_LINE_MESSAGE_TYPE,
   STEER_STRATEGIES,
   type SteerRule,
   type SteerStrategy,
@@ -26,8 +25,6 @@ export { SqliteAuditReader, SqliteAuditStore } from "./audit/audit-store.js";
 export { type AuditInput, type AuditRecorder, type AuditResult, isUnreadFailure, UNREAD_FAILURE_HEAD } from "./audit/audit.js";
 export { loadPackRuleDocuments } from "./catalog/rule-documents.js";
 export { installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "./catalog/rule-catalog.js";
-export { WORKTREE_PACK_ID, WORKTREE_PUBLISHER, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "./catalog/worktree-pack.js";
-export { approve, currentSubject, isApproved, packSubject, ruleSubject } from "./catalog/rule-approval.js";
 export { RULE_PACK_LIST } from "./catalog/pack-list.generated.js";
 export { ConversationRuleRegistry } from "./catalog/registry.js";
 export { repositoryIdentityLocation, resolveCloneId } from "./catalog/repository-identity.js";
@@ -53,7 +50,7 @@ export {
   setUpRepository,
 } from "./catalog/rule-configuration.js";
 export { getLibraryRule, listLibraryRules, upsertLibraryRule, writeLibraryRule } from "./catalog/rule-library.js";
-export { BLOCK_STEERS_NOTE, RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
+export { RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
 export {
   loadRulePacks,
   RULE_PACK_RULE_ID,
@@ -61,7 +58,6 @@ export {
   type RulePackFile,
   rulePackFileSchema,
   rulePackPackageName,
-  rulePackPackageOf,
   rulePackPackageSchema,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
@@ -101,8 +97,6 @@ export {
 } from "./native/native.js";
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
-export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
-export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
 export {
   databaseInstalledAt,
@@ -138,13 +132,12 @@ export {
   ruleAttachments,
   ruleViolationRollup,
   ruleCatalogIdentities,
-  ruleApprovals,
   schemaMigrations,
   rules,
   ruleSettings,
   sessions,
   workLinks,
 } from "./storage/schema.js";
-export { ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
+export { ENTRY_POINTS, PACKAGE_ROOT } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";

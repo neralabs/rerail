@@ -6,16 +6,15 @@
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { data, ui, repoName, stateHere } from "../state.js";
 import { invalidate } from "../shell.js";
-import { repoOption, repoHint } from "../render/repos.js";
+import { repoOption } from "../render/repos.js";
 
 const $ = id => document.getElementById(id);
 
 /* ---------- status ----------
- * One indicator for the daemon and this repo: "Live" while the polls come in, "Updated
+ * One indicator for the daemon and this repo, as v8 words it: "Updating live" while the polls come in, "Updated
  * 3 min ago" when the page has fallen behind (a hidden tab, a slow answer), amber when Rerail is not on here or the
- * page is reconnecting, red once the daemon has not answered for a while or reports its model broken (the file at
- * fault named). The repo is in the pill beside the wordmark and the install date in Settings: the bar keeps only the
- * dot and how fresh the data is. */
+ * page is reconnecting, red once the daemon has not answered for a while. The repo is in the pill beside the
+ * wordmark and the install date in Settings: the bar keeps only the dot and how fresh the data is. */
 
 const DOWN_AFTER_MS = 30_000;
 /** Two missed polls (every 5 s) and the page is no longer live. */
@@ -31,41 +30,28 @@ function updatedAgo(at) {
   return `${Math.round(min / 1440)}d ago`;
 }
 
-/* Labels stay short and leave out the repo (it is in the pill); the tooltip says what is known and what to do. Any
- * failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did not
- * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. */
 function status() {
-  if (!data.loaded && !data.disconnected && !data.accessRequired) return { cls: "", text: "Connecting…", title: `Waiting for the local daemon at ${location.origin}.` };
+  if (!data.loaded && !data.disconnected) return { cls: "", text: "Connecting…", title: "" };
   const rel = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
   const version = data.health ? ` ${data.health.version}` : "";
-  if (data.accessRequired) {
-    return { cls: "down", text: "Needs the dashboard link",
-      title: `${location.origin} answers only a browser that has opened its dashboard link once. Run rerail manage, or rerail daemon start --open, on this computer.` };
-  }
   if (data.disconnected) {
     if (!data.updatedAt || Date.now() - data.updatedAt > DOWN_AFTER_MS) {
-      const since = data.updatedAt ? ` since ${new Date(data.updatedAt).toLocaleTimeString()}` : "";
-      return { cls: "down", text: "Daemon not responding",
-        title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
+      return { cls: "down", text: `Daemon not reachable · data from ${rel} · new sessions are not steered`,
+        title: `The local daemon did not answer at ${location.origin}. Rules are not steering sessions until it is back; this page keeps retrying.` };
     }
-    return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${rel}; retrying.` };
+    return { cls: "warn", text: `Updated ${rel} · reconnecting`, title: "The last refresh failed; this page keeps retrying." };
   }
-  // A model whose files do not match its manifest fails every session's attach, whichever repo the page shows.
-  const model = data.health?.model;
-  if (model && !model.ok) {
-    return { cls: "down", text: `Model: ${model.message}`,
-      title: "The engine's model files do not match model/manifest.json, so no session can attach. Reinstall Rerail, or in a source checkout run git lfs install && git lfs pull and rebuild; then run rerail daemon stop and rerail daemon start." };
-  }
-  if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "Open the dashboard from a session, or pick a repo." };
-  if (data.missing) return { cls: "warn", text: "Repo not found", title: "The daemon has no record of this checkout. Run /rerail-start in a session there, or pick another repo." };
+  if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "The dashboard shows one repo at a time. Open it from a session, or pick a repo." };
+  if (data.missing) return { cls: "warn", text: "Unknown repository", title: "The daemon has no record of this repository or checkout." };
+  const name = repoName() || "this repo";
   if (data.repository?.setUp === false) {
-    return { cls: "warn", text: "Not set up", title: "No rule packs chosen, so no rules run here. Run /rerail-start in a session here." };
+    return { cls: "warn", text: `${name} is not set up · nothing runs here`, title: `No rule packs have been chosen for ${name}. Run /rerail-start in a session there.` };
   }
   if (stateHere() === "stopped") {
-    return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
+    return { cls: "warn", text: `Rerail stopped in ${name}`, title: "Nothing is audited or logged here while Rerail is stopped. Start it from the banner on Overview, in Settings, or with /rerail-start in a session." };
   }
-  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · refreshing every 5 s.` };
-  return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.updatedAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
+  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Updating live", title: `Connected to the local daemon${version} · refreshing every 5 s` };
+  return { cls: "", text: `Updated ${rel}`, title: `Connected to the local daemon${version} · last refreshed ${new Date(data.updatedAt).toLocaleString()}` };
 }
 
 /** The status pill; also run on a timer, since "Updated 2 min ago" ages without a poll. */
@@ -105,9 +91,9 @@ function renderRepoMenu(pill) {
   const layer = $("repolayer");
   if (!menuOpen) { setContent(layer, "", () => null); return; }
   const current = data.repository?.repositoryKey;
-  setContent(layer, JSON.stringify([data.repositories, current]), () => h("div.repomenu", { role: "listbox", "aria-label": "Repos" },
+  setContent(layer, JSON.stringify([data.repositories, current]), () => h("div.repomenu", { role: "listbox", "aria-label": "Repos Rerail has seen" },
     data.repositories.map(repo => repoOption(repo, repo.repositoryKey === current)),
-    h("p.sub", null, repoHint())));
+    h("p.sub", null, "One repo at a time. To set up a new repo, open a coding agent there and type ", h("span.mono", null, "/rerail-start"), ".")));
   const at = pill.getBoundingClientRect(), menu = layer.firstChild;
   menu.style.left = `${Math.round(at.left)}px`;
   menu.style.top = `${Math.round(at.bottom) + 6}px`;

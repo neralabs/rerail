@@ -1,18 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { z } from "zod";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import {
-  CODEX_TRUST_NOTE,
   detectHarnesses,
   HARNESSES,
-  loadsOmpPluginCopy,
-  OMP_PLUGIN_NOTE,
-  piHoldsGalleryBeside,
   registerHarnesses,
-  UnreadableConfigError,
   unregisterHarnesses,
   type Harness,
   type RegistrationChange,
@@ -29,13 +22,9 @@ export const CODING_AGENT_NAMES: Readonly<Record<Harness, string>> = {
 
 export type { CodingAgentState };
 
-/**
- * Coding agent config lives under the user's home (`~/.cursor`, `~/.claude`, …), not under the Rerail home: the home
- * the coding agents read, which is `HOME` on macOS and Linux and the profile folder (`USERPROFILE`) on Windows, where
- * Git Bash's own `HOME` may name another folder.
- */
+/** Coding agent config lives under the user's home (`~/.cursor`, `~/.claude`, …), not under the Rerail home. */
 export function codingAgentHome(): string {
-  return homedir();
+  return process.env.HOME ?? homedir();
 }
 
 /** Registrations point at `<rerail home>/current` once set-up has run; before that, at the running package. */
@@ -44,27 +33,17 @@ export function registrationRoot(rerailHome: string, packageRoot: string): strin
   return existsSync(join(current, "package.json")) ? current : packageRoot;
 }
 
-/** Where `codingAgentStates` looks for what keeps a coding agent out of Rerail's data; defaults are this computer's. */
-export interface DataAccessOptions {
-  platform?: NodeJS.Platform;
-  /** Claude Code's managed settings file (`claudeManagedSettingsPath`); null for none. */
-  claudeManagedSettings?: string | null;
-}
-
 /**
- * Every coding agent Rerail works with: whether it is on this computer, whether Rerail is connected
- * to it (a dry run of registering it against `root` would write nothing), and whether its tools can read Rerail's
- * data. One dry run per coding agent, so a config that cannot be read marks only that one, with the reason. Changes nothing.
+ * Every coding agent Rerail works with: whether it is on this computer, and whether Rerail is connected
+ * to it (a dry run of registering it against `root` would write nothing). One dry run per coding agent,
+ * so a config that cannot be read marks only that one, with the reason. Changes nothing.
  */
-export async function codingAgentStates(root: string, home: string, options: DataAccessOptions = {}): Promise<CodingAgentState[]> {
-  const platform = options.platform ?? process.platform;
-  const managed = options.claudeManagedSettings === undefined ? claudeManagedSettingsPath(platform) : options.claudeManagedSettings ?? undefined;
+export async function codingAgentStates(root: string, home: string): Promise<CodingAgentState[]> {
   const found = new Set(detectHarnesses(home));
   const states: CodingAgentState[] = [];
   for (const id of HARNESSES) {
     const base = { id, name: CODING_AGENT_NAMES[id], found: found.has(id) };
-    const state = base.found ? await connection(root, home, id) : { connected: false, problem: null };
-    states.push({ ...base, ...state, rerailData: rerailDataAccess(id, state.connected, home, platform, managed) });
+    states.push(base.found ? { ...base, ...await connection(root, home, id) } : { ...base, connected: false, problem: null });
   }
   return states;
 }
@@ -78,62 +57,11 @@ async function connection(root: string, home: string, id: Harness): Promise<Pick
   }
 }
 
-/** Claude Code's managed settings file, which no other setting overrides; none on native Windows, where Claude Code has no sandbox. */
-export function claudeManagedSettingsPath(platform: NodeJS.Platform = process.platform): string | undefined {
-  if (platform === "darwin") return "/Library/Application Support/ClaudeCode/managed-settings.json";
-  if (platform === "linux") return "/etc/claude-code/managed-settings.json";
-  return undefined;
-}
-
-/**
- * What keeps coding agent `id` out of the Rerail home and the content cache, read from its files only. Set-up writes
- * deny entries for Claude Code (`claudeIsolationEntries`) and the Cursor CLI (`planCursorCli`); they hold only where
- * the host enforces them: Claude Code's sandbox rules only while its sandbox is on, and the Cursor CLI's file tools
- * only in an existing `cli-config.json`, never on native Windows.
- */
-function rerailDataAccess(id: Harness, connected: boolean, home: string, platform: NodeJS.Platform, claudeManagedSettings: string | undefined): CodingAgentState["rerailData"] {
-  switch (id) {
-    case "claude-code":
-      if (!connected) return { access: "open", why: "Rerail is not connected to Claude Code, so nothing keeps it out of Rerail's data." };
-      return platform !== "win32" && claudeSandboxOn(join(home, ".claude", "settings.json"), claudeManagedSettings)
-        ? { access: "kept-out", why: "Claude Code's sandbox is on, so its commands and file tools cannot read Rerail's data." }
-        : { access: "file-tools", why: "Claude Code's sandbox is off (sandbox.enabled), so its file tools cannot read Rerail's data but its shell commands can." };
-    case "cursor":
-      return connected && platform !== "win32" && existsSync(join(home, ".cursor", "cli-config.json"))
-        ? { access: "file-tools", why: "The Cursor CLI's file tools cannot read Rerail's data; Cursor's editor agent and shell commands can." }
-        : { access: "open", why: "Nothing keeps Cursor's agent out of Rerail's data." };
-    case "codex":
-      return { access: "open", why: "Codex's sandbox lets commands read every file, Rerail's data included." };
-    case "omp":
-    case "pi":
-      return { access: "open", why: `${CODING_AGENT_NAMES[id]} has no sandbox, so its agent can read Rerail's data.` };
-  }
-}
-
-/** Claude Code's `sandbox.enabled`: managed settings, where they set it, win over the user's. */
-function claudeSandboxOn(userSettings: string, managedSettings: string | undefined): boolean {
-  const managed = managedSettings === undefined ? undefined : sandboxEnabled(managedSettings);
-  return (managed ?? sandboxEnabled(userSettings)) === true;
-}
-
-/** The part of a Claude Code settings file that says whether its sandbox is on. */
-const claudeSandboxSettings = z.object({ sandbox: z.object({ enabled: z.boolean().optional() }).optional() });
-
-/** `sandbox.enabled` in the settings file at `path`; undefined when the file is missing, unreadable, not JSON or does not set it. */
-function sandboxEnabled(path: string): boolean | undefined {
-  try {
-    return claudeSandboxSettings.safeParse(JSON.parse(readFileSync(path, "utf8"))).data?.sandbox?.enabled;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Whether coding agent `id` holds any registration of `root`: a dry run of removing Rerail from it would change
- * something. An agent missing part of what this version registers (a command added since) counts, and so does Pi with
- * only Rerail's npm source from Pi's gallery when `root` is the managed install, which that source stands in for. One
- * the person never connected, or connected to another root, does not. Changes nothing; a configuration that cannot be
- * read throws.
+ * something. An agent missing part of what this version registers (a command added
+ * since) counts, and one the person never connected, or connected to another root, does not. Changes nothing; a
+ * configuration that cannot be read throws.
  */
 async function isRegistered(root: string, home: string, id: Harness): Promise<boolean> {
   const plan = await unregisterHarnesses({ root, home, harnesses: [id], dryRun: true });
@@ -184,124 +112,4 @@ export async function refreshCodingAgents(root: string, home: string): Promise<R
     }
   }
   return result;
-}
-
-export interface ConnectProblem extends RefreshProblem {
-  /** The agent's config file when it is not plain JSON; `message` is then the parser's reason. */
-  file?: string;
-}
-
-export interface ConnectResult {
-  /** The coding agents named whose config this call changed: not connected, or not wholly, before. */
-  changed: Harness[];
-  /**
-   * Every coding agent on this computer that holds a registration of the root now, these included: one whose
-   * registration is out of date (its hooks name a Node that has moved since, say) is still connected, its hooks
-   * still run, and `rerail update` brings it up to date.
-   */
-  all: Harness[];
-  /**
-   * The coding agents named, and Pi when its npm source was to be swapped, that could not be registered, with the
-   * reason; their config is left as it was.
-   */
-  failures: ConnectProblem[];
-  /** Codex's hooks were written: Codex runs them only once the person trusts them with `/hooks`. */
-  codexTrust: boolean;
-  /** OMP also loads its own plugin install of Rerail (`OMP_PLUGIN_NOTE`): the person removes it with `omp plugin uninstall`. */
-  ompPlugin: boolean;
-}
-
-/**
- * Set-up's connection of `agents` to `root`, one coding agent at a time, as `refreshCodingAgents` does: a config that
- * cannot be read (a comment or trailing comma in a JSON file) stops only its own agent, untouched, and the others are
- * connected. `workspaceDir`: the repository the person said yes to, for Claude Code's project status line.
- *
- * A connected agent not named is otherwise left as it is, out-of-date registration and all, for `rerail update`, but for
- * two copies of Rerail loading in it: Pi is registered again while its settings hold both an entry for `root` and
- * Rerail's npm source (a `pi install npm:@neralabs/rerail` since), which swaps that source for `root`, and OMP's plugin
- * install is looked for whenever OMP is connected. A Pi holding only the gallery entry was never connected by set-up, so
- * one left out of `agents` keeps it; naming Pi or `rerail update` swaps it.
- */
-export async function connectCodingAgents(root: string, home: string, agents: readonly Harness[], workspaceDir?: string): Promise<ConnectResult> {
-  const result: ConnectResult = { changed: [], all: [], failures: [], codexTrust: false, ompPlugin: false };
-  for (const id of [...agents, ...await piToSwap(root, home, agents)]) {
-    try {
-      const report = await registerHarnesses({ root, home, harnesses: [id], ...(workspaceDir === undefined ? {} : { workspaceDir }) });
-      if (agents.includes(id) && report.changes.some(change => change.harness === id && (change.action === "created" || change.action === "updated"))) result.changed.push(id);
-      if (report.notes.includes(CODEX_TRUST_NOTE)) result.codexTrust = true;
-      if (report.notes.includes(OMP_PLUGIN_NOTE)) result.ompPlugin = true;
-    } catch (error) {
-      result.failures.push(error instanceof UnreadableConfigError
-        ? { agent: id, message: error.reason, file: error.path }
-        : { agent: id, message: error instanceof Error ? error.message : String(error) });
-    }
-  }
-  for (const id of detectHarnesses(home)) {
-    try {
-      if (await isRegistered(root, home, id)) result.all.push(id);
-    } catch {
-      // A config that cannot be read connects nothing; set-up names it when it was asked to connect it.
-    }
-  }
-  if (!result.ompPlugin && !agents.includes("omp") && result.all.includes("omp")) result.ompPlugin = await loadsOmpPluginCopy(root, home);
-  return result;
-}
-
-/**
- * `["pi"]` when Pi, not among `agents`, holds an entry for `root` and Rerail's npm source beside it. Only `root`'s own
- * entry shows set-up connected Pi: a gallery entry alone counts as registered for the managed install (`isRegistered`).
- */
-async function piToSwap(root: string, home: string, agents: readonly Harness[]): Promise<Harness[]> {
-  if (agents.includes("pi") || !detectHarnesses(home).includes("pi")) return [];
-  try {
-    return await piHoldsGalleryBeside(root, home) ? ["pi"] : [];
-  } catch {
-    // A config that cannot be read is left as it is, as for any agent not named.
-    return [];
-  }
-}
-
-/**
- * In the Rerail home: `{ "seen": [<agent id>, …] }`, every coding agent set-up or `rerail install` found on this
- * computer or was named, but one it could not connect. Set-up run again in a repository that is set up connects only
- * the agents found since, so it never undoes `rerail install --remove --agents <id>` or an earlier `--agents` that
- * left one out, and does retry an agent whose config it could not read.
- */
-const SEEN_AGENTS_FILE = "coding-agents.json";
-
-/**
- * The coding agents recorded as seen, or undefined when there is no record to go by: none written yet (an install from
- * before the record existed, whose removals and `--agents` choices it never saw) or one that cannot be read. Set-up run
- * again then connects no agent rather than every one found, and the record starts from what is found now.
- */
-export function seenCodingAgents(rerailHome: string): Harness[] | undefined {
-  try {
-    const { seen } = JSON.parse(readFileSync(join(rerailHome, SEEN_AGENTS_FILE), "utf8")) as { seen?: unknown };
-    return Array.isArray(seen) ? HARNESSES.filter(id => seen.includes(id)) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function writeSeenCodingAgents(rerailHome: string, seen: ReadonlySet<Harness>): Promise<void> {
-  await mkdir(rerailHome, { recursive: true, mode: 0o700 });
-  await writeFile(join(rerailHome, SEEN_AGENTS_FILE), `${JSON.stringify({ seen: HARNESSES.filter(id => seen.has(id)) }, null, 2)}\n`, { mode: 0o600 });
-}
-
-/** Adds `agents` to the coding agents recorded as seen, starting the record if there is none; writes nothing when each is recorded already. */
-export async function recordSeenCodingAgents(rerailHome: string, agents: readonly Harness[]): Promise<void> {
-  const before = seenCodingAgents(rerailHome);
-  const seen = new Set([...before ?? [], ...agents]);
-  if (before !== undefined && seen.size === before.length) return;
-  await writeSeenCodingAgents(rerailHome, seen);
-}
-
-/**
- * Takes `agents` out of the record: set-up could not connect them, so set-up run again tries them once more, even one
- * `rerail install` recorded earlier.
- */
-export async function forgetSeenCodingAgents(rerailHome: string, agents: readonly Harness[]): Promise<void> {
-  const before = seenCodingAgents(rerailHome);
-  if (before === undefined || !agents.some(id => before.includes(id))) return;
-  await writeSeenCodingAgents(rerailHome, new Set(before.filter(id => !agents.includes(id))));
 }

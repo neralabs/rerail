@@ -141,11 +141,11 @@ describe("resumeCommand", () => {
     });
   });
 
-  it("has no command for hosts it has no resume CLI for, and says where to look", () => {
+  it("has no command for hosts without a resume CLI but still names the session", () => {
     const r = resumeCommand({ host: "cursor", cwd: "/w", sessionId: "cur-1" });
     expect(r.name).toBe("Cursor");
     expect(r.cmd).toBeNull();
-    expect(r.cwd).toBe("/w");
+    expect(r.how).toContain("cur-1");
   });
 });
 

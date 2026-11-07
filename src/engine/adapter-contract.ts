@@ -15,8 +15,6 @@ export interface CodingAgentState {
   connected: boolean;
   /** Why its connection could not be checked, such as a config file that is not valid JSON; null when it could. */
   problem: string | null;
-  /** Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Read-only: Rerail never changes it. */
-  rerailData: { access: "kept-out" | "file-tools" | "open"; why: string };
 }
 export type AssistantObservation = "streaming" | "completed";
 export type ToolSurface = "native" | "event";
@@ -300,13 +298,6 @@ export function isSteerRule(value: unknown): value is SteerRule {
 
 /** The `customType` every host records Rerail rule guidance under in its own session transcript. */
 export const RULE_MESSAGE_TYPE = "rerail.rule" as const;
-
-/**
- * The `customType` of the person's line for the steers that rode a tool call's own result (OMP): drawn like a
- * `rerail.rule` message, but for the person alone. The coding agent read those steers in the result, so the OMP adapter
- * takes this message out of every model request and the compaction guard out of what the host summarizes.
- */
-export const STEER_LINE_MESSAGE_TYPE = "rerail.steer-line" as const;
 
 type NativeRuleMessage = {
   customType: typeof RULE_MESSAGE_TYPE;

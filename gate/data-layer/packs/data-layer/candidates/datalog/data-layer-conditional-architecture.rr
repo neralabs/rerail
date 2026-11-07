@@ -1,0 +1,10 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.input doc
+.decl in_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("l2070_batching/conditional_step.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/_conditional_compile.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/sql_conditional.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/sql_backend_executor.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", p).
+.output violation

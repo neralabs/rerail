@@ -1,0 +1,15 @@
+// python/misc2-todo-span: where a TODO finding sits. Ruff reports TD001-TD007 at the tag itself, so the
+// finding's column is the tag's and TD006's fix rewrites only the tag.
+//
+// Interface
+//   todo_at(c, D)    D is the span of comment c's directive tag, the same tag as misc2-todo's todo_tag
+//
+//   x = 1  # todo: fix     todo_at(<comment>, <the span "todo">)
+//
+// The TD rules' logic is all in python/misc2-todo, keyed by the comment node; this file only places the tag,
+// with the same regex as todo_tag (a capture on a node is a span).
+#include "python/misc2-todo.rr"
+
+.decl todo_at(c: node, D: span)
+todo_at(c, D) :- todo_tag(c, _, _, _),
+    match("(?:.*?#[#\\s]*)(?<D>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX]|[hH][aA][cC][kK])(?:[\\t -/:-@\\[-\\x60{-~].*)?", c).

@@ -1,0 +1,40 @@
+.policy "eslint-grouped-accessor-pairs" revision 5
+.description "Keep a property's getter and setter next to each other in objects, classes and type declarations."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   accessor (getters and setters by list and key), accessor_name, accessor_at, list_index
+
+// ESLint's grouped-accessor-pairs: a getter and a setter of one property, in one object literal or class
+// (static and instance members apart), must be next to each other.
+//   ({ get a() {}, b: 1, set a(v) {} })   → Accessor pair getter 'a' and setter 'a' should be grouped.
+// `order` (the string option): "anyOrder" (the default), "getBeforeSet" or "setBeforeGet":
+//   ({ set a(v) {}, get a() {} })          with getBeforeSet → Expected getter 'a' to be before setter 'a'.
+// enforceForTSTypes: also object types and interfaces. A property with two getters or two setters is skipped.
+// Reported at the latter of the two.
+.violation grouped_accessor_pairs(at: loc, msg: symbol) code "grouped-accessor-pairs" "{msg}"
+    suppress eslint "grouped-accessor-pairs"
+    suppress oxlint "grouped-accessor-pairs"
+    suppress biome "lint/style/useGroupedAccessorPairs"
+grouped_accessor_pairs(at, cat(cat("Accessor pair ", a), cat(" and ", cat(b, " should be grouped.")))) :-
+    pair(f, l, d), d > 1, named(f, l, a, b), accessor_at(l, at).
+grouped_accessor_pairs(at, cat(cat("Expected ", b), cat(" to be before ", cat(a, ".")))) :-
+    pair(f, l, 1), misordered(f), named(f, l, a, b), accessor_at(l, at).
+
+// pair(f, l, d): f and l are the one getter and one setter of a key, l the latter, d members apart.
+.decl pair(f: node, l: node, d: number)
+pair(f, l, d) :- accessor(c, s, g, k, "get"), accessor(c, s, t, k, "set"), checked(c),
+    count : { accessor(c, s, x, k, "get") } = 1, count : { accessor(c, s, y, k, "set") } = 1,
+    list_index(c, g, i), list_index(c, t, j), (i < j, f = g, l = t, d = j - i ; j < i, f = t, l = g, d = i - j).
+.decl checked(c: node)
+checked(c) :- (kind(c, "object") ; kind(c, "class_body")).
+checked(c) :- (kind(c, "object_type") ; kind(c, "interface_body")), option("enforceForTSTypes", "true").
+.decl misordered(f: node)  // f, the former, is the kind the order wants second
+misordered(f) :- order("getBeforeSet"), op(f, "set").
+misordered(f) :- order("setBeforeGet"), op(f, "get").
+.decl order(v: symbol)  // the JSON names the string option `order`; an ESLint array gives it as `option`
+order(v) :- (option("order", v) ; option("option", v)).
+.decl named(f: node, l: node, a: symbol, b: symbol)
+named(f, l, a, b) :- pair(f, l, _), accessor_name(f, a), accessor_name(l, b).

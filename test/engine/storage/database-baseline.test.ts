@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -283,6 +282,19 @@ describe("the baseline schema", () => {
     expectRefused(path, unreadable(path, "schema v1 in a shape this build does not know, such as 0.1.0-next.0's"));
     expect(readFileSync(path)).toEqual(before);
   });
+
+  // Self-review round 5: while `rerail update rollback` writes a copy into the file, a session that opened it would
+  // commit between the saved file and the copy, and its change would be in neither.
+  it("refuses every open while a rollback puts a copy back, and opens again once it is done", async () => {
+    const path = await temporaryDatabase();
+    openRerailDatabase(path).$client.close();
+    await writeFile(`${path}.restoring`, "");
+    expectRefused(path, `Rerail is putting back a copy of ${path} for a rollback; try again in a moment (if no rerail update `
+      + `rollback is running, one was interrupted: delete ${path}.restoring)`);
+    await rm(`${path}.restoring`);
+    openRerailDatabase(path).$client.close();
+    openRerailDatabase(path, { readonly: true }).$client.close();
+  });
 });
 
 /** The ids `schema_migrations` records, and whether `rule_settings` has a `note` column. */
@@ -479,39 +491,13 @@ describe("the migration path", () => {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadRuleCatalog(), "repo"))
-          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
+          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
         expect(statSync(path).mode & 0o777).toBe(0o400);
       }
     } finally {
       chmodSync(path, 0o600);
     }
     expect(readFileSync(path).equals(before)).toBe(true);
-  });
-
-  it("approves, at the content it has, every library rule a file held before approvals, and nothing added after", async () => {
-    const path = await temporaryDatabase();
-    // A file from before the step: library rules, no rule_approvals, the step not recorded.
-    stampedFile(path, `
-      DROP TABLE rule_approvals;
-      DELETE FROM schema_migrations WHERE id = 'rule-approvals';
-      INSERT INTO library_rules (rule_id, kind, document_json, revision, payload_hash, created_at, updated_at)
-      VALUES ('mine', 'code', '{}', 1, 'sha256:mine', 0, 5);
-    `);
-    openRerailDatabase(path).$client.close();
-    const database = new Database(path);
-    try {
-      database.exec("INSERT INTO library_rules (rule_id, kind, document_json, revision, payload_hash, created_at, updated_at) VALUES ('later', 'code', '{}', 1, 'sha256:later', 6, 6)");
-    } finally {
-      database.close();
-    }
-    openRerailDatabase(path).$client.close();
-    const reader = new Database(path, { readonly: true });
-    try {
-      expect(reader.prepare("SELECT subject_kind, subject_id, digest, approved_at FROM rule_approvals").all())
-        .toEqual([{ subject_kind: "rule", subject_id: "mine", digest: "sha256:mine", approved_at: 5 }]);
-    } finally {
-      reader.close();
-    }
   });
 
   it("runs a step an existing file has not run, keeps its rows, records the step, and runs nothing on reopening", async () => {
@@ -660,24 +646,5 @@ describe("the migration path", () => {
     const failing: Migration = { id: "fails", up: () => { throw new Error("step failed"); } };
     expect(() => openRerailDatabase(path, { readonly: true, migrations: [failing] })).toThrow(new Error("step failed"));
     expect(migrationState(path)).toEqual({ recorded: WITHOUT_NOTE, note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
-  });
-});
-
-describe("a writer's delete", () => {
-  it("leaves nothing of the deleted row in the file once the connection has closed", async () => {
-    const path = await temporaryDatabase();
-    const secret = `distinctive-${randomUUID()}`;
-    const insert = "INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES (?, ?, 0, 0)";
-    const written = openRerailDatabase(path);
-    written.$client.prepare(insert).run("kept", "kept");
-    written.$client.prepare(insert).run("gone", secret);
-    written.$client.close();
-    expect(readFileSync(path).toString("latin1")).toContain(secret);
-
-    const deleting = openRerailDatabase(path);
-    deleting.$client.prepare("DELETE FROM repositories WHERE repository_key = 'gone'").run();
-    deleting.$client.close();
-
-    expect(readFileSync(path).toString("latin1")).not.toContain(secret);
   });
 });

@@ -74,7 +74,7 @@ describe("a repository's Follow .gitignore setting", () => {
     expect(await context()).toMatchObject({ repository: { followGitignore: true } });
   });
 
-  it("lets a coding agent turn it on only before the repository is set up, and never off", async () => {
+  it("lets a coding agent change it only before the repository is set up", async () => {
     const mcp = createRerailMcpHandler(stores, operations, { version: "0.0.0-test" });
     const call = async (followGitignore: boolean): Promise<{ isError?: boolean; content: Array<{ text: string }> }> => {
       const response = await mcp(new Request("http://localhost:4737/mcp", {
@@ -87,19 +87,12 @@ describe("a repository's Follow .gitignore setting", () => {
       }));
       return (await response.json() as { result: { isError?: boolean; content: Array<{ text: string }> } }).result;
     };
-    const refused = { isError: true, content: [{ text: expect.stringMatching(/^agent-not-permitted/u) }] };
-    // Off lets audits read what Git ignores: that is the person's grant to give, set up or not.
-    expect(await call(false)).toMatchObject(refused);
-    expect(await context()).toMatchObject({ repository: { followGitignore: true } });
-    expect((await set({ repository: repositoryKey, followGitignore: false })).status).toBe(200);
-    expect((await call(true)).isError).not.toBe(true);
-    expect(await context()).toMatchObject({ repository: { followGitignore: true } });
+    expect((await call(false)).isError).not.toBe(true);
+    expect(await context()).toMatchObject({ repository: { followGitignore: false } });
 
     setUpRepository(stores.database(), repositoryKey, { packs: [] });
-    expect(await call(false)).toMatchObject(refused);
-    expect(await context()).toMatchObject({ repository: { followGitignore: true } });
-    expect((await set({ repository: repositoryKey, followGitignore: false })).status).toBe(200);
-    expect(await call(true)).toMatchObject(refused);
+    const refused = await call(true);
+    expect(refused).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^agent-not-permitted/u) }] });
     expect(await context()).toMatchObject({ repository: { followGitignore: false } });
   });
 });

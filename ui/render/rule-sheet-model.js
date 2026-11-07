@@ -4,7 +4,7 @@
  */
 
 /** The prompt box's chips: the sheet's own section names; the box title carries the verb. */
-export const ASK = [["ask", "Ask"], ["check", "What it looks for"], ["scope", "Where it applies"], ["delivery", "On a violation"]];
+export const ASK = [["ask", "Ask"], ["check", "What it checks"], ["scope", "Where it applies"], ["delivery", "On a violation"]];
 /** Prompts that end mid-sentence: the person finishes them after pasting. */
 export const ASK_OPEN = { check: true, scope: true, delivery: true };
 
@@ -16,29 +16,15 @@ const withStop = text => (/[.!?]$/u.test(text) ? text : `${text}.`);
  */
 export function askPrompt(rule, intent) {
   const ref = `the rule "${rule.id}" (${rule.title})`;
-  if (intent === "check") return `Using Rerail, update ${ref}. Show me the change before saving. I want it to look for: `;
+  if (intent === "check") return `Using Rerail, update ${ref}. Show me the change before saving. I want it to check: `;
   if (intent === "scope") return `Using Rerail, update ${ref}. Currently it applies to: ${withStop(rule.scope)} Show me the change before saving. I want it to apply to: `;
   if (intent === "delivery") return `Using Rerail, update ${ref}. Currently, on a violation: ${rule.mode}. Show me the change before saving. Instead I want it to: `;
-  return `Using Rerail, explain ${ref}: what it looks for, where it applies, and its most recent violations.`;
+  return `Using Rerail, explain ${ref}: what it checks, where it applies, and its most recent violations.`;
 }
 
 /** The hand-off for "What the agent sees": the coding agent rewrites the rule's message; the page writes nothing. */
 export const agentSeesPrompt = (id, text) =>
   `Using Rerail, update the rule "${id}": change the message the coding agent sees on a violation to: ${text.trim()}`;
-
-/** Why a rule on Log's message goes nowhere: under the message, and under its draft. */
-export const LOG_NOTE = "Not sent while this rule is on Log.";
-
-const COPY_NOTE = "Saved as your copy. This one turns off.";
-
-/** What saving a new message does: a pack rule's edit is a library copy, and on Log nothing reaches the agent. */
-export const agentSeesHint = ({ fromPack, log }) => [
-  ...(fromPack ? [COPY_NOTE] : []),
-  log ? LOG_NOTE : "Reaches open sessions once your agent saves it.",
-].join(" ");
-
-/** What saving a change from the prompt box does: as `agentSeesHint`, for a change to more than the message. */
-export const askHint = ({ fromPack }) => [...(fromPack ? [COPY_NOTE] : []), "Applies in open sessions once your agent saves it."].join(" ");
 
 const DAY_FORMAT = new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short", year: "numeric" });
 
@@ -56,10 +42,10 @@ export const canDelete = stored => stored.origin === "user" && libraryAttachment
 /** What deleting a rule from this repository does, before the second click: `{ repo, pastViolations, on }`. */
 export function deleteConsequences({ repo, pastViolations, on }) {
   return [
-    `Rerail stops logging and steering it in ${repo}.`,
+    `Rerail stops auditing this rule in every session in ${repo}.`,
     ...(pastViolations > 0 ? [`Its ${pastViolations} past ${pastViolations === 1 ? "violation stays" : "violations stay"} in History.`] : []),
-    "It stays in your library.",
-    ...(on ? ["To pause it instead, turn it off."] : []),
+    "The rule stays in your library; your coding agent can add it here again.",
+    ...(on ? ["To pause it without losing it, turn it off instead."] : []),
   ];
 }
 

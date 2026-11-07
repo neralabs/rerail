@@ -1,0 +1,22 @@
+.policy "typescript-eslint-no-unsafe-declaration-merging" revision 2
+.description "Don't give a TypeScript class and an interface the same name in one scope; the merge adds the interface's members to the class without checking them."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-b-scope.rr"
+//   variable
+
+// typescript-eslint's no-unsafe-declaration-merging: `interface A { x: number } class A {}` merges the two, and the
+// class then claims an `x` it never sets. Both names are reported.
+//   interface A {} class A {}   declare class B {} interface B {}                → each name reported
+//   namespace N { export interface C {} } class C {}   interface D {} namespace D {}    fine
+// One quirk is kept: the rule looks an interface's name up from the interface's own scope, which, for an interface
+// with type parameters, is the scope of those parameters, where the name is not; so `interface E<T> {}` beside
+// `class E<T> {}` reports only the class. No options.
+.violation no_unsafe_declaration_merging(at: node) code "@typescript-eslint/no-unsafe-declaration-merging" "Rename the class or the interface so they don't merge; merged, the class claims the interface's members without implementing them."
+    suppress eslint "@typescript-eslint/no-unsafe-declaration-merging"
+    suppress biome "lint/suspicious/noUnsafeDeclarationMerging"
+no_unsafe_declaration_merging(id) :- variable(s, x, id, "class"), variable(s, x, _, "interface").
+no_unsafe_declaration_merging(id) :- variable(s, x, id, "interface"), variable(s, x, _, "class"), field(i, "name", id),
+    !field(i, "type_parameters", _).

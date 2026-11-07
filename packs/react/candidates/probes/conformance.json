@@ -5,6 +5,7 @@
     "syntax",
     "scope"
   ],
+  "corpora": [],
   "tools": [
     {
       "name": "labels",

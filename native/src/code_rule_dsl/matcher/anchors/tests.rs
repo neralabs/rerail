@@ -480,7 +480,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             .clauses
             .iter()
             .find_map(|clause| match &clause.kind {
-                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(&matchers[..]),
+                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.as_slice()),
                 _ => None,
             })
             .expect("an AST clause")
@@ -516,7 +516,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    assert_eq!(queries.len(), 1665, "pinned catalog query inventory");
+    assert_eq!(queries.len(), 369, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
@@ -534,29 +534,6 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             GrammarDialect::JavaScript,
             "function route(a, b, c) {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
         ),
-        (
-            "php",
-            GrammarDialect::Php,
-            "<?php\nfunction route($a, $b, $c) {\n  if ($a) return 1;\n  if ($b) return 2;\n  if ($c) return 3;\n  foreach ($a as $x) { if ($x) return 4; }\n  return $a && $b ? 5 : 6;\n}\n",
-        ),
-        // A Blade clause reads the compiled view, a PHP program (`ast.embedded: compiled-view`).
-        (
-            "blade",
-            GrammarDialect::Php,
-            "<?php\n$route = function ($a, $b, $c) {\n  if ($a) return 1;\n  if ($b) return 2;\n  if ($c) return 3;\n  foreach ($a as $x) { if ($x) return 4; }\n  return $a && $b ? 5 : 6;\n};\n",
-        ),
-        (
-            "rust",
-            GrammarDialect::Rust,
-            "fn route(a: bool, b: bool, c: bool, v: Vec<u32>) -> u32 {\n    if a { return 1; }\n    if b { return 2; }\n    if c { return 3; }\n    for x in v { if x > 0 { return 4; } }\n    if a && b { 5 } else { 6 }\n}\n",
-        ),
-        // A Vue clause reads the program its scripts make (`ast.embedded: script-block`): TypeScript
-        // for `lang="ts"`.
-        (
-            "vue",
-            GrammarDialect::TypeScript,
-            "function route(a: any, b: any, c: any): number {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
-        ),
     ];
     for (query, _) in &queries {
         let language = query["language"].as_str().expect("AST query language");
@@ -566,10 +543,8 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
         );
     }
     for (name, language, source) in fixtures {
-        // Compiling the queries is most of the test's work; each compiles alone.
-        use rayon::prelude::*;
         let compiled: Vec<_> = queries
-            .par_iter()
+            .iter()
             .filter(|(query, _)| query["language"] == name)
             .map(|(query, defines)| {
                 let mut clauses = defines.clone();
@@ -1320,76 +1295,4 @@ fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
         spent < (roots / 16) as u64,
         "{spent} units for {roots} candidate roots"
     );
-}
-
-/// The Airflow ports (AIR302, AIR311, AIR312) write Ruff's `seen_module(AIRFLOW)` gate inline in
-/// every clause, as `inside module has dotted_name ^airflow`, so the anchor index selects no root
-/// in a file without an `airflow` import. A utility cannot do that: `compile_util` reduces a plan
-/// that projects relations to its root kinds, so folding the gate into the shared `seen-airflow`
-/// keeps every finding and makes AIR302 about a hundred times slower on such files (#375).
-#[test]
-fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
-    // Names the rules report, with no `airflow` import: `airflowx` has the prefix, not the module.
-    let without = "import airflowx\nfrom airflowx.hooks import PostgresHook\nimport os.path as airflow_path\n\nclass Dataset: ...\n\ndef run(h: \"PostgresHook\", d: \"Dataset\") -> \"BashOperator\":\n    airflow_path.join(h.conn, airflowx.DAG)\n    return BashOperator(bash_command=\"x\", sla=d)\n";
-    let with = "from airflow.hooks.S3_hook import S3Hook\nfrom airflow import Dataset\nfrom airflow.operators.bash import BashOperator\n\ndef run(h: \"S3Hook\") -> \"BashOperator\":\n    return BashOperator(bash_command=\"x\", sla=Dataset(uri=\"x\"))\n";
-    let without = AstGrep::doc(StrDoc::new(without, GrammarDialect::Python));
-    let with = AstGrep::doc(StrDoc::new(with, GrammarDialect::Python));
-    for name in [
-        "ruff-air302-airflow3-moved-to-provider",
-        "ruff-air311-airflow3-suggested-update",
-        "ruff-air312-airflow3-suggested-to-move-to-provider",
-    ] {
-        let document = std::fs::read_to_string(rules.join(format!("{name}.json"))).unwrap();
-        let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
-            document,
-            "json".to_owned(),
-            crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
-        )
-        .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
-        let grammars: Vec<&GrammarMatcher> = compiled
-            .inner
-            .clauses
-            .iter()
-            .filter_map(|clause| match &clause.kind {
-                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.iter()),
-                _ => None,
-            })
-            .flatten()
-            .collect();
-        assert!(!grammars.is_empty(), "{name}: AST clauses");
-        for grammar in &grammars {
-            let (found, roots, _, complete, all) = selected(
-                &without,
-                &grammar.matcher,
-                &grammar.anchors,
-                usize::MAX,
-                || false,
-            );
-            assert!(complete && !all, "{name}: the index decides the file");
-            assert_eq!(roots, 0, "{name}: no root without an airflow import");
-            assert!(found.is_empty(), "{name}");
-        }
-        let mut reported = 0;
-        for grammar in &grammars {
-            let (found, _, _, complete, _) = selected(
-                &with,
-                &grammar.matcher,
-                &grammar.anchors,
-                usize::MAX,
-                || false,
-            );
-            assert!(complete, "{name}");
-            assert_eq!(
-                found,
-                actual(&with, &grammar.matcher),
-                "{name}: sound selection"
-            );
-            reported += found.len();
-        }
-        assert!(
-            reported > 0,
-            "{name}: a file with an airflow import still reports"
-        );
-    }
 }

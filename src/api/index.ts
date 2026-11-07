@@ -12,4 +12,3 @@ export { presentationResponseSchema, type sessionResponseSchema } from "./sessio
 export { DatabaseApiStores } from "./stores.js";
 export { invokeOperation } from "./operation.js";
 export { type RulesDashboardScope } from "./session-contracts.js";
-export { runRerailMcpBridge } from "./mcp-bridge.js";

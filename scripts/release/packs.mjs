@@ -5,8 +5,6 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isDeepStrictEqual } from "node:util";
-import { NEXT_TAG, raiseNext } from "./dist-tags.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PACKS = join(ROOT, "packs");
@@ -14,7 +12,7 @@ export const REGISTRY = "https://registry.npmjs.org";
 /** Every pack version is published under `latest`, where set-up and `rerail packs add` fetch it. */
 export const PUBLISH_TAG = "latest";
 /** Where a pack held at an older `latest` (put back on purpose) is published instead, so the hold stays. */
-export const HELD_PUBLISH_TAG = NEXT_TAG;
+export const HELD_PUBLISH_TAG = "next";
 
 /** The git tag that marks `name`'s `version` as published. */
 export const releaseTag = (name, version) => `${name}@${version}`;
@@ -47,13 +45,10 @@ export const alreadyOnRegistry = (output) => /cannot publish over the previously
 /**
  * Releases each `{ name, version, file }` of a packs-pack.ts manifest, so that any failed run can be run again:
  * a version whose tag exists is skipped; one the registry already has without its tag (a run that failed after
- * publishing) is not published again, only taken through the steps after the publish. A pack named in `held` (held
- * at an older `latest`) is published under `next`, every other under `latest`, and then `next` is pointed at it too
- * unless `next` is already at a newer version (raiseNext in dist-tags.mjs), so `next` never trails `latest`. `steps`
- * does the I/O: `publish(file, distTag)` returns `{ ok, output }`, `readNext(name)` resolves to `next` or null, and
- * `assertPublic(name, version)`, `distTag(name, version, tag)` and `tag(tag)` throw on failure. The release tag comes
- * last, so a run that fails before it takes that version through every step again. Returns each
- * `{ name, version, distTag }` this run released.
+ * publishing) is not published again, only checked and tagged. A pack named in `held` (held at an older `latest`) is
+ * published under `next`, every other under `latest`. `steps` does the I/O: `publish(file, distTag)` returns
+ * `{ ok, output }`, `assertRestricted(name)` and `tag(tag)` throw on failure. Returns each `{ name, version, distTag }`
+ * this run released.
  */
 export async function releasePacks(manifest, tags, steps, held = []) {
   const existing = new Set(tags);
@@ -69,8 +64,7 @@ export async function releasePacks(manifest, tags, steps, held = []) {
     const published = steps.publish(file, distTag);
     if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${tag} failed`);
     if (!published.ok) steps.log(`${tag} is already on the registry without its tag; checking and tagging it`);
-    await steps.assertPublic(name, version);
-    if (distTag === PUBLISH_TAG) steps.log(await raiseNext(name, version, steps));
+    await steps.assertRestricted(name);
     steps.tag(tag);
     steps.log(`released ${tag} under ${distTag}${holding.has(name) ? ` (held at an older ${PUBLISH_TAG})` : ""}`);
     released.push({ name, version, distTag });
@@ -97,19 +91,6 @@ export function readChangesets(directory = join(ROOT, ".changeset")) {
     .map((file) => ({ file, text: readFileSync(join(directory, file), "utf8") }));
 }
 
-/** A changeset's summary: its text after the front matter, trimmed, which becomes the pack's changelog entry. */
-export const changesetSummary = (text) => text.replace(/^---\r?\n(?:[\s\S]*?\r?\n)?---/u, "").trim();
-
-/** Each package a changeset's front matter names, with its bump: `{ name, bump }`. */
-export function changesetEntries(text) {
-  const front = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";
-  return front
-    .split(/\r?\n/u)
-    .map((line) => /^\s*["']?([^"':]+)["']?\s*:\s*(patch|minor|major)\s*$/u.exec(line))
-    .filter((entry) => entry !== null)
-    .map(([, name, bump]) => ({ name, bump }));
-}
-
 /**
  * What the pending `changesets` bump past a patch on a pack below 1.0.0. A pack is pre-release until 1.0.0, so every
  * change to it is a patch (docs/pack-format.md, "Versioning and release"); `changeset version` would otherwise take
@@ -119,45 +100,15 @@ export function changesetBumpFailures(changesets, packs) {
   const versions = new Map(packs.map((pack) => [pack.name, pack.version]));
   const failures = [];
   for (const { file, text } of changesets) {
-    for (const { name, bump } of changesetEntries(text)) {
+    const front = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";
+    for (const line of front.split(/\r?\n/u)) {
+      const entry = /^\s*["']?([^"':]+)["']?\s*:\s*(patch|minor|major)\s*$/u.exec(line);
+      if (entry === null) continue;
+      const [, name, bump] = entry;
       const version = versions.get(name);
       if (version === undefined || bump === "patch" || !version.startsWith("0.")) continue;
       failures.push(`${file}: ${name} is ${version}, below 1.0.0, so its bump is patch, not ${bump}`);
     }
-  }
-  return failures;
-}
-
-/**
- * Whether a pack's package.json changed what installing the pack gives, from its text `before` (undefined: the file is
- * new) to `after`. `publishConfig` only steers `npm publish`, so a change to it alone needs no release.
- */
-export function manifestChanged(before, after) {
-  if (before === undefined) return true;
-  const { publishConfig: _before, ...was } = JSON.parse(before);
-  const { publishConfig: _after, ...is } = JSON.parse(after);
-  return !isDeepStrictEqual(was, is);
-}
-
-/**
- * Each pack a pull request changes what it publishes of, with no changeset of that pull request naming it. A pack
- * publishes its `package.json` and what its `files` list (a file, or everything under a directory); its expected findings,
- * candidates and `CHANGELOG.md` are not published, and changing them needs no changeset. `changed` lists the pull
- * request's changed paths (old and new paths of a rename both), `changesets` the changesets it adds or edits, and
- * `packs` each pack's `{ id, name, files }`.
- */
-export function missingChangesets(changed, changesets, packs) {
-  const named = new Set(changesets.flatMap(({ text }) => changesetEntries(text).map((entry) => entry.name)));
-  const failures = [];
-  for (const { id, name, files } of packs) {
-    const prefix = `packs/${id}/`;
-    const published = changed
-      .filter((path) => path.startsWith(prefix))
-      .map((path) => path.slice(prefix.length))
-      .filter((path) => path === "package.json" || files.some((entry) => path === entry || path.startsWith(`${entry}/`)));
-    if (published.length === 0 || named.has(name)) continue;
-    const shown = published.slice(0, 3).map((path) => `${prefix}${path}`).join(", ");
-    failures.push(`${name}: ${shown}${published.length > 3 ? ` and ${published.length - 3} more` : ""} changed, and no changeset names it`);
   }
   return failures;
 }
@@ -248,16 +199,12 @@ export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) 
 
 /**
  * Points `latest` at each `{ name, version }` in `promotions`, refusing a version this repository never released (no
- * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. Then `next` is pointed at the version
- * too unless it is already at a newer one (raiseNext in dist-tags.mjs), so `next` never trails `latest`; a put-back to
- * an older version leaves it where it is. One failure does not stop the others. Returns each pack fully promoted, and
- * each failure, so the run reports them all and can be run again. `steps.promote(name, version)`,
- * `steps.hold(name, version)`, `steps.release(name)` and `steps.distTag(name, version, tag)` throw on failure, and
- * `steps.readNext(name)` resolves to `next` or null.
+ * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. One failure does not stop the
+ * others; returns each failure, so the run reports them all and can be run again. `steps.promote(name, version)`,
+ * `steps.hold(name, version)` and `steps.release(name)` throw on failure.
  */
-export async function promotePacks(promotions, tags, steps) {
+export function promotePacks(promotions, tags, steps) {
   const existing = new Set(tags);
-  const promoted = [];
   const failures = [];
   for (const { name, version, hold = false, release = false } of promotions) {
     const tag = releaseTag(name, version);
@@ -267,13 +214,11 @@ export async function promotePacks(promotions, tags, steps) {
       if (hold) steps.hold(name, version);
       if (release) steps.release(name);
       steps.log(`promoted ${tag} to latest${hold ? `, held there (${HOLD_TAG})` : ""}${release ? `, ${HOLD_TAG} released` : ""}`);
-      steps.log(await raiseNext(name, version, steps));
-      promoted.push({ name, version });
     } catch (error) {
       failures.push(`${tag}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { promoted, failures };
+  return failures;
 }
 
 /**

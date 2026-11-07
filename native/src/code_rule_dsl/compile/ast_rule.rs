@@ -46,10 +46,10 @@ const AST_RULE_KEYS: &[&str] = &[
     "capture",
     "formatArgs",
     "layout",
+    "filePath",
     "calls",
     "embedded",
     "host",
-    "importTarget",
 ];
 /// Tests add `testUnknown`, a leaf whose verdict is unknown where its regex matches the node's text.
 #[cfg(test)]
@@ -76,10 +76,10 @@ const AST_RULE_KEYS: &[&str] = &[
     "capture",
     "formatArgs",
     "layout",
+    "filePath",
     "calls",
     "embedded",
     "host",
-    "importTarget",
     "testUnknown",
 ];
 
@@ -440,14 +440,9 @@ pub(crate) fn compile_ast_rule(
     }
     if let Some(kind) = rule.get("kind").and_then(Value::as_str) {
         terms.push(match KindMatcher::try_new(kind, language) {
-            // A supertype names a symbol no node carries: ast-grep accepts it and never matches.
-            Ok(_) if is_supertype(kind, language) => grammar_gap(
-                gaps,
-                format!(
-                    "{path}/kind: `{kind}` is an abstract kind (a grammar supertype) that no node \
-                     carries; list its concrete kinds under `any`"
-                ),
-            ),
+            // A supertype names a symbol no node carries, so ast-grep's kind test never matches
+            // it: it matches the nodes the parser reported as its members (the tape's).
+            Ok(_) if is_supertype(kind, language) => AstMatcher::Supertype(crate::code_rule_dsl::matcher::Supertype::new(language.kind_to_id(kind), language)),
             Ok(matcher) => match language.kinds().kind_ids(kind).as_slice() {
                 [_] => AstMatcher::Kind(matcher),
                 ids => AstMatcher::Any(
@@ -521,6 +516,20 @@ pub(crate) fn compile_ast_rule(
                 utils,
             )
             .expect("arguments is semantic")?,
+        );
+    }
+    if let Some(condition) = rule.get("filePath") {
+        terms.push(
+            semantic::compile_key(
+                "filePath",
+                condition,
+                semantic::Stage::Atomic,
+                language,
+                &format!("{path}/filePath"),
+                gaps,
+                utils,
+            )
+            .expect("filePath is semantic")?,
         );
     }
     // Composites, negations, utilities, relations and binding terms may read captures, and all but
@@ -881,21 +890,6 @@ pub(crate) fn compile_ast_rule(
     {
         terms.push(compiled?);
     }
-    // An import target reads the node's value and the files around it, and binds nothing.
-    if let Some(target) = rule.get("importTarget") {
-        terms.push(
-            semantic::compile_key(
-                "importTarget",
-                target,
-                semantic::Stage::Late,
-                language,
-                &format!("{path}/importTarget"),
-                gaps,
-                utils,
-            )
-            .expect("importTarget is semantic")?,
-        );
-    }
     // A call's reach reads the workspace closure: the costliest term, and it binds nothing.
     if let Some(calls) = rule.get("calls") {
         terms.push(
@@ -1129,39 +1123,29 @@ mod tests {
     }
 
     #[test]
-    fn abstract_kinds_are_rejected() {
+    fn abstract_kinds_match_the_nodes_the_parser_reported_as_members() {
         // A supertype (`expression`, `statement`, ...) resolves to a symbol no node carries, so
-        // ast-grep 0.45.3 accepts it and it never matches.
-        for kind in [
-            "expression",
-            "statement",
-            "declaration",
-            "primary_expression",
-            "pattern",
-        ] {
-            let reason = rejection(compile_typescript_rule(json!({ "kind": kind })));
-            assert_eq!(
-                reason,
-                format!(
-                    "/clauses/0/forbid/ast/rule/kind: `{kind}` is an abstract kind (a grammar supertype) that no node carries; list its concrete kinds under `any` (typescript, tsx, javascript grammars)"
-                ),
-            );
+        // ast-grep's kind test never matches it. Rerail matches the nodes the parser reported as
+        // its members, which the tape stores per node (decision 0025): membership is contextual,
+        // so the assigned `a` is a `pattern`, not an `expression`, while `b` is one.
+        for kind in ["expression", "statement", "declaration", "primary_expression", "pattern"] {
+            compile_typescript_rule(json!({ "kind": kind })).unwrap_or_else(|error| panic!("{kind}: {}", error.reason));
         }
+        let source = "a = b;\n";
+        let expression = compile_typescript_rule(json!({ "kind": "expression" })).unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&expression, "typescript", "a.ts", source);
+        assert_eq!(matched_texts(&result, source), ["a = b", "b"]);
+        let statement = compile_typescript_rule(json!({ "kind": "statement" })).unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&statement, "typescript", "a.ts", source);
+        assert_eq!(matched_texts(&result, source), ["a = b;"]);
+        // Under a relation too.
         let python = clause_document(json!({
             "id": "c",
-            "forbid": { "ast": { "language": "python", "rule": { "kind": "identifier", "has": { "kind": "expression" } } } },
+            "forbid": { "ast": { "language": "python", "rule": { "kind": "assignment", "has": { "kind": "expression" } } } },
             "violation": violation(),
         }));
-        let reason = rejection(compile_document_with(
-            python,
-            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
-        ));
-        assert!(
-            reason.starts_with(
-                "/clauses/0/forbid/ast/rule/has/kind: `expression` is an abstract kind"
-            ),
-            "{reason}"
-        );
+        compile_document_with(python, &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"))
+            .unwrap_or_else(|error| panic!("{}", error.reason));
         // Concrete kinds, including ones named like a keyword, still compile.
         for kind in ["expression_statement", "await_expression", "identifier"] {
             compile_typescript_rule(json!({ "kind": kind }))

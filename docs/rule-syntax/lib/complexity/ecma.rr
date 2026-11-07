@@ -1,0 +1,39 @@
+// complexity/ecma: lizard's decision points in TypeScript and JavaScript (and a Vue component's scripts), on
+// tree-sitter-typescript and tree-sitter-javascript, for complexity/cyclomatic.rr.
+//
+// A function is a function declaration or expression, an arrow function, a method (getters, setters and
+// constructors are methods) or a generator. A class is not scored itself. Decisions:
+//   if (else if included)  for  for…in  for…of  while  do…while  catch     a statement or clause each
+//   a && b   a || b   a &&= b   a ||= b   c ? x : y                         each operator
+//   switch                                       once if it has a `case`; a switch with only `default` counts 0
+// Not counted: `??`, `??=`, `?.`, optional parameters and properties (`a?: T`), default parameters.
+//
+// A function with no name of its own takes the variable, class field or object key it is the value of:
+//   const label = (x) => …        `label`          { onClick: () => … }     `onClick`
+//   class A { handler = () => … }  `handler`        xs.map((x) => …)        "This function"
+//
+//   function pick(a, b) {         CCN 4
+//     if (a && b) return 1;       if, &&
+//     return a ? 2 : 3;           ?:
+//   }
+#include "complexity/cyclomatic.rr"
+
+cc_boundary("function_declaration"). cc_boundary("function_expression"). cc_boundary("arrow_function").
+cc_boundary("method_definition"). cc_boundary("generator_function"). cc_boundary("generator_function_declaration").
+
+cc_decision(n, 0) :- kind(n, k), cc_ecma_statement(k).
+cc_decision(n, 0) :- kind(n, "switch_statement"), field(n, "body", b), child(b, c, _), kind(c, "switch_case").
+cc_decision(n, 0) :- kind(n, "ternary_expression").
+cc_decision(n, 0) :- kind(n, "binary_expression"), (op(n, "&&") ; op(n, "||")).
+cc_decision(n, 0) :- kind(n, "augmented_assignment_expression"), (op(n, "&&=") ; op(n, "||=")).
+.decl cc_ecma_statement(k: symbol)
+cc_ecma_statement("if_statement"). cc_ecma_statement("for_statement"). cc_ecma_statement("for_in_statement").
+cc_ecma_statement("while_statement"). cc_ecma_statement("do_statement"). cc_ecma_statement("catch_clause").
+
+cc_name(f, x) :- cc_boundary(k), kind(f, k), field(f, "name", n), text(n, x).
+cc_name(f, x) :- cc_boundary(k), kind(f, k), !field(f, "name", _), child(p, f, _), cc_ecma_holder(p, n), text(n, x).
+.decl cc_ecma_holder(p: node, n: node)  // p gives its value a name n: a declarator, a class field, an object key
+cc_ecma_holder(p, n) :- kind(p, "variable_declarator"), field(p, "name", n).
+cc_ecma_holder(p, n) :- kind(p, "public_field_definition"), field(p, "name", n).
+cc_ecma_holder(p, n) :- kind(p, "field_definition"), field(p, "property", n).
+cc_ecma_holder(p, n) :- kind(p, "pair"), field(p, "key", n).

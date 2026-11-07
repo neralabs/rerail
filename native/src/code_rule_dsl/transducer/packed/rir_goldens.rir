@@ -1,0 +1,157 @@
+; ast-grep pattern
+program sha256:c967a9646fcb71b71ae9e77b202961fe80fb10337a70e76bb8a67db74d35149d ir=7 grammar=python@00fe1b6c89e0af4a caps=interp,micro,pattern
+  mode set=0 query=0
+  pattern (internal call (terminal identifier named "exec") (internal argument_list (terminal "(" any "(") (single "A" named) (terminal ")" any ")")))
+  0000 STOP 0
+; ast-grep pattern with a multi-capture
+program sha256:fec7599178fb282ccd0c558e7f133098652eff883c1a3f7124d5dc9bf9ce6767 ir=7 grammar=python@00fe1b6c89e0af4a caps=interp,micro,pattern
+  mode set=0 query=0
+  pattern (internal function_definition (terminal "def" any "def") (single "F" named) (internal parameters (terminal "(" any "(") (ellipsis "ARGS") (terminal ")" any ")")) (terminal ":" any ":") (ellipsis "BODY"))
+  0000 STOP 0
+; ast-grep literal
+program sha256:0c1622da2a63be67a1e19dd55636a1e2902af6c5fa6ebd31e791a82212168fa8 ir=7 grammar=python@00fe1b6c89e0af4a caps=interp,micro
+  mode set=0 query=0
+  string 0 "execute"
+  string 1 "match"
+  string 2 "ast-grep-literal"
+  label 0 s1
+  label 1 s2
+  predicate 0 equal s0
+  0000 KIND identifier
+  0001 TEXT P0
+  0002 CAPTURE L0  ; match
+  0003 EMIT L1  ; ast-grep-literal
+; regex
+program sha256:245e896be4dd6e26c997894121ea7cb22c1c665c6e9eea840d98c7989ac6bce4 ir=7 grammar=python@00fe1b6c89e0af4a caps=interp,micro
+  mode set=0 query=0
+  string 0 "^eval|exec$"
+  string 1 "match"
+  string 2 "regex"
+  label 0 s1
+  label 1 s2
+  predicate 0 regex s0
+  0000 TEXT P0
+  0001 CAPTURE L0  ; match
+  0002 EMIT L1  ; regex
+; navigation
+program sha256:3679b03b478eab3817a347a7cc89c9cc62b61254106ad7aa03f6942996400705 ir=7 grammar=python@00fe1b6c89e0af4a caps=interp,micro
+  mode set=0 query=0
+  0000 STOP 0
+; query: fields
+program sha256:ce7aa27ed0d860b292a6966c37293cb39a2b2039d83a1195b1e4049e24e3d758 ir=7 grammar=python@00fe1b6c89e0af4a caps=interp
+  mode set=0 query=1
+  string 0 "name"
+  string 1 "definition"
+  string 2 "tree-sitter-query"
+  label 0 s0
+  label 1 s1
+  label 2 s2
+  0000 KIND function_definition
+  0001 SAVE_CURSOR 0
+  0002 CHILD 0
+  0003 FIELD name
+  0004 KIND identifier
+  0005 CAPTURE L0  ; name
+  0006 RESTORE_CURSOR 0
+  0007 CAPTURE L1  ; definition
+  0008 EMIT L2  ; tree-sitter-query
+; query: #eq?
+program sha256:23c9709fe811e43f218456cd29d450ee53f39b10bd53c6ce33d5ded15bb6cc7f ir=7 grammar=python@00fe1b6c89e0af4a caps=interp
+  mode set=0 query=1
+  string 0 "name"
+  string 1 "exec"
+  string 2 "tree-sitter-query"
+  label 0 s0
+  label 1 s2
+  predicate 0 equal s1
+  assert 0 text L0 P0 negated=0 any=0
+  0000 KIND identifier
+  0001 CAPTURE L0  ; name
+  0002 ASSERT A0
+  0003 EMIT L1  ; tree-sitter-query
+; query: #match? over alternation
+program sha256:8797e5539e75d2052e771722c94c78760f0a8c883ea62d44e7f4f2b5407320d2 ir=7 grammar=python@00fe1b6c89e0af4a caps=interp
+  mode set=0 query=1
+  string 0 "number"
+  string 1 "^[12]"
+  string 2 "tree-sitter-query"
+  label 0 s0
+  label 1 s2
+  predicate 0 regex s1
+  assert 0 text L0 P0 negated=0 any=0
+  0000 FORK @0003
+  0001 KIND integer
+  0002 GOTO @0004
+  0003 KIND float
+  0004 CAPTURE L0  ; number
+  0005 ASSERT A0
+  0006 EMIT L1  ; tree-sitter-query
+; query: quantifier
+program sha256:b916c57e1160beca5af3907a84ac7d202f51010d1a662f204f899d3a91e36e66 ir=7 grammar=python@00fe1b6c89e0af4a caps=interp
+  mode set=0 query=1
+  string 0 "item"
+  string 1 "# 0"
+  string 2 "tree-sitter-query"
+  label 0 s0
+  label 1 s2
+  predicate 0 equal s1
+  assert 0 text L0 P0 negated=0 any=0
+  0000 KIND module
+  0001 SAVE_CURSOR 0
+  0002 REPEAT_BEGIN 0
+  0003 CHILD 0
+  0004 KIND comment
+  0005 CAPTURE L0  ; item
+  0006 REPEAT_BUMP 0
+  0007 FORK @0013
+  0008 NEXT 0
+  0009 KIND comment
+  0010 CAPTURE L0  ; item
+  0011 REPEAT_BUMP 0
+  0012 GOTO @0007
+  0013 REPEAT_END 0
+  0014 GOTO @0015
+  0015 RESTORE_CURSOR 0
+  0016 ASSERT A0
+  0017 EMIT L1  ; tree-sitter-query
+; query: directives
+program sha256:331d85f378be06103657ea042b3f45177e4cec565e160075fad4f68797cc9e12 ir=7 grammar=python@00fe1b6c89e0af4a caps=interp
+  mode set=0 query=1
+  string 0 "name"
+  string 1 "role"
+  string 2 "definition"
+  string 3 "tree-sitter-query"
+  label 0 s0
+  label 1 s3
+  directive 0 set s1 s2
+  directive 1 downcase L0
+  0000 KIND identifier
+  0001 CAPTURE L0  ; name
+  0002 EMIT L1  ; tree-sitter-query
+; query: offset
+program sha256:76720dffaddce2bb0f69d121e4f6231799e5182458b95f54849ffe79d7eba227 ir=7 grammar=python@00fe1b6c89e0af4a caps=interp
+  mode set=0 query=1
+  string 0 "name"
+  string 1 "role"
+  string 2 "trimmed"
+  string 3 "tree-sitter-query"
+  label 0 s0
+  label 1 s3
+  directive 0 offset L0 0 1 0 -1
+  directive 1 set s1 s2
+  0000 KIND identifier
+  0001 CAPTURE L0  ; name
+  0002 EMIT L1  ; tree-sitter-query
+; set mode
+program sha256:2cd1fdaeb20670296d67664208167eeaf5c3cdd0d0e7556a48ae3b27fa0934bc ir=7 grammar=python@00fe1b6c89e0af4a caps=interp,micro
+  mode set=1 query=0
+  string 0 "execute"
+  string 1 "match"
+  string 2 "ast-grep-literal"
+  label 0 s1
+  label 1 s2
+  predicate 0 equal s0
+  0000 KIND identifier
+  0001 TEXT P0
+  0002 CAPTURE L0  ; match
+  0003 EMIT L1  ; ast-grep-literal

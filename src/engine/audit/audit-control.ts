@@ -8,7 +8,6 @@ import { openRerailDatabase, type RerailDatabase } from "../storage/database.js"
 import { runGit } from "../git.js";
 import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits } from "../storage/schema.js";
 import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
-import { scrubSecrets } from "../secret-scrub.js";
 
 import {
   auditSettingsSchema, auditSettingsPatchSchema, repositoryAuditSchema, auditRequestInputSchema, auditRequestSchema,
@@ -257,8 +256,7 @@ export class SqliteAuditControlStore {
     error: string | null = null,
   ): void {
     this.#database.update(repositoryAudits).set({
-      // An error's text may quote what failed; it is kept scrubbed of secrets.
-      auditId: auditId, status, error: error === null ? null : scrubSecrets(error), finishedAt: Date.now(),
+      auditId: auditId, status, error, finishedAt: Date.now(),
     }).where(and(
       eq(repositoryAudits.workspaceRoot, canonicalWorkspace(checkoutRoot)),
       eq(repositoryAudits.sessionId, sessionId),
@@ -305,7 +303,7 @@ export class SqliteAuditControlStore {
           this.#database.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.checkoutPath, path)).get() !== undefined);
         if (paths.length === 0) selectionError = "Git diff contains no changed files";
       } catch (error) {
-        selectionError = `Could not read git diff: ${scrubSecrets(error instanceof Error ? error.message : String(error))}`;
+        selectionError = `Could not read git diff: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
     const id = randomUUID();
@@ -348,7 +346,7 @@ export class SqliteAuditControlStore {
   }
   finish(id: string, status: "completed" | "failed" | "interrupted", auditIds: readonly string[], error: string | null = null): void {
     const finishedAt = Date.now();
-    const finished = this.#database.update(auditRequests).set({ status, auditIds: [...auditIds], error: error === null ? null : scrubSecrets(error), finishedAt })
+    const finished = this.#database.update(auditRequests).set({ status, auditIds: [...auditIds], error, finishedAt })
       .where(and(eq(auditRequests.id, id), eq(auditRequests.status, "running"))).returning({ id: auditRequests.id }).get();
     if (finished === undefined && status === "interrupted" && auditIds.length > 0) {
       // Closing the session can record interruption before native work returns its audit IDs.

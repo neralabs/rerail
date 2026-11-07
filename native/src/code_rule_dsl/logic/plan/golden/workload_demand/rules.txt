@@ -1,0 +1,84 @@
+kind($n, $k)	node(_, $n, $k, _, _)	[]	15832
+assigns($s, $x, $r)	kind($a, "assignment")	[["nearest($a, $s, scope)", "climb"]]	1425
+docof($n, $d)	node($d, $n, _, _, _)	[]	15832
+defines_class($s, $x, @cat($m, $x))	kind($c, "class_definition")	[["nearest($c, $s, scope)", "climb"]]	40
+class_q($q)	defines_class(_, _, $q)	[]	14
+defines_fn($s, $x, $f, @cat($m, $x))	kind($f, "function_definition")	[["nearest($f, $s, scope)", "climb"]]	521
+bound_in($s, $x)	assigns($s, $x, _)	[]	467
+bound_in($s, $x)	defines_class($s, $x, _)	[]	14
+bound_in($s, $x)	defines_fn($s, $x, _, _)	[]	53
+bound_in($f, $x)	kind($f, "function_definition")	[]	529
+bound_in($f, $x)	kind($f, "function_definition")	[]	417
+fn_q($q, $f)	defines_fn(_, _, $f, $q)	[]	53
+binds($d, $t, $t)	kind($i, "import_statement")	[]	70
+binds($d, $a, $m)	kind($x, "aliased_import")	[]	12
+binds($d, $s, @cat($m, $s))	kind($i, "import_from_statement")	[]	26
+binds($d, $a, @cat($m, $s))	kind($x, "aliased_import")	[]	12
+resolves($n, $q)	binds($d, $s, $q)	[["text($n, $s)", "range"]]	3004
+resolves($n, @cat($m, $s))	resolves($o, $m)	[]	2114
+augdef($s, $x, $a)	kind($a, "augmented_assignment")	[["nearest($a, $s, scope)", "climb"]]	116
+binval($n, $o, $l, $r)	kind($n, "binary_operator")	[]	396
+binval($a, $o, $l, $r)	kind($a, "augmented_assignment")	[]	383
+modnode($d, $m)	node($d, $m, "module", _, _)	[]	10
+fn_ref($n, $f)	lookup($n, $x, $s)	[]	2348
+fn_ref($n, $f)	fn_q($q, $f)	[]	646
+lookup($n, $x, $s)	magic_lookup($n)	[["nearest($n, $s, scope)", "climb"]]	15611
+lookup($n, $x, $m)	modnode($d, $m)	[["text($n, $x)", "range"], ["nearest($n, $s, scope)", "climb"]]	5327
+magic_class_ref($f)	kind($c, "call")	[]	1661
+magic_cv($r)	lookup($n, $x, $s)	[]	2060
+magic_cv($a)	lookup($n, $x, $s)	[]	3168
+magic_cv($c)	kind($n, "parenthesized_expression")	[]	77
+magic_cv($l)	binval($n, $o, $l, $r)	[]	634
+magic_cv($r)	binval($n, $o, $l, $r)	[]	634
+magic_cv($a)	text($f, "range")	[]	5
+magic_fn_ref($f)	kind($c, "call")	[]	1661
+magic_has_def($n)	magic_cv($n)	[]	3001
+magic_lookup($f)	magic_class_ref($f)	[]	1001
+magic_lookup($n)	magic_fn_ref($n)	[]	1001
+magic_lookup($n)	magic_type_of($n)	[]	1001
+magic_lookup($n)	magic_has_def($n)	[]	1001
+magic_lookup($n)	magic_has_def($n)	[]	1001
+magic_lookup($n)	magic_cv($n)	[]	1001
+magic_lookup($n)	magic_cv($n)	[]	1001
+magic_returns($fn)	fn_ref($f, $fn)	[]	2228
+magic_type_of($r)	lookup($n, $x, $s)	[]	2060
+magic_type_of($c)	kind($n, "parenthesized_expression")	[]	77
+magic_type_of($e)	kind($r, "return_statement")	[["nearest($r, $f, scope)", "climb"]]	464
+magic_type_of($o)	text($m, "append")	[]	45
+class_ref($f, $q)	magic_class_ref($f)	[]	5
+class_ref($f, $q)	magic_class_ref($f)	[]	6
+returns($f, $t)	magic_returns($f)	[["nearest($r, $f, scope)", "climb"]]	1
+type_of($n, $t)	magic_type_of($n)	[]	20081
+type_of($n, $t)	lookup($n, $x, $s)	[]	262
+type_of($n, $t)	magic_type_of($n)	[]	1161
+type_of($c, $q)	class_ref($f, $q)	[]	1
+type_of($c, $t)	fn_ref($f, $fn)	[]	1
+append_type($o, $t)	type_of($o, $t)	[]	35
+exc_type($n)	text($n, "Exception")	[]	4
+exc_type($n)	kind($n, "parenthesized_expression")	[]	376
+has_non_block($e)	kind($e, "except_clause")	[]	168
+catch_all($e)	kind($e, "except_clause")	[]	35
+catch_all($e)	exc_type($c)	[]	6
+catch_all($e)	exc_type($x)	[]	10
+has_def($n)	magic_has_def($n)	[]	1
+has_def($n)	magic_has_def($n)	[]	1
+is_lit($k)	lit_type($k, _)	[]	1001
+cv($n, $v)	magic_cv($n)	[]	13
+cv($n, top)	magic_cv($n)	[]	9
+cv($n, top)	magic_cv($n)	[]	13
+cv($n, top)	magic_cv($n)	[]	17
+cv($n, top)	magic_cv($n)	[]	9
+cv($n, $v)	magic_cv($n)	[]	96
+cv($n, $v)	magic_cv($n)	[]	1576
+cv($n, $v)	magic_cv($n)	[]	233
+cv($n, @flat_bin($o, $a, $b))	cv($r, $b)	[]	3004001
+has_splat($c)	kind($k, "dictionary_splat")	[]	22
+kwarg($c, $s, $v)	kind($k, "keyword_argument")	[]	238
+has_timeout($c)	kwarg($c, "timeout", _)	[]	3
+mirror($l, $r)	kind($a, "assignment")	[]	1342
+mirror($l2, $r2)	mirror($l, $r)	[]	9260
+finding("B110", $e)	catch_all($e)	[]	40
+finding("SELF_ASSIGN", $l)	mirror($l, $r)	[]	2492
+finding("NO_TIMEOUT", $c)	resolves($f, $q)	[]	712
+finding("NO_TIMEOUT", $c)	kwarg($c, "timeout", $v)	[]	8
+range_const($c, $v)	text($f, "range")	[]	5

@@ -1,0 +1,16 @@
+.policy "bandit-b323-unverified-context" revision 2
+.description "Don't create SSL contexts with ssl._create_unverified_context(); it turns off certificate and hostname verification and allows man-in-the-middle attacks."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B323 (its B001 blacklist): a call to ssl._create_unverified_context.
+//   import ssl; ssl._create_unverified_context()     B323
+//   ssl.create_default_context()                     not reported
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B323(at: node) code "B323"
+    "Use ssl.create_default_context() instead, which verifies certificates and hostnames."
+    suppress nosec "B323"
+B323(n) :- blacklisted(n, "B323").

@@ -1,1 +1,0 @@
-Rule packs published by third parties load: any npm package named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, added with `rerail packs add <package>`. Rerail names their publisher wherever they show, warns that it has not reviewed them, and loads its own pack when ids clash. Only packages you installed load ([third parties' packs](docs/rule-packs.md#third-parties-packs)).

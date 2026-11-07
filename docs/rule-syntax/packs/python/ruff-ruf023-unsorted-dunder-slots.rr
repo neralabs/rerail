@@ -1,0 +1,21 @@
+.policy "ruff-ruf023-unsorted-dunder-slots" revision 3
+.description "Keep the entries of a class's __slots__ in natural sorted order, with digit runs compared by number."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF023: a class's `__slots__` whose string entries are not in natural order (digit runs by number).
+// Checked: `__slots__ = …` (one target) and `__slots__: T = …` in a class body (in an `if` too), with a list, tuple, set
+// or dict display (its keys) of two or more strings. Reported at the display.
+//   class C:
+//       __slots__ = ("b", "a")                       ← RUF023
+//       __slots__ = {"y": "doc", "x": "doc"}         ← RUF023
+//       __slots__ = ("a2", "a10")                    not reported: natural order
+#include "python/ruff-sorting.rr"
+
+.violation RUF023(at: node, c: symbol) code "RUF023"
+    "Sort the entries of this `{c}.__slots__` in natural order (digit runs by number). Reordering is safe unless other code iterates `__slots__` and relies on the order."
+    suppress ruff "RUF023"
+RUF023(v, c) :- slots_seq(v, k), unsorted(v, "natural"), def_name(k, c).
+
+sort_ask(v, "natural") :- slots_seq(v, _).

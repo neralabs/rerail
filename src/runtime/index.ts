@@ -6,13 +6,9 @@
  */
 export {
   DAEMON_STATE_FILE,
-  daemonFetch,
   type DaemonHealth,
   type DaemonLaunchOptions,
-  type EngineEndpoint,
   type DaemonState,
-  probeDaemon,
-  readDaemonState,
   startDaemon,
   stopDaemon,
 } from "./daemon-control.js";
@@ -42,5 +38,5 @@ export {
   SqliteSessionReader,
   SqliteSessionStore,
 } from "./session-store.js";
-export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, onRuleCount } from "./repository-start.js";
+export { type RepositorySetupIo, onRuleCount } from "./repository-start.js";
 export { type NpmRunner } from "./npm.js";

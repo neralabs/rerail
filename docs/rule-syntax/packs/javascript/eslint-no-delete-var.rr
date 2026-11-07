@@ -1,0 +1,19 @@
+.policy "eslint-no-delete-var" revision 3
+.description "Don't use delete on a plain variable; delete only removes object properties and is a syntax error on variables in strict mode."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   deparen
+
+// ESLint's no-delete-var: `delete x` where x is a plain name, with or without parentheses.
+//   delete x;            → reported
+//   delete obj.x;        fine
+// No options.
+.violation no_delete_var(at: node) code "no-delete-var"
+    "Remove this delete; to clear the variable, assign undefined to it instead."
+    suppress eslint "no-delete-var"
+    suppress oxlint "no-delete-var"
+no_delete_var(u) :- kind(u, "unary_expression"), op(u, "delete"), field(u, "argument", a), deparen(a, x),
+    kind(x, "identifier").

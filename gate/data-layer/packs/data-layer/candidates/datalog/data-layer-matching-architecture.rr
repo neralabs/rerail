@@ -1,0 +1,12 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.input doc
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("conform/l5250_matching/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer_testing/matching_operator.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+.output violation

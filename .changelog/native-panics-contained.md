@@ -1,1 +1,0 @@
-A Rust panic in the native engine no longer stops the shared daemon, and with it every rule in every session: the call that panicked fails, and that session's checks report the failure. A crash that is not a panic, such as one in a parser's C code, still stops it.

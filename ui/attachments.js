@@ -5,7 +5,6 @@
  */
 import { data, ui, packById, packFolder, isSetUp, keptPacks } from "./state.js";
 import { recommendationsFor, captureScope, inScope, queueInScope, refreshNow } from "./poll.js";
-import { andList, failed as failedText } from "./format.js";
 
 const ATTACHMENTS = "/api/repository/attachments";
 
@@ -19,22 +18,19 @@ const packAttachment = (id, folder) => ({ sourceKind: "pack", sourceId: id, fold
 function recommendedFor(scope) {
   const loaded = data.recommendations;
   return loaded === null
-    ? recommendationsFor(scope).catch(error => { throw new Error(`couldn’t read the repo to place it (${error.message})`); })
+    ? recommendationsFor(scope).catch(error => { throw new Error(`could not read the repo (${error.message})`); })
     : Promise.resolve(loaded);
 }
 
-/** After set-up: the packs it added, by name (their folders show on each pack page). */
-function setUpMessage(added) {
-  const repo = data.repository?.name ?? "This repo";
-  return added.length === 0 ? `${repo} is set up, but no rule pack fits it yet.`
-    : `${repo} is set up with ${andList(added.map(({ sourceId }) => packName(sourceId)))}.`;
-}
+const setUpMessage = added => (added.length === 0
+  ? "Set up with no rule packs: none fits this repository yet."
+  : `Set up with ${added.map(({ sourceId, folder }) => (folder === "" ? packName(sourceId) : `${packName(sourceId)} in ${folder}`)).join(", ")}.`);
 
 export function attachmentWrites({ toast, invalidate }) {
   /** True while the page shows the repository the write was started in; else the write is dropped, and said so. */
   function stillShown(scope) {
     if (inScope(scope)) return true;
-    toast("Nothing saved: you switched repos before it was sent.");
+    toast("Nothing saved: the repository changed before the change was sent.");
     return false;
   }
 
@@ -59,9 +55,9 @@ export function attachmentWrites({ toast, invalidate }) {
    * repository set up): at once, or when `attached` is a promise, once it resolves. On error they go back to what
    * they were before this click and the poll reads them back; the writes clicked after it are dropped, so that also
    * undoes their changes. Dropped when the page shows another repository before it is sent; once it is, neither the
-   * answer nor a rollback touches the page. `failed` begins the toast when the write fails, before the error.
+   * answer nor a rollback touches the page.
    */
-  async function setAttachments(scope, { body, attached, configure = false }, message, failed = "Couldn’t save") {
+  async function setAttachments(scope, { body, attached, configure = false }, message) {
     const before = { attached: data.attachedPacks, repository: data.repository };
     const show = packs => {
       if (packs === null || !inScope(scope)) return;
@@ -79,7 +75,7 @@ export function attachmentWrites({ toast, invalidate }) {
       if (!inScope(scope)) return;
       data.attachedPacks = before.attached;
       data.repository = before.repository;
-      toast(failedText(failed, error));
+      toast(`Could not save: ${error.message}`);
       await refreshNow();
       return;
     }
@@ -89,32 +85,32 @@ export function attachmentWrites({ toast, invalidate }) {
   }
 
   /** Add packs, each at its recommended folder, else the whole repository. The first addition sets the repository up. */
-  function addPacks(ids, message, failed) {
+  function addPacks(ids, message) {
     const fresh = ids.filter(id => !data.attachedPacks.has(id));
     if (fresh.length === 0) return;
     const scope = captureScope();
     const { folders, add } = additions(scope, fresh);
     const attached = new Map([...data.attachedPacks, ...fresh.map((id, i) => [id, [folders[i]]])]);
-    return setAttachments(scope, { body: add.then(a => a && { add: a }), attached }, message, failed);
+    return setAttachments(scope, { body: add.then(a => a && { add: a }), attached }, message);
   }
 
   /**
    * Remove a pack: every attachment it has, at each folder it is added at, in one write. A folder still loading for
    * an add queued before this click is awaited, and that add is sent first.
    */
-  function removePack(id, message, failed) {
+  function removePack(id, message) {
     const folders = data.attachedPacks.get(id) ?? [];
     const attached = new Map([...data.attachedPacks].filter(([packId]) => packId !== id));
     const body = Promise.all(folders).then(known => ({ remove: known.map(folder => packAttachment(id, folder)) }));
-    return setAttachments(captureScope(), { body, attached }, message, failed);
+    return setAttachments(captureScope(), { body, attached }, message);
   }
 
   /** Review in a repository that is not set up: the kept packs at their folders, and set up, in one write. */
-  function setUpWithPacks(ids, message, failed) {
+  function setUpWithPacks(ids, message) {
     const scope = captureScope();
     const { folders, add } = additions(scope, ids);
     const attached = new Map(ids.map((id, i) => [id, [folders[i]]]));
-    return setAttachments(scope, { body: add.then(a => a && { add: a, configure: true }), attached, configure: true }, message, failed);
+    return setAttachments(scope, { body: add.then(a => a && { add: a, configure: true }), attached, configure: true }, message);
   }
 
   /**
@@ -137,7 +133,7 @@ export function attachmentWrites({ toast, invalidate }) {
       return { add: added, configure: true };
     });
     const attached = loaded === null ? recommendations.then(asAttached) : asAttached(loaded);
-    await setAttachments(scope, { body, attached, configure: true }, () => setUpMessage(added), "Couldn’t set up the repo");
+    await setAttachments(scope, { body, attached, configure: true }, () => setUpMessage(added));
     ui.settingUp = false;
     invalidate();
   }
@@ -147,12 +143,12 @@ export function attachmentWrites({ toast, invalidate }) {
    * not set up, the change writes the whole kept set (`keptPacks()`, the recommended packs until then) with that pack
    * in or out, and sets it up, so the packs kept alongside it stay; once it is, it adds or removes that pack alone.
    */
-  function keepPack(id, keep, message, failed) {
+  function keepPack(id, keep, message) {
     if (data.repository === null) return;
     const kept = keptPacks();
     if (kept.includes(id) === keep) return;
-    if (!isSetUp()) return setUpWithPacks(keep ? [...kept, id] : kept.filter(x => x !== id), message, failed);
-    return keep ? addPacks([id], message, failed) : removePack(id, message, failed);
+    if (!isSetUp()) return setUpWithPacks(keep ? [...kept, id] : kept.filter(x => x !== id), message);
+    return keep ? addPacks([id], message) : removePack(id, message);
   }
 
   return { addPacks, removePack, setUpRecommended, keepPack };

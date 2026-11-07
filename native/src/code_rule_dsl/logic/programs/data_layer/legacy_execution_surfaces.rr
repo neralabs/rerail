@@ -1,0 +1,442 @@
+// data-layer-legacy-execution-surfaces in Rerail logic: the seven regex forbid clauses (post-fetch-filter_query_results,
+// post-fetch-filter_query_results_async, graph-fallback-text, inventory-export_cursor.py, inventory-fts_searcher.py,
+// inventory-legacy_wrappers.py, removed-read-leaves) and the relational clause `legacy-execution-graphs`, options at
+// their defaults (entryPoint "all", oracleAnalyzer false). Source:
+// gate/data-layer/packs/data-layer/candidates/rules/data-layer-legacy-execution-surfaces.json.
+//
+// One relation per SQL stage, under the stage's name. A SQL row keyed by (__path, __start) is a node here, and a node id
+// `kind:start:end` is the tape node; a nullable column is a side relation that holds where the column is not NULL.
+// Inputs are matcher atoms with the rule's matchers verbatim (their `$option` nodes included, resolved at the defaults
+// by the matcher compiler). The clause is partitioned by file: every join is within one document.
+// None of the forbid clauses is an `ast` forbid (yaml's form), so the generated forbid block is empty; each is a
+// `violation` rule by hand, its `$option` pattern at the default case.
+//
+// Builtins (t17's catalogue): @rx_matches, @lower, @substr, @length, @sub (a − b), @concat, @instr, @printf, @within
+// (tape), @glob (1 when a path matches a glob: `**` any run of segments, `*` within one segment), @class_prefix (tape:
+// the `name` texts of a node's class_definition ancestors, outermost first, each followed by "."; "" with none).
+// A builtin with no value (SQL NULL) binds nothing.
+// fold: function_symbols' `group_concat` of the enclosing classes' names (ordered by start) is the tape builtin
+// @class_prefix, the non-recursive ordered ancestor fold of E0 § 2.5 rows 1 and 34.
+// findings layer (§8): a file.content regex forbid (lines.first) reports one witness per matching line, at its first
+// match's span, which is no node; here one violation per document, at its module node.
+// ties: nodes.ordinal = 0 (first child by start, end, kind), active_functions (last definition of a symbol by start),
+// eager_anchors (first anchor by start, then end descending): exact ties keep every candidate.
+.policy {"format": "rerail.policy/v1", "id": "data-layer-legacy-execution-surfaces", "revision": 1, "mode": "block", "description": "Candidate port of nera-data-layer legacy_execution_surfaces at 2b1504adc4291daaf080b2e932962b134da1a69a.", "scope": {"include": ["docs/**/*.py", "impl/common/l2070_server_plan/**/*.py", "impl/common/l5200_sql_query/**/*.py", "impl/common/l9700_sql_graph_query/**/*.py", "impl/mariadb/fts/**/*.py", "impl/postgres/fts/**/*.py", "impl/sqlite/fts/**/*.py", "l2050_transaction/**/*.py", "l4000_permissions/**/*.py", "l5200_vector_index/**/*.py", "l7200_versioned_transactions/**/*.py", "l8000_admin/tools/**/*.py", "l9900_auto_api/**/*.py", "reqs/**/*.py"], "exclude": ["**/.git/**", "**/.mypy_cache/**", "**/.pytest_cache/**", "**/.ruff_cache/**", "**/.venv/**", "**/__pycache__/**", "**/tmp/**", "**/tests/**", "**/test/**", "**/conform/**"]}, "clauses": [{"id": "shared", "define": {"options": {"oracleAnalyzer": {"type": "boolean", "default": false}, "entryPoint": {"type": "string", "default": "all"}}}}, {"id": "legacy-execution-graphs", "relational": "rdl", "violation": {"code": "architecture", "message": "Architecture contract violation", "anchor": "witness.span"}}, {"id": "post-fetch-filter_query_results", "forbid": "rdl", "violation": {"code": "LEG-071", "message": "SQL-facing post-fetch filter", "anchor": "witness.span"}}, {"id": "post-fetch-filter_query_results_async", "forbid": "rdl", "violation": {"code": "LEG-071", "message": "SQL-facing post-fetch filter", "anchor": "witness.span"}}, {"id": "graph-fallback-text", "forbid": "rdl", "violation": {"code": "LEG-061", "message": "Fallback grammar bridge", "anchor": "witness.span"}}, {"id": "inventory-export_cursor.py", "forbid": "rdl", "violation": {"code": "LEG-001", "message": "Legacy file outside inventory", "anchor": "witness.span"}}, {"id": "inventory-fts_searcher.py", "forbid": "rdl", "violation": {"code": "LEG-001", "message": "Legacy file outside inventory", "anchor": "witness.span"}}, {"id": "inventory-legacy_wrappers.py", "forbid": "rdl", "violation": {"code": "LEG-001", "message": "Legacy file outside inventory", "anchor": "witness.span"}}, {"id": "removed-read-leaves", "forbid": "rdl", "violation": {"code": "LEG-070", "message": "Removed SQL read leaf", "anchor": "witness.span"}}]}
+
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl cdef(kind: symbol)
+cdef("class_definition").
+
+// ---- forbid clauses ----
+.decl violation(policy: symbol, clause: symbol, d: number, n: node)
+.output violation
+.decl forbid_include(clause: symbol, glob: symbol)
+.decl forbid_exclude(clause: symbol, glob: symbol)
+forbid_include("post-fetch-filter_query_results", "docs/**").
+forbid_include("post-fetch-filter_query_results", "api/docs/**").
+forbid_include("post-fetch-filter_query_results", "impl/common/l2070_server_plan/**").
+forbid_include("post-fetch-filter_query_results", "api/impl/common/l2070_server_plan/**").
+forbid_include("post-fetch-filter_query_results", "impl/common/l5200_sql_query/**").
+forbid_include("post-fetch-filter_query_results", "api/impl/common/l5200_sql_query/**").
+forbid_include("post-fetch-filter_query_results", "l4000_permissions/**").
+forbid_include("post-fetch-filter_query_results", "api/l4000_permissions/**").
+forbid_include("post-fetch-filter_query_results", "reqs/**").
+forbid_include("post-fetch-filter_query_results", "api/reqs/**").
+forbid_exclude("post-fetch-filter_query_results", "docs/data_history/**").
+forbid_include("post-fetch-filter_query_results_async", "docs/**").
+forbid_include("post-fetch-filter_query_results_async", "api/docs/**").
+forbid_include("post-fetch-filter_query_results_async", "impl/common/l2070_server_plan/**").
+forbid_include("post-fetch-filter_query_results_async", "api/impl/common/l2070_server_plan/**").
+forbid_include("post-fetch-filter_query_results_async", "impl/common/l5200_sql_query/**").
+forbid_include("post-fetch-filter_query_results_async", "api/impl/common/l5200_sql_query/**").
+forbid_include("post-fetch-filter_query_results_async", "l4000_permissions/**").
+forbid_include("post-fetch-filter_query_results_async", "api/l4000_permissions/**").
+forbid_include("post-fetch-filter_query_results_async", "reqs/**").
+forbid_include("post-fetch-filter_query_results_async", "api/reqs/**").
+forbid_exclude("post-fetch-filter_query_results_async", "docs/data_history/**").
+forbid_include("graph-fallback-text", "impl/common/l9700_sql_graph_query/**").
+forbid_include("graph-fallback-text", "api/impl/common/l9700_sql_graph_query/**").
+forbid_exclude("graph-fallback-text", "impl/common/l9700_sql_graph_query/sql_graph_query.py").
+forbid_exclude("graph-fallback-text", "api/impl/common/l9700_sql_graph_query/sql_graph_query.py").
+forbid_include("inventory-export_cursor.py", "**/*").
+forbid_exclude("inventory-export_cursor.py", "impl/doltdb/export_cursor.py").
+forbid_exclude("inventory-export_cursor.py", "impl/mariadb/export_cursor.py").
+forbid_exclude("inventory-export_cursor.py", "impl/mongodb/export_cursor.py").
+forbid_exclude("inventory-export_cursor.py", "impl/neo4j/export_cursor.py").
+forbid_exclude("inventory-export_cursor.py", "impl/postgres/export_cursor.py").
+forbid_exclude("inventory-export_cursor.py", "impl/sqlite/export_cursor.py").
+forbid_exclude("inventory-export_cursor.py", "l3500_bulk_ops/export_cursor.py").
+forbid_include("inventory-fts_searcher.py", "**/*").
+forbid_exclude("inventory-fts_searcher.py", "impl/mariadb/fts/fts_searcher.py").
+forbid_exclude("inventory-fts_searcher.py", "impl/mongodb/fts/fts_searcher.py").
+forbid_exclude("inventory-fts_searcher.py", "impl/postgres/fts/fts_searcher.py").
+forbid_exclude("inventory-fts_searcher.py", "impl/read_through/fts_searcher.py").
+forbid_exclude("inventory-fts_searcher.py", "impl/sqlite/fts/fts_searcher.py").
+forbid_include("inventory-legacy_wrappers.py", "**/*").
+forbid_exclude("inventory-legacy_wrappers.py", "l2050_transaction/legacy_wrappers.py").
+// regex.paths: a file the clause reads (removed-read-leaves has no `paths`: every file).
+.decl forbid_excluded(clause: symbol, d: number)
+forbid_excluded(c, d) :- forbid_exclude(c, g), doc(d, p), glob(g, p).
+.decl forbid_file(clause: symbol, d: number)
+forbid_file(c, d) :- forbid_include(c, g), doc(d, p), glob(g, p), !forbid_excluded(c, d).
+forbid_file("removed-read-leaves", d) :- doc(d, _).
+// The witness node: the document's module (its text is file.content past leading white space).
+.decl root(d: number, n: node)
+root(d, n) :- node(d, n, "module", _, _).
+// file.content, entryPoint "all".
+violation("data-layer-legacy-execution-surfaces", "post-fetch-filter_query_results", D, N) :- forbid_file("post-fetch-filter_query_results", D),
+    root(D, N), text(N, s), @rx_matches(s, "filter_query_results") = 1.
+violation("data-layer-legacy-execution-surfaces", "post-fetch-filter_query_results_async", D, N) :- forbid_file("post-fetch-filter_query_results_async", D),
+    root(D, N), text(N, s), @rx_matches(s, "filter_query_results_async") = 1.
+violation("data-layer-legacy-execution-surfaces", "graph-fallback-text", D, N) :- forbid_file("graph-fallback-text", D),
+    root(D, N), text(N, s), @rx_matches(s, "grammar_rows_lazy|grammar_row_lazy|fetchone_via_plan|fetchall_via_plan") = 1.
+// file.path, oracleAnalyzer false.
+violation("data-layer-legacy-execution-surfaces", "inventory-export_cursor.py", D, N) :- forbid_file("inventory-export_cursor.py", D),
+    doc(D, p), @rx_matches(p, "(?:^|/)export_cursor\\.py$") = 1, root(D, N).
+violation("data-layer-legacy-execution-surfaces", "inventory-fts_searcher.py", D, N) :- forbid_file("inventory-fts_searcher.py", D),
+    doc(D, p), @rx_matches(p, "(?:^|/)fts_searcher\\.py$") = 1, root(D, N).
+violation("data-layer-legacy-execution-surfaces", "inventory-legacy_wrappers.py", D, N) :- forbid_file("inventory-legacy_wrappers.py", D),
+    doc(D, p), @rx_matches(p, "(?:^|/)legacy_wrappers\\.py$") = 1, root(D, N).
+violation("data-layer-legacy-execution-surfaces", "removed-read-leaves", D, N) :- forbid_file("removed-read-leaves", D),
+    doc(D, p), @rx_matches(p, "^(?:impl/common/l5200_sql_query/_aggregate_query_leaf\\.py|impl/common/l5200_sql_query/_pagination_leaf\\.py|impl/common/l5200_sql_query/_read_query_leaf\\.py)$") = 1,
+    root(D, N).
+
+// ==== legacy-execution-graphs ====
+.decl finding(issue: symbol, identity: symbol, n: node)
+.output finding
+
+// ---- syntax_rows_0, syntax_rows_1: the syntax inputs, one per kind group ----
+// Each exports only NODE (the matched node). PARENT (`inside`, stopBy neighbor) is the tape's `child`; ancestor_* repeat
+// it. NAME, FUNCTION, ARGUMENTS, OBJECT, ATTRIBUTE, CONDITION (each `any: [has field X, $_]`) are the node's `field`
+// children: an input projects NULL for one only on kinds without that field. `line` is never read.
+.decl syntax_rows_0(n: node)
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[a-f]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[g-m]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[n-r]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^s"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[t-z]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[A-Z]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^_"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[^a-zA-Z_]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"not": {"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}[a-z]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"not": {"any": [{"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}[a-z]"}]}}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "call"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "attribute"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "argument_list"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "keyword_argument"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "expression_statement"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "assignment"}, {"kind": "augmented_assignment"}, {"kind": "return_statement"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "block"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "type"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "typed_parameter"}, {"kind": "typed_default_parameter"}, {"kind": "parameters"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "type_parameter"}, {"kind": "generic_type"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_0(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "integer"}, {"kind": "float"}, {"kind": "true"}, {"kind": "false"}, {"kind": "none"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+.decl syntax_rows_1(n: node)
+syntax_rows_1(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "tuple"}, {"kind": "list"}, {"kind": "set"}, {"kind": "dictionary"}, {"kind": "pair"}, {"kind": "pattern_list"}, {"kind": "tuple_pattern"}, {"kind": "list_pattern"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+syntax_rows_1(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"not": {"any": [{"kind": "identifier"}, {"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}, {"kind": "call"}, {"kind": "attribute"}, {"kind": "argument_list"}, {"kind": "keyword_argument"}, {"kind": "expression_statement"}, {"kind": "assignment"}, {"kind": "augmented_assignment"}, {"kind": "return_statement"}, {"kind": "block"}, {"kind": "type"}, {"kind": "typed_parameter"}, {"kind": "typed_default_parameter"}, {"kind": "parameters"}, {"kind": "type_parameter"}, {"kind": "generic_type"}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"kind": "integer"}, {"kind": "float"}, {"kind": "true"}, {"kind": "false"}, {"kind": "none"}, {"kind": "tuple"}, {"kind": "list"}, {"kind": "set"}, {"kind": "dictionary"}, {"kind": "pair"}, {"kind": "pattern_list"}, {"kind": "tuple_pattern"}, {"kind": "list_pattern"}]}}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$CONDITION", "stopBy": "neighbor", "field": "condition"}}, {"pattern": "$_"}]}]}]}]}}).
+
+// ---- from_imports, direct_imports (one row per IMPORTED, `each`) ----
+.decl from_imports(i: node, x: node, module: symbol, name: symbol)
+from_imports(i, x, m, name) :- ast(d, i, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"kind": "import_from_statement"}, {"pattern": "$IMPORT"}, {"has": {"pattern": "$MODULE", "stopBy": "neighbor", "field": "module_name"}}, {"has": {"any": [{"all": [{"kind": "dotted_name"}, {"pattern": "$IMPORTED"}]}, {"all": [{"kind": "aliased_import"}, {"has": {"pattern": "$IMPORTED", "stopBy": "neighbor", "field": "name"}}, {"has": {"pattern": "$ALIAS", "stopBy": "neighbor", "field": "alias"}}]}], "stopBy": "neighbor", "field": "name"}}]}]}}, MODULE: mn, IMPORTED: x),
+    text(mn, m), text(x, name).
+// ALIAS: bound in the aliased_import branch: the alias of the aliased_import whose name is IMPORTED.
+.decl from_imports_alias(x: node, alias: symbol)
+from_imports_alias(x, alias) :- from_imports(_, x, _, _), field(ai, "name", x), kind(ai, "aliased_import"), field(ai, "alias", a), text(a, alias).
+.decl direct_imports(i: node, x: node, name: symbol)
+direct_imports(i, x, name) :- ast(d, i, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_file_content": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch"}], "stopBy": "end"}}]}}}, {"all": [{"kind": "import_statement"}, {"has": {"any": [{"all": [{"kind": "dotted_name"}, {"pattern": "$IMPORTED"}]}, {"all": [{"kind": "aliased_import"}, {"has": {"pattern": "$IMPORTED", "stopBy": "neighbor", "field": "name"}}]}], "stopBy": "neighbor", "field": "name"}}]}]}}, IMPORTED: x), text(x, name).
+
+// ---- nodes, edges ----
+.decl nodes(n: node)
+nodes(n) :- syntax_rows_0(n).
+nodes(n) :- syntax_rows_1(n).
+// row_number() OVER (PARTITION BY parent ORDER BY __start, __end, kind) - 1 is read only as ordinal = 0: the first child.
+.decl child_start(p: node, s: number)
+child_start(p, s) :- edges(p, c), start(c, s).
+.decl first_child_start(p: node, s: number)
+first_child_start(p, s) :- child_start(p, _), s = min t : { child_start(p, t) }.
+.decl nodes_first(p: node, c: node)
+nodes_first(p, c) :- edges(p, c), start(c, s), first_child_start(p, s).
+.decl edges(src: node, dst: node)
+edges(p, c) :- nodes(c), child(p, c, _).
+// node id `kind:start:end`, the text the findings' identities carry.
+.decl node_id(n: node, id: symbol)
+node_id(n, id) :- nodes(n), node(_, n, k, s, e), id = @printf("%s:%d:%d", k, s, e).
+
+// ---- functions, classes, attributes, calls, arguments, paths ----
+.decl functions(f: node, name: symbol)
+functions(f, name) :- nodes(f), kind(f, "function_definition"), field(f, "name", x), text(x, name).
+.decl classes(c: node, name: symbol)
+classes(c, name) :- nodes(c), kind(c, "class_definition"), field(c, "name", x), text(x, name).
+.decl attributes(a: node, attr: symbol, object: node, object_text: symbol)
+attributes(a, attr, o, ot) :- nodes(a), kind(a, "attribute"), field(a, "attribute", x), text(x, attr), field(a, "object", o), text(o, ot).
+.decl attribute_node(a: node)
+attribute_node(a) :- attributes(a, _, _, _).
+// callee = coalesce(a.attr, f.text); receiver = a.object (calls_receiver).
+.decl calls(c: node, callee_id: node, callee_kind: symbol, full_callee: symbol, callee: symbol)
+calls(c, f, k, t, attr) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), kind(f, k), text(f, t), attributes(f, attr, _, _).
+calls(c, f, k, t, t) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), kind(f, k), text(f, t), !attribute_node(f).
+.decl calls_receiver(c: node, r: node)
+calls_receiver(c, o) :- calls(c, f, _, _, _), attributes(f, _, o, _).
+.decl call_node(c: node)
+call_node(c) :- calls(c, _, _, _, _).
+.decl excluded_argument(kind: symbol)
+excluded_argument("comment"). excluded_argument("keyword_argument"). excluded_argument("list_splat"). excluded_argument("dictionary_splat").
+.decl arguments(call: node, a: node)
+arguments(c, a) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, a, _), nodes(a), kind(a, k), !excluded_argument(k).
+// position: row_number() OVER (PARTITION BY call ORDER BY __start) - 1, read as position = 1 and count(*) < 2.
+.decl argument_before(a: node, b: node)
+argument_before(a, b) :- arguments(c, a), arguments(c, b), start(a, sa), start(b, sb), sb < sa.
+.decl argument_second(call: node, a: node)
+argument_second(c, a) :- arguments(c, a), k = count : { argument_before(a, _) }, k = 1.
+.decl two_arguments(call: node)
+two_arguments(c) :- arguments(c, a), arguments(c, b), a != b.
+.decl paths(d: number, path: symbol)
+paths(d, q) :- nodes(n), docof(n, d), doc(d, p), @substr(p, 1, 4) = "api/", q = @substr(p, 5).
+paths(d, p) :- nodes(n), docof(n, d), doc(d, p), @substr(p, 1, 4) != "api/".
+
+// ---- ownership: nearest function / class, outermost function, ancestor-or-self (03 §7: not recursion) ----
+// The SQL walks `edges` from the parentless rows; every ancestor of a row is a row, so it is the tape's ancestry.
+.decl ownership(n: node)
+ownership(n) :- nodes(n).
+.decl ownership_fn(n: node, f: node)
+ownership_fn(n, n) :- nodes(n), kind(n, "function_definition").
+ownership_fn(n, f) :- nodes(n), !kind(n, "function_definition"), nearest(n, f, fdef).
+.decl ownership_cls(n: node, c: node)
+ownership_cls(n, n) :- nodes(n), kind(n, "class_definition").
+ownership_cls(n, c) :- nodes(n), !kind(n, "class_definition"), nearest(n, c, cdef).
+.decl nested_function(f: node)
+nested_function(f) :- kind(f, "function_definition"), nearest(f, a, fdef).
+.decl ownership_top_fn(n: node, f: node)
+ownership_top_fn(n, n) :- nodes(n), kind(n, "function_definition"), !nested_function(n).
+ownership_top_fn(n, f) :- nodes(n), kind(f, "function_definition"), @within(n, f) = 1, !nested_function(f).
+
+// ---- decorators: coalesce(c.callee, a.attr, child.text) ----
+.decl decorators(fn: node, d: node, name: symbol)
+decorators(f, dn, name) :- functions(f, _), child(w, f, _), nodes(w), kind(w, "decorated_definition"), child(w, dn, _), nodes(dn), kind(dn, "decorator"),
+    child(dn, x, _), nodes(x), calls(x, _, _, _, name).
+decorators(f, dn, name) :- functions(f, _), child(w, f, _), nodes(w), kind(w, "decorated_definition"), child(w, dn, _), nodes(dn), kind(dn, "decorator"),
+    child(dn, x, _), nodes(x), !call_node(x), attributes(x, name, _, _).
+decorators(f, dn, name) :- functions(f, _), child(w, f, _), nodes(w), kind(w, "decorated_definition"), child(w, dn, _), nodes(dn), kind(dn, "decorator"),
+    child(dn, x, _), nodes(x), !call_node(x), !attribute_node(x), text(x, name).
+.decl legacy_marker(name: symbol)
+legacy_marker("direct_legacy_module_async"). legacy_marker("direct_legacy_module_sync"). legacy_marker("legacy_async").
+legacy_marker("legacy_module_async"). legacy_marker("legacy_module_sync"). legacy_marker("legacy_sync").
+.decl boundary_marker(name: symbol)
+boundary_marker("legacy_async"). boundary_marker("legacy_module_async"). boundary_marker("legacy_module_sync"). boundary_marker("legacy_sync").
+
+// ---- function_symbols, active_functions ----
+// symbol = (group_concat of the enclosing classes' names, '.', by start) || '.' || name: @class_prefix; legacy is
+// function_legacy.
+.decl function_symbols(f: node, name: symbol, symbol: symbol)
+function_symbols(f, name, symbol) :- functions(f, name), symbol = @concat(@class_prefix(f), name).
+.decl function_legacy(f: node)
+function_legacy(f) :- function_symbols(f, _, _), decorators(f, _, m), legacy_marker(m).
+// row_number() OVER (PARTITION BY __path, symbol ORDER BY __start DESC) = 1: the last definition of a symbol.
+.decl symbol_start(d: number, symbol: symbol, s: number)
+symbol_start(d, sym, s) :- function_symbols(f, _, sym), docof(f, d), start(f, s).
+.decl symbol_last(d: number, symbol: symbol, s: number)
+symbol_last(d, sym, s) :- symbol_start(d, sym, _), s = max t : { symbol_start(d, sym, t) }.
+.decl active_functions(f: node, name: symbol, symbol: symbol)
+active_functions(f, name, sym) :- function_symbols(f, name, sym), docof(f, d), start(f, s), symbol_last(d, sym, s).
+
+// ---- valid_boundary ----
+.decl boundary_runner(name: symbol)
+boundary_runner("run_in_legacy_execution_boundary"). boundary_runner("run_in_legacy_execution_boundary_async").
+.decl valid_boundary(d: number)
+valid_boundary(d) :- functions(f, _), decorators(f, _, m), boundary_marker(m), docof(f, d).
+// lazy.name = CASE WHEN substr(f.name, -6) = '_async' THEN substr(f.name, 1, length(f.name) - 6) || '_lazy' ELSE f.name || '_lazy' END
+valid_boundary(d) :- functions(f, n), ownership_fn(c, f), calls(c, _, "identifier", _, q), boundary_runner(q), docof(f, d),
+    @substr(n, -6) = "_async", lazy = @concat(@substr(n, 1, @sub(@length(n), 6)), "_lazy"), functions(g, lazy), docof(g, d).
+valid_boundary(d) :- functions(f, n), ownership_fn(c, f), calls(c, _, "identifier", _, q), boundary_runner(q), docof(f, d),
+    @substr(n, -6) != "_async", lazy = @concat(n, "_lazy"), functions(g, lazy), docof(g, d).
+
+// ---- receiver_edges, receiver_tokens: a set recursion over the in-file receiver graph ----
+.decl receiver_edges(src: node, dst: node)
+receiver_edges(o, a) :- attributes(a, _, o, _).
+receiver_edges(x, a) :- attributes(a, _, _, _), field(a, "attribute", x).
+receiver_edges(f, c) :- calls(c, f, _, _, q), q != "cast".
+receiver_edges(f, c) :- calls(c, f, _, _, "cast"), !two_arguments(c).
+receiver_edges(a, c) :- calls(c, _, _, _, "cast"), argument_second(c, a).
+receiver_edges(c, n) :- nodes(n), kind(n, "subscript"), nodes_first(n, c).
+receiver_edges(c, n) :- nodes(n), kind(n, "parenthesized_expression"), nodes_first(n, c).
+.decl receiver_tokens(id: node, token: symbol)
+receiver_tokens(n, t) :- nodes(n), kind(n, "identifier"), text(n, s), t = @lower(s).
+receiver_tokens(d, t) :- receiver_tokens(s, t), receiver_edges(s, d).
+
+// ---- raw_boundaries ----
+.decl boundary_module(module: symbol)
+boundary_module("l2050_transaction.execution_boundary"). boundary_module("l2000_connection.execution_boundary").
+.decl raw_boundaries(i: node, x: node)
+raw_boundaries(i, x) :- from_imports(i, x, m, "legacy_execution_boundary"), boundary_module(m).
+// coalesce(r.alias, r.name): the boundary's local name.
+.decl boundary_local(i: node, name: symbol)
+boundary_local(i, a) :- raw_boundaries(i, x), from_imports_alias(x, a).
+boundary_local(i, "legacy_execution_boundary") :- raw_boundaries(i, x), !from_imports_alias(x, _).
+
+// ---- eager_seeds, call_candidates, resolved_calls ----
+.decl resolve_callee(name: symbol)
+resolve_callee("resolve"). resolve_callee("resolve_async").
+.decl eager_seeds(fn: node, anchor: node)
+eager_seeds(f, c) :- active_functions(f, _, _), !function_legacy(f), ownership_fn(c, f), calls(c, _, "attribute", _, q), resolve_callee(q).
+.decl candidate_excluded(name: symbol)
+candidate_excluded("resolve"). candidate_excluded("resolve_async"). candidate_excluded("_legacy_delegate_stub"). candidate_excluded("legacy_execution_boundary").
+candidate_excluded("run_in_legacy_execution_boundary"). candidate_excluded("run_in_legacy_execution_boundary_async").
+.decl self_receiver(text: symbol)
+self_receiver("self"). self_receiver("cls").
+.decl call_candidates(caller: node, anchor: node, candidate: symbol)
+call_candidates(f, c, q) :- active_functions(f, _, _), !function_legacy(f), ownership_fn(c, f), calls(c, _, _, _, q), !candidate_excluded(q).
+// substr(f.symbol, 1, length(f.symbol) - length(f.name)) || c.callee: the method's class prefix and the callee.
+call_candidates(f, c, cand) :- active_functions(f, name, sym), !function_legacy(f), ownership_fn(c, f), calls(c, fn, _, _, q),
+    attributes(fn, _, _, ot), self_receiver(ot), !resolve_callee(q), @instr(sym, ".") > 0,
+    cand = @concat(@substr(sym, 1, @sub(@length(sym), @length(name))), q).
+// GROUP BY caller, anchor, candidate HAVING count(*) = 1 AND min(f.id) != caller: the one active function of the
+// file named or qualified by the candidate.
+.decl candidate_match(caller: node, anchor: node, candidate: symbol, f: node)
+candidate_match(c, a, q, f) :- call_candidates(c, a, q), docof(c, d), active_functions(f, q, _), docof(f, d).
+candidate_match(c, a, q, f) :- call_candidates(c, a, q), docof(c, d), active_functions(f, _, q), docof(f, d).
+.decl resolved_calls(caller: node, anchor: node, callee: node)
+resolved_calls(c, a, f) :- candidate_match(c, a, q, f), k = count : { candidate_match(c, a, q, _) }, k = 1, f != c.
+
+// ---- eager_reach: a set recursion over the in-file call graph, callee to non-legacy caller ----
+.decl eager_reach(fn: node)
+eager_reach(f) :- eager_seeds(f, _).
+eager_reach(c) :- eager_reach(f), resolved_calls(c, _, f), active_functions(c, _, _), !function_legacy(c).
+
+// ---- eager_anchors: per function, its first anchor (row_number() OVER (… ORDER BY __start, __end DESC) = 1) ----
+.decl seed_fn(fn: node)
+seed_fn(f) :- eager_seeds(f, _).
+.decl anchor_candidate(branch: number, fn: node, anchor: node)
+anchor_candidate(0, f, a) :- eager_seeds(f, a).
+anchor_candidate(1, f, a) :- resolved_calls(f, a, g), eager_reach(g), !seed_fn(f).
+.decl anchor_start(branch: number, fn: node, s: number)
+anchor_start(b, f, s) :- anchor_candidate(b, f, a), nodes(a), start(a, s).
+.decl anchor_first_start(branch: number, fn: node, s: number)
+anchor_first_start(b, f, s) :- anchor_start(b, f, _), s = min t : { anchor_start(b, f, t) }.
+.decl anchor_end(branch: number, fn: node, e: number)
+anchor_end(b, f, e) :- anchor_candidate(b, f, a), anchor_first_start(b, f, s), node(_, a, _, s, e).
+.decl anchor_last_end(branch: number, fn: node, e: number)
+anchor_last_end(b, f, e) :- anchor_end(b, f, _), e = max t : { anchor_end(b, f, t) }.
+.decl eager_anchors(fn: node, anchor: node)
+eager_anchors(f, a) :- anchor_candidate(b, f, a), anchor_first_start(b, f, s), anchor_last_end(b, f, e), node(_, a, _, s, e).
+
+// ---- the clause's query: (issue, identity) per node ----
+.decl allowed(issue: symbol, key: symbol)
+allowed("LEG-021", "impl/common/l7245_versioned_backends/generic_sparse.py"). allowed("LEG-021", "l2050_transaction/transaction.py").
+allowed("LEG-021", "l7200_versioned_transactions/versioned_transactions.py").
+allowed("LEG-020", "impl/common/l7245_versioned_backends/generic_sparse.py"). allowed("LEG-020", "l2050_transaction/legacy_wrappers.py").
+allowed("LEG-020", "l2050_transaction/transaction.py"). allowed("LEG-020", "l7200_versioned_transactions/versioned_transactions.py").
+allowed("LEG-083", "l8000_admin/tools/sql_execution.py:execute_sql_command"). allowed("LEG-083", "l8000_admin/tools/sql_execution.py:execute_sql_query").
+allowed("LEG-083", "l8000_admin/tools/sql_execution.py:explain_query").
+allowed("LEG-010", "impl/common/l7245_versioned_backends/generic_sparse.py"). allowed("LEG-010", "impl/common/l9700_sql_graph_query/sql_graph_query.py").
+allowed("LEG-010", "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py"). allowed("LEG-010", "l2050_transaction/tests/test_legacy_wrapper_delegation.py").
+allowed("LEG-010", "l2050_transaction/transaction.py"). allowed("LEG-010", "l2080_lazy_orm/lazy_table.py"). allowed("LEG-010", "l2090_response/pagination.py").
+allowed("LEG-010", "l4170_inbound_bridge/process.py"). allowed("LEG-010", "l5200_vector_index/index_implementations/pgvector.py").
+allowed("LEG-010", "l5200_vector_index/index_implementations/sql_table_hnsw.py"). allowed("LEG-010", "l5200_vector_index/similarity.py").
+allowed("LEG-010", "l7200_versioned_transactions/versioned_transactions.py"). allowed("LEG-010", "l8000_admin/tools/_versioning_helpers.py").
+allowed("LEG-010", "scripts/reapply_legacy_wrappers.py").
+// (p.path = dir OR substr(p.path, 1, len) = dir || '/') AND p.path NOT IN (…), per branch; an empty NOT IN () holds.
+.decl leg_dir(issue: symbol, dir: symbol, prefix: symbol, len: number)
+leg_dir("LEG-040", "l4000_permissions", "l4000_permissions/", 18). leg_dir("LEG-040", "l8000_admin/tools", "l8000_admin/tools/", 18).
+leg_dir("LEG-040", "impl/common/l2070_server_plan", "impl/common/l2070_server_plan/", 30). leg_dir("LEG-040", "impl/sqlite/fts", "impl/sqlite/fts/", 16).
+leg_dir("LEG-050", "l4000_permissions", "l4000_permissions/", 18). leg_dir("LEG-050", "l5200_vector_index", "l5200_vector_index/", 19).
+leg_dir("LEG-050", "l8000_admin/tools", "l8000_admin/tools/", 18). leg_dir("LEG-050", "impl/mariadb/fts", "impl/mariadb/fts/", 17).
+leg_dir("LEG-050", "impl/postgres/fts", "impl/postgres/fts/", 18). leg_dir("LEG-050", "impl/sqlite/fts", "impl/sqlite/fts/", 16).
+leg_dir("LEG-060", "impl/common/l9700_sql_graph_query", "impl/common/l9700_sql_graph_query/", 34).
+.decl leg_dir_excluded(issue: symbol, dir: symbol, path: symbol)
+leg_dir_excluded("LEG-040", "impl/sqlite/fts", "impl/sqlite/fts/fts_searcher.py").
+leg_dir_excluded("LEG-050", "l5200_vector_index", "l5200_vector_index/index_implementations/pgvector.py").
+leg_dir_excluded("LEG-050", "l5200_vector_index", "l5200_vector_index/vector_capabilities.py").
+leg_dir_excluded("LEG-050", "l8000_admin/tools", "l8000_admin/tools/backup_tools.py").
+leg_dir_excluded("LEG-050", "l8000_admin/tools", "l8000_admin/tools/docs_search/fts_index.py").
+leg_dir_excluded("LEG-050", "l8000_admin/tools", "l8000_admin/tools/logging_tools.py").
+leg_dir_excluded("LEG-050", "impl/mariadb/fts", "impl/mariadb/fts/fts_manager.py").
+leg_dir_excluded("LEG-050", "impl/postgres/fts", "impl/postgres/fts/fts_manager.py").
+leg_dir_excluded("LEG-050", "impl/sqlite/fts", "impl/sqlite/fts/fts_manager.py").
+leg_dir_excluded("LEG-060", "impl/common/l9700_sql_graph_query", "impl/common/l9700_sql_graph_query/sql_graph_query.py").
+.decl in_leg_dir(issue: symbol, dir: symbol, d: number)
+in_leg_dir(i, r, d) :- leg_dir(i, r, _, _), paths(d, r), !leg_dir_excluded(i, r, r).
+in_leg_dir(i, r, d) :- leg_dir(i, r, x, l), paths(d, p), @substr(p, 1, l) = x, !leg_dir_excluded(i, r, p).
+// The LEG-08x files: implementation code outside tests and the boundary's own modules.
+.decl leg08_scope(d: number)
+leg08_scope(d) :- paths(d, p), @rx_matches(p, "^(?:impl/|data_layer/|l[0-9])") = 1, @rx_matches(p, "(?:^|/)tests/") = 0,
+    p != "l2050_transaction/execution_boundary.py", p != "l2050_transaction/legacy_wrappers.py".
+.decl callee_in(list: symbol, name: symbol)
+callee_in("raw", "execute_raw"). callee_in("raw", "fetchall_raw"). callee_in("raw", "fetchone_raw").
+callee_in("cursor", "execute"). callee_in("cursor", "fetchall"). callee_in("cursor", "fetchone").
+callee_in("plan", "_execute_impl_async"). callee_in("plan", "_execute_now"). callee_in("plan", "delete_by_id"). callee_in("plan", "delete_by_id_async").
+callee_in("plan", "execute"). callee_in("plan", "execute_async"). callee_in("plan", "fetch"). callee_in("plan", "insert"). callee_in("plan", "insert_async").
+callee_in("plan", "select"). callee_in("plan", "select_async"). callee_in("plan", "select_one"). callee_in("plan", "select_one_async").
+callee_in("plan", "update"). callee_in("plan", "update_async").
+.decl token_in(list: symbol, token: symbol)
+token_in("connection", "db"). token_in("connection", "conn"). token_in("connection", "connection"). token_in("connection", "raw_conn").
+token_in("connection", "raw_connection").
+token_in("plan", "server_plan"). token_in("plan", "plan"). token_in("plan", "read_plan"). token_in("plan", "write_plan").
+token_in("txn", "txn"). token_in("txn", "transaction"). token_in("txn", "read_txn"). token_in("txn", "write_txn"). token_in("txn", "plan_txn").
+token_in("txn", "lazy_txn"). token_in("txn", "scope"). token_in("txn", "query"). token_in("txn", "queries"). token_in("txn", "lazy_query").
+token_in("txn", "typed_query"). token_in("txn", "sql_query").
+token_in("mixin", "mixin"). token_in("mixin", "_plan_mixin"). token_in("mixin", "plan_mixin").
+.decl receiver_token(c: node, list: symbol)
+receiver_token(c, l) :- calls_receiver(c, r), receiver_tokens(r, t), token_in(l, t).
+.decl cursor_receiver(c: node)
+cursor_receiver(c) :- calls_receiver(c, r), receiver_tokens(r, t), @instr(t, "cursor") > 0.
+cursor_receiver(c) :- receiver_token(c, "connection").
+
+// LEG-021: a stub call, unless the file has a valid boundary and the call's function is boundary-decorated and calls
+// nothing but the stub.
+.decl calls_other(f: node)
+calls_other(f) :- ownership_fn(c, f), calls(c, _, _, t, _), t != "_legacy_delegate_stub".
+.decl stub_only_boundary(f: node)
+stub_only_boundary(f) :- function_symbols(f, _, _), decorators(f, _, m), boundary_marker(m), !calls_other(f).
+.decl stub_excused(n: node)
+stub_excused(n) :- calls(n, _, _, _, _), docof(n, d), valid_boundary(d), ownership_fn(n, f), stub_only_boundary(f).
+finding("LEG-021", id, n) :- calls(n, _, "identifier", _, "_legacy_delegate_stub"), docof(n, d), paths(d, p), !allowed("LEG-021", p),
+    !stub_excused(n), node_id(n, id).
+finding("LEG-020", id, n) :- functions(n, "_legacy_delegate_stub"), docof(n, d), paths(d, p), !allowed("LEG-020", p), node_id(n, id).
+.decl versioning_helper(name: symbol)
+versioning_helper("diagnose_versioning_issues"). versioning_helper("find_common_ancestor"). versioning_helper("find_orphaned_revisions").
+versioning_helper("walk_ancestry_ids").
+finding("LEG-030", id, n) :- functions(n, name), versioning_helper(name), docof(n, d), paths(d, _), node_id(n, id).
+// LEG-040, LEG-050: identity = dir || n.id.
+finding("LEG-040", key, n) :- calls(n, _, "attribute", _, q), callee_in("raw", q), docof(n, d), in_leg_dir("LEG-040", r, d),
+    node_id(n, id), key = @concat(r, id).
+finding("LEG-050", key, n) :- calls(n, _, "attribute", _, q), callee_in("cursor", q), docof(n, d), in_leg_dir("LEG-050", r, d),
+    cursor_receiver(n), node_id(n, id), key = @concat(r, id).
+// LEG-081, LEG-080: a plan-API call outside every legacy function (f.__start <= n.__start AND f.__end >= n.__end).
+.decl in_legacy_function(n: node)
+in_legacy_function(n) :- calls(n, _, _, _, _), function_legacy(f), @within(n, f) = 1.
+.decl plan_call(n: node)
+plan_call(n) :- calls(n, _, "attribute", _, q), callee_in("plan", q), docof(n, d), leg08_scope(d), !in_legacy_function(n).
+finding("LEG-081", id, n) :- plan_call(n), receiver_token(n, "plan"), node_id(n, id).
+finding("LEG-080", id, n) :- plan_call(n), !receiver_token(n, "plan"), receiver_token(n, "txn"), node_id(n, id).
+finding("LEG-082", id, n) :- calls(n, _, "identifier", _, q), boundary_runner(q), docof(n, d), leg08_scope(d), node_id(n, id).
+finding("LEG-083", id, n) :- nodes(n), docof(n, d), leg08_scope(d), paths(d, p), eager_anchors(f, n), active_functions(f, _, sym),
+    !function_legacy(f), key = @concat(p, ":", sym), !allowed("LEG-083", key), node_id(n, id).
+// LEG-084: a node at a boundary import's span.
+finding("LEG-084", id, n) :- raw_boundaries(i, _), node(d, i, _, s, e), leg08_scope(d), node(d, n, _, s, e), nodes(n), node_id(n, id).
+finding("LEG-085", id, n) :- calls(n, _, "identifier", _, "legacy_execution_boundary"), docof(n, d), leg08_scope(d), node_id(n, id).
+finding("LEG-085", id, n) :- calls(n, _, "identifier", _, q), docof(n, d), leg08_scope(d), boundary_local(i, q), docof(i, d),
+    start(i, si), start(n, sn), si < sn, node_id(n, id).
+// LEG-010: an import_from_statement row is the from_imports statement at its span.
+.decl wrappers_module(module: symbol)
+wrappers_module("api.l2050_transaction.legacy_wrappers"). wrappers_module("l2050_transaction.legacy_wrappers").
+.decl wrappers_import(i: node)
+wrappers_import(i) :- from_imports(i, _, m, _), wrappers_module(m).
+wrappers_import(i) :- from_imports(i, _, "l2050_transaction", "legacy_wrappers").
+.decl wrappers_user(d: number)
+wrappers_user(d) :- from_imports(i, _, m, name), wrappers_module(m), name != "validate_legacy_delegates", docof(i, d).
+finding("LEG-010", id, n) :- nodes(n), kind(n, "import_from_statement"), wrappers_import(n), docof(n, d), paths(d, p), !allowed("LEG-010", p),
+    !valid_boundary(d), @rx_matches(p, "(?:^|/)tests/") = 0, node_id(n, id).
+finding("LEG-010", id, n) :- nodes(n), kind(n, "import_from_statement"), wrappers_import(n), docof(n, d), paths(d, p), !allowed("LEG-010", p),
+    !valid_boundary(d), @rx_matches(p, "(?:^|/)tests/") = 1, wrappers_user(d), node_id(n, id).
+finding("LEG-010", name, n) :- direct_imports(n, _, name), wrappers_module(name), docof(n, d), paths(d, p), !allowed("LEG-010", p), !valid_boundary(d).
+// LEG-060: `if <mixin token> is None` (two non-comment children, the first a mixin receiver).
+.decl if_kind(kind: symbol)
+if_kind("if_statement"). if_kind("elif_clause").
+.decl mixin_none_test(t: node)
+mixin_none_test(t) :- nodes(t), kind(t, "comparison_operator"), text(t, s), @rx_matches(s, "\\bis\\s+None$") = 1, k = count : { edges(t, _) }, k = 2,
+    nodes_first(t, l), receiver_tokens(l, tok), token_in("mixin", tok).
+finding("LEG-060", id, n) :- nodes(n), kind(n, k), if_kind(k), docof(n, d), in_leg_dir("LEG-060", _, d), field(n, "condition", t),
+    mixin_none_test(t), node_id(n, id).

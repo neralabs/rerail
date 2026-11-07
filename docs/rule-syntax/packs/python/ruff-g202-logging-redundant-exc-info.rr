@@ -1,0 +1,16 @@
+.policy "ruff-g202-logging-redundant-exc-info" revision 2
+.description "Remove exc_info from exception logging calls inside exception handlers; the exception method already logs the traceback."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff G202 (flake8-logging-format): `exception(…, exc_info=True)` (or `exc_info=sys.exc_info()`) inside an
+// exception handler. `exception` already logs the traceback. Reported at the `exc_info=` keyword.
+//   except: logging.exception("Hello", exc_info=True)          ← G202
+//   logging.exception("Hello", exc_info=True)                  not reported: no handler around it
+#include "python/logging.rr"
+
+.violation G202(at: node) code "G202"
+    "Remove this redundant `exc_info` argument: `exception(...)` already logs the active exception's traceback."
+    suppress ruff "G202"
+G202(k) :- log_call(c, "exception", _, _), exc_info_set(c, k), log_in_handler(c).

@@ -504,12 +504,6 @@ fn normalize(path: &str) -> Option<String> {
 /// JSON with comments and trailing commas, as TypeScript reads a configuration file: comments
 /// go first, so a trailing comma before a comment and a closing bracket is still dropped.
 fn parse_jsonc(text: &str) -> Option<Value> {
-    serde_json::from_str(&strip_jsonc(text)).ok()
-}
-
-/// A JSON-with-comments text as plain JSON (`parse_jsonc`): without a leading byte-order mark,
-/// comments and trailing commas.
-pub(crate) fn strip_jsonc(text: &str) -> String {
     // TypeScript drops a leading byte-order mark, as editors on Windows write one.
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let without_comments = strip_outside_strings(text, |bytes, at| match bytes[at..] {
@@ -527,7 +521,7 @@ pub(crate) fn strip_jsonc(text: &str) -> String {
         ),
         _ => None,
     });
-    strip_outside_strings(&without_comments, |bytes, at| {
+    let without_trailing_commas = strip_outside_strings(&without_comments, |bytes, at| {
         (bytes[at] == b','
             && matches!(
                 bytes[at + 1..]
@@ -536,7 +530,8 @@ pub(crate) fn strip_jsonc(text: &str) -> String {
                 Some(b'}' | b']')
             ))
         .then_some(at + 1)
-    })
+    });
+    serde_json::from_str(&without_trailing_commas).ok()
 }
 
 /// `text` without the spans `skip` names outside string literals: given the bytes and an offset,

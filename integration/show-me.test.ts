@@ -35,7 +35,6 @@ describe("/rerail-show-me in a running session", () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-show-me-"));
     setUpTestRepository(root);
     const socketPath = join(root, "engine.sock");
-    const engine = { socketPath };
     const storageRoot = join(root, ".rerail", "sessions");
     const sessionId = "show-me";
     const file = join(root, SHOW_ME_FILE);
@@ -43,18 +42,18 @@ describe("/rerail-show-me in a running session", () => {
     let step = 0;
     const write = async (content: string): Promise<AdapterDelivery[]> => {
       const toolCallId = `write-${++step}`;
-      await ingestEngineEvent(engine, { kind: "call", eventId: `call:${toolCallId}`, toolCallId, sessionId, toolName: "write", input: { path: SHOW_ME_FILE } });
+      await ingestEngineEvent(socketPath, { kind: "call", eventId: `call:${toolCallId}`, toolCallId, sessionId, toolName: "write", input: { path: SHOW_ME_FILE } });
       await writeFile(file, content);
-      return [...await ingestEngineEvent(engine, { kind: "result", eventId: `result:${toolCallId}`, toolCallId, sessionId, toolName: "write", output: { ok: true } })];
+      return [...await ingestEngineEvent(socketPath, { kind: "result", eventId: `result:${toolCallId}`, toolCallId, sessionId, toolName: "write", output: { ok: true } })];
     };
     // A turn's end settles every pending check, so what it returns is all the turn still had to say.
     const endTurn = async (): Promise<readonly AdapterDelivery[]> =>
-      ingestEngineEvent(engine, { kind: "turn-end", eventId: `turn:${++step}`, sessionId, text: "done" });
+      ingestEngineEvent(socketPath, { kind: "turn-end", eventId: `turn:${++step}`, sessionId, text: "done" });
 
     try {
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
-      await ingestEngineEvent(engine, { kind: "session-start", eventId: "start", session: { host: "omp", sessionId, cwd: root } });
-      await awaitCodeRulesOpen(engine, { host: "omp", sessionId, cwd: root });
+      await ingestEngineEvent(socketPath, { kind: "session-start", eventId: "start", session: { host: "omp", sessionId, cwd: root } });
+      await awaitCodeRulesOpen(socketPath, { host: "omp", sessionId, cwd: root });
 
       expect(showMe(["--repo", root, "--json"])).toBe(0);
       const broken = [...await write(SHOW_ME_VIOLATING), ...await endTurn()];
@@ -66,7 +65,7 @@ describe("/rerail-show-me in a running session", () => {
 
       expect(showMe(["--cleanup", "--repo", root])).toBe(0);
       expect(demoSteers([...await write(SHOW_ME_VIOLATING), ...await endTurn()])).toEqual([]);
-      await ingestEngineEvent(engine, { kind: "session-end", eventId: "end", sessionId });
+      await ingestEngineEvent(socketPath, { kind: "session-end", eventId: "end", sessionId });
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });

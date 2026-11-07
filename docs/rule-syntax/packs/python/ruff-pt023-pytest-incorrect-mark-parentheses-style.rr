@@ -1,0 +1,19 @@
+.policy "ruff-pt023-pytest-incorrect-mark-parentheses-style" revision 2
+.description "Write pytest markers that take no arguments without empty parentheses, so every marker decorator follows one consistent style."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT023 (flake8-pytest-style): the parentheses of a `pytest.mark` decorator on a function or a class, against
+// option `mark-parentheses`. At its default, false, a call with no arguments is reported; at true, a bare mark.
+//   @pytest.mark.slow()          ← PT023 at the default
+//   @pytest.mark.slow            ← PT023 with mark-parentheses = true
+#include "python/pytest.rr"
+//   pytest_mark(o, d, e, m), exc_no_args(c)
+
+.violation PT023(at: node, id: symbol) code "PT023" "{id}"
+    suppress ruff "PT023"
+PT023(d, cat("Remove the empty `()` after this `pytest.mark.", m, "` decorator; a marker without arguments is written bare. Keep any comments that sat inside the parentheses.")) :-
+    !option("mark-parentheses", "true"), pytest_mark(_, d, e, m), exc_no_args(e).
+PT023(d, cat("Add `()` after this `pytest.mark.", m, "` decorator, as the project's mark-parentheses setting asks.")) :-
+    option("mark-parentheses", "true"), pytest_mark(_, d, e, m), !kind(e, "call").

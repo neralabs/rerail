@@ -1,0 +1,18 @@
+.policy "ruff-d200-unnecessary-multiline-docstring" revision 2
+.description "Write a docstring with a single line of text on one line, with the quotes beside the text, not on lines of their own."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D200 (pydocstyle): a docstring that spans several lines but has only one line of text.
+//   def f():
+//       """
+//       Return the total.
+//       """                  ← D200 (at the opening quotes)
+#include "python/docstrings.rr"
+
+.violation D200(at: node) code "D200"
+    "Put this docstring's only line of text on one line with its quotes: `\"\"\"Text.\"\"\"`; escape a quote or backslash that would then touch the closing quotes."
+    suppress ruff "D200"
+// One non-blank line (blank ones around it), and a line break somewhere.
+D200(s) :- doc_checked(s), doc_body(s, b), contains("\n", b), match("\\s*\\S[^\\n]*\\s*", b).

@@ -1,1 +1,0 @@
-A rule pack installed from a folder or tarball (`rerail packs add <folder>`) is named as one wherever it shows, whatever its `package.json` calls it, and Rerail warns that it has not reviewed it ([third parties' packs](docs/rule-packs.md#third-parties-packs)).

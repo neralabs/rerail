@@ -1,0 +1,570 @@
+// data-layer-serverplan-state-tripwires in Rerail logic, part file: clause `state-flow-1` (no `.policy`; the rule's main
+// file holds it). Options at their defaults: entryPoint "all" (so partitionBy "file"), oracleAnalyzer false,
+// sourceProvided true, returnKindsHex its default (decoded into `return_kind_entry` facts). Source:
+// gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
+//
+// One relation per SQL stage, under the stage's name; helper relations are named after their stage. A row keyed by
+// (__path, id) is a node; a nullable or boolean column is a side relation that holds where it is not NULL / true.
+// W's syntax tables: `nodes` is `gnode` (documents in syntax_gate, minus excludeKinds), `ownership` is own_fn / own_cls /
+// own_top, the `descendants` reachability is `descendants` over @within. The clause is file-partitioned: every join on a
+// name stays within one document (`docof`), as the SQL's __path equalities do.
+//
+// Builtins: @rx_matches, @concat, @length, @instr, @within; new: @id (a node's tape index, W's `id` column, as decimal
+// text), @class_path (the `name` texts of a class_definition and its class_definition ancestors, outermost first,
+// joined with ".").
+// contexts.class_names: a string path-fold over class nesting (E0 #34), replaced by the non-recursive @class_path.
+// transitive_sinks: every simple path's route, then row_number() = 1; a best-witness lattice under shortlex (E0 #39).
+// taints: EXISTS(SELECT 1 FROM project_mode) is read within the document (the file partition): it adds no row.
+// ties: direct_sinks keeps every event tied on (priority, depth, __start); transitive_sinks every sink tied on
+// (length(route), __start) (equal-length routes from different origins).
+// findings layer (§8): the rows' byte span, identity (fn:kind or node id) and detector columns; the key here is `issue`.
+
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl cdef(kind: symbol)
+cdef("class_definition").
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+
+// ---- inputs (evidence) ----
+// raw_strings_0..2: a string literal without interpolation whose decoded value is a carrier or context key; `value` is
+// DECODED, a transform output (text). The SQL keys a string by its span (__path, __start, __end).
+.decl raw_strings(d: number, s: number, e: number, value: symbol)
+raw_strings(d, s, e, v) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"$option": "sourceProvided", "cases": {"true": {"any": [{"matches": "state-function-source"}, {"inside": {"matches": "state-function-source", "stopBy": "end"}}]}, "false": {"filePath": {"regex": "(?s).*"}}}}}, {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"any": [{"matches": "state-flow-source"}, {"inside": {"matches": "state-flow-source", "stopBy": "end"}}]}}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"pattern": "$STRING"}, {"not": {"has": {"kind": "interpolation", "stopBy": "end"}}}]}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}, {"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"value": {"regex": "^(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|connection|materialized_pipeline|row|rows|sql_conn|sql_connection|txn)$"}}}]}]}]}]}, "transform": {"DECODED": {"replace": {"source": "$STRING", "value": true, "replace": "\\b\\B", "by": ""}}}}, DECODED: v), node(d, x, _, s, e).
+raw_strings(d, s, e, v) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"$option": "sourceProvided", "cases": {"true": {"any": [{"matches": "state-function-source"}, {"inside": {"matches": "state-function-source", "stopBy": "end"}}]}, "false": {"filePath": {"regex": "(?s).*"}}}}}, {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"any": [{"matches": "state-flow-source"}, {"inside": {"matches": "state-flow-source", "stopBy": "end"}}]}}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"pattern": "$STRING"}, {"not": {"has": {"kind": "interpolation", "stopBy": "end"}}}]}, {"all": [{"not": {"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}[a-z]"}]}, {"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"value": {"regex": "^(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|connection|materialized_pipeline|row|rows|sql_conn|sql_connection|txn)$"}}}]}]}]}]}, "transform": {"DECODED": {"replace": {"source": "$STRING", "value": true, "replace": "\\b\\B", "by": ""}}}}, DECODED: v), node(d, x, _, s, e).
+raw_strings(d, s, e, v) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"$option": "sourceProvided", "cases": {"true": {"any": [{"matches": "state-function-source"}, {"inside": {"matches": "state-function-source", "stopBy": "end"}}]}, "false": {"filePath": {"regex": "(?s).*"}}}}}, {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"any": [{"matches": "state-flow-source"}, {"inside": {"matches": "state-flow-source", "stopBy": "end"}}]}}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"pattern": "$STRING"}, {"not": {"has": {"kind": "interpolation", "stopBy": "end"}}}]}, {"not": {"any": [{"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}[a-z]"}]}}, {"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"value": {"regex": "^(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|connection|materialized_pipeline|row|rows|sql_conn|sql_connection|txn)$"}}}]}]}]}]}, "transform": {"DECODED": {"replace": {"source": "$STRING", "value": true, "replace": "\\b\\B", "by": ""}}}}, DECODED: v), node(d, x, _, s, e).
+.decl project_mode(d: number)
+project_mode(d) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"$option": "sourceProvided", "cases": {"true": {"any": [{"matches": "state-function-source"}, {"inside": {"matches": "state-function-source", "stopBy": "end"}}]}, "false": {"filePath": {"regex": "(?s).*"}}}}}, {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"any": [{"matches": "state-flow-source"}, {"inside": {"matches": "state-flow-source", "stopBy": "end"}}]}}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"kind": "module"}, {"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}]}]}]}]}}).
+// syntax_gate: the gate of W's syntax tables (`nodes` holds only its documents) and the clause's requireNonemptyInput.
+.decl syntax_gate(d: number)
+syntax_gate(d) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"$option": "sourceProvided", "cases": {"true": {"any": [{"matches": "state-function-source"}, {"inside": {"matches": "state-function-source", "stopBy": "end"}}]}, "false": {"filePath": {"regex": "(?s).*"}}}}}, {"all": [{"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"any": [{"matches": "state-flow-source"}, {"inside": {"matches": "state-flow-source", "stopBy": "end"}}]}}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_project_sources": {"filePath": {"regex": "(?s).*"}}, "scan_source": {"filePath": {"regex": "(?s).*"}}, "scan_tree": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"kind": "module"}]}]}]}]}}).
+
+// ---- W's syntax tables ----
+// nodes: the gated documents' nodes minus excludeKinds. edge_parent = parent = `child`; ordinal = `child`'s index.
+.decl excluded_kind(k: symbol)
+excluded_kind("comment"). excluded_kind("string_start"). excluded_kind("string_content"). excluded_kind("string_end").
+excluded_kind("escape_sequence"). excluded_kind("line_continuation").
+.decl gnode(n: node)
+gnode(n) :- node(d, n, k, _, _), syntax_gate(d), !excluded_kind(k).
+// ownership: fn / cls = the nearest function_definition / class_definition ancestor-or-self; top_fn = the outermost
+// function_definition ancestor-or-self (the outermost function above the nearest one).
+.decl own_fn(x: node, f: node)
+own_fn(x, x) :- gnode(x), kind(x, "function_definition").
+own_fn(x, f) :- gnode(x), !kind(x, "function_definition"), nearest(x, f, fdef).
+.decl own_cls(x: node, c: node)
+own_cls(x, x) :- gnode(x), kind(x, "class_definition").
+own_cls(x, c) :- gnode(x), !kind(x, "class_definition"), nearest(x, c, cdef).
+.decl nested_fn(f: node)
+nested_fn(f) :- kind(f, "function_definition"), nearest(f, g, fdef).
+.decl fn_top(f: node, t: node)
+fn_top(f, f) :- kind(f, "function_definition"), !nested_fn(f).
+fn_top(f, t) :- nested_fn(f), docof(f, d), kind(t, "function_definition"), docof(t, d), !nested_fn(t), @within(f, t) = 1.
+.decl own_top(x: node, t: node)
+own_top(x, t) :- own_fn(x, f), fn_top(f, t).
+
+// ---- functions, attributes, calls ----
+.decl functions(f: node, name: symbol)
+functions(f, name) :- gnode(f), kind(f, "function_definition"), field(f, "name", x), text(x, name).
+.decl attributes(n: node, attr: symbol, object: node, object_text: symbol)
+attributes(n, a, o, ot) :- gnode(n), kind(n, "attribute"), field(n, "attribute", x), text(x, a), field(n, "object", o), text(o, ot).
+// callee = coalesce(the function's attribute name, the function's text); receiver (nullable) = that attribute's object.
+.decl calls(n: node, callee_id: node, callee_kind: symbol, full_callee: symbol, callee: symbol)
+calls(n, f, k, t, a) :- gnode(n), kind(n, "call"), field(n, "function", f), gnode(f), kind(f, k), text(f, t), attributes(f, a, _, _).
+calls(n, f, k, t, t) :- gnode(n), kind(n, "call"), field(n, "function", f), gnode(f), kind(f, k), text(f, t), !attributes(f, _, _, _).
+.decl call_receiver(n: node, receiver: node)
+call_receiver(n, o) :- calls(n, f, _, _, _), attributes(f, _, o, _).
+
+// ---- arguments: position = row_number() OVER (PARTITION BY call ORDER BY __start) - 1, the count of earlier rows ----
+.decl arg_skip(k: symbol)
+arg_skip("comment"). arg_skip("keyword_argument"). arg_skip("list_splat"). arg_skip("dictionary_splat").
+.decl arg_row(call: node, a: node)
+arg_row(c, a) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, a, _), gnode(a), kind(a, k), !arg_skip(k).
+.decl arg_before(call: node, a: node, b: node)
+arg_before(c, a, b) :- arg_row(c, a), arg_row(c, b), start(a, sa), start(b, sb), sb < sa.
+.decl has_arg_before(a: node)
+has_arg_before(a) :- arg_before(_, a, _).
+.decl arguments(call: node, a: node, position: number)
+arguments(c, a, 0) :- arg_row(c, a), !has_arg_before(a).
+arguments(c, a, p) :- arg_row(c, a), has_arg_before(a), p = count : { arg_before(c, a, _) }.
+
+// ---- keywords ----
+.decl keywords(call: node, keyword: node, name: symbol, value: node)
+keywords(c, k, name, v) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, k, _), gnode(k), kind(k, "keyword_argument"),
+    field(k, "name", kn), gnode(kn), text(kn, name), field(k, "value", v), gnode(v).
+
+// ---- descendants (reachability over `nodes`) ----
+// Every node is its own descendant; a root whose kind is not below (`expand`) also reaches its strict descendants.
+.decl no_expand(k: symbol)
+no_expand("module"). no_expand("block"). no_expand("expression_statement"). no_expand("argument_list").
+no_expand("decorated_definition"). no_expand("type").
+.decl descendants(root: node, n: node)
+descendants(r, r) :- gnode(r).
+descendants(r, n) :- gnode(r), kind(r, k), !no_expand(k), docof(r, d), gnode(n), docof(n, d), @within(n, r) = 1.
+
+// ---- assignments: value (nullable) and fn (nullable, ownership.fn) are side relations ----
+.decl assignments(n: node, target: node, target_kind: symbol, target_text: symbol)
+assignments(n, l, k, t) :- gnode(n), kind(n, "assignment"), field(n, "left", l), gnode(l), kind(l, k), text(l, t).
+.decl assignment_value(n: node, value: node)
+assignment_value(n, r) :- assignments(n, _, _, _), field(n, "right", r), gnode(r).
+.decl assignment_fn(n: node, fn: node)
+assignment_fn(n, f) :- assignments(n, _, _, _), own_fn(n, f).
+
+// ---- parameters ----
+// The name node: the parameter itself when an identifier, else its first child (ordinal 0) when that is an identifier.
+.decl param_kind(k: symbol)
+param_kind("typed_parameter"). param_kind("default_parameter"). param_kind("typed_default_parameter").
+.decl param_row(fn: node, p: node, name: symbol)
+param_row(f, p, name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), gnode(p), kind(p, "identifier"), text(p, name).
+param_row(f, p, name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), gnode(p), kind(p, k), param_kind(k),
+    child(p, n, 0), gnode(n), kind(n, "identifier"), text(n, name).
+// position: row_number() OVER (PARTITION BY fn ORDER BY __start) - 1.
+.decl param_before(fn: node, p: node, q: node)
+param_before(f, p, q) :- param_row(f, p, _), param_row(f, q, _), start(p, sp), start(q, sq), sq < sp.
+.decl has_param_before(p: node)
+has_param_before(p) :- param_before(_, p, _).
+.decl parameters(fn: node, p: node, name: symbol, position: number)
+parameters(f, p, n, 0) :- param_row(f, p, n), !has_param_before(p).
+parameters(f, p, n, i) :- param_row(f, p, n), has_param_before(p), i = count : { param_before(f, p, _) }.
+// annotation (nullable): the `type` field; its text where the SQL reads ann.text.
+.decl annotation_text(p: node, text: symbol)
+annotation_text(p, s) :- param_row(_, p, _), field(p, "type", t), gnode(t), text(t, s).
+
+// ---- contexts: functions in no function (own.top_fn = f.id) ----
+// class_name = coalesce(class_names.name, '') of own.cls. class_names folds the class nesting into a dotted path through
+// `||` (a string path-fold, E0 #34); here the non-recursive @class_path of the nearest class.
+.decl contexts(f: node, name: symbol, class_name: symbol)
+contexts(f, n, q) :- functions(f, n), own_top(f, f), own_cls(f, c), q = @class_path(c).
+contexts(f, n, "") :- functions(f, n), own_top(f, f), !own_cls(f, _).
+.decl planning_name(n: symbol)
+planning_name("compile"). planning_name("lower"). planning_name("post_op"). planning_name("pre_op"). planning_name("preprocess").
+// Boolean columns planning, preprocess, ctx_helper, provider_helper, materializer: one relation each, holding where true.
+.decl ctx_planning(f: node)
+ctx_planning(f) :- contexts(f, n, _), @rx_matches(n, "_lazy$") = 1.
+ctx_planning(f) :- contexts(f, n, _), planning_name(n).
+ctx_planning(f) :- contexts(f, "pending_pipeline_effects", _).
+ctx_planning(f) :- contexts(f, n, _), @rx_matches(n, "^apply_.*_effect$") = 1.
+ctx_planning(f) :- contexts(f, _, _), child(w, f, _), gnode(w), kind(w, "decorated_definition"), text(w, t),
+    @rx_matches(t, "(?m)^\\s*@(?:[\\w.]*\\.)?pure_lazy\\b") = 1.
+.decl ctx_preprocess(f: node)
+ctx_preprocess(f) :- contexts(f, "preprocess", _).
+// substr(name, -11) = 'sql_builder': the name ends in it.
+.decl ctx_helper(f: node)
+ctx_helper(f) :- contexts(f, n, _), @rx_matches(n, "sql_builder$") = 1, !planning_name(n), parameters(f, p, _, _), annotation_text(p, t),
+    @rx_matches(t, "\\bCompilationContext\\b") = 1.
+.decl ctx_provider_helper(f: node)
+ctx_provider_helper(f) :- contexts(f, n, _), docof(f, d), doc(d, "impl/common/l2070_server_plan/backend_profiles.py"),
+    @rx_matches(n, "component|components|score|scores") = 1.
+.decl ctx_materializer(f: node)
+ctx_materializer(f) :- contexts(f, n, _), parameters(f, _, "runtime_refs", _), @rx_matches(n, "^materialize_.*builder$") = 1.
+ctx_materializer(f) :- contexts(f, _, _), parameters(f, _, "runtime_refs", _), parameters(f, p, _, _), annotation_text(p, t),
+    @rx_matches(t, "\\bRuntimeBuilderSpec\\b") = 1.
+
+// ---- body_nodes ----
+.decl body_nodes(fn: node, n: node)
+body_nodes(f, x) :- own_top(x, f), contexts(f, _, _).
+
+// ---- callback_parameters ----
+// The call's span inside the context's (__start >=, __end <=): a call never spans a function_definition, so @within;
+// the nested function's (__start >, __end <=): a strict descendant, @within.
+.decl callback_keyword(k: symbol)
+callback_keyword("post_op"). callback_keyword("post_op_with_refs").
+.decl callback_parameters(fn: node, name: symbol, callback_kind: symbol, position: number)
+callback_parameters(c, name, kn, i) :- contexts(c, _, _), docof(c, d), calls(call, _, _, _, "CompiledStep"), docof(call, d), @within(call, c) = 1,
+    keywords(call, _, kn, v), callback_keyword(kn), kind(v, "identifier"), text(v, vt), functions(nested, vt), docof(nested, d),
+    @within(nested, c) = 1, parameters(nested, _, name, i), i >= 1, i <= 2.
+
+// ---- parameter_kinds ----
+// rx_matches(coalesce(ann.text, ''), …) never matches '': only annotated parameters.
+.decl authority_param(n: symbol)
+authority_param("txn"). authority_param("read_txn"). authority_param("write_txn"). authority_param("conn"). authority_param("connection").
+authority_param("sql_conn").
+.decl carrier_param(n: symbol)
+carrier_param("hydrator"). carrier_param("runtime_hydrator"). carrier_param("runtime_refs").
+.decl parameter_kinds(fn: node, name: symbol, kind: symbol)
+parameter_kinds(f, n, "authority") :- parameters(f, _, n, _), authority_param(n).
+parameter_kinds(f, n, "authority") :- parameters(f, p, n, _), annotation_text(p, t), @rx_matches(t, "\\b(?:ReadTransaction|SyncDatabaseConnection|SyncSqlConnection|WriteTransaction)\\b") = 1.
+parameter_kinds(f, n, "provider") :- parameters(f, p, n, _), annotation_text(p, t), @rx_matches(t, "\\b(?:CrossBranchQueryProvider|HybridSearchProvider|VectorCandidateProvider|VersionedLoweringProvider|VersionedStorageProvider)\\b") = 1.
+parameter_kinds(f, "resolved", "runtime_value") :- parameters(f, _, "resolved", _).
+parameter_kinds(f, n, "runtime_value") :- parameters(f, p, n, _), annotation_text(p, t), @rx_matches(t, "\\bResolvedRefs\\b") = 1.
+parameter_kinds(f, "runtime_refs", "runtime_value") :- parameters(f, _, "runtime_refs", _), ctx_materializer(f).
+parameter_kinds(f, n, "carrier") :- parameters(f, _, n, _), carrier_param(n).
+parameter_kinds(f, n, "carrier") :- parameters(f, p, n, _), annotation_text(p, t), @rx_matches(t, "\\bHydrator\\b") = 1.
+// CASE over callback parameters: position 1 is a carrier; position 2 of post_op_with_refs a runtime value, and (the
+// last UNION) a carrier.
+parameter_kinds(f, n, "carrier") :- callback_parameters(f, n, _, 1).
+parameter_kinds(f, n, "runtime_value") :- callback_parameters(f, n, "post_op_with_refs", 2).
+parameter_kinds(f, n, "carrier") :- callback_parameters(f, n, "post_op_with_refs", 2).
+
+// ---- string_values: keyed by span, as the SQL's readers join it ----
+// module_strings: `NAME = "<string>"` as a statement of the module.
+.decl module_strings(d: number, name: symbol, value: symbol)
+module_strings(d, name, v) :- assignments(a, _, "identifier", name), child(stmt, a, _), gnode(stmt), child(root, stmt, _), gnode(root),
+    kind(root, "module"), field(a, "right", r), node(d, r, _, s, e), raw_strings(d, s, e, v).
+.decl string_values(d: number, s: number, e: number, value: symbol)
+string_values(d, s, e, v) :- raw_strings(d, s, e, v).
+string_values(d, s, e, v) :- gnode(n), kind(n, "identifier"), text(n, name), node(d, n, _, s, e), module_strings(d, name, v).
+
+// ---- special_attributes ----
+.decl ctx_attr(a: symbol)
+ctx_attr("materialized_pipeline"). ctx_attr("sql_connection"). ctx_attr("txn").
+.decl carrier_attr(a: symbol)
+carrier_attr("_conn"). carrier_attr("_serverplan_runtime_txn"). carrier_attr("_serverplan_sql_conn"). carrier_attr("_txn").
+carrier_attr("conn"). carrier_attr("connection"). carrier_attr("sql_conn"). carrier_attr("txn").
+.decl special_attributes(fn: node, n: node, owner: symbol, attr: symbol)
+// <object>.<attr>: CASE gives 'context' to ctx.<context attr>, 'carrier' to the rest the WHERE admits.
+special_attributes(f, a, "context", at) :- attributes(a, at, _, "ctx"), ctx_attr(at), body_nodes(f, a).
+special_attributes(f, a, "carrier", at) :- attributes(a, at, _, ot), ot != "ctx", carrier_attr(at), body_nodes(f, a), parameter_kinds(f, ot, "carrier").
+special_attributes(f, a, "carrier", at) :- attributes(a, at, _, "ctx"), carrier_attr(at), !ctx_attr(at), body_nodes(f, a), parameter_kinds(f, "ctx", "carrier").
+// getattr(<receiver>, "<key>"): the key's string value by span; CASE gives 'context' when the receiver is `ctx`.
+special_attributes(f, c, "context", v) :- calls(c, _, _, "getattr", _), body_nodes(f, c), arguments(c, r, 0), kind(r, "identifier"), text(r, "ctx"),
+    arguments(c, k, 1), node(d, k, _, s, e), string_values(d, s, e, v), ctx_attr(v).
+special_attributes(f, c, "context", v) :- calls(c, _, _, "getattr", _), body_nodes(f, c), arguments(c, r, 0), kind(r, "identifier"), text(r, "ctx"),
+    arguments(c, k, 1), node(d, k, _, s, e), string_values(d, s, e, v), carrier_attr(v), parameter_kinds(f, "ctx", "carrier").
+special_attributes(f, c, "carrier", v) :- calls(c, _, _, "getattr", _), body_nodes(f, c), arguments(c, r, 0), kind(r, "identifier"), text(r, rt),
+    rt != "ctx", arguments(c, k, 1), node(d, k, _, s, e), string_values(d, s, e, v), carrier_attr(v), parameter_kinds(f, rt, "carrier").
+// <carrier>.get("<key>")
+special_attributes(f, c, "carrier", v) :- calls(c, g, _, _, "get"), body_nodes(f, c), attributes(g, _, _, ot), arguments(c, k, 0),
+    node(d, k, _, s, e), string_values(d, s, e, v), carrier_attr(v), parameter_kinds(f, ot, "carrier").
+// <carrier>["<key>"]: the key is any other child of the subscript.
+special_attributes(f, n, "carrier", v) :- gnode(n), kind(n, "subscript"), body_nodes(f, n), field(n, "value", r), gnode(r), kind(r, "identifier"),
+    text(r, rt), child(n, k, _), gnode(k), k != r, node(d, k, _, s, e), string_values(d, s, e, v), carrier_attr(v),
+    parameter_kinds(f, rt, "carrier").
+
+// ---- return_kinds ----
+// runtime: a set recursion over the in-file call graph by name (E0 #35).
+.decl runtime(d: number, name: symbol)
+runtime(d, n) :- contexts(c, n, _), docof(c, d), special_attributes(c, _, "carrier", _), parameter_kinds(c, _, "carrier").
+runtime(d, n) :- contexts(c, n, _), body_nodes(c, call), calls(call, _, "identifier", _, callee), docof(call, d), runtime(d, callee),
+    arguments(call, a, _), descendants(a, x), kind(x, "identifier"), text(x, t), parameter_kinds(c, t, "carrier").
+// returnKindsHex at its default, decoded: one fact per (name, kind) of its JSON.
+.decl return_kind_entry(name: symbol, kind: symbol)
+return_kind_entry("__aenter__", "authority"). return_kind_entry("__call__", "authority"). return_kind_entry("__enter__", "authority").
+return_kind_entry("__new__", "authority"). return_kind_entry("_acquire_sync_context_impl", "authority"). return_kind_entry("_assert_upload_scope", "authority").
+return_kind_entry("_build_cross_branch_provider", "provider"). return_kind_entry("_build_hybrid_search_provider", "provider"). return_kind_entry("_build_plan_versioned_write_transaction", "authority").
+return_kind_entry("_build_plan_versioned_write_transaction_from_context_result", "authority"). return_kind_entry("_build_plan_versioned_write_transaction_from_literal", "authority"). return_kind_entry("_build_read_txn", "authority").
+return_kind_entry("_build_vector_candidate_provider", "provider"). return_kind_entry("_build_versioned_lowering_provider", "provider"). return_kind_entry("_build_versioned_storage_provider", "provider").
+return_kind_entry("_build_versioned_write_context", "authority"). return_kind_entry("_build_write_txn", "authority"). return_kind_entry("_conn", "authority").
+return_kind_entry("_connection_for_txn", "authority"). return_kind_entry("_connections", "authority"). return_kind_entry("_create_backend_write_transaction", "authority").
+return_kind_entry("_create_connection", "authority"). return_kind_entry("_create_from_url", "authority"). return_kind_entry("_create_historical_read_transaction", "authority").
+return_kind_entry("_create_read_transaction", "authority"). return_kind_entry("_create_read_transaction_async", "authority"). return_kind_entry("_create_sqlite", "authority").
+return_kind_entry("_create_sync_doltdb_connection", "authority"). return_kind_entry("_create_sync_mariadb_connection", "authority"). return_kind_entry("_create_sync_mongodb_connection", "authority").
+return_kind_entry("_create_sync_neo4j_connection", "authority"). return_kind_entry("_create_sync_postgres_connection", "authority"). return_kind_entry("_create_sync_sqlite_connection", "authority").
+return_kind_entry("_create_worker_connection", "authority"). return_kind_entry("_create_write_transaction", "authority"). return_kind_entry("_create_write_transaction_async", "authority").
+return_kind_entry("_ensure_system_txn", "authority"). return_kind_entry("_enter_doltdb_versioned_write_async", "authority"). return_kind_entry("_enter_doltdb_versioned_write_sync", "authority").
+return_kind_entry("_enter_read_transaction_context", "authority"). return_kind_entry("_enter_sparse_versioned_async", "authority"). return_kind_entry("_enter_sparse_versioned_sync", "authority").
+return_kind_entry("_enter_sql_read_async", "authority"). return_kind_entry("_enter_sql_read_sync", "authority"). return_kind_entry("_enter_sql_versioned_write_async", "authority").
+return_kind_entry("_enter_sql_versioned_write_sync", "authority"). return_kind_entry("_enter_sql_write_async", "authority"). return_kind_entry("_enter_sql_write_sync", "authority").
+return_kind_entry("_enter_write_transaction_context", "authority"). return_kind_entry("_factory", "authority"). return_kind_entry("_find_root_transaction", "authority").
+return_kind_entry("_get_connection", "authority"). return_kind_entry("_get_context_cache", "authority"). return_kind_entry("_get_ops_connection_terminal", "authority").
+return_kind_entry("_get_ops_connection_terminal_async", "authority"). return_kind_entry("_get_owner_connection", "authority"). return_kind_entry("_get_plan_vrt_class", "authority").
+return_kind_entry("_get_sql_conn", "authority"). return_kind_entry("_get_sql_conn_from_txn", "authority"). return_kind_entry("_graph_visibility_plan_owner", "authority").
+return_kind_entry("_is_read_or_write_transaction", "authority"). return_kind_entry("_is_versioned_transaction_plan_target", "authority"). return_kind_entry("_make_branch_tip_read_transaction", "authority").
+return_kind_entry("_make_inferred_branch_read_transaction", "authority"). return_kind_entry("_make_plan_versioned_read_transaction", "authority"). return_kind_entry("_materialize_sql_versioned_read_txn", "authority").
+return_kind_entry("_materialize_sql_versioned_read_txn_async", "authority"). return_kind_entry("_materialize_sql_versioned_read_txn_impl", "authority"). return_kind_entry("_open_cache_txn", "authority").
+return_kind_entry("_open_cache_txn_async", "authority"). return_kind_entry("_open_upstream_txn", "authority"). return_kind_entry("_open_upstream_txn_async", "authority").
+return_kind_entry("_prepare_base_write_transaction", "authority"). return_kind_entry("_require_async_write_transaction", "authority"). return_kind_entry("_require_base_write_transaction", "authority").
+return_kind_entry("_require_cache_txn", "authority"). return_kind_entry("_require_cache_txn_for_write", "authority"). return_kind_entry("_require_sync_database_connection", "authority").
+return_kind_entry("_require_upstream_txn", "authority"). return_kind_entry("_require_upstream_write_txn", "authority"). return_kind_entry("_require_versioned_write_transaction", "authority").
+return_kind_entry("_require_worker_connection_owner", "authority"). return_kind_entry("_require_write_transaction", "authority"). return_kind_entry("_resolve_base_txn", "authority").
+return_kind_entry("_storage_read_context", "authority"). return_kind_entry("_transaction_types", "authority"). return_kind_entry("_validated", "authority").
+return_kind_entry("_versioned_read_transaction_async", "authority"). return_kind_entry("_versioned_read_transaction_base_cls", "authority"). return_kind_entry("_versioned_write_transaction", "authority").
+return_kind_entry("_versioned_write_transaction_async", "authority"). return_kind_entry("_versioned_write_transaction_impl", "authority"). return_kind_entry("_versioned_write_transaction_runtime_cls", "authority").
+return_kind_entry("acquire_sync_context", "authority"). return_kind_entry("base_read_transaction", "authority"). return_kind_entry("base_write_transaction", "authority").
+return_kind_entry("cache", "authority"). return_kind_entry("conn", "authority"). return_kind_entry("create_db_connection", "authority").
+return_kind_entry("create_queue_worker", "authority"). return_kind_entry("create_sync", "authority"). return_kind_entry("create_worker_connection", "authority").
+return_kind_entry("get_ops_connection", "authority"). return_kind_entry("get_ops_connection_async", "authority"). return_kind_entry("get_ops_connection_lazy", "authority").
+return_kind_entry("get_schema_transaction_connection", "authority"). return_kind_entry("get_schema_transaction_connection_runtime_lazy", "authority"). return_kind_entry("get_transaction_connection", "authority").
+return_kind_entry("get_transaction_connection_runtime_lazy", "authority"). return_kind_entry("handler_txn", "authority"). return_kind_entry("nested_versioned_read_context", "authority").
+return_kind_entry("nested_versioned_read_context_async", "authority"). return_kind_entry("nested_versioned_read_context_with_schema_context_async", "authority"). return_kind_entry("nested_versioned_write_context", "authority").
+return_kind_entry("read", "authority"). return_kind_entry("read_async", "authority"). return_kind_entry("read_transaction", "authority").
+return_kind_entry("read_txn", "authority"). return_kind_entry("readthrough_transaction", "authority"). return_kind_entry("require_cross_branch_query_provider", "provider").
+return_kind_entry("require_hybrid_search_provider", "provider"). return_kind_entry("require_permission_compile_txn", "authority"). return_kind_entry("require_permission_lazy_read_transaction", "authority").
+return_kind_entry("require_permission_read_transaction", "authority"). return_kind_entry("require_permission_write_transaction", "authority"). return_kind_entry("require_sql_hybrid_search_provider", "provider").
+return_kind_entry("require_vector_candidate_provider", "provider"). return_kind_entry("require_versioned_lowering_provider", "provider"). return_kind_entry("require_versioned_storage_provider", "provider").
+return_kind_entry("runtime_write_txn_from_hydrator", "authority"). return_kind_entry("serverplan_cache_transaction", "authority"). return_kind_entry("transaction", "authority").
+return_kind_entry("txn", "authority"). return_kind_entry("versioned_read", "authority"). return_kind_entry("versioned_read_async", "authority").
+return_kind_entry("versioned_read_transaction", "authority"). return_kind_entry("versioned_write", "authority"). return_kind_entry("versioned_write_async", "authority").
+return_kind_entry("write", "authority"). return_kind_entry("write_async", "authority"). return_kind_entry("write_transaction", "authority").
+return_kind_entry("write_txn", "authority").
+.decl return_kinds(d: number, name: symbol, kind: symbol)
+return_kinds(d, n, "runtime_authority") :- runtime(d, n).
+return_kinds(d, n, "authority") :- contexts(c, n, _), docof(c, d), field(c, "return_type", t), gnode(t), text(t, s), @rx_matches(s, "\\b(?:ReadTransaction|SyncDatabaseConnection|SyncSqlConnection|WriteTransaction)\\b") = 1.
+return_kinds(d, n, "provider") :- contexts(c, n, _), docof(c, d), field(c, "return_type", t), gnode(t), text(t, s), @rx_matches(s, "\\b(?:CrossBranchQueryProvider|HybridSearchProvider|VectorCandidateProvider|VersionedLoweringProvider|VersionedStorageProvider)\\b") = 1.
+// FROM contexts c, json_each(the option): every entry, in every document with a context.
+return_kinds(d, n, k) :- contexts(c, _, _), docof(c, d), return_kind_entry(n, k).
+
+// ---- expression_edges, identifier_nodes ----
+.decl expression_edges(src: node, dst: node)
+expression_edges(o, n) :- attributes(n, _, o, _).
+expression_edges(r, n) :- call_receiver(n, r).
+expression_edges(v, n) :- gnode(n), kind(n, "subscript"), field(n, "value", v).
+.decl identifier_nodes(n: node, text: symbol)
+identifier_nodes(n, t) :- gnode(n), kind(n, "identifier"), text(n, t).
+
+// ---- taints: a set recursion over (fn, node, kind), kind a finite label (E0 #36) ----
+.decl flow_kind(k: symbol)
+flow_kind("authority"). flow_kind("provider"). flow_kind("runtime_value").
+.decl taints(fn: node, n: node, kind: symbol)
+taints(f, n, k) :- body_nodes(f, n), identifier_nodes(n, t), parameter_kinds(f, t, k), k != "carrier".
+taints(f, n, "authority") :- special_attributes(f, n, "carrier", _).
+taints(f, n, "authority") :- special_attributes(f, n, _, "txn").
+taints(f, n, "authority") :- special_attributes(f, n, _, "sql_connection").
+taints(f, c, k) :- body_nodes(f, c), calls(c, _, _, _, callee), docof(c, d), return_kinds(d, callee, k).
+// EXISTS(SELECT 1 FROM project_mode) within the document adds nothing to the rule above (file partition).
+taints(f, t, k) :- taints(f, n, k), expression_edges(n, t), body_nodes(f, t).
+taints(f, x, k) :- taints(f, n, k), flow_kind(k), assignment_value(a, n), assignments(a, _, "identifier", name), body_nodes(f, a),
+    identifier_nodes(x, name), body_nodes(f, x).
+
+// ---- semantic_values: a set recursion, upward through descendants and along assignments (E0 #37) ----
+.decl semantic_values(fn: node, n: node)
+semantic_values(f, n) :- taints(f, n, "runtime_value").
+semantic_values(f, n) :- body_nodes(f, n), identifier_nodes(n, t), parameter_kinds(f, t, "carrier").
+semantic_values(f, r) :- semantic_values(f, n), descendants(r, n).
+semantic_values(f, x) :- semantic_values(f, n), assignment_value(a, n), assignments(a, _, "identifier", name), body_nodes(f, a),
+    identifier_nodes(x, name), body_nodes(f, x).
+
+// ---- direct_events ----
+.decl eager_name(n: symbol)
+eager_name("execute_grammar_fetchall_direct"). eager_name("execute_grammar_fetchall_direct_async"). eager_name("execute_grammar_fetchall_with_params_direct").
+eager_name("execute_grammar_fetchall_with_params_direct_async"). eager_name("execute_grammar_fetchone_direct"). eager_name("execute_grammar_fetchone_direct_async").
+eager_name("execute_grammar_fetchone_with_params_direct"). eager_name("execute_grammar_fetchone_with_params_direct_async"). eager_name("grammar_effect_lazy").
+eager_name("grammar_execute"). eager_name("grammar_execute_async"). eager_name("grammar_fetchall").
+eager_name("grammar_fetchall_async"). eager_name("grammar_fetchone"). eager_name("grammar_fetchone_async").
+eager_name("grammar_row_lazy"). eager_name("grammar_rows_lazy"). eager_name("grammar_scalar").
+eager_name("grammar_scalar_async"). eager_name("grammar_value_lazy").
+.decl exec_name(n: symbol)
+exec_name("execute"). exec_name("execute_async"). exec_name("execute_ddl"). exec_name("execute_ddl_async"). exec_name("executemany"). exec_name("executemany_async").
+exec_name("fetchall"). exec_name("fetchall_async"). exec_name("fetchone"). exec_name("fetchone_async"). exec_name("scalar"). exec_name("scalar_async").
+// The rx_matches(n.full_callee, …) alternatives of each branch, one fact per pattern.
+.decl eager_rx(p: symbol)
+eager_rx("(?:^|\\.)conn(?:\\([^)]*\\))?\\.execute$"). eager_rx("(?:^|\\.)conn(?:\\([^)]*\\))?\\.execute_async$").
+eager_rx("(?:^|\\.)conn(?:\\([^)]*\\))?\\.fetchall$"). eager_rx("(?:^|\\.)conn(?:\\([^)]*\\))?\\.fetchall_async$").
+eager_rx("(?:^|\\.)conn(?:\\([^)]*\\))?\\.fetchone$"). eager_rx("(?:^|\\.)conn(?:\\([^)]*\\))?\\.fetchone_async$").
+eager_rx("(?:^|\\.)connection(?:\\([^)]*\\))?\\.execute$"). eager_rx("(?:^|\\.)connection(?:\\([^)]*\\))?\\.execute_async$").
+eager_rx("(?:^|\\.)connection(?:\\([^)]*\\))?\\.fetchall$"). eager_rx("(?:^|\\.)connection(?:\\([^)]*\\))?\\.fetchall_async$").
+eager_rx("(?:^|\\.)connection(?:\\([^)]*\\))?\\.fetchone$"). eager_rx("(?:^|\\.)connection(?:\\([^)]*\\))?\\.fetchone_async$").
+eager_rx("(?:^|\\.)cursor(?:\\([^)]*\\))?\\.execute$"). eager_rx("(?:^|\\.)cursor(?:\\([^)]*\\))?\\.executemany$").
+eager_rx("(?:^|\\.)query(?:\\([^)]*\\))?\\.execute$"). eager_rx("(?:^|\\.)query(?:\\([^)]*\\))?\\.execute_async$").
+eager_rx("(?:^|\\.)query(?:\\([^)]*\\))?\\.fetchall$"). eager_rx("(?:^|\\.)query(?:\\([^)]*\\))?\\.fetchall_async$").
+eager_rx("(?:^|\\.)query(?:\\([^)]*\\))?\\.fetchone$"). eager_rx("(?:^|\\.)query(?:\\([^)]*\\))?\\.fetchone_async$").
+eager_rx("(?:^|\\.)txn(?:\\([^)]*\\))?\\.execute$"). eager_rx("(?:^|\\.)txn(?:\\([^)]*\\))?\\.execute_async$").
+eager_rx("(?:^|\\.)txn(?:\\([^)]*\\))?\\.fetchall$"). eager_rx("(?:^|\\.)txn(?:\\([^)]*\\))?\\.fetchall_async$").
+eager_rx("(?:^|\\.)txn(?:\\([^)]*\\))?\\.fetchone$"). eager_rx("(?:^|\\.)txn(?:\\([^)]*\\))?\\.fetchone_async$").
+.decl native_name(n: symbol)
+native_name("create_usearch_index_class"). native_name("deserialize_embedding"). native_name("get_similarity_function"). native_name("serialize_embedding").
+.decl native_rx(p: symbol)
+native_rx("(?:^|\\.)np(?:\\([^)]*\\))?\\.array$"). native_rx("(?:^|\\.)np(?:\\([^)]*\\))?\\.ascontiguousarray$").
+native_rx("(?:^|\\.)np(?:\\([^)]*\\))?\\.isinf$"). native_rx("(?:^|\\.)np(?:\\([^)]*\\))?\\.isnan$").
+native_rx("(?:^|\\.)numpy(?:\\([^)]*\\))?\\.array$"). native_rx("(?:^|\\.)numpy(?:\\([^)]*\\))?\\.ascontiguousarray$").
+native_rx("(?:^|\\.)numpy(?:\\([^)]*\\))?\\.isinf$"). native_rx("(?:^|\\.)numpy(?:\\([^)]*\\))?\\.isnan$").
+.decl large_column_name(n: symbol)
+large_column_name("explicit_plan_execution_scope"). large_column_name("hydrate_many_post_op").
+large_column_name("hydrate_one_post_op"). large_column_name("runtime_sql_conn_from_hydrator").
+.decl nested_name(n: symbol)
+nested_name("execute_runtime_nested_steps_async"). nested_name("execute_runtime_nested_steps_sync").
+.decl nested_rx(p: symbol)
+nested_rx("(?:^|\\.)PlanExecutor(?:\\([^)]*\\))?\\.execute$"). nested_rx("(?:^|\\.)PlanExecutor(?:\\([^)]*\\))?\\.execute_async$").
+nested_rx("(?:^|\\.)executor(?:\\([^)]*\\))?\\.execute$"). nested_rx("(?:^|\\.)executor(?:\\([^)]*\\))?\\.execute_async$").
+.decl refs_keyword(k: symbol)
+refs_keyword("post_op_with_refs"). refs_keyword("pre_op_with_refs").
+.decl resolved_call(n: symbol)
+resolved_call("get"). resolved_call("peek"). resolved_call("resolve_server_ref").
+.decl resolved_name(n: symbol)
+resolved_name("resolved"). resolved_name("resolved_refs").
+.decl projection_call(n: symbol)
+projection_call("all"). projection_call("any"). projection_call("filter"). projection_call("len"). projection_call("map"). projection_call("max").
+projection_call("min"). projection_call("reversed"). projection_call("sorted"). projection_call("sum").
+.decl sequence_method(n: symbol)
+sequence_method("count"). sequence_method("index"). sequence_method("reverse"). sequence_method("sort").
+.decl comprehension_kind(k: symbol)
+comprehension_kind("list_comprehension"). comprehension_kind("set_comprehension"). comprehension_kind("dictionary_comprehension").
+comprehension_kind("generator_expression").
+.decl direct_events(fn: node, n: node, kind: symbol, priority: number)
+direct_events(f, n, "eager_sql", 1) :- calls(n, _, _, _, c), body_nodes(f, n), eager_name(c).
+direct_events(f, n, "eager_sql", 1) :- calls(n, _, "identifier", _, c), body_nodes(f, n), exec_name(c).
+direct_events(f, n, "eager_sql", 1) :- calls(n, _, _, fc, _), body_nodes(f, n), eager_rx(p), @rx_matches(fc, p) = 1.
+direct_events(f, n, "eager_sql", 1) :- calls(n, _, _, _, c), body_nodes(f, n), exec_name(c), call_receiver(n, r), taints(f, r, "authority").
+direct_events(f, n, "native_python_work", 1) :- calls(n, _, _, _, c), body_nodes(f, n), native_name(c).
+direct_events(f, n, "native_python_work", 1) :- calls(n, _, _, fc, _), body_nodes(f, n), native_rx(p), @rx_matches(fc, p) = 1.
+direct_events(f, n, "runtime_callback", 1) :- calls(n, _, _, _, "CompiledStep"), body_nodes(f, n), keywords(n, _, k, _), refs_keyword(k).
+direct_events(f, n, "large_column", 1) :- calls(n, _, _, _, c), body_nodes(f, n), large_column_name(c).
+direct_events(f, n, "large_column", 1) :- calls(n, _, _, _, "convert_row_to_model"), body_nodes(f, n), keywords(n, _, "hydrate_large_columns", v),
+    kind(v, "true").
+direct_events(f, n, "resolved_refs", 1) :- calls(n, g, _, _, c), resolved_call(c), body_nodes(f, n), attributes(g, _, o, _), gnode(o),
+    kind(o, "identifier"), text(o, t), resolved_name(t).
+direct_events(f, n, "resolved_refs", 1) :- calls(n, g, _, _, c), resolved_call(c), body_nodes(f, n), attributes(g, _, o, _), gnode(o),
+    attributes(o, t, _, _), resolved_name(t).
+direct_events(f, n, "resolved_refs", 1) :- calls(n, g, _, _, c), resolved_call(c), body_nodes(f, n), attributes(g, _, o, _), gnode(o),
+    kind(o, k), k != "identifier", k != "attribute", text(o, t), @instr(t, "resolved") > 0.
+direct_events(f, n, "nested_execute", 1) :- calls(n, _, _, _, c), body_nodes(f, n), nested_name(c).
+direct_events(f, n, "nested_execute", 1) :- calls(n, _, _, fc, _), body_nodes(f, n), nested_rx(p), @rx_matches(fc, p) = 1.
+direct_events(f, n, "materialized_pipeline", 1) :- attributes(n, "materialized_pipeline", _, _), body_nodes(f, n).
+direct_events(f, n, "materialized_pipeline", 1) :- special_attributes(f, n, "context", "materialized_pipeline"), body_nodes(f, n), gnode(n).
+direct_events(f, n, "ctx_access", 1) :- special_attributes(f, n, "context", _), body_nodes(f, n), gnode(n).
+direct_events(f, n, "runtime_authority", 1) :- special_attributes(f, n, "carrier", _), body_nodes(f, n), gnode(n), kind(n, "attribute").
+direct_events(f, n, "runtime_authority", 1) :- special_attributes(f, n, "carrier", _), body_nodes(f, n), gnode(n), kind(n, "call").
+direct_events(f, n, "runtime_authority", 1) :- calls(n, _, _, _, "active_pipeline_txn_for_callbacks"), body_nodes(f, n).
+direct_events(f, n, "runtime_authority", 1) :- calls(n, _, _, _, _), body_nodes(f, n), taints(f, n, "runtime_authority").
+direct_events(f, n, "runtime_authority", 0) :- assignments(n, _, _, _), body_nodes(f, n), assignment_value(n, v), taints(f, v, "runtime_authority").
+direct_events(f, n, "runtime_value", 0) :- assignments(n, _, _, _), body_nodes(f, n), assignment_value(n, v), taints(f, v, "runtime_value").
+direct_events(f, n, "runtime_value", 1) :- calls(n, _, _, _, _), body_nodes(f, n), taints(f, n, "runtime_value").
+direct_events(f, n, "runtime_value", 1) :- calls(n, _, _, _, _), body_nodes(f, n), call_receiver(n, r), taints(f, r, "runtime_value").
+direct_events(f, n, "runtime_value", 1) :- calls(n, _, _, _, _), body_nodes(f, n), arguments(n, a, _), taints(f, a, "runtime_value").
+direct_events(f, n, "runtime_value", 1) :- calls(n, _, _, _, _), body_nodes(f, n), keywords(n, _, _, v), taints(f, v, "runtime_value").
+direct_events(f, n, "runtime_value", 1) :- gnode(n), kind(n, "subscript"), body_nodes(f, n), field(n, "value", o), gnode(o), kind(o, "identifier"),
+    taints(f, o, "runtime_value").
+direct_events(f, n, "runtime_value", 1) :- gnode(n), kind(n, "comparison_operator"), body_nodes(f, n), text(n, t), @rx_matches(t, "\\bin\\b") = 1,
+    child(n, o, _), gnode(o), kind(o, "identifier"), taints(f, o, "runtime_value").
+direct_events(f, n, "provider_authority", 1) :- calls(n, _, _, _, _), body_nodes(f, n), call_receiver(n, r), taints(f, r, "provider"),
+    arguments(n, a, _), taints(f, a, "authority").
+direct_events(f, n, "provider_authority", 1) :- calls(n, _, _, _, _), body_nodes(f, n), call_receiver(n, r), taints(f, r, "provider"),
+    keywords(n, _, _, v), taints(f, v, "authority").
+direct_events(f, n, "runtime_semantic_projection", 1) :- calls(n, _, _, _, c), projection_call(c), body_nodes(f, n), arguments(n, a, _),
+    semantic_values(f, a).
+direct_events(f, n, "runtime_semantic_projection", 1) :- calls(n, _, _, _, c), projection_call(c), body_nodes(f, n), keywords(n, _, _, v),
+    semantic_values(f, v).
+direct_events(f, n, "runtime_semantic_projection", 1) :- calls(n, _, _, _, c), sequence_method(c), body_nodes(f, n), call_receiver(n, r),
+    semantic_values(f, r).
+direct_events(f, n, "runtime_semantic_projection", 1) :- gnode(n), kind(n, "subscript"), body_nodes(f, n), child(n, sl, _), gnode(sl),
+    kind(sl, "slice"), field(n, "value", v), semantic_values(f, v).
+direct_events(f, n, "runtime_semantic_projection", 1) :- gnode(n), kind(n, k), comprehension_kind(k), body_nodes(f, n), child(n, fi, _), gnode(fi),
+    kind(fi, "for_in_clause"), child(n, ic, _), gnode(ic), kind(ic, "if_clause"), field(fi, "right", r), semantic_values(f, r).
+// The two for_statement branches (semantic and sequence projection) share one condition: a semantic iterable, an
+// append/extend call inside, and a projection inside (a subscript, or a get/getattr call) reading a loop target's name.
+.decl loop_projection(p: node)
+loop_projection(p) :- gnode(p), kind(p, "subscript").
+loop_projection(p) :- calls(p, _, _, _, "get").
+loop_projection(p) :- calls(p, _, _, _, "getattr").
+.decl append_call(n: symbol)
+append_call("append"). append_call("extend").
+.decl projection_loop(fn: node, n: node)
+projection_loop(f, n) :- gnode(n), kind(n, "for_statement"), body_nodes(f, n), field(n, "right", r), semantic_values(f, r),
+    descendants(n, c), calls(c, _, _, _, cc), append_call(cc), descendants(n, p), loop_projection(p),
+    descendants(p, u), identifier_nodes(u, name), field(n, "left", l), descendants(l, x), identifier_nodes(x, name).
+direct_events(f, n, "runtime_semantic_projection", 1) :- projection_loop(f, n).
+direct_events(f, n, "runtime_sequence_projection", 1) :- projection_loop(f, n).
+
+// ---- direct_sinks: row_number() OVER (PARTITION BY fn, kind ORDER BY priority, depth, __start) = 1, chained minima ----
+// depth: the count of descendants rows reaching the node from a root of a kind not below (ancestors-or-self).
+.decl depth_skip(k: symbol)
+depth_skip("module"). depth_skip("block"). depth_skip("expression_statement"). depth_skip("argument_list").
+depth_skip("decorated_definition"). depth_skip("parenthesized_expression"). depth_skip("type").
+.decl event_ancestor(n: node, r: node)
+event_ancestor(n, r) :- direct_events(_, n, _, _), descendants(r, n), kind(r, k), !depth_skip(k).
+.decl event_rank(fn: node, kind: symbol, n: node, priority: number, depth: number, s: number)
+event_rank(f, k, n, p, c, s) :- direct_events(f, n, k, p), c = count : { event_ancestor(n, _) }, start(n, s).
+.decl ds_priority(fn: node, kind: symbol, priority: number)
+ds_priority(f, k, p) :- event_rank(f, k, _, _, _, _), p = min q : { event_rank(f, k, _, q, _, _) }.
+.decl ds_depth(fn: node, kind: symbol, depth: number)
+ds_depth(f, k, c) :- ds_priority(f, k, p), c = min x : { event_rank(f, k, _, p, x, _) }.
+.decl ds_start(fn: node, kind: symbol, s: number)
+ds_start(f, k, s) :- ds_priority(f, k, p), ds_depth(f, k, c), s = min y : { event_rank(f, k, _, p, c, y) }.
+.decl direct_sinks(fn: node, n: node, kind: symbol)
+direct_sinks(f, n, k) :- ds_priority(f, k, p), ds_depth(f, k, c), ds_start(f, k, s), event_rank(f, k, n, p, c, s).
+
+// ---- call_graph ----
+.decl self_name(n: symbol)
+self_name("self"). self_name("cls").
+.decl call_graph(fn: node, n: node, target: node)
+call_graph(f, c, t) :- body_nodes(f, c), calls(c, _, "identifier", _, callee), contexts(f, _, _), docof(c, d), contexts(t, callee, ""), docof(t, d),
+    t != f.
+call_graph(f, c, t) :- body_nodes(f, c), calls(c, g, "attribute", _, callee), contexts(f, _, cn), cn != "", docof(c, d), contexts(t, callee, cn),
+    docof(t, d), t != f, attributes(g, _, _, ot), self_name(ot).
+
+// ---- reachable: a set recursion over call_graph (E0 #38) ----
+.decl reachable(fn: node)
+reachable(c) :- ctx_planning(c).
+reachable(c) :- ctx_preprocess(c).
+reachable(c) :- ctx_materializer(c).
+reachable(c) :- ctx_helper(c).
+reachable(c) :- ctx_provider_helper(c).
+reachable(c) :- contexts(c, _, _), docof(c, d), doc(d, p), @rx_matches(p, "(?:^|/)impl/common/l2070_server_plan/") = 1,
+    direct_sinks(c, _, "native_python_work").
+reachable(t) :- reachable(f), call_graph(f, _, t).
+
+// ---- transitive_sinks ----
+// sink enumerates every simple path up the call graph from a reachable direct sink, stopping at a caller with its own
+// direct sink of the kind; route '|origin|…|fn|' grows by the caller's id and '|' per hop. Keyed by (fn, kind, node,
+// origin), the least route under shortlex is a shortest path: a route the SQL's cycle guard forbids has a shorter
+// prefix with the same (fn, kind), which wins the pick below, and every extension of it is dominated by that prefix's.
+.lattice shortlex_min<symbol> { Lub -> @shortlex_min }
+.decl sink(fn: node, kind: symbol, n: node, origin: node, route: shortlex_min<>) widen 64
+sink(f, k, n, f, r) :- direct_sinks(f, n, k), reachable(f), r = @concat("|", @id(f), "|").
+sink(g, k, c, o, r) :- sink(f, k, _, o, r0), call_graph(g, c, f), reachable(g), !direct_sinks(g, _, k), r = @concat(r0, @id(g), "|").
+// row_number() OVER (PARTITION BY fn, kind ORDER BY length(route), __start) = 1, as two minima.
+.decl sink_len(fn: node, kind: symbol, n: node, origin: node, len: number)
+sink_len(f, k, n, o, l) :- sink(f, k, n, o, r), l = @length(r).
+.decl ts_len(fn: node, kind: symbol, len: number)
+ts_len(f, k, l) :- sink_len(f, k, _, _, _), l = min x : { sink_len(f, k, _, _, x) }.
+.decl ts_candidate(fn: node, kind: symbol, n: node, origin: node, s: number)
+ts_candidate(f, k, n, o, s) :- sink_len(f, k, n, o, l), ts_len(f, k, l), start(n, s).
+.decl ts_start(fn: node, kind: symbol, s: number)
+ts_start(f, k, s) :- ts_candidate(f, k, _, _, _), s = min y : { ts_candidate(f, k, _, _, y) }.
+.decl transitive_sinks(fn: node, n: node, kind: symbol, origin: node)
+transitive_sinks(f, n, k, o) :- ts_candidate(f, k, n, o, s), ts_start(f, k, s).
+
+// ---- signed_exceptions ----
+.decl signed_exceptions(key: symbol)
+signed_exceptions("SPT-003::USearchVectorIndex.search_lazy::l5200_vector_index/index_implementations/usearch_index.py").
+signed_exceptions("SPT-026::_USearchScopedPersistStep.compile::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_ComputeContentHashKeyedHnswPlanStep._compute_plan::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_ComputeSourceKeyedHnswPlanStep._compute_plan::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_USearchScopedPersistStep._build_instance::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_USearchScopedPersistStep.tables_written::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_build_source_keyed_usearch_steps::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_coerce_sql_table_hnsw_query_vector::impl/common/l2070_server_plan/backend_profiles.py").
+signed_exceptions("SPT-027::_compute_similarity::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_runtime_embedding_vector_rows::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_sql_table_hnsw_query_vector::impl/common/l2070_server_plan/steps/versioned_hybrid_search.py").
+signed_exceptions("SPT-027::_sql_table_hnsw_query_vector::impl/common/l2070_server_plan/steps/versioned_vector_search.py").
+signed_exceptions("SPT-027::_usearch_scoped_persist_post_op::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::runtime_materialize_embedding_projection_rows_compiled_step::impl/common/l2070_server_plan/steps/intent_embedding_runtime_projection.py").
+
+// ---- the clause's query (entryPoint "all", oracleAnalyzer false) ----
+// The exception key: issue || '::' || (class_name '' ? name : class_name || '.' || name) || '::' || __path.
+.decl flow_issue(i: symbol)
+flow_issue("SPT-002"). flow_issue("SPT-003"). flow_issue("SPT-005"). flow_issue("SPT-010"). flow_issue("SPT-011"). flow_issue("SPT-012").
+flow_issue("SPT-019"). flow_issue("SPT-020"). flow_issue("SPT-021"). flow_issue("SPT-022"). flow_issue("SPT-024"). flow_issue("SPT-026").
+flow_issue("SPT-027"). flow_issue("SPT-028").
+.decl ctx_display(f: node, name: symbol)
+ctx_display(f, n) :- contexts(f, n, "").
+ctx_display(f, q) :- contexts(f, n, c), c != "", q = @concat(c, ".", n).
+.decl signed(issue: symbol, f: node)
+signed(i, f) :- ctx_display(f, n), docof(f, d), doc(d, p), flow_issue(i), key = @concat(i, "::", n, "::", p), signed_exceptions(key).
+// Every flow branch joins contexts c (fn) and origin_fn (origin).
+.decl flow(fn: node, n: node, kind: symbol, origin: node)
+flow(f, n, k, o) :- transitive_sinks(f, n, k, o), contexts(f, _, _), contexts(o, _, _).
+.decl post_process_name(n: symbol)
+post_process_name("_post_process"). post_process_name("post_op_with_refs"). post_process_name("post_process"). post_process_name("postprocess").
+finding("state-flow-1", "SPT-003", n) :- flow(f, n, "eager_sql", o), ctx_planning(f), !ctx_preprocess(f), o != f, !signed("SPT-003", f).
+finding("state-flow-1", "SPT-011", n) :- flow(f, n, "eager_sql", o), ctx_preprocess(f), o != f, !signed("SPT-011", f).
+finding("state-flow-1", "SPT-019", n) :- flow(f, n, "eager_sql", o), ctx_provider_helper(f), o != f, !signed("SPT-019", f).
+finding("state-flow-1", "SPT-020", n) :- flow(f, n, "ctx_access", o), ctx_planning(f), o != f, !signed("SPT-020", f).
+finding("state-flow-1", "SPT-020", n) :- flow(f, n, "ctx_access", o), ctx_helper(f), o != f, !signed("SPT-020", f).
+finding("state-flow-1", "SPT-002", n) :- flow(f, n, "large_column", o), ctx_planning(f), o != f, !signed("SPT-002", f).
+finding("state-flow-1", "SPT-010", n) :- flow(f, n, "resolved_refs", o), ctx_planning(f), o != f, !signed("SPT-010", f).
+finding("state-flow-1", "SPT-005", n) :- flow(f, n, "nested_execute", o), ctx_planning(f), o != f, !signed("SPT-005", f).
+finding("state-flow-1", "SPT-012", n) :- flow(f, n, "materialized_pipeline", o), ctx_planning(f), o != f, !signed("SPT-012", f).
+finding("state-flow-1", "SPT-022", n) :- flow(f, n, "runtime_authority", _), ctx_planning(f), !signed("SPT-022", f).
+finding("state-flow-1", "SPT-024", n) :- flow(f, n, "runtime_value", o), ctx_planning(f), contexts(o, on, _), !post_process_name(on),
+    @rx_matches(on, "_post_op_with_refs$") = 0, !signed("SPT-024", f).
+finding("state-flow-1", "SPT-021", n) :- flow(f, n, "provider_authority", _), ctx_planning(f), !signed("SPT-021", f).
+finding("state-flow-1", "SPT-026", n) :- flow(f, n, "runtime_callback", _), ctx_planning(f), !signed("SPT-026", f).
+finding("state-flow-1", "SPT-028", n) :- flow(f, n, "runtime_semantic_projection", _), ctx_planning(f), !signed("SPT-028", f).
+finding("state-flow-1", "SPT-028", n) :- flow(f, n, "runtime_sequence_projection", f), !ctx_planning(f), ctx_materializer(f), !signed("SPT-028", f).
+finding("state-flow-1", "SPT-027", n) :- flow(f, n, "native_python_work", f), docof(f, d), doc(d, p),
+    @rx_matches(p, "(?:^|/)impl/common/l2070_server_plan/") = 1, !signed("SPT-027", f).
+// direct-flow rows: a getattr call on the context (special_attributes joined on the node).
+.decl context_call(f: node, n: node, attr: symbol)
+context_call(f, n, a) :- calls(n, _, _, _, _), special_attributes(f, n, "context", a), contexts(f, _, _).
+.decl outside_tests(n: node)
+outside_tests(n) :- docof(n, d), doc(d, p), @rx_matches(p, "/tests/") = 0.
+finding("state-flow-1", "SPT-020", n) :- context_call(f, n, "txn"), outside_tests(n), ctx_planning(f).
+finding("state-flow-1", "SPT-020", n) :- context_call(f, n, "txn"), outside_tests(n), ctx_helper(f).
+finding("state-flow-1", "SPT-020", n) :- context_call(f, n, "sql_connection"), outside_tests(n), ctx_planning(f).
+finding("state-flow-1", "SPT-020", n) :- context_call(f, n, "sql_connection"), outside_tests(n), ctx_helper(f).
+finding("state-flow-1", "SPT-012", n) :- context_call(f, n, "materialized_pipeline"), ctx_planning(f).
+// convert_row_to_model inside a function (span-inside: @within) that is nested in a context and declares a parameter
+// named like one of that context's callback parameters.
+finding("state-flow-1", "SPT-023", n) :- calls(n, _, _, _, "convert_row_to_model"), outside_tests(n), docof(n, d), functions(nested, _), docof(nested, d),
+    @within(n, nested) = 1, parameters(nested, _, pn, _), callback_parameters(of, pn, _, _), contexts(of, _, _), @within(nested, of) = 1.

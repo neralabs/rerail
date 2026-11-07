@@ -13,14 +13,12 @@ A draft goes to the read-back only when it passes all of these.
 | Valid | `rules test` reports `valid: true` | Fix what the error names. It gives the field path. |
 | Cases | Every case `ok`, none `notChecked`; at least 2 caught and 2 passed, one of them a near miss | Fix the matcher, or the case's code if it does not parse |
 | Evidence | The code or command the person corrected is a caught case | The rule does not catch what was asked for: rework it |
-| Repo matches | You read every match in `repository.matches`, and each is a real violation | Narrow the matcher, and add the false positive as a passed case |
+| Repo matches | You read every example the report shows, and each is a real violation | Narrow the matcher, and add the false positive as a passed case |
 | Repo agreement | Matches in no more than about 25 files | Many matches mean the repo's convention says otherwise. Show the person 2 or 3, and ask whether the existing code is wrong. If not, narrow the rule or drop it. If it is but fixing is not the agent's job now, use Log. |
 | Command rules | No repo pass runs; the cases carry the proof, so include the tools of every agent (`Edit`, `write`, `apply_patch`, `bash`) | — |
 | Zero matches | Fine when the person asked for it, a standard states it, or the evidence shows the agent breaking it: the repo already follows it | With none of those, the rule may be aimed at nothing: mark the Tested row `Not sure` |
 | Standard vs. safety | Following the steer is safe everywhere in the scope | A written standard can still be unsafe in part of its scope (a Node-only logger steered into browser components). Narrow the scope to where it is safe and say so in the read-back |
-| History (architecture rules) | Catches the first draft the maintainers sent back; no more matches at the merge than at the base; quiet on recent merged PRs in its scope, as in [architecture-rules.md](architecture-rules.md#proving-it-against-history) | Rework the matcher. A rule that matches the accepted merge steers against the maintainers' own design |
-| Unchecked files | `repository.unchecked.files` is empty, or the files are ones the rule does not care about | Say in the read-back that the rule cannot see those files |
-| Left out | `repository.leftOut` is 0, or the rule's scope is not about hidden, secret-named or Git-ignored files | The repo pass does not read those files; Rerail enforces this in code. Hidden and secret-named files are never read; Git-ignored ones are read only after a person turns the repository's Follow .gitignore off. Zero matches then says nothing about them: mark the Tested row `Not sure` and say the repo pass could not check them |
+| Unchecked files | `repository.unchecked.count` is 0, or the files are ones the rule does not care about | Say in the read-back that the rule cannot see those files |
 | Safe to obey | No item in [Harmful steering](#harmful-steering) applies | Use the fix ladder below, or Log |
 
 ## Harmful steering

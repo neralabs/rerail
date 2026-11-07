@@ -1,0 +1,5483 @@
+{
+  "format": "rerail.complete-api-observations/v1",
+  "exitCode": 0,
+  "mode": "oracle",
+  "sourceFilesChecked": 1495,
+  "observations": [
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_l2080_lazy_orm_pending_update_materializers_are_lazy_native",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_l2080_lazy_orm_pending_update_materializers_are_lazy_native",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_resolve_server_value_in_preprocess",
+      "check": "eager_resolve",
+      "entry": "_scan_preprocess_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "resolve_server_value(value, resolved)",
+          "pattern_name": "preprocess:resolve_server_value()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.preprocess"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_resolve_lazy_param_str_in_preprocess",
+      "check": "eager_resolve",
+      "entry": "_scan_preprocess_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "resolve_lazy_param_str(self._query_source, resolved)",
+          "pattern_name": "preprocess:resolve_lazy_param_str()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.preprocess"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_resolved_get_in_preprocess",
+      "check": "eager_resolve",
+      "entry": "_scan_preprocess_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "resolved.get(self._payload_ref)",
+          "pattern_name": "preprocess:resolved.get()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.preprocess"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_ref_resolve_with_resolved_in_preprocess",
+      "check": "eager_resolve",
+      "entry": "_scan_preprocess_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "self._query_ref.resolve(resolved)",
+          "pattern_name": "preprocess:*.resolve(resolved)",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.preprocess"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_does_not_flag_non_preprocess_helper",
+      "check": "eager_resolve",
+      "entry": "_scan_preprocess_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_resolve_in_lower",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "lazy.resolve()",
+          "pattern_name": "lower:*.resolve()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.lower"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_is_resolved_in_lower",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "lazy.is_resolved",
+          "pattern_name": "lower:*.is_resolved",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.lower"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_resolved_value_in_compile",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "lazy.resolved_value",
+          "pattern_name": "compile:*.resolved_value",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.compile"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_helper_probe_call_in_lower",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "peek_resolved_value(self._lazy_revision)",
+          "pattern_name": "lower:peek_resolved_value()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.lower"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_peek_prefix_helper_call_in_compile",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "peek_instance_attr(self._payload, '_ref_id')",
+          "pattern_name": "compile:peek_instance_attr()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.compile"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_attribute_helper_probe_call_in_compile",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "helpers.deleted_ref_probe_helper(self._payload)",
+          "pattern_name": "compile:*.deleted_ref_probe_helper()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.compile"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flagsdeleted_ref_value_helper_helper_in_compile_chain",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "deleted_ref_value_helper(ref)",
+          "pattern_name": "compile:deleted_ref_value_helper()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._helper"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_step_ref_id_probe_in_lower_chain",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 2,
+          "text": "getattr(lazy, '_step_ref_id', None)",
+          "pattern_name": "lower:getattr(_step_ref_id)",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._helper"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_does_not_flag_helper_outside_lower_compile",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_transitive_module_helper_getattr_probe_from_lower",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 2,
+          "text": "getattr(ref, '_ref_id', None)",
+          "pattern_name": "lower:getattr(_ref_id)",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._server_ref_deleted_state_flag"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_transitive_module_helper_deleted_state_slot_unwrap_from_lower",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 2,
+          "text": "getattr(ref, '_deleted_state_slot')",
+          "pattern_name": "lower:getattr(_deleted_state_slot)",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._server_ref_deleted_state_value"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_inspect_getattr_static_probe_from_compile",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 6,
+          "text": "inspect.getattr_static(self._payload, '_ref_id', None)",
+          "pattern_name": "compile:*.getattr_static(_ref_id)",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.compile"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_dunder_dict_probe_from_compile",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "object.__getattribute__(self._payload, '__dict__')",
+          "pattern_name": "compile:*.__getattribute__(__dict__)",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep.compile"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_transitive_self_helper_deleted_state_slot_probe_from_lower",
+      "check": "eager_resolve",
+      "entry": "_scan_lower_compile_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "value._deleted_state_slot",
+          "pattern_name": "lower:*._deleted_state_slot",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadStep._helper"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_transitive_helper_wrapper_call_chain",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def _helper(ref):",
+          "pattern_name": "transitive:deleted_ref_probe_helper()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._helper"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "def _wrapper(ref):",
+          "pattern_name": "transitive:deleted_ref_probe_helper()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._wrapper"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_fake_progress_helper_extractions",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 11,
+          "text": "def caller(txn, spec, revision_selector_value):",
+          "pattern_name": "transitive:_append_revision_selector_filter()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.caller"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 11,
+          "text": "def caller(txn, spec, revision_selector_value):",
+          "pattern_name": "transitive:_effective_diff_to_revision()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.caller"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_transitive_eager_helper_call_chain",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def _helper(txn, build_lazy):",
+          "pattern_name": "transitive:_resolve_legacy_result_sync()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._helper"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "def _wrapper(txn, build_lazy):",
+          "pattern_name": "transitive:_resolve_legacy_result_sync()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._wrapper"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "def _wrapper(txn, build_lazy):",
+          "pattern_name": "transitive:legacy-boundary-call:_helper()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._wrapper"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_internal_call_to_module_legacy_boundary_wrapper",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 10,
+          "text": "def rebuild_fts_index(txn, stmt):",
+          "pattern_name": "transitive:legacy-boundary-call:_rows()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.rebuild_fts_index"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_internal_self_call_to_legacy_boundary_method",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 9,
+          "text": "def optimize(self, txn):",
+          "pattern_name": "transitive:legacy-boundary-call:rebuild()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.Manager.optimize"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_internal_call_to_undecorated_legacy_boundary_behavior",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def _rows(txn, stmt):",
+          "pattern_name": "transitive:*.resolve<bound>",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._rows"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "def rebuild_fts_index(txn, stmt):",
+          "pattern_name": "transitive:*.resolve<bound>",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.rebuild_fts_index"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "def rebuild_fts_index(txn, stmt):",
+          "pattern_name": "transitive:legacy-boundary-call:_rows()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.rebuild_fts_index"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_decorated_boundary_even_when_body_hides_behavior",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 7,
+          "text": "@legacy_module_sync(lazy_name='publish_lazy')",
+          "pattern_name": "transitive:legacy-boundary-call:_hidden_delegate()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.publish"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 10,
+          "text": "def run_publish(txn):",
+          "pattern_name": "transitive:legacy-boundary-call:_hidden_delegate()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.run_publish"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 10,
+          "text": "def run_publish(txn):",
+          "pattern_name": "transitive:legacy-boundary-call:publish()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.run_publish"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_decorator_alias_boundary_even_when_body_hides_behavior",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 9,
+          "text": "@eager_boundary",
+          "pattern_name": "transitive:legacy-boundary-call:_hidden_delegate()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.Manager.rebuild"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 12,
+          "text": "def optimize(self, txn):",
+          "pattern_name": "transitive:legacy-boundary-call:_hidden_delegate()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.Manager.optimize"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 12,
+          "text": "def optimize(self, txn):",
+          "pattern_name": "transitive:legacy-boundary-call:rebuild()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.Manager.optimize"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_getattr_dispatch_to_legacy_boundary_behavior",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 6,
+          "text": "def optimize(self, txn):",
+          "pattern_name": "transitive:legacy-boundary-call:rebuild()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.Manager.optimize"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_local_alias_to_getattr_legacy_boundary_behavior",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 6,
+          "text": "def optimize(self, txn):",
+          "pattern_name": "transitive:legacy-boundary-call:rebuild()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.Manager.optimize"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_globals_dispatch_to_module_legacy_boundary_behavior",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "def run_publish(txn):",
+          "pattern_name": "transitive:legacy-boundary-call:publish()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.run_publish"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_exact_legacy_boundary_definition_itself_is_not_flagged",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_exact_legacy_boundary_definition_itself_is_not_flagged",
+      "check": "eager_resolve",
+      "entry": "_scan_legacy_boundary_definition_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_non_exact_legacy_boundary_definition_is_not_counted",
+      "check": "eager_resolve",
+      "entry": "_scan_legacy_boundary_definition_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_legacy_boundary_definition_without_lazy_target_is_not_counted",
+      "check": "eager_resolve",
+      "entry": "_scan_legacy_boundary_definition_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_exact_legacy_boundary_call_is_flagged_at_caller",
+      "check": "eager_resolve",
+      "entry": "_scan_legacy_boundary_definition_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_exact_legacy_boundary_call_is_flagged_at_caller",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 10,
+          "text": "def run_publish(txn):",
+          "pattern_name": "transitive:legacy-boundary-call:publish()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.run_publish"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_non_lazy_transaction_terminal_calls",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "async def get_row(txn, model_cls, object_id):",
+          "pattern_name": "transitive:non-lazy-call:*.select_one_async()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.get_row"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "async def wrapper(txn, model_cls, object_id):",
+          "pattern_name": "transitive:non-lazy-call:*.select_one_async()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.wrapper"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_managed_secret_style_eager_query_execution",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "async def list_rows(txn, model_cls):",
+          "pattern_name": "transitive:non-lazy-call:*.execute_async()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.list_rows"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_external_io_boundary_definition_is_reported_until_allowlisted",
+      "check": "eager_resolve",
+      "entry": "_scan_external_io_boundary_definition_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "@external_io_boundary_eager_async",
+          "pattern_name": "external-io-boundary:orchestrate_provider_io()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.orchestrate_provider_io"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_signed_external_io_boundary_suppresses_owned_eager_db_terminals",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_python_materialization_of_lazy_result",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def bad(txn, model_cls):",
+          "pattern_name": "transitive:lazy-python:list(lazy)",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.bad"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def bad(txn, model_cls):",
+          "pattern_name": "transitive:lazy-python:sorted(lazy)",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.bad"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def bad(txn, model_cls):",
+          "pattern_name": "transitive:lazy-python:tuple(lazy)",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.bad"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_python_branching_and_indexing_of_lazy_result",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def bad(txn, model_cls):",
+          "pattern_name": "transitive:lazy-python:if lazy",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.bad"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def bad(txn, model_cls):",
+          "pattern_name": "transitive:lazy-python:lazy[...]",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.bad"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_python_iteration_over_any_lazy_surface",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def bad(txn, model_cls):",
+          "pattern_name": "transitive:lazy-python:for lazy",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.bad"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_permission_checks_against_sql_derived_rows",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "async def bad(txn, secret_id, context):",
+          "pattern_name": "transitive:sql-derived-python:permission-check",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.bad"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_direct_permission_sql_outside_permission_layer",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 3,
+          "text": "def bad(query, row_cls, permissions):",
+          "pattern_name": "transitive:permission-sql:direct-permission-expression",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.bad"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_ignores_non_database_method_with_same_terminal_name",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_plan_scope_execute_boundary",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def run(session, lazy_factory):",
+          "pattern_name": "transitive:plan-scope:*.execute()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.run"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_cast_plan_scope_execute_boundary",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "async def run(session, lazy_factory):",
+          "pattern_name": "transitive:plan-scope:*.execute()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.run"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_canonical_legacy_helper_wrapper_caller_sync",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 6,
+          "text": "def wrapper(self, model_cls, object_id):",
+          "pattern_name": "transitive:legacy-boundary-call:foo()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.GoodTxn.wrapper"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_canonical_legacy_helper_wrapper_caller_async",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 6,
+          "text": "async def wrapper_async(self, model_cls, object_id):",
+          "pattern_name": "transitive:legacy-boundary-call:foo_async()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.GoodTxn.wrapper_async"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_non_lazy_legacy_helper_wrapper",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 3,
+          "text": "def foo(self, model_cls, object_id):",
+          "pattern_name": "transitive:_resolve_legacy_result_sync()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step.BadTxn.foo"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_transitive_resolve_call_chain",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def _helper(lazy):",
+          "pattern_name": "transitive:*.resolve_async()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._helper"
+        },
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 4,
+          "text": "def _wrapper(lazy):",
+          "pattern_name": "transitive:*.resolve_async()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._wrapper"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_flags_callback_terminal_get_as_eager_priming",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l2070_server_plan/steps/example_step.py",
+          "line": 1,
+          "text": "def _prime_callback_result(result):",
+          "pattern_name": "transitive:callback-terminal:*.get()",
+          "symbol": "impl.common.l2070_server_plan.steps.example_step._prime_callback_result"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_transitive_resolve_chain_rooted_at_non_lazy_symbol_is_ignored",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_transitive_resolve_chain_in_non_exempt_file_still_flagged",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": [
+        {
+          "file_path": "impl/common/l9700_sql_graph_query/example.py",
+          "line": 1,
+          "text": "def _helper(lazy):",
+          "pattern_name": "transitive:*.resolve()",
+          "symbol": "impl.common.l9700_sql_graph_query.example._helper"
+        },
+        {
+          "file_path": "impl/common/l9700_sql_graph_query/example.py",
+          "line": 4,
+          "text": "def _wrapper(lazy):",
+          "pattern_name": "transitive:*.resolve()",
+          "symbol": "impl.common.l9700_sql_graph_query.example._wrapper"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_transitive_resolve_chain_does_not_propagate_through_non_lazy_leaf",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_eager_resolve.py::test_ignores_dynamic_embedding_handler_registry_resolve",
+      "check": "eager_resolve",
+      "entry": "_scan_transitive_eager_ast",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_lazy_calling_legacy_wrapper_triggers_la013",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "api/_lint_lazy_arch_legacy_boundary_fixture.py",
+            "line": 14,
+            "symbol": "api._lint_lazy_arch_legacy_boundary_fixture.caller_lazy",
+            "message": "caller_lazy reaches a legacy eager wrapper downstream"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_unified_lazy_architecture_includes_imported_helper_definitions",
+      "check": "lazy_architecture",
+      "entry": "_scan_analyzed_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "l2000_connection/caller.py",
+            "line": 5,
+            "symbol": "l2000_connection.caller.caller_lazy",
+            "message": "caller_lazy reaches non-lazy helper l1550_helpers.helper.helper; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_calling_non_lazy_helper_triggers_la013",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "api/_lint_lazy_arch_non_lazy_helper_fixture.py",
+            "line": 10,
+            "symbol": "api._lint_lazy_arch_non_lazy_helper_fixture.caller_lazy",
+            "message": "caller_lazy reaches non-lazy helper api._lint_lazy_arch_non_lazy_helper_fixture.helper; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_dynamic_import_is_allowed",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_internal_raw_access_triggers_la013",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "api/_lint_lazy_arch_pure_raw_access_fixture.py",
+            "line": 7,
+            "symbol": "api._lint_lazy_arch_pure_raw_access_fixture.helper",
+            "message": "helper marks runtime behavior as @pure_lazy: forbidden @pure_lazy operation _ensure_internal_raw_access; @pure_lazy helpers must be pure planning code"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_bootstrap_lazy_result_of_return_triggers_la015",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 1,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-015",
+            "file": "l2000_connection/schema_transaction.py",
+            "line": 8,
+            "symbol": "l2000_connection.schema_transaction.bootstrap_schema_tail_lazy",
+            "message": "bootstrap_schema_tail_lazy returns LazyResult.of(...) in bootstrap/DDL code; declare a ServerPlan ref, lazy primitive, or explicit terminal dependency instead"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_ddl_lazy_result_of_return_triggers_la015",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 1,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-015",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 8,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services.build_ddl_plan_lazy",
+            "message": "build_ddl_plan_lazy returns LazyResult.of(...) in bootstrap/DDL code; declare a ServerPlan ref, lazy primitive, or explicit terminal dependency instead"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_non_bootstrap_lazy_result_of_return_does_not_trigger_la015",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_bootstrap_pure_lazy_state_assignment_triggers_la016",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 1,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-016",
+            "file": "l2000_connection/_lint_lazy_arch_bootstrap_state_mutation_fixture.py",
+            "line": 7,
+            "symbol": "l2000_connection._lint_lazy_arch_bootstrap_state_mutation_fixture.bootstrap_schema_tail_lazy",
+            "message": "bootstrap_schema_tail_lazy mutates state inside bootstrap/DDL @pure_lazy code (attribute assignment to self._schema_changed); publish a ServerPlan step/ref and make mutation occur during plan execution"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_ddl_pure_lazy_sidecar_append_triggers_la016",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 1,
+          "LA-017": 0,
+          "LA-018": 3
+        },
+        [
+          {
+            "rule": "LA-018",
+            "file": "l2000_connection/_lint_lazy_arch_ddl_sidecar_mutation_fixture.py",
+            "line": 6,
+            "symbol": "pending_after_create_schema_ddl_statements",
+            "message": "deleted cold-bootstrap surface was reintroduced"
+          },
+          {
+            "rule": "LA-018",
+            "file": "l2000_connection/_lint_lazy_arch_ddl_sidecar_mutation_fixture.py",
+            "line": 6,
+            "symbol": "_schema_sidecar",
+            "message": "deleted schema sidecar surface '_schema_sidecar' must not be reintroduced"
+          },
+          {
+            "rule": "LA-018",
+            "file": "l2000_connection/_lint_lazy_arch_ddl_sidecar_mutation_fixture.py",
+            "line": 6,
+            "symbol": "schema_sidecar",
+            "message": "deleted schema sidecar surface 'schema_sidecar' must not be reintroduced"
+          },
+          {
+            "rule": "LA-016",
+            "file": "l2000_connection/_lint_lazy_arch_ddl_sidecar_mutation_fixture.py",
+            "line": 7,
+            "symbol": "l2000_connection._lint_lazy_arch_ddl_sidecar_mutation_fixture.defer_ddl_lazy",
+            "message": "defer_ddl_lazy mutates state inside bootstrap/DDL @pure_lazy code (mutating call append(...)); publish a ServerPlan step/ref and make mutation occur during plan execution"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_ddl_side_queue_field_declaration_triggers_la016",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 1,
+          "LA-017": 0,
+          "LA-018": 2
+        },
+        [
+          {
+            "rule": "LA-018",
+            "file": "l2000_connection/_lint_lazy_arch_ddl_sidecar_field_fixture.py",
+            "line": 2,
+            "symbol": "pending_after_create_schema_ddl_statements",
+            "message": "deleted cold-bootstrap surface was reintroduced"
+          },
+          {
+            "rule": "LA-018",
+            "file": "l2000_connection/_lint_lazy_arch_ddl_sidecar_field_fixture.py",
+            "line": 1,
+            "symbol": "SchemaTransactionSidecar",
+            "message": "deleted schema sidecar surface 'SchemaTransactionSidecar' must not be reintroduced"
+          },
+          {
+            "rule": "LA-016",
+            "file": "l2000_connection/_lint_lazy_arch_ddl_sidecar_field_fixture.py",
+            "line": 3,
+            "symbol": "l2000_connection._lint_lazy_arch_ddl_sidecar_field_fixture.SchemaTransactionSidecar.pending_after_create_schema_ddl_statements",
+            "message": "SchemaTransactionSidecar.pending_after_create_schema_ddl_statements mutates state inside bootstrap/DDL @pure_lazy code (forbidden side-queue declaration pending_after_create_schema_ddl_statements); publish a ServerPlan step/ref and make mutation occur during plan execution"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_deleted_schema_sidecar_surface_triggers_la018",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 1
+        },
+        [
+          {
+            "rule": "LA-018",
+            "file": "tmp/la018_schema_transaction.py",
+            "line": 1,
+            "symbol": "SchemaTransactionSidecar",
+            "message": "deleted schema sidecar surface 'SchemaTransactionSidecar' must not be reintroduced"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_deleted_cold_bootstrap_surface_triggers_la018",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 4
+        },
+        [
+          {
+            "rule": "LA-018",
+            "file": "l3200_metadata/_lint_lazy_arch_deleted_cold_bootstrap_fixture.py",
+            "line": 2,
+            "symbol": "COLD_APPLICATION",
+            "message": "deleted cold-bootstrap surface was reintroduced"
+          },
+          {
+            "rule": "LA-018",
+            "file": "l3200_metadata/_lint_lazy_arch_deleted_cold_bootstrap_fixture.py",
+            "line": 6,
+            "symbol": "_bootstrap_force_versioned_aux_cold_create_only",
+            "message": "deleted cold-bootstrap surface was reintroduced"
+          },
+          {
+            "rule": "LA-018",
+            "file": "l3200_metadata/_lint_lazy_arch_deleted_cold_bootstrap_fixture.py",
+            "line": 5,
+            "symbol": "begin_bootstrap_transition_capture",
+            "message": "deleted cold-bootstrap surface was reintroduced"
+          },
+          {
+            "rule": "LA-018",
+            "file": "l3200_metadata/_lint_lazy_arch_deleted_cold_bootstrap_fixture.py",
+            "line": 2,
+            "symbol": "cold_application",
+            "message": "deleted cold-bootstrap surface was reintroduced"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_bootstrap_pure_lazy_plan_add_step_does_not_trigger_la016",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_schema_discovery_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 1,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 7,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services._reconcile_existing_table_lazy",
+            "message": "_reconcile_existing_table_lazy uses reconciliation schema discovery surface physical_columns_for_reconcile(); gather schema facts through a closed observation ServerPlan step and build reconciliation DDL from SchemaStateSnapshot"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_direct_ddl_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 2,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 7,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services.ensure_polymorphic_columns_exist_lazy",
+            "message": "ensure_polymorphic_columns_exist_lazy uses reconciliation direct DDL or schema plan flush surface _execute_schema_ddl_lazy(); gather schema facts through a closed observation ServerPlan step and build reconciliation DDL from SchemaStateSnapshot"
+          },
+          {
+            "rule": "LA-017",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 8,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services.ensure_polymorphic_columns_exist_lazy",
+            "message": "ensure_polymorphic_columns_exist_lazy uses reconciliation direct DDL or schema plan flush surface flush_schema_plan(); gather schema facts through a closed observation ServerPlan step and build reconciliation DDL from SchemaStateSnapshot"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_lazy_callback_trampoline_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 2,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "l2000_connection/schema_transaction.py",
+            "line": 7,
+            "symbol": "l2000_connection.schema_transaction.get_table_info_lazy",
+            "message": "get_table_info_lazy uses reconciliation lazy callback trampoline surface _schema_operation_lazy(); gather schema facts through a closed observation ServerPlan step and build reconciliation DDL from SchemaStateSnapshot"
+          },
+          {
+            "rule": "LA-017",
+            "file": "l2000_connection/schema_transaction.py",
+            "line": 7,
+            "symbol": "l2000_connection.schema_transaction.get_table_info_lazy",
+            "message": "get_table_info_lazy uses reconciliation schema discovery surface _get_physical_table_info_for_schema_batch(); gather schema facts through a closed observation ServerPlan step and build reconciliation DDL from SchemaStateSnapshot"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_internal_resolve_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 1,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 1,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 1,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-001",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 8,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services._schema_reconcile_create_table_lazy",
+            "message": "_schema_reconcile_create_table_lazy is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-012",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 8,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services._schema_reconcile_create_table_lazy",
+            "message": "_schema_reconcile_create_table_lazy terminates a LazyResult outside a legacy boundary"
+          },
+          {
+            "rule": "LA-009",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 8,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services._schema_reconcile_create_table_lazy",
+            "message": "_schema_reconcile_create_table_lazy reaches eager downstream function impl.common.l2200_sql_dialect.sql_schema_services._schema_reconcile_create_table_lazy (direct eager sink lazy.resolve)"
+          },
+          {
+            "rule": "LA-017",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 8,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services._schema_reconcile_create_table_lazy",
+            "message": "_schema_reconcile_create_table_lazy terminates a LazyResult inside reconciliation/schema code; only the wrapper may resolve observation or execution handles"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_deleted_surface_implementation_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 1,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 3,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services._SqlSchemaMixin.table_exists_many_lazy",
+            "message": "_SqlSchemaMixin.table_exists_many_lazy restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_deleted_surface_tombstone_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 1,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "impl/common/l2200_sql_dialect/sql_schema_services.py",
+            "line": 3,
+            "symbol": "impl.common.l2200_sql_dialect.sql_schema_services._SqlSchemaMixin.table_exists_many_lazy",
+            "message": "_SqlSchemaMixin.table_exists_many_lazy restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_fact_check_default_empty_snapshot_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 1,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "l2000_connection/table_existence_authority.py",
+            "line": 10,
+            "symbol": "l2000_connection.table_existence_authority.schema_fact_default_many_lazy",
+            "message": "schema_fact_default_many_lazy uses schema fact absence fallback assigns frozenset() to snapshot; table or schema absence must come from observed initial facts or computed eventual state"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_fact_check_default_false_result_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 2,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "l2000_connection/table_existence_authority.py",
+            "line": 10,
+            "symbol": "l2000_connection.table_existence_authority.schema_fact_default_one_lazy",
+            "message": "schema_fact_default_one_lazy uses schema fact absence fallback calls _record_table_exists_result(..., False); table or schema absence must come from observed initial facts or computed eventual state"
+          },
+          {
+            "rule": "LA-017",
+            "file": "l2000_connection/table_existence_authority.py",
+            "line": 11,
+            "symbol": "l2000_connection.table_existence_authority.schema_fact_default_one_lazy",
+            "message": "schema_fact_default_one_lazy uses schema fact absence fallback returns LazyResult.of(False); table or schema absence must come from observed initial facts or computed eventual state"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_model_metadata_false_result_does_not_trigger_schema_fact_absence_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_computed_drop_state_false_result_does_not_trigger_schema_fact_absence_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_schema_batch_default_empty_set_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 1,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "l2000_connection/schema_transaction.py",
+            "line": 9,
+            "symbol": "l2000_connection.schema_transaction._table_exists_many_for_schema_batch",
+            "message": "_table_exists_many_for_schema_batch uses schema fact absence fallback assigns set() to snapshot; table or schema absence must come from observed initial facts or computed eventual state"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_restored_schema_ensure_cutover_surface_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 2,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "impl/common/l2200_sql_dialect/schema_ensure.py",
+            "line": 2,
+            "symbol": "impl.common.l2200_sql_dialect.schema_ensure.cached_or_fetched_table_columns",
+            "message": "cached_or_fetched_table_columns restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts"
+          },
+          {
+            "rule": "LA-017",
+            "file": "impl/common/l2200_sql_dialect/schema_ensure.py",
+            "line": 7,
+            "symbol": "impl.common.l2200_sql_dialect.schema_ensure.model_table_is_usable_lazy",
+            "message": "model_table_is_usable_lazy restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_deleted_schema_reconciliation_cutover_surface_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 1,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "l2000_connection/table_existence_authority.py",
+            "line": 2,
+            "symbol": "l2000_connection.table_existence_authority._table_exists_many_from_schema_service_lazy",
+            "message": "_table_exists_many_from_schema_service_lazy restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_schema_reconciliation_tombstone_surface_triggers_la017",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 1,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-017",
+            "file": "impl/common/l2200_sql_dialect/schema_ensure.py",
+            "line": 2,
+            "symbol": "impl.common.l2200_sql_dialect.schema_ensure.cached_or_fetched_table_columns",
+            "message": "cached_or_fetched_table_columns restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_lazy_callchain_allows_lazy_helpers",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_lazy_reaching_async_helper_inside_lambda_triggers_la009",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-009",
+            "file": "api/_lint_lazy_arch_async_lambda_fixture.py",
+            "line": 14,
+            "symbol": "api._lint_lazy_arch_async_lambda_fixture.caller_lazy",
+            "message": "caller_lazy reaches eager downstream function api._lint_lazy_arch_async_lambda_fixture.eager_runtime_async (async function)"
+          },
+          {
+            "rule": "LA-013",
+            "file": "api/_lint_lazy_arch_async_lambda_fixture.py",
+            "line": 14,
+            "symbol": "api._lint_lazy_arch_async_lambda_fixture.caller_lazy",
+            "message": "caller_lazy reaches non-lazy helper api._lint_lazy_arch_async_lambda_fixture.eager_runtime_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_lazy_reaching_sync_helper_with_resolve_triggers_la009",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 1,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 1,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-012",
+            "file": "api/_lint_lazy_arch_sync_resolve_fixture.py",
+            "line": 7,
+            "symbol": "api._lint_lazy_arch_sync_resolve_fixture.eager_sync_helper",
+            "message": "eager_sync_helper terminates a LazyResult outside a legacy boundary"
+          },
+          {
+            "rule": "LA-001",
+            "file": "api/_lint_lazy_arch_sync_resolve_fixture.py",
+            "line": 11,
+            "symbol": "api._lint_lazy_arch_sync_resolve_fixture.caller_lazy",
+            "message": "caller_lazy is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-009",
+            "file": "api/_lint_lazy_arch_sync_resolve_fixture.py",
+            "line": 11,
+            "symbol": "api._lint_lazy_arch_sync_resolve_fixture.caller_lazy",
+            "message": "caller_lazy reaches eager downstream function api._lint_lazy_arch_sync_resolve_fixture.eager_sync_helper (direct eager sink lazy.resolve)"
+          },
+          {
+            "rule": "LA-013",
+            "file": "api/_lint_lazy_arch_sync_resolve_fixture.py",
+            "line": 11,
+            "symbol": "api._lint_lazy_arch_sync_resolve_fixture.caller_lazy",
+            "message": "caller_lazy reaches non-lazy helper api._lint_lazy_arch_sync_resolve_fixture.eager_sync_helper; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_async_pure_lazy_composer_without_runtime_operations_is_allowed",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_lazy_reaching_sync_wrapper_of_async_function_triggers_la009",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-009",
+            "file": "api/_lint_lazy_arch_async_wrapper_fixture.py",
+            "line": 13,
+            "symbol": "api._lint_lazy_arch_async_wrapper_fixture.caller_lazy",
+            "message": "caller_lazy reaches eager downstream function api._lint_lazy_arch_async_wrapper_fixture.runtime_leaf_async (async function)"
+          },
+          {
+            "rule": "LA-013",
+            "file": "api/_lint_lazy_arch_async_wrapper_fixture.py",
+            "line": 13,
+            "symbol": "api._lint_lazy_arch_async_wrapper_fixture.caller_lazy",
+            "message": "caller_lazy reaches non-lazy helper api._lint_lazy_arch_async_wrapper_fixture.sync_wrapper; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_execution_context_terminal_triggers_la009",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-009",
+            "file": "l8100_ops_analytics/_lint_execution_context_fixture.py",
+            "line": 9,
+            "symbol": "l8100_ops_analytics._lint_execution_context_fixture.BadContext.execute_sync",
+            "message": "BadContext.execute_sync hides eager execution behind an ExecutionContext terminal"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_lazy_internal_peeking_triggers_la009",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-009",
+            "file": "l7200_versioned_transactions/_lint_lazy_internal_peek_fixture.py",
+            "line": 3,
+            "symbol": "l7200_versioned_transactions._lint_lazy_internal_peek_fixture.inspect_lazy_state",
+            "message": "inspect_lazy_state peeks into LazyResult internals outside sanctioned runtime helpers"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_execution_derived_state_write_triggers_la009",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 2,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-009",
+            "file": "l7200_versioned_transactions/_lint_state_smuggling_fixture.py",
+            "line": 3,
+            "symbol": "l7200_versioned_transactions._lint_state_smuggling_fixture.cache_branch_id",
+            "message": "cache_branch_id peeks into LazyResult internals outside sanctioned runtime helpers"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l7200_versioned_transactions/_lint_state_smuggling_fixture.py",
+            "line": 3,
+            "symbol": "l7200_versioned_transactions._lint_state_smuggling_fixture.cache_branch_id",
+            "message": "cache_branch_id writes execution-derived planner state instead of surfaced refs"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_private_runtime_reachthrough_triggers_la009",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-009",
+            "file": "impl/common/l7300_revision_history/_lint_private_state_fixture.py",
+            "line": 3,
+            "symbol": "impl.common.l7300_revision_history._lint_private_state_fixture.resolve_history_domain",
+            "message": "resolve_history_domain reaches through private runtime state instead of surfaced dependencies"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_importing_defer_lazy_result_triggers_la013",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "impl/common/l7248_sparse_versioned_transactions/_lint_lazy_delegate_fixture.py",
+            "line": 5,
+            "symbol": "defer_lazy_result",
+            "message": "defer_lazy_result is forbidden; publish a real ServerPlan step/ref instead"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_calling_defer_lazy_result_triggers_la013",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "impl/common/l7248_sparse_versioned_transactions/_lint_lazy_call_fixture.py",
+            "line": 6,
+            "symbol": "defer_lazy_result",
+            "message": "defer_lazy_result is forbidden; publish a real ServerPlan step/ref instead"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_undecorated_lazy_name_is_not_itself_a_violation",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_calling_provably_non_eager_helper_is_not_la009",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "api/_lint_lazy_arch_pure_helper_fixture.py",
+            "line": 10,
+            "symbol": "api._lint_lazy_arch_pure_helper_fixture.caller_lazy",
+            "message": "caller_lazy reaches non-lazy helper api._lint_lazy_arch_pure_helper_fixture.helper; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_selected_file_scan_does_not_analyze_unselected_violations",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_la011_collect_results_permission_steps_have_no_preprocess_io_violations",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_lazy_scan_reuses_legacy_boundary_symbol_index",
+      "check": "lazy_architecture",
+      "entry": "_scan_analyzed_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_scan_returns_counts_and_violations_tuple",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 1,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-010",
+            "file": "l2000_connection/example.py",
+            "line": 2,
+            "symbol": "l2000_connection.example.mixed_lazy_async",
+            "message": "mixed_lazy_async mixes 'lazy' with 'sync' or 'async' in its name"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l2000_connection/example.py",
+            "line": 2,
+            "symbol": "l2000_connection.example.mixed_lazy_async",
+            "message": "mixed_lazy_async reaches eager downstream function l2000_connection.example.mixed_lazy_async (name ends with _async)"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_la006_applies_outside_transaction_modules",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 1,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-006",
+            "file": "impl/common/l5150_fts_polyfill/searcher/_lint_owner_violation.py",
+            "line": 5,
+            "symbol": "impl.common.l5150_fts_polyfill.searcher._lint_owner_violation.grammar_query_rows_lazy",
+            "message": "grammar_query_rows_lazy passes _conn to grammar_rows_lazy() instead of the plan owner"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_la014_flags_dynamic_behavior_lookup_in_materializer",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 2,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-014",
+            "file": "impl/common/l2070_server_plan/steps/_lint_dynamic_behavior.py",
+            "line": 4,
+            "symbol": "impl.common.l2070_server_plan.steps._lint_dynamic_behavior.materialize_bad",
+            "message": "materialize_bad performs callable() applied to dynamically looked-up behavior"
+          },
+          {
+            "rule": "LA-014",
+            "file": "impl/common/l2070_server_plan/steps/_lint_dynamic_behavior.py",
+            "line": 5,
+            "symbol": "impl.common.l2070_server_plan.steps._lint_dynamic_behavior.materialize_bad",
+            "message": "materialize_bad performs invokes dynamically looked-up behavior inside a ServerPlan service"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_la014_flags_callable_payload_into_runtime_builder_service",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 1,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-014",
+            "file": "impl/common/l2070_server_plan/steps/_lint_callable_payload.py",
+            "line": 4,
+            "symbol": "impl.common.l2070_server_plan.steps._lint_callable_payload.compile_bad",
+            "message": "compile_bad passes callable-tainted payload passed into a ServerPlan service"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_architecture.py::test_la014_allows_closed_enum_dispatch_table_in_materializer",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lazy_architecture_plugin_parity.py::test_aggregate_detects_nonlazy_helper_in_lazy_callchain[False-]",
+      "check": "lazy_architecture",
+      "entry": "_scan_analyzed_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "l2000_connection/example.py",
+            "line": 5,
+            "symbol": "l2000_connection.example.build_lazy",
+            "message": "build_lazy reaches non-lazy helper l2000_connection.example.shape; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lazy_architecture_plugin_parity.py::test_aggregate_detects_nonlazy_helper_in_lazy_callchain[False-# pure_lazy\\n]",
+      "check": "lazy_architecture",
+      "entry": "_scan_analyzed_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "l2000_connection/example.py",
+            "line": 6,
+            "symbol": "l2000_connection.example.build_lazy",
+            "message": "build_lazy reaches non-lazy helper l2000_connection.example.shape; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lazy_architecture_plugin_parity.py::test_aggregate_detects_nonlazy_helper_in_lazy_callchain[True-]",
+      "check": "lazy_architecture",
+      "entry": "_scan_analyzed_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "l2000_connection/example.py",
+            "line": 3,
+            "symbol": "l2000_connection.example.build_lazy",
+            "message": "build_lazy reaches non-lazy helper l1400_types.example.shape; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lazy_architecture_plugin_parity.py::test_aggregate_detects_nonlazy_helper_in_lazy_callchain[True-# pure_lazy\\n]",
+      "check": "lazy_architecture",
+      "entry": "_scan_analyzed_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "l2000_connection/example.py",
+            "line": 4,
+            "symbol": "l2000_connection.example.build_lazy",
+            "message": "build_lazy reaches non-lazy helper l1400_types.example.shape; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "test": "scripts/tests/test_repository_lazy_architecture.py::test_lazy_callgraph_accepts_a_minimal_safe_repository",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "result": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_protected_runtime_attr_access_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-003",
+          "file": "l7200_versioned_transactions/builder.py",
+          "line": 7,
+          "qualname": "Builder.build",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_dynamic_runtime_attr_access_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-002",
+          "file": "impl/common/l2070_server_plan/builder.py",
+          "line": 6,
+          "qualname": "build",
+          "message": "pure-lazy functions must not dynamically access runtime attribute '_conn'",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_returning_runtime_bound_container",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-003",
+          "file": "l2055_lazy_result/example.py",
+          "line": 6,
+          "qualname": "build",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_lazy_wrapper_with_runtime_bound_payload",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-004",
+          "file": "l2055_lazy_result/example.py",
+          "line": 6,
+          "qualname": "build",
+          "message": "pure-lazy functions must not return resolved lazy wrappers containing runtime-bound state",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_lazy_operation_payload_with_runtime_handle_fields",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-010",
+          "file": "l2000_connection/example.py",
+          "line": 12,
+          "qualname": "build",
+          "message": "pure-lazy functions must not construct LazyOperation payloads with runtime field 'handle'",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_wrapped_opaque_lazy_operation_payload",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-010",
+          "file": "l2000_connection/example.py",
+          "line": 17,
+          "qualname": "build",
+          "message": "pure-lazy functions must not construct LazyOperation payloads with runtime field 'handle'",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_opaque_handle_entry_helper_use_from_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-010",
+          "file": "l2000_connection/example.py",
+          "line": 6,
+          "qualname": "build",
+          "message": "pure-lazy functions must not construct LazyOperation payloads with runtime field 'handle'",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_local_dataflow_return_of_runtime_bound_value",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-001",
+          "file": "l2055_lazy_result/example.py",
+          "line": 6,
+          "qualname": "build",
+          "message": "pure-lazy functions must not access runtime attribute '_txn'",
+          "stable_scope": null
+        },
+        {
+          "code": "PLP-005",
+          "file": "l2055_lazy_result/example.py",
+          "line": 7,
+          "qualname": "build",
+          "message": "pure-lazy functions must not return locals derived from runtime-bound state",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_method_calls_without_protected_attr_access",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_non_decorated_lazy_named_methods_via_colored_lazy_surface",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_transitive_runtime_handle_helper_reached_from_lazy_surface",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": [
+        {
+          "code": "PLP-003",
+          "file": "impl/common/l5150_fts_polyfill/helper.py",
+          "line": 3,
+          "qualname": "_runtime_owner",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_pure_lazy_runtime_handle_return_contract_and_contextvar_accessor",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-006",
+          "file": "l2055_lazy_result/example.py",
+          "line": 11,
+          "qualname": "get_active_batch_context",
+          "message": "pure-lazy functions must not declare runtime-handle return types",
+          "stable_scope": null
+        },
+        {
+          "code": "PLP-003",
+          "file": "l2055_lazy_result/example.py",
+          "line": 12,
+          "qualname": "get_active_batch_context",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_transitive_runtime_handle_helper_return_from_pure_lazy_wrapper",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-006",
+          "file": "l2055_lazy_result/example.py",
+          "line": 14,
+          "qualname": "wrapper",
+          "message": "pure-lazy functions must not declare runtime-handle return types",
+          "stable_scope": null
+        },
+        {
+          "code": "PLP-005",
+          "file": "l2055_lazy_result/example.py",
+          "line": 16,
+          "qualname": "wrapper",
+          "message": "pure-lazy functions must not return locals derived from runtime-bound state",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_colors_private_helper_called_from_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": [
+        {
+          "code": "PLP-002",
+          "file": "l2060_query_builder/set_operations.py",
+          "line": 5,
+          "qualname": "_deeper",
+          "message": "pure-lazy functions must not dynamically access runtime attribute '_txn'",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_lazy_name_without_owner_like_parameter_does_not_seed_coloring",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_exported_lazy_function_without_pure_lazy_decorator",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": [
+        {
+          "code": "PLP-007",
+          "file": "l7800_versioned_merge/merge.py",
+          "line": 2,
+          "qualname": "merge_branches_lazy",
+          "message": "exported public *_lazy functions must be decorated with @pure_lazy",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_exported_lazy_function_with_pure_lazy_decorator",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_global_mutable_state_read_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-009",
+          "file": "l2055_lazy_result/example.py",
+          "line": 8,
+          "qualname": "build",
+          "message": "pure-lazy global cache/state access requires signed allowlist for '_cache' (mutable-cache-or-registry) via '.get'",
+          "stable_scope": "global=_cache category=mutable-cache-or-registry access=.get"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_mutated_global_cache_with_structural_category",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-009",
+          "file": "l2055_lazy_result/example.py",
+          "line": 11,
+          "qualname": "build",
+          "message": "pure-lazy global cache/state access requires signed allowlist for '_cache' (mutated-cache-or-registry) via '.get'",
+          "stable_scope": "global=_cache category=mutated-cache-or-registry access=.get"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_runtime_object_global_with_structural_category",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-009",
+          "file": "l2055_lazy_result/example.py",
+          "line": 12,
+          "qualname": "build",
+          "message": "pure-lazy global cache/state access requires signed allowlist for '_registry' (runtime-object) via '.get'",
+          "stable_scope": "global=_registry category=runtime-object access=.get"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_thread_local_runtime_state_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-008",
+          "file": "l2050_transaction/example.py",
+          "line": 9,
+          "qualname": "build",
+          "message": "pure-lazy functions must not return module-level runtime state '_settings'",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_guard_like_contextvar_wrapper_still_requires_signed_allowlist",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-008",
+          "file": "l2055_lazy_result/guard_like_wrapper.py",
+          "line": 9,
+          "qualname": "build",
+          "message": "pure-lazy functions must not return module-level runtime state '_guard_depth'",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_enumerates_only_candidate_module_asts_once[]",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_enumerates_only_candidate_module_asts_once[@cached_pure_lazy(cache_args=())\\n]",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "example.build",
+          "path": "example.py",
+          "line": 2,
+          "cache_args": [],
+          "cache_annotations": [],
+          "body_hash": "794234877009436a78f9d266285689dec3a67743952144820f75fd7969c37118",
+          "signature_hash": "3dd6ba9d0e6f53bde7841ac3d24cde7429efa1be10994f4f45246e1e3df2bdf5",
+          "cache_members": [],
+          "errors": []
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_normalized_identifier_findings[@\\uff43\\uff41\\uff43\\uff48\\uff45\\uff44_\\uff50\\uff55\\uff52\\uff45_\\uff4c\\uff41\\uff5a\\uff59(cache_args=())]",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "example.build",
+          "path": "example.py",
+          "line": 2,
+          "cache_args": [],
+          "cache_annotations": [],
+          "body_hash": "794234877009436a78f9d266285689dec3a67743952144820f75fd7969c37118",
+          "signature_hash": "3dd6ba9d0e6f53bde7841ac3d24cde7429efa1be10994f4f45246e1e3df2bdf5",
+          "cache_members": [],
+          "errors": []
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_normalized_identifier_findings[@unresolved(\\uff43\\uff41\\uff43\\uff48\\uff45_\\uff41\\uff52\\uff47\\uff53=())]",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "example.<unsupported_cached_pure_lazy_call_1_1>",
+          "path": "example.py",
+          "line": 1,
+          "cache_args": [],
+          "cache_annotations": [],
+          "body_hash": "577c8262562f4537bc84ecafa5037f52e47c526a01cf6815d5632dd5e3473560",
+          "signature_hash": "577c8262562f4537bc84ecafa5037f52e47c526a01cf6815d5632dd5e3473560",
+          "cache_members": [],
+          "errors": [
+            "unresolved cache decorator alias is forbidden"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_unrelated_syntax_errors",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "exception": {
+        "type": "SyntaxError",
+        "message": "'(' was never closed (example.py, line 1)",
+        "attributes": {
+          "filename": "example.py",
+          "msg": "'(' was never closed",
+          "lineno": 1,
+          "offset": 12,
+          "text": "def invalid(\n",
+          "end_lineno": 1,
+          "end_offset": 0
+        }
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "discover_cached_pure_lazy_functions",
+      "result": [
+        {
+          "function": "l2070_batching.optimizer_run_cache.OptimizerRunCache.dependencies_for",
+          "path": "l2070_batching/optimizer_run_cache.py",
+          "line": 259,
+          "cache_args": [
+            "self"
+          ],
+          "cache_annotations": [
+            [
+              "self",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "92f766ac8e4a579700c9d24d03d7701d5271a441714bf5da664f73ccb6850f8d",
+          "signature_hash": "154d2af28e4f40cbd0619d7c6609144f7c41456ec3ac2dee3777af60d53aed0b",
+          "cache_members": [
+            [
+              "dependencies_for",
+              "resolver"
+            ],
+            [
+              "dependency_facts.get",
+              "call"
+            ],
+            [
+              "dependency_facts.set",
+              "call"
+            ],
+            [
+              "inc_counter",
+              "call"
+            ]
+          ],
+          "errors": []
+        },
+        {
+          "function": "l2070_batching.optimizer_run_cache.OptimizerRunCache.ordered_sql_dependencies_for",
+          "path": "l2070_batching/optimizer_run_cache.py",
+          "line": 275,
+          "cache_args": [
+            "self"
+          ],
+          "cache_annotations": [
+            [
+              "self",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "4ed2b4bbbdc63609cfd6a48d9c00b45229c58ec816315696aa03d9de9117595e",
+          "signature_hash": "154d2af28e4f40cbd0619d7c6609144f7c41456ec3ac2dee3777af60d53aed0b",
+          "cache_members": [
+            [
+              "dependencies_for",
+              "call"
+            ],
+            [
+              "inc_counter",
+              "call"
+            ],
+            [
+              "ordered_sql_dependency_facts.get",
+              "call"
+            ],
+            [
+              "ordered_sql_dependency_facts.set",
+              "call"
+            ]
+          ],
+          "errors": []
+        },
+        {
+          "function": "l2070_batching.optimizer_run_cache.OptimizerRunCache.scheduling_fingerprint_for",
+          "path": "l2070_batching/optimizer_run_cache.py",
+          "line": 303,
+          "cache_args": [
+            "self"
+          ],
+          "cache_annotations": [
+            [
+              "self",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "73f19fee57b140ebcc01b44c094375b70ab89aed57e055f6be66439bbc48d0f2",
+          "signature_hash": "9f4503ea32540c15e920415065f23513d9e14532f7f70f5ef35e331d5130d5ad",
+          "cache_members": [
+            [
+              "dependencies_for",
+              "resolver"
+            ],
+            [
+              "inc_counter",
+              "call"
+            ],
+            [
+              "scheduling_fingerprint_facts.get",
+              "call"
+            ],
+            [
+              "scheduling_fingerprint_facts.set",
+              "call"
+            ],
+            [
+              "scheduling_fingerprint_for",
+              "resolver"
+            ]
+          ],
+          "errors": []
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "cached_pure_lazy_runtime_source_hash",
+      "result": "99be089b093b39f56806799440fa2d608e39cbf642034ebf728facb2f8500d31"
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "cached_pure_lazy_runtime_source_hash",
+      "result": "93648abe60757787e67d66548cfc6176939e6b0c6e1c53d1e17327d2085f459d"
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "cached_pure_lazy_runtime_source_hash",
+      "result": "46acc09fbb70b8fe55c8b8bbf7b4570f1d68c9f865b2afab0a7ab1d8be71be75"
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "cached_pure_lazy_runtime_source_hash",
+      "result": "93648abe60757787e67d66548cfc6176939e6b0c6e1c53d1e17327d2085f459d"
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.unsigned.unsigned",
+          "path": "l2070_batching/unsigned.py",
+          "line": 5,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "object"
+            ]
+          ],
+          "body_hash": "871078441fd90e395b888d16037376c4251b479f57b67d1404bb18a3a83bafdf",
+          "signature_hash": "eaf30c996f19eac55accd0cd3341f844b6e2cc0156084ed1dfcc160825906722",
+          "cache_members": [
+            [
+              "size",
+              "call"
+            ]
+          ],
+          "errors": [
+            "a cache argument cannot escape through return"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "result": [
+        "unsigned cached pure-lazy function: l2070_batching.unsigned.unsigned"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.escaping.escaping",
+          "path": "l2070_batching/escaping.py",
+          "line": 5,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "e230a1f265d74f242d75124b95497fa851becf1293325f7181f727f3bacc44fc",
+          "signature_hash": "6da2491fc65d2e627307746b93c3790cffed8227201d187c2f6335246ad41e59",
+          "cache_members": [],
+          "errors": [
+            "a cache argument can only be used through signed member access",
+            "a cache argument cannot escape through return"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "result": [
+        "l2070_batching.escaping.escaping: a cache argument can only be used through signed member access",
+        "l2070_batching.escaping.escaping: a cache argument cannot escape through return"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.generator_escape.generator_escape",
+          "path": "l2070_batching/generator_escape.py",
+          "line": 5,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "e217055a56ec590c0c21970f02731a0ac71d839e4067e40e069969d84da6b383",
+          "signature_hash": "6da2491fc65d2e627307746b93c3790cffed8227201d187c2f6335246ad41e59",
+          "cache_members": [
+            [
+              "dependency_facts",
+              "read"
+            ]
+          ],
+          "errors": [
+            "a cache argument cannot be captured by a closure"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.changed_member.changed_member",
+          "path": "l2070_batching/changed_member.py",
+          "line": 5,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "object"
+            ]
+          ],
+          "body_hash": "871078441fd90e395b888d16037376c4251b479f57b67d1404bb18a3a83bafdf",
+          "signature_hash": "eaf30c996f19eac55accd0cd3341f844b6e2cc0156084ed1dfcc160825906722",
+          "cache_members": [
+            [
+              "size",
+              "call"
+            ]
+          ],
+          "errors": [
+            "a cache argument cannot escape through return"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "result": [
+        "l2070_batching.changed_member.changed_member: a cache argument cannot escape through return",
+        "l2070_batching.changed_member.changed_member: cache argument 'run_cache' annotation 'object' does not match cache type 'l2070_batching.optimizer_run_cache.OptimizerRunCache'",
+        "l2070_batching.changed_member.changed_member: cache member access changed: actual=(('size', 'call'),) policy=()"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "result": [
+        "l2070_batching.changed_member.changed_member: a cache argument cannot escape through return",
+        "l2070_batching.changed_member.changed_member: decorator cache arguments changed",
+        "l2070_batching.changed_member.changed_member: cache argument 'different_cache' annotation None does not match cache type 'l2070_batching.optimizer_run_cache.OptimizerRunCache'"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "result": [
+        "l2070_batching.changed_member.changed_member: a cache argument cannot escape through return",
+        "l2070_batching.changed_member.changed_member: cache type 'builtins.object' is not approved",
+        "l2070_batching.changed_member.changed_member: owner scope 'connection' is not approved",
+        "l2070_batching.changed_member.changed_member: review rationale is required"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.mutable_global.reads_global",
+          "path": "l2070_batching/mutable_global.py",
+          "line": 7,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "5180ff323df3b9cdd64dcbf9c4caec3b6316561a1cb8ec76a8957b54313db3ff",
+          "signature_hash": "2417fc2e8a659f81489a5faaec7731c772c05f867f3ef437821703a6645413e3",
+          "cache_members": [
+            [
+              "size",
+              "call"
+            ]
+          ],
+          "errors": [
+            "a cache argument cannot escape through return",
+            "cached pure-lazy functions cannot write mutable global state"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "result": [
+        "l2070_batching.mutable_global.reads_global: a cache argument cannot escape through return",
+        "l2070_batching.mutable_global.reads_global: cached pure-lazy functions cannot write mutable global state"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.direct_mutation.mutates_cache",
+          "path": "l2070_batching/direct_mutation.py",
+          "line": 5,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "035ba321e67c7fa3d10ad0b1b9bad4cd8643bed562de378e40fee5e435df19b9",
+          "signature_hash": "e69eb1763ba59967d8406b00018eddf71bbdfb0ee427eb405df8664fc132c729",
+          "cache_members": [
+            [
+              "counters",
+              "read"
+            ]
+          ],
+          "errors": [
+            "cache member alias 'dependency_facts' is forbidden",
+            "cache subscript mutation through 'counters' is forbidden",
+            "direct cache attribute mutation 'dependency_facts' is forbidden"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "result": [
+        "l2070_batching.direct_mutation.mutates_cache: cache member alias 'dependency_facts' is forbidden",
+        "l2070_batching.direct_mutation.mutates_cache: cache subscript mutation through 'counters' is forbidden",
+        "l2070_batching.direct_mutation.mutates_cache: direct cache attribute mutation 'dependency_facts' is forbidden"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.restricted.invalid",
+          "path": "l2070_batching/restricted.py",
+          "line": 5,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "d85f4a39cde46f8c0cec0bbc7ed38ba7464d9f96144aa43b1f583268dd0a3039",
+          "signature_hash": "26deb91cc699c2b1b740f264ab1d18ca1801689abde70c06303981f994168c2a",
+          "cache_members": [],
+          "errors": [
+            "a cache argument can only be used through signed member access",
+            "cache argument 'run_cache' cannot have a default",
+            "cache argument 'run_cache' must be keyword-only",
+            "cached pure-lazy functions cannot be generators",
+            "cached pure-lazy functions cannot use variadic arguments",
+            "cached pure-lazy functions must be synchronous",
+            "delattr() on a cache argument is forbidden",
+            "dynamic cache access '__getattribute__' is forbidden",
+            "getattr() on a cache argument is forbidden",
+            "hasattr() on a cache argument is forbidden"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "discover_cached_pure_lazy_functions",
+      "result": [
+        {
+          "function": "l4000_permissions.cached_policy_gap.Owner.method",
+          "path": "l4000_permissions/cached_policy_gap.py",
+          "line": 20,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "871078441fd90e395b888d16037376c4251b479f57b67d1404bb18a3a83bafdf",
+          "signature_hash": "e5aa89f28835bc884795c48a6d2861de4a727068904d8934b8dda548ad589907",
+          "cache_members": [
+            [
+              "size",
+              "call"
+            ]
+          ],
+          "errors": [
+            "a cache argument cannot escape through return"
+          ]
+        },
+        {
+          "function": "l4000_permissions.cached_policy_gap.enclosing.<locals>.nested",
+          "path": "l4000_permissions/cached_policy_gap.py",
+          "line": 12,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "871078441fd90e395b888d16037376c4251b479f57b67d1404bb18a3a83bafdf",
+          "signature_hash": "2417fc2e8a659f81489a5faaec7731c772c05f867f3ef437821703a6645413e3",
+          "cache_members": [
+            [
+              "size",
+              "call"
+            ]
+          ],
+          "errors": [
+            "a cache argument cannot escape through return",
+            "cached pure-lazy functions cannot read mutable global state 'reviewed_cache'"
+          ]
+        },
+        {
+          "function": "l4000_permissions.cached_policy_gap.unlisted",
+          "path": "l4000_permissions/cached_policy_gap.py",
+          "line": 7,
+          "cache_args": [
+            "run_cache"
+          ],
+          "cache_annotations": [
+            [
+              "run_cache",
+              "OptimizerRunCache"
+            ]
+          ],
+          "body_hash": "871078441fd90e395b888d16037376c4251b479f57b67d1404bb18a3a83bafdf",
+          "signature_hash": "2417fc2e8a659f81489a5faaec7731c772c05f867f3ef437821703a6645413e3",
+          "cache_members": [
+            [
+              "size",
+              "call"
+            ]
+          ],
+          "errors": [
+            "a cache argument cannot escape through return",
+            "cached pure-lazy functions cannot read mutable global state 'reviewed_cache'"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.indirect.<unsupported_cached_pure_lazy_call_7_11>",
+          "path": "l2070_batching/indirect.py",
+          "line": 7,
+          "cache_args": [],
+          "cache_annotations": [],
+          "body_hash": "e2b60248d4796ade603f9cd4fb41cd0cd1e62ec8a890642808a3ff36dc568be7",
+          "signature_hash": "e2b60248d4796ade603f9cd4fb41cd0cd1e62ec8a890642808a3ff36dc568be7",
+          "cache_members": [],
+          "errors": [
+            "cached_pure_lazy must use decorator syntax"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.reexported_alias.<unsupported_cached_pure_lazy_call_4_1>",
+          "path": "l2070_batching/reexported_alias.py",
+          "line": 4,
+          "cache_args": [],
+          "cache_annotations": [],
+          "body_hash": "53bdc332cf6ec64cac2915fe8483ece76a10f6a355d5029654294055f3b1ba4c",
+          "signature_hash": "53bdc332cf6ec64cac2915fe8483ece76a10f6a355d5029654294055f3b1ba4c",
+          "cache_members": [],
+          "errors": [
+            "unresolved cache decorator alias is forbidden"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.partial_alias.<unsupported_cached_pure_lazy_call_5_9>",
+          "path": "l2070_batching/partial_alias.py",
+          "line": 5,
+          "cache_args": [],
+          "cache_annotations": [],
+          "body_hash": "2820e82018de4107a0fcf8591d9c85cde985c81dac204994d69dfb8048c5f53e",
+          "signature_hash": "2820e82018de4107a0fcf8591d9c85cde985c81dac204994d69dfb8048c5f53e",
+          "cache_members": [],
+          "errors": [
+            "unresolved cache decorator alias is forbidden"
+          ]
+        },
+        {
+          "function": "l2070_batching.partial_alias.<escaped_cached_pure_lazy_reference_5_17>",
+          "path": "l2070_batching/partial_alias.py",
+          "line": 5,
+          "cache_args": [],
+          "cache_annotations": [],
+          "body_hash": "5e7841be3b9b30e7b9d9ca0afbe15de571ae8185f2ed78dcf83d7c7c732b50bd",
+          "signature_hash": "5e7841be3b9b30e7b9d9ca0afbe15de571ae8185f2ed78dcf83d7c7c732b50bd",
+          "cache_members": [],
+          "errors": [
+            "cached_pure_lazy cannot escape as a first-class value"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "scan_cached_pure_lazy_source",
+      "result": [
+        {
+          "function": "l2070_batching.hidden_partial.<unsupported_cached_pure_lazy_call_5_9>",
+          "path": "l2070_batching/hidden_partial.py",
+          "line": 5,
+          "cache_args": [],
+          "cache_annotations": [],
+          "body_hash": "34597895ab59f71eab0ac5c277158c49692ba3fe76868c2908d6909777302648",
+          "signature_hash": "34597895ab59f71eab0ac5c277158c49692ba3fe76868c2908d6909777302648",
+          "cache_members": [],
+          "errors": [
+            "unresolved cache decorator alias is forbidden"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_sql_text_analysis_uses_approved_bounded_memoization[path0]",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_sql_text_analysis_uses_approved_bounded_memoization[path1]",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_unbounded_managed_cache_access_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-009",
+          "file": "l2055_lazy_result/example.py",
+          "line": 9,
+          "qualname": "build",
+          "message": "pure-lazy global cache/state access requires signed allowlist for '_memo' (runtime-object) via '.get'",
+          "stable_scope": "global=_memo category=runtime-object access=.get"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_managed_cache_invalidation_from_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-009",
+          "file": "l2055_lazy_result/example.py",
+          "line": 9,
+          "qualname": "build",
+          "message": "pure-lazy global cache/state access requires signed allowlist for '_memo' (managed-memoization-cache) via '.clear'",
+          "stable_scope": "global=_memo category=managed-memoization-cache access=.clear"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_schema_callback_registry_for_metadata_cache_invalidation",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_static_mutable_lookup_table_with_structural_category",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-009",
+          "file": "l2055_lazy_result/example.py",
+          "line": 8,
+          "qualname": "build",
+          "message": "pure-lazy global cache/state access requires signed allowlist for '_DIRECTION_MAP' (mutable-static-table) via '[]'",
+          "stable_scope": "global=_DIRECTION_MAP category=mutable-static-table access=[]"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_module_sentinel_passed_to_lazy_operation_in_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-008",
+          "file": "l2055_lazy_result/example.py",
+          "line": 8,
+          "qualname": "build",
+          "message": "pure-lazy functions must not pass module-level runtime state '_SENTINEL' into runtime sink 'txn'",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_global_object_from_unrecognized_factory_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": [
+        {
+          "code": "PLP-008",
+          "file": "l2055_lazy_result/example.py",
+          "line": 11,
+          "qualname": "build",
+          "message": "pure-lazy functions must not return module-level runtime state '_TOKEN'",
+          "stable_scope": null
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_immutable_literal_global_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_compiled_regex_global_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_static_module_handle_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_frozen_value_object_global_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_ignores_type_argument_to_cast_for_global_mutable_state",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_typing_global_factories_inside_pure_lazy",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_transitive_helper_reading_global_mutable_state",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": [
+        {
+          "code": "PLP-009",
+          "file": "l2055_lazy_result/example.py",
+          "line": 7,
+          "qualname": "_helper",
+          "message": "pure-lazy global cache/state access requires signed allowlist for '_cache' (mutable-cache-or-registry) via '.get'",
+          "stable_scope": "global=_cache category=mutable-cache-or-registry access=.get"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_pure_surface_classes_do_not_make_eager_terminals_roots",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_pure_surface_explicit_lazy_methods_still_color_helper_closure",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": [
+        {
+          "code": "PLP-009",
+          "file": "l2055_lazy_result/example.py",
+          "line": 16,
+          "qualname": "Query._helper",
+          "message": "pure-lazy global cache/state access requires signed allowlist for '_cache' (mutable-cache-or-registry) via '.get'",
+          "stable_scope": "global=_cache category=mutable-cache-or-registry access=.get"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_local_callable_shadow_does_not_color_module_helper",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_callback_reference_in_partial_does_not_color_helper",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_unsigned_function",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "discover_memoized_pure_lazy_functions",
+      "result": [
+        {
+          "function": "l1234_policy_test.sample.derive",
+          "path": "l1234_policy_test/sample.py",
+          "line": 5,
+          "max_entries": 4,
+          "body_hash": "7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced",
+          "signature_hash": "ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd",
+          "errors": []
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_unsigned_function",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "result": [
+        "unsigned memoized pure-lazy function: l1234_policy_test.sample.derive"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_source_drift",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "discover_memoized_pure_lazy_functions",
+      "result": [
+        {
+          "function": "l1234_policy_test.sample.derive",
+          "path": "l1234_policy_test/sample.py",
+          "line": 5,
+          "max_entries": 4,
+          "body_hash": "7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced",
+          "signature_hash": "ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd",
+          "errors": []
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_source_drift",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "result": [
+        "l1234_policy_test.sample.derive: function body hash changed"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_dynamic_bound",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "discover_memoized_pure_lazy_functions",
+      "result": [
+        {
+          "function": "l1234_policy_test.sample.derive",
+          "path": "l1234_policy_test/sample.py",
+          "line": 7,
+          "max_entries": null,
+          "body_hash": "7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced",
+          "signature_hash": "ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd",
+          "errors": [
+            "memoized_pure_lazy max_entries must be a literal integer"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_dynamic_bound",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "result": [
+        "l1234_policy_test.sample.derive: memoized_pure_lazy max_entries must be a literal integer",
+        "unsigned memoized pure-lazy function: l1234_policy_test.sample.derive"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_alias",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "discover_memoized_pure_lazy_functions",
+      "result": [
+        {
+          "function": "l1234_policy_test.sample.<memoized_decorator_alias_1>",
+          "path": "l1234_policy_test/sample.py",
+          "line": 1,
+          "max_entries": null,
+          "body_hash": "41f6c38bbe28b1d8c0b088eb84f8e92c024d744d1174d8622435aba686635fe1",
+          "signature_hash": "41f6c38bbe28b1d8c0b088eb84f8e92c024d744d1174d8622435aba686635fe1",
+          "errors": [
+            "memoized_pure_lazy decorator aliases are forbidden"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_alias",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "result": [
+        "l1234_policy_test.sample.<memoized_decorator_alias_1>: memoized_pure_lazy decorator aliases are forbidden",
+        "unsigned memoized pure-lazy function: l1234_policy_test.sample.<memoized_decorator_alias_1>"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_private_storage_access",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "discover_memoized_pure_lazy_functions",
+      "result": [
+        {
+          "function": "l1234_policy_test.sample.<private_memoized_storage_access_3_8>",
+          "path": "l1234_policy_test/sample.py",
+          "line": 3,
+          "max_entries": null,
+          "body_hash": "3096ddc9aee62522b82abf2137b2b6e7a1ce095ff96eef828b115b2796727ee7",
+          "signature_hash": "3096ddc9aee62522b82abf2137b2b6e7a1ce095ff96eef828b115b2796727ee7",
+          "errors": [
+            "direct access to private memoization storage is forbidden"
+          ]
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_private_storage_access",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "result": [
+        "l1234_policy_test.sample.<private_memoized_storage_access_3_8>: direct access to private memoization storage is forbidden",
+        "unsigned memoized pure-lazy function: l1234_policy_test.sample.<private_memoized_storage_access_3_8>"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_direct_bare_name_call_without_import",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_attribute_call_with_target_name",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "plan_helpers.grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_does_not_flag_non_target_attribute",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_does_not_flag_non_target_bare_call",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_import_alias_still_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "ev()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_private_terminal_import_is_flagged_without_call",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "from impl.common.l2070_server_plan.plan_helpers import _grammar_effect_lazy_now",
+          "reason": "old or private _grammar_effect_lazy_now import is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_any_private_via_plan_import_is_flagged_without_call",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "from impl.common.l2070_server_plan.plan_helpers import _renamed_via_plan_escape",
+          "reason": "old or private _renamed_via_plan_escape import is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_private_terminal_import_alias_call_is_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "from impl.common.l2070_server_plan.plan_helpers import _grammar_rows_lazy_impl_async as run",
+          "reason": "old or private _grammar_rows_lazy_impl_async import is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        },
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 3,
+          "line": "await run()",
+          "reason": "old or private _grammar_rows_lazy_impl_async() call is forbidden",
+          "callsite": "l1000_mod.foo::f"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_private_terminal_calls_are_allowed_inside_plan_helpers_module",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_local_alias_to_public_helper_is_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "run()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_local_alias_to_module_private_helper_is_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "run()",
+          "reason": "old or private _grammar_effect_lazy_now() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_private_via_plan_module_alias_call_is_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "ph._renamed_via_plan_escape()",
+          "reason": "old or private _renamed_via_plan_escape() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_private_via_plan_from_module_alias_call_is_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "ph._renamed_via_plan_escape()",
+          "reason": "old or private _renamed_via_plan_escape() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_import_of_non_target_name_does_not_track",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_import_from_unrelated_module_does_not_track",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_target_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "fetchone_via_plan_async()",
+          "reason": "old or private fetchone_via_plan_async() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_target_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "execute_via_plan()",
+          "reason": "old or private execute_via_plan() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_target_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "ddl_via_plan()",
+          "reason": "old or private ddl_via_plan() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_target_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "scalar_via_plan()",
+          "reason": "old or private scalar_via_plan() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_target_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "fetchall_via_plan()",
+          "reason": "old or private fetchall_via_plan() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_target_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "fetchone_via_plan()",
+          "reason": "old or private fetchone_via_plan() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_target_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "execute_via_plan_async()",
+          "reason": "old or private execute_via_plan_async() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_target_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "fetchall_via_plan_async()",
+          "reason": "old or private fetchall_via_plan_async() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_target_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "ddl_via_plan_async()",
+          "reason": "old or private ddl_via_plan_async() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_fetchone_via_plan_now()",
+          "reason": "old or private _fetchone_via_plan_now() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_scalar_via_plan_now()",
+          "reason": "old or private _scalar_via_plan_now() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_ddl_via_plan_impl_async()",
+          "reason": "old or private _ddl_via_plan_impl_async() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_execute_via_plan_impl_async()",
+          "reason": "old or private _execute_via_plan_impl_async() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_fetchall_via_plan_now()",
+          "reason": "old or private _fetchall_via_plan_now() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_scalar_via_plan_impl_async()",
+          "reason": "old or private _scalar_via_plan_impl_async() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_fetchone_via_plan_impl_async()",
+          "reason": "old or private _fetchone_via_plan_impl_async() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_execute_via_plan_now()",
+          "reason": "old or private _execute_via_plan_now() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_fetchall_via_plan_impl_async()",
+          "reason": "old or private _fetchall_via_plan_impl_async() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_all_private_terminal_helpers_parametrically",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "_ddl_via_plan_now()",
+          "reason": "old or private _ddl_via_plan_now() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_callsite_in_nested_class_and_function",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 3,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::C.m"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_allowlisted_callsite_not_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_non_allowlisted_class_method_is_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 3,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::Other.do_it"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_violation_captures_source_line",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "grammar_effect_lazy()  # direct call",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_returns_violations",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_returns_violations",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_tolerates_missing",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_tolerates_syntax_error",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_tolerates_non_utf8",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_on_clean_source",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_finds_violations_under_api",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "file": "l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_finds_violations_under_impl",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "file": "impl/sqlite/foo.py",
+          "line_num": 1,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "impl.sqlite.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_skips_tests",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_skips_conform",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_skips_docs_directory",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_respects_allowlist",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_aggregates_multiple_files",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "file": "api/l1/a.py",
+          "line_num": 1,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1.a::<module>"
+        },
+        {
+          "file": "impl/sqlite/b.py",
+          "line_num": 1,
+          "line": "grammar_row_lazy()",
+          "reason": "old or private grammar_row_lazy() call is forbidden",
+          "callsite": "impl.sqlite.b::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_call_to_subscript_not_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_call_to_nested_attribute_not_flagged_unless_target",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_call_to_nested_attribute_flagged_if_final_attr_is_target",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "a.b.grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_records_line_number",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 4,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_nested_function_callsite",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 3,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::outer.inner"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_async_function_callsite",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::f"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_multiple_violations_in_single_function",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::f"
+        },
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 3,
+          "line": "grammar_row_lazy()",
+          "reason": "old or private grammar_row_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::f"
+        },
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 4,
+          "line": "grammar_rows_lazy()",
+          "reason": "old or private grammar_rows_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::f"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_import_asname_tracked",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "v()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_import_multiple_target_helpers",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 2,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        },
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 3,
+          "line": "grammar_row_lazy()",
+          "reason": "old or private grammar_row_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_ignores_call_without_args",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_detector_call_with_args_still_flagged",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/l1000_mod/foo.py",
+          "line_num": 1,
+          "line": "grammar_effect_lazy(a, b, c)",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "l1000_mod.foo::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_empty_source",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_source_with_only_comments",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_returns_list_type",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_skips_venv_directory",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_skips_git_directory",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_empty_root_returns_empty",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_returns_list_type",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_clean_files_under_api_impl",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_records_line_content",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "result": [
+        {
+          "file": "api/m.py",
+          "line_num": 2,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "m::f"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_preserves_relative_path",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "file": "api/m.py",
+          "line_num": 1,
+          "line": "grammar_effect_lazy()",
+          "reason": "old or private grammar_effect_lazy() call is forbidden",
+          "callsite": "m::<module>"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_ignores_pyc_files",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_ignores_terminals_directory",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_repo_ignores_data_layer_testing",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_internal_versioned_write_callback_is_quarantined",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "code": "LCB-020",
+          "file_path": "impl/common/example.py",
+          "line_number": 6,
+          "message": "Internal call to legacy callback API write_version() is forbidden; use explicit plan scopes or lazy owners instead."
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_internal_versioned_async_callback_is_quarantined",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "code": "LCB-020",
+          "file_path": "l7200_versioned_transactions/example.py",
+          "line_number": 6,
+          "message": "Internal call to legacy callback API write_version_async() is forbidden; use explicit plan scopes or lazy owners instead."
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_internal_session_write_callback_is_quarantined",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "code": "LCB-020",
+          "file_path": "data_layer/internal_example.py",
+          "line_number": 3,
+          "message": "Internal call to legacy callback API write() is forbidden; use explicit plan scopes or lazy owners instead."
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_internal_attribute_connection_callback_is_quarantined",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "code": "LCB-020",
+          "file_path": "services/internal_example.py",
+          "line_number": 4,
+          "message": "Internal call to legacy callback API write_version() is forbidden; use explicit plan scopes or lazy owners instead."
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_internal_version_handle_read_callback_is_quarantined",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "code": "LCB-020",
+          "file_path": "impl/common/version_helper.py",
+          "line_number": 3,
+          "message": "Internal call to legacy callback API read_version() is forbidden; use explicit plan scopes or lazy owners instead."
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_nested_async_helper_callback_remains_quarantined",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "code": "LCB-020",
+          "file_path": "l9900_auto_api/internal_helper.py",
+          "line_number": 7,
+          "message": "Internal call to legacy callback API write_version_async() is forbidden; use explicit plan scopes or lazy owners instead."
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_public_legacy_versioned_callback_definition_is_allowed",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_protocol_versioned_callback_definition_is_allowed",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_conform_callback_usage_is_quarantined",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "code": "LCB-020",
+          "file_path": "conform/l7000_versioning/test_example.py",
+          "line_number": 3,
+          "message": "Internal call to legacy callback API write_version() is forbidden; use explicit plan scopes or lazy owners instead."
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_connection_level_commit_branch_definition_is_quarantined",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "code": "LCB-030",
+          "file_path": "impl/postgres/connection.py",
+          "line_number": 3,
+          "message": "Production connection class defines connection-level commit_branch(); publish must live on versioned transactions or explicit versioned plan scopes."
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_internal_connection_level_commit_branch_call_is_quarantined",
+      "check": "legacy_callback_quarantine",
+      "entry": "scan_repo",
+      "result": [
+        {
+          "code": "LCB-031",
+          "file_path": "impl/common/example.py",
+          "line_number": 3,
+          "message": "Internal call to connection-level commit_branch() is forbidden; use versioned transaction legacy wrappers or explicit versioned plan scopes."
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_rejects_eager_overlay_restore_and_runtime_seed",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "transaction.py",
+          "line": 3,
+          "code": "RTA001",
+          "message": "Read durable overlays inside the admitted application plan"
+        },
+        {
+          "file_path": "transaction.py",
+          "line": 4,
+          "code": "RTA002",
+          "message": "Do not pass authority-scoped overlays through runtime seeds"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_rejects_connection_entry_overlay_loading",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "connection.py",
+          "line": 2,
+          "code": "RTA001",
+          "message": "Connection authority binding must not load durable overlay evidence"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_rejects_cleanup_model_heuristics",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "lowering_handlers.py",
+          "line": 2,
+          "code": "RTA003",
+          "message": "Gate authority cleanup with ReadThroughAuthorityOwnedTableRecord, not cache-state heuristics"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_requires_principal_scoped_overlay_evidence",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "coverage.py",
+          "line": 2,
+          "code": "RTA004",
+          "message": "Durable overlay evidence must include principal_user_id"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_accepts_closed_same_plan_overlay_and_inventory_contract",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_requires_complete_lease_identity_for_cleanup",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "lowering_steps.py",
+          "line": 2,
+          "code": "RTA008",
+          "message": "Lease transition cleanup must compare the complete authority identity"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_requires_exact_renewal_to_preserve_established_at",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "lowering_steps.py",
+          "line": 2,
+          "code": "RTA009",
+          "message": "Exact lease renewal must update only last_authenticated_at"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_requires_overlay_validation_before_authority_publication",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "lowering_handlers.py",
+          "line": 2,
+          "code": "RTA007",
+          "message": "Validate admitted overlays before authority and cache publication"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_current_readthrough_authority_architecture_is_clean",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_authentication_plan_purity.py::test_rejects_transport_and_mutable_results_in_semantic_steps",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "sample.py",
+          "line": 4,
+          "code": "APP001",
+          "message": "Semantic plan steps must not retain transport objects"
+        },
+        {
+          "file_path": "sample.py",
+          "line": 5,
+          "code": "APP002",
+          "message": "Semantic plan steps must not retain mutable runtime results"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_authentication_plan_purity.py::test_rejects_transport_state_with_arbitrary_names_in_semantic_subclasses",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "sample.py",
+          "line": 4,
+          "code": "APP001",
+          "message": "Semantic plan steps must not retain transport objects"
+        },
+        {
+          "file_path": "sample.py",
+          "line": 5,
+          "code": "APP002",
+          "message": "Semantic plan steps must not retain mutable runtime results"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_authentication_plan_purity.py::test_rejects_eager_authentication_from_transaction_entry",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "sample.py",
+          "line": 3,
+          "code": "APP003",
+          "message": "Transaction entry must not authenticate or bind authority eagerly"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_authentication_plan_purity.py::test_rejects_eager_authentication_hidden_behind_entry_helper",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "sample.py",
+          "line": 3,
+          "code": "APP003",
+          "message": "Transaction entry must not authenticate or bind authority eagerly"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_authentication_plan_purity.py::test_rejects_nonlegacy_sync_async_method_pairs",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "result": [
+        {
+          "file_path": "sample.py",
+          "line": 3,
+          "code": "APP004",
+          "message": "Authentication compatibility methods must delegate to a pure lazy method"
+        },
+        {
+          "file_path": "sample.py",
+          "line": 6,
+          "code": "APP004",
+          "message": "Authentication compatibility methods must delegate to a pure lazy method"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_authentication_plan_purity.py::test_accepts_legacy_forwarders_to_pure_lazy_method",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_authentication_plan_purity.py::test_current_authentication_architecture_is_clean",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_accepts_sync_and_async_adapters_over_one_pure_lazy_module_surface",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "result": []
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_rejects_adapter_body_that_duplicates_planning",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "result": [
+        {
+          "linter_name": "lazy_adapter_ownership",
+          "code": "LAO001",
+          "path": "consumer_surface.py",
+          "line": 10,
+          "message": "immediate is a legacy adapter but its body contains executable planning or I/O",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_rejects_module_adapter_without_pure_lazy_target",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "result": [
+        {
+          "linter_name": "lazy_adapter_ownership",
+          "code": "LAO006",
+          "path": "consumer_surface.py",
+          "line": 4,
+          "message": "async transaction-facing function blueprint has no awaited I/O and is not a legacy adapter",
+          "severity": "error"
+        },
+        {
+          "linter_name": "lazy_adapter_ownership",
+          "code": "LAO003",
+          "path": "consumer_surface.py",
+          "line": 8,
+          "message": "eventual delegates to blueprint, which is not @pure_lazy",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_rejects_resolve_or_execute_inside_pure_lazy_surface",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "result": [
+        {
+          "linter_name": "lazy_adapter_ownership",
+          "code": "LAO004",
+          "path": "consumer_surface.py",
+          "line": 5,
+          "message": "@pure_lazy surface blueprint reaches eager terminal resolve",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_rejects_undecorated_eager_transaction_function",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "result": [
+        {
+          "linter_name": "lazy_adapter_ownership",
+          "code": "LAO005",
+          "path": "consumer_surface.py",
+          "line": 2,
+          "message": "transaction-facing function immediate owns eager calls insert instead of delegating to one @pure_lazy surface",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_rejects_false_async_transaction_function",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "result": [
+        {
+          "linter_name": "lazy_adapter_ownership",
+          "code": "LAO006",
+          "path": "consumer_surface.py",
+          "line": 2,
+          "message": "async transaction-facing function eventual has no awaited I/O and is not a legacy adapter",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_fixture_symbol_names_do_not_control_findings",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "result": [
+        {
+          "linter_name": "lazy_adapter_ownership",
+          "code": "LAO005",
+          "path": "consumer_surface.py",
+          "line": 2,
+          "message": "transaction-facing function alpha owns eager calls insert instead of delegating to one @pure_lazy surface",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_fixture_symbol_names_do_not_control_findings",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "result": [
+        {
+          "linter_name": "lazy_adapter_ownership",
+          "code": "LAO005",
+          "path": "consumer_surface.py",
+          "line": 2,
+          "message": "transaction-facing function completely_unrelated_name owns eager calls insert instead of delegating to one @pure_lazy surface",
+          "severity": "error"
+        }
+      ]
+    }
+  ]
+}

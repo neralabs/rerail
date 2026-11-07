@@ -1,0 +1,54 @@
+# Engine decision records (final shape)
+
+This continues the series in Pulling-it-all-together's `docs/rule-engine-direction/decisions/`
+(0001–0007), with the same template and protocol: every record cites the ast-index-spike indexes
+(`prior-work/`) and the lessons ledger there, and says whether it agrees or departs.
+
+| # | Decision | Status |
+|---|---|---|
+| 0008 | Base facts are read through per-wave vtab bindings over core facts; integers only | accepted |
+| 0009 | The planner lowers programs, statistics and inputs to the same integers | accepted |
+| 0010 | Waves run on one owner connection; SQL selects each wave's frontier; derived relations are fact families | accepted |
+| 0011 | Composite matchers lower to node-label passes plus positive walking programs | accepted |
+| 0012 | Compilation runs in the background, on demand; the interpreter runs until it is ready | accepted |
+| 0013 | Findings are one stratified SQL layer over the match facts, from facts of the tape | accepted |
+| 0014 | The slice's entry points keep the wave's rows per scope; a warm run evaluates changed documents only | accepted |
+| 0015 | Short label programs run as micro walks, one thread per (pass, start); workspaces are untouched by the host | accepted |
+| 0016 | Work that outgrows a workspace is split along an axis it is independent on; S7's gate lists known differences by name | accepted |
+| 0017 | A label walk's text tests are bits computed once per (value, kind); a Metal wave runs its roots on the CPU | accepted |
+| 0018 | Execution ranges packed to a 64 MB workspace budget per file size; count programs run as micro walks | accepted |
+| 0019 | Micro walks carry four cursors; label passes of one domain share their roots and walk items | accepted |
+| 0020 | CPU execution ranges packed by u32 record counts (demand-zero workspaces); program groups from one batch's counts; text rows shared across a labelling's runs | accepted |
+| 0021 | Micro walk stacks by static depth: 8 frames in thread memory, deeper walks over a 4096-thread pool with device stacks | accepted |
+| 0022 | The engine's footprint within 500 MB: freed pages returned at stage ends, SQLite on jemalloc, GPU buffers sized by the run | accepted |
+| 0023 | Metal's speed by profile: text rows in one pass, NFA early exit, a 2048×64 loop pool with a deep retry, faster host sweeps, unsorted candidate arms | accepted |
+| 0024 | A wave's execution shape: one node space, sets as bitmaps evaluated natively from SQL's plan, labels and roots as device micro walks, integer match records, a RAM working set written back | accepted |
+| 0025 | The tape format becomes v9np: random access for anchor indexing (O8's measurements on Rerail's grammars) | accepted |
+| 0026 | Nodes live in tapes: no per-node structure beside a tape; how each node attribute is read from the tape or a bare index; enforced by `check-node-structures` | accepted |
+| 0027 | Device-side enqueue is a work queue inside a persistent dispatch: workers push the items their work creates and idle workers take them, with no unbounded wait; first used by file-local lattice FIX | accepted |
+| 0028 | G's grid executor is superseded by 0024: not ported to the work queue; its digit-ordered terminals, exact state dedupe, bulk closure and exact pages kept for a small general executor if the census's 71 of ~15,600 general programs grow | accepted |
+| 0029 | The `py.*` fact families: five integer relations of calls, contexts and arguments, from core facts at the `call` postings, made on a wave's first read, one derivation per document over its core name; demand reads them before the batch | accepted |
+| 0030 | Semantic predicates as labels from fact producers: W's predicate with its single-target sub-rules as slot captures makes (node, targets) rows before the passes; the slots are labels; keyed by the query's content; CPU and Metal | accepted |
+| 0031 | The findings layer's statement is one typed query: `single` composes the steps' checked `select::Query`s (a materialized CTE per lower relation, reads rebound, checked whole); batch inputs are typed `Source`s; the layer's tables come from its program's `.decl`s; S's `sql_shape` stays test-only (O19) | accepted |
+| 0032 | Tapes resident in 64 MiB slabs (one no-copy buffer each), keyed by tape digest, admitted from frames straight into slabs, dropped 2 min after a full execution; format 11 aligns columns; the device reads v9np columns in place through a batch document table (`metal_tape.metal`) | accepted |
+| 0033 | A label pass's roots are a rule over each document's codes, not a node list | accepted |
+| 0034 | The device keeps no per-thread memory (the driver's scratch, sized for every thread in flight and kept): walks run in pools with device stacks, pattern equality walks preorder runs, pattern kernels hold 8 patterns each | accepted |
+| 0035 | Cross-file rounds bound file crossings: a recursive atom whose node may be in another file reads the previous round (`@doc` split); digest cutoff; k = 2 | accepted |
+| 0036 | Rules are Datalog (joins, negation, recursion through facts, name sets, string tests, types, options); tree axes are built-ins computed as tapes in the transducer, as `nearest` is; the NFA is optimized and an optimizer may lower tape-shaped rules to tapes | accepted |
+| 0037 | Text tests are globs over typed text, run once per distinct string | accepted |
+| 0038 | Rule bodies simplified (nearest for inside-not-blocked, identical relations merged, implied atoms dropped); plans reused across chunks and re-priced; search bounded; estimates at least one row; nearest ancestors by pointer jumping on the device | accepted |
+| 0039 | Device scratch buffers come from pre-pinned blocks (one retained no-copy buffer each, pages written once, power-of-two sizes, 32 MiB kept) and one kept command queue; the profile splits device time into buffers made, queue, encode, submit, schedule, GPU and wake | accepted |
+| 0040 | Nearest ancestors in one dispatch per chunk: a cell's state (target, final bit) is read and advanced in place by its thread until final; one command buffer, one wait, any depth | accepted |
+| 0041 | Text matching is chunk-at-a-time and per file: host DFAs and literal prefilters with no work limit, device chunked automata (O66); never a byte-at-a-time NFA per node | accepted (host done) |
+| 0042 | One text layer: every text test (regex, glob, affix, name set) is normalized to a canonical matcher and key, so a regex costs what its best rewrite costs; vocabulary text runs once per distinct string, other text by one file scan placed on nodes through the tape | proposed |
+| 0043 | Every rule the engine runs is `.rr` (Soufflé Datalog plus `core.rr`): one reader, one printer, the converter writes `.rr`; `.rdl` stays only as T's copies until step 31 | accepted |
+| 0044 | A run starts from seeded facts (`file`, `library_file`, `config_file`, `grammar` with content hashes); content facts in local ids, path facts as `.rr` rules, the program a derivation of the library, evaluation recorded per stratum (file-local by tape hash); one entry path | proposed |
+| 0045 | Node sets are chunked containers (2^16-id chunks per document: arrays, bitmaps, runs) on the host, the device and in the store; subtrees are runs; thresholds from a measurement first | proposed |
+| 0046 | `.rr` as `core.rr` states it: the reader and lowering (items 1-3, 6-8); the base relations in `core.rr`'s shape for programs that include it (comments as nodes, `text` of every node, `op` of every token with T's as `op_t`, source text, tokens, literals per language, repository inputs), T's for the others | proposed |
+| 0047 | `core.rr`'s names are the engine's: no other file declares or derives one (the reader refuses it); the planner names an input's columns only for inputs; T's programs are the engine's and read `kind`, `docof`; namespaces sketched (Soufflé components; engine, library, private program levels) | accepted |
+| 0048 | Relations computed for every node that rules only negate are computed for the keys the readers reach: each reader splits into its body less those negations (`pre_<i>`, planned freely per chunk), which seeds `demand_<R>`; a keyed anti-join, structural guard, corpus runs only | accepted |
+| 0049 | Atoms on disk are segments of the in-memory arena (no value index), read by SQL through a virtual table over one shared mirror; pending atoms commit in the same transaction as any row that uses them, at a bound (256k atoms, 16 MB, 30 s) and at close; a file-lock lease guards other processes; a crash loses only pending atoms, which nothing durable names | accepted |
+| 0050 | Containment is read off the tree, made per looked-up node with statistics from depths and subtree sizes: the language's `within(n, a)` (strictly below; no longer lowered to an id range or a `child` climb), which the converter now writes, and `span_within(inner, outer)`, which the simplifier makes of two span comparisons of one file's nodes | accepted |
+| 0051 | All rules run as one combined program over tapes cached by content (a store of their own, `RERAIL_TAPE_CACHE`); a cross-file rule's file-local part (its positive local reads joined by variables, with the comparisons and negations they bind) becomes a relation the chunks export, so no base relation is held for the cross-file part | accepted |
+| 0052 | A corpus run memoises each file's file-local rows in the store's facts memo (content, path, plan: engine build, grammar, program, document key); every handed-on relation names its document (`locate`), document keys come from paths and symbols are the persistent store's atoms, so an unchanged file is neither parsed nor evaluated | accepted |
+| 0053 | The store collects in the background: each corpus run records a manifest of its sources and memo plan; each root's last 2 runs are protected, older manifests are kept newest first under a 512 MB high-water mark (evicting to 384 MB), with a 30-day backstop; `auto_vacuum` is fixed so freed pages return to the disk; passes run in the server's wake, after a run and from `rerail-engine gc`; atoms are rebuilt by epoch past 64 MB (not built yet) | accepted |

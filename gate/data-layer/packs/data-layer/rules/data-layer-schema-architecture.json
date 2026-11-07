@@ -1,0 +1,529 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-schema-architecture",
+  "revision": 1,
+  "mode": "block",
+  "description": "Exact port of nera-data-layer schema_architecture at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2000_connection/**/*.py",
+      "l3200_metadata/**/*.py",
+      "impl/common/l7245_versioned_backends/**/*.py",
+      "l2000_connection/schema_transaction.py",
+      "l3200_metadata/bootstrap_coordinator.py",
+      "l3200_metadata/bootstrap_state.py",
+      "impl/common/l2200_sql_dialect/sql_schema_services.py",
+      "impl/common/l2200_sql_dialect/sql_versioning_services.py",
+      "impl/common/l7245_versioned_backends/generic_sparse.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/tests/**",
+      "**/test/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "schema-planning",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "enqueue_post_|materialize_schema_operation_records|planning_callback"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "lint_file": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'forbid-schema-planning-callback-field' AS issue,'Represent schema ordering with artifact requirements, not executable callback fields.' AS message,n.id||':forbid-schema-planning-callback-field:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'planning_callback' AS symbol,'' AS sort_name FROM a n WHERE n.kind='AnnAssign' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='target' AND (v.kind IN ('Name','Attribute') AND v.name='planning_callback')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'forbid-schema-callback-queues' AS issue,'Declare schema artifacts and dependencies before finalization instead of queueing callbacks.' AS message,n.id||':forbid-schema-callback-queues:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n WHERE n.callee IN ('enqueue_post_ddl','enqueue_post_schema_ddl_flush','enqueue_post_commit_schema_exit','planning_callback') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'forbid-materialization-plan-mutation' AS issue,'Schema materialization may consume a frozen plan only; it cannot mutate or recursively flush it.' AS message,n.id||':forbid-materialization-plan-mutation:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n JOIN functions f ON f.__path=n.__path AND f.id=n.fn WHERE instr(f.name,'materialize_schema_operation_records')>0 AND n.callee IN ('add_operation','_materialize_schema_operation_records','_materialize_schema_operation_records_async','flush_schema_plan','flush_schema_plan_async')",
+            "standalone": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'forbid-schema-planning-callback-field' AS issue,'Represent schema ordering with artifact requirements, not executable callback fields.' AS message,n.id||':forbid-schema-planning-callback-field:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'planning_callback' AS symbol,'' AS sort_name FROM a n WHERE n.kind='AnnAssign' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='target' AND (v.kind IN ('Name','Attribute') AND v.name='planning_callback')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'forbid-schema-callback-queues' AS issue,'Declare schema artifacts and dependencies before finalization instead of queueing callbacks.' AS message,n.id||':forbid-schema-callback-queues:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n WHERE n.callee IN ('enqueue_post_ddl','enqueue_post_schema_ddl_flush','enqueue_post_commit_schema_exit','planning_callback') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'forbid-materialization-plan-mutation' AS issue,'Schema materialization may consume a frozen plan only; it cannot mutate or recursively flush it.' AS message,n.id||':forbid-materialization-plan-mutation:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n JOIN functions f ON f.__path=n.__path AND f.id=n.fn WHERE instr(f.name,'materialize_schema_operation_records')>0 AND n.callee IN ('add_operation','_materialize_schema_operation_records','_materialize_schema_operation_records_async','flush_schema_plan','flush_schema_plan_async')"
+          },
+          "default": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'forbid-schema-planning-callback-field' AS issue,'Represent schema ordering with artifact requirements, not executable callback fields.' AS message,n.id||':forbid-schema-planning-callback-field:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'planning_callback' AS symbol,'' AS sort_name FROM a n WHERE n.kind='AnnAssign' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='target' AND (v.kind IN ('Name','Attribute') AND v.name='planning_callback')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'forbid-schema-callback-queues' AS issue,'Declare schema artifacts and dependencies before finalization instead of queueing callbacks.' AS message,n.id||':forbid-schema-callback-queues:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n WHERE n.callee IN ('enqueue_post_ddl','enqueue_post_schema_ddl_flush','enqueue_post_commit_schema_exit','planning_callback') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'forbid-materialization-plan-mutation' AS issue,'Schema materialization may consume a frozen plan only; it cannot mutate or recursively flush it.' AS message,n.id||':forbid-materialization-plan-mutation:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n JOIN functions f ON f.__path=n.__path AND f.id=n.fn WHERE instr(f.name,'materialize_schema_operation_records')>0 AND n.callee IN ('add_operation','_materialize_schema_operation_records','_materialize_schema_operation_records_async','flush_schema_plan','flush_schema_plan_async')) WHERE 0"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "schema-lifecycle",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "all": [
+                              {
+                                "regex": "SchemaTransaction|Callable|_schema_operation_plan"
+                              },
+                              {
+                                "filePath": {
+                                  "regex": "^(?:l2000_connection|l3200_metadata|impl/common/l7245_versioned_backends)/"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_breadth_order",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(ast_breadth_order,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "expression_roots",
+            "query": "WITH RECURSIVE roots(__path,id,root,name) AS (\n SELECT __path,id,id,name FROM a WHERE kind='Name'\n UNION ALL SELECT parent.__path,parent.id,roots.root,roots.name FROM roots JOIN a parent ON parent.__path=roots.__path JOIN a child ON child.__path=roots.__path AND child.id=roots.id WHERE parent.id=child.parent AND parent.kind='Attribute' AND child.field='value') SELECT * FROM roots",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "schema_parameters",
+            "query": "SELECT DISTINCT p.__path,p.fn,p.name FROM parameters p JOIN a annotation ON annotation.__path=p.__path AND annotation.parent=p.id AND annotation.field='annotation' JOIN a term ON term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last WHERE p.kind='arg' AND p.field IN ('posonlyargs','args','kwonlyargs') AND term.kind IN ('Name','Attribute') AND substr(term.name,-17)='SchemaTransaction'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "plan_aliases",
+            "query": "SELECT DISTINCT f.__path,f.id fn,target.name FROM functions f JOIN a assignment ON assignment.__path=f.__path AND assignment.id BETWEEN f.id AND f.last AND assignment.kind IN ('Assign','AnnAssign') JOIN a value ON value.__path=assignment.__path AND value.parent=assignment.id AND value.field='value' AND value.kind='Attribute' AND value.name='_schema_operation_plan' JOIN expression_roots root ON root.__path=value.__path AND root.id=value.id JOIN schema_parameters param ON param.__path=f.__path AND param.fn=f.id AND param.name=root.name JOIN a target ON target.__path=assignment.__path AND target.parent=assignment.id AND target.field IN ('target','targets') AND target.kind='Name'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "executing_functions",
+            "query": "SELECT DISTINCT f.__path,f.id FROM functions f JOIN calls call ON call.__path=f.__path AND call.id BETWEEN f.id AND f.last WHERE call.callee IN ('execute','execute_async','execute_server_plan_async','execute_server_plan_now','resolve','resolve_async','resolve_terminal_async','resolve_terminal_sync')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "lifecycle_calls",
+            "query": "SELECT call.*,f.id AS function_id,f.bfs function_order,f.name function_name,root.name root_name FROM functions f JOIN calls call ON call.__path=f.__path AND call.id BETWEEN f.id AND f.last LEFT JOIN expression_roots root ON root.__path=call.__path AND root.id=call.receiver",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "all": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP001' AS issue,'schema operation '||cls.name||' stores callable field '||CASE WHEN target.kind='Name' THEN target.name ELSE '<field>' END AS message,n.id||':SAP001:'||(printf('%020d/%03d/%020d',cls.bfs,0,n.position)) AS identity,0 AS phase,printf('%020d/%03d/%020d',cls.bfs,0,n.position) AS ordering,'' AS symbol,'' AS sort_name FROM a cls JOIN a n ON n.__path=cls.__path AND n.parent=cls.id AND n.field='body' LEFT JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field='target' WHERE cls.kind='ClassDef' AND EXISTS(SELECT 1 FROM a field JOIN a annotation ON annotation.__path=field.__path AND annotation.parent=field.id AND annotation.field='annotation' JOIN a term ON term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last WHERE field.__path=cls.__path AND field.parent=cls.id AND field.kind='AnnAssign' AND field.field='body' AND term.kind IN ('Name','Attribute') AND term.name='SchemaOperationKind') AND n.kind='AnnAssign' AND EXISTS(SELECT 1 FROM a annotation WHERE annotation.__path=n.__path AND annotation.parent=n.id AND annotation.field='annotation' AND (EXISTS(SELECT 1 FROM a term WHERE term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last AND (term.kind IN ('Name','Attribute') AND term.name='Callable')))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP002' AS issue,n.function_name||' mutates schema planning state while executing/materializing it' AS message,n.id||':SAP002:'||(printf('%020d/%03d/%020d',n.function_order,0,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,0,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.function_id) AND n.callee_kind='Attribute' AND n.callee IN ('add','add_operation','append','clear','extend','insert','pop','remove') AND (EXISTS(SELECT 1 FROM plan_aliases p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) OR EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) AND EXISTS(SELECT 1 FROM a receiver JOIN a attr ON attr.__path=receiver.__path AND attr.id BETWEEN receiver.id AND receiver.last WHERE receiver.__path=n.__path AND receiver.id=n.receiver AND attr.kind='Attribute' AND attr.name='_schema_operation_plan')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP005' AS issue,n.function_name||' adds or queries lazy schema work while executing/materializing it' AS message,n.id||':SAP005:'||(printf('%020d/%03d/%020d',n.function_order,1,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,1,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.function_id) AND n.callee_kind='Attribute' AND substr(n.callee,-5)='_lazy' AND EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP004' AS issue,n.name||' recursively materializes schema work during execution' AS message,n.id||':SAP004:'||(printf('%020d/%03d/%020d',n.bfs,2,0)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.bfs,2,0) AS ordering,'' AS symbol,'' AS sort_name FROM functions n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.id) AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id BETWEEN n.id AND n.last AND (call.callee_kind='Name' AND call.callee=n.name)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP003' AS issue,n.function_name||' stores executable callback behavior on a schema transaction' AS message,n.id||':SAP003:'||(printf('%020d/%03d/%020d',n.function_order,3,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,3,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE n.callee_kind='Attribute' AND EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='args' AND (v.kind='Lambda'))",
+            "scan_source": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP001' AS issue,'schema operation '||cls.name||' stores callable field '||CASE WHEN target.kind='Name' THEN target.name ELSE '<field>' END AS message,n.id||':SAP001:'||(printf('%020d/%03d/%020d',cls.bfs,0,n.position)) AS identity,0 AS phase,printf('%020d/%03d/%020d',cls.bfs,0,n.position) AS ordering,'' AS symbol,'' AS sort_name FROM a cls JOIN a n ON n.__path=cls.__path AND n.parent=cls.id AND n.field='body' LEFT JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field='target' WHERE cls.kind='ClassDef' AND EXISTS(SELECT 1 FROM a field JOIN a annotation ON annotation.__path=field.__path AND annotation.parent=field.id AND annotation.field='annotation' JOIN a term ON term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last WHERE field.__path=cls.__path AND field.parent=cls.id AND field.kind='AnnAssign' AND field.field='body' AND term.kind IN ('Name','Attribute') AND term.name='SchemaOperationKind') AND n.kind='AnnAssign' AND EXISTS(SELECT 1 FROM a annotation WHERE annotation.__path=n.__path AND annotation.parent=n.id AND annotation.field='annotation' AND (EXISTS(SELECT 1 FROM a term WHERE term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last AND (term.kind IN ('Name','Attribute') AND term.name='Callable')))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP002' AS issue,n.function_name||' mutates schema planning state while executing/materializing it' AS message,n.id||':SAP002:'||(printf('%020d/%03d/%020d',n.function_order,0,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,0,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.function_id) AND n.callee_kind='Attribute' AND n.callee IN ('add','add_operation','append','clear','extend','insert','pop','remove') AND (EXISTS(SELECT 1 FROM plan_aliases p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) OR EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) AND EXISTS(SELECT 1 FROM a receiver JOIN a attr ON attr.__path=receiver.__path AND attr.id BETWEEN receiver.id AND receiver.last WHERE receiver.__path=n.__path AND receiver.id=n.receiver AND attr.kind='Attribute' AND attr.name='_schema_operation_plan')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP005' AS issue,n.function_name||' adds or queries lazy schema work while executing/materializing it' AS message,n.id||':SAP005:'||(printf('%020d/%03d/%020d',n.function_order,1,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,1,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.function_id) AND n.callee_kind='Attribute' AND substr(n.callee,-5)='_lazy' AND EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP004' AS issue,n.name||' recursively materializes schema work during execution' AS message,n.id||':SAP004:'||(printf('%020d/%03d/%020d',n.bfs,2,0)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.bfs,2,0) AS ordering,'' AS symbol,'' AS sort_name FROM functions n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.id) AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id BETWEEN n.id AND n.last AND (call.callee_kind='Name' AND call.callee=n.name)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP003' AS issue,n.function_name||' stores executable callback behavior on a schema transaction' AS message,n.id||':SAP003:'||(printf('%020d/%03d/%020d',n.function_order,3,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,3,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE n.callee_kind='Attribute' AND EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='args' AND (v.kind='Lambda'))",
+            "_extract_facts": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP001' AS issue,'schema operation '||cls.name||' stores callable field '||CASE WHEN target.kind='Name' THEN target.name ELSE '<field>' END AS message,n.id||':SAP001:'||(printf('%020d/%03d/%020d',cls.bfs,0,n.position)) AS identity,0 AS phase,printf('%020d/%03d/%020d',cls.bfs,0,n.position) AS ordering,'' AS symbol,'' AS sort_name FROM a cls JOIN a n ON n.__path=cls.__path AND n.parent=cls.id AND n.field='body' LEFT JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field='target' WHERE cls.kind='ClassDef' AND EXISTS(SELECT 1 FROM a field JOIN a annotation ON annotation.__path=field.__path AND annotation.parent=field.id AND annotation.field='annotation' JOIN a term ON term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last WHERE field.__path=cls.__path AND field.parent=cls.id AND field.kind='AnnAssign' AND field.field='body' AND term.kind IN ('Name','Attribute') AND term.name='SchemaOperationKind') AND n.kind='AnnAssign' AND EXISTS(SELECT 1 FROM a annotation WHERE annotation.__path=n.__path AND annotation.parent=n.id AND annotation.field='annotation' AND (EXISTS(SELECT 1 FROM a term WHERE term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last AND (term.kind IN ('Name','Attribute') AND term.name='Callable')))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP002' AS issue,n.function_name||' mutates schema planning state while executing/materializing it' AS message,n.id||':SAP002:'||(printf('%020d/%03d/%020d',n.function_order,0,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,0,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.function_id) AND n.callee_kind='Attribute' AND n.callee IN ('add','add_operation','append','clear','extend','insert','pop','remove') AND (EXISTS(SELECT 1 FROM plan_aliases p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) OR EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) AND EXISTS(SELECT 1 FROM a receiver JOIN a attr ON attr.__path=receiver.__path AND attr.id BETWEEN receiver.id AND receiver.last WHERE receiver.__path=n.__path AND receiver.id=n.receiver AND attr.kind='Attribute' AND attr.name='_schema_operation_plan')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP005' AS issue,n.function_name||' adds or queries lazy schema work while executing/materializing it' AS message,n.id||':SAP005:'||(printf('%020d/%03d/%020d',n.function_order,1,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,1,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.function_id) AND n.callee_kind='Attribute' AND substr(n.callee,-5)='_lazy' AND EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP004' AS issue,n.name||' recursively materializes schema work during execution' AS message,n.id||':SAP004:'||(printf('%020d/%03d/%020d',n.bfs,2,0)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.bfs,2,0) AS ordering,'' AS symbol,'' AS sort_name FROM functions n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.id) AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id BETWEEN n.id AND n.last AND (call.callee_kind='Name' AND call.callee=n.name)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP003' AS issue,n.function_name||' stores executable callback behavior on a schema transaction' AS message,n.id||':SAP003:'||(printf('%020d/%03d/%020d',n.function_order,3,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,3,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE n.callee_kind='Attribute' AND EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='args' AND (v.kind='Lambda'))"
+          },
+          "default": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP001' AS issue,'schema operation '||cls.name||' stores callable field '||CASE WHEN target.kind='Name' THEN target.name ELSE '<field>' END AS message,n.id||':SAP001:'||(printf('%020d/%03d/%020d',cls.bfs,0,n.position)) AS identity,0 AS phase,printf('%020d/%03d/%020d',cls.bfs,0,n.position) AS ordering,'' AS symbol,'' AS sort_name FROM a cls JOIN a n ON n.__path=cls.__path AND n.parent=cls.id AND n.field='body' LEFT JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field='target' WHERE cls.kind='ClassDef' AND EXISTS(SELECT 1 FROM a field JOIN a annotation ON annotation.__path=field.__path AND annotation.parent=field.id AND annotation.field='annotation' JOIN a term ON term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last WHERE field.__path=cls.__path AND field.parent=cls.id AND field.kind='AnnAssign' AND field.field='body' AND term.kind IN ('Name','Attribute') AND term.name='SchemaOperationKind') AND n.kind='AnnAssign' AND EXISTS(SELECT 1 FROM a annotation WHERE annotation.__path=n.__path AND annotation.parent=n.id AND annotation.field='annotation' AND (EXISTS(SELECT 1 FROM a term WHERE term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last AND (term.kind IN ('Name','Attribute') AND term.name='Callable')))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP002' AS issue,n.function_name||' mutates schema planning state while executing/materializing it' AS message,n.id||':SAP002:'||(printf('%020d/%03d/%020d',n.function_order,0,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,0,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.function_id) AND n.callee_kind='Attribute' AND n.callee IN ('add','add_operation','append','clear','extend','insert','pop','remove') AND (EXISTS(SELECT 1 FROM plan_aliases p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) OR EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) AND EXISTS(SELECT 1 FROM a receiver JOIN a attr ON attr.__path=receiver.__path AND attr.id BETWEEN receiver.id AND receiver.last WHERE receiver.__path=n.__path AND receiver.id=n.receiver AND attr.kind='Attribute' AND attr.name='_schema_operation_plan')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP005' AS issue,n.function_name||' adds or queries lazy schema work while executing/materializing it' AS message,n.id||':SAP005:'||(printf('%020d/%03d/%020d',n.function_order,1,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,1,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.function_id) AND n.callee_kind='Attribute' AND substr(n.callee,-5)='_lazy' AND EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP004' AS issue,n.name||' recursively materializes schema work during execution' AS message,n.id||':SAP004:'||(printf('%020d/%03d/%020d',n.bfs,2,0)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.bfs,2,0) AS ordering,'' AS symbol,'' AS sort_name FROM functions n WHERE EXISTS(SELECT 1 FROM executing_functions f WHERE f.__path=n.__path AND f.id=n.id) AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id BETWEEN n.id AND n.last AND (call.callee_kind='Name' AND call.callee=n.name)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SAP003' AS issue,n.function_name||' stores executable callback behavior on a schema transaction' AS message,n.id||':SAP003:'||(printf('%020d/%03d/%020d',n.function_order,3,n.bfs)) AS identity,0 AS phase,printf('%020d/%03d/%020d',n.function_order,3,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM lifecycle_calls n WHERE n.callee_kind='Attribute' AND EXISTS(SELECT 1 FROM schema_parameters p WHERE p.__path=n.__path AND p.fn=n.function_id AND p.name=n.root_name) AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='args' AND (v.kind='Lambda'))) WHERE 0"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "source-syntax",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "invalid",
+          "rule": {
+            "all": [
+              {
+                "kind": "module"
+              },
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "scan_source": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "NATIVE-SYNTAX",
+        "message": "Python source cannot be parsed",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "reported-parser-error",
+      "relational": {
+        "inputs": {
+          "invalid": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "invalid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "SchemaTransaction|Callable|_schema_operation_plan"
+                      },
+                      {
+                        "filePath": {
+                          "regex": "^(?:l2000_connection|l3200_metadata|impl/common/l7245_versioned_backends)/"
+                        }
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "filePath": {
+                              "regex": "(?s).*"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "\\b\\B"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "requireNonemptyInput": "invalid",
+        "stages": [
+          {
+            "name": "parsed",
+            "pythonAst": {
+              "source": "invalid",
+              "roots": "SELECT __path,source_text(__path,0,__end) AS source FROM invalid",
+              "fields": [
+                "syntax_error"
+              ]
+            }
+          }
+        ],
+        "query": "SELECT i.__path path,0 start_byte,0 end_byte,1 line,'SAP000' issue,'cannot inspect schema lifecycle ownership: SyntaxError: '||json_extract(p.syntax_error,'$.msg')||CASE WHEN json_extract(p.syntax_error,'$.lineno') IS NULL THEN '' ELSE ' ('||rx_replace(i.__path,'^.*/','')||', line '||json_extract(p.syntax_error,'$.lineno')||')' END message,i.__path identity,0 phase,0 ordering,'' symbol,'' sort_name FROM invalid i JOIN parsed p ON p.__path=i.__path WHERE p.syntax_error!='null'",
+        "key": [
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message"
+      },
+      "violation": {
+        "code": "SAP000",
+        "message": "Parser error",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+.policy "eslint-plugin-vue-no-export-in-script-setup" revision 2
+.description "Don't export values from a Vue script setup block (type exports are fine); put shared exports in a separate regular script block."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+//   vscript(p, setup)
+
+// eslint-plugin-vue's no-export-in-script-setup: an export statement in <script setup>, which compiles into the
+// setup function and cannot export. Type exports are erased and allowed. A declaration export is reported at its
+// `export` keyword, any other at the statement. No options.
+//   <script setup> export const a = 1; export * from "x"; export default {} </script>      all reported
+//   <script setup lang="ts"> export type T = 1; export interface I {}; export { type U } </script>  allowed
+.violation export_in_setup(at: loc) code "vue/no-export-in-script-setup"
+    "Move this export into a separate regular `<script>` block; `<script setup>` cannot export values."
+    suppress eslint "vue/no-export-in-script-setup"
+export_in_setup(kw) :- setup_export(e), field(e, "declaration", _), first_token(e, kw).
+export_in_setup(e) :- setup_export(e), !field(e, "declaration", _).
+.decl setup_export(e: node)
+setup_export(e) :- vscript(p, "true"), child(p, e, _), kind(e, "export_statement"), !type_export(e).
+// type_export(e): `export type …`, `export interface …`, `export declare type …`, or specifiers that are all types.
+.decl type_export(e: node)
+type_export(e) :- kind(e, "export_statement"), op(e, "type").
+type_export(e) :- kind(e, "export_statement"), field(e, "declaration", d), type_decl(d).
+type_export(e) :- kind(e, "export_statement"), child(e, c, _), kind(c, "export_clause"),
+    count : { child(c, s, _), kind(s, "export_specifier") } > 0,
+    count : { child(c, s, _), kind(s, "export_specifier"), !op(s, "type") } = 0.
+.decl type_decl(d: node)
+type_decl(d) :- kind(d, "type_alias_declaration") ; kind(d, "interface_declaration").
+type_decl(d) :- kind(d, "ambient_declaration"), child(d, c, _), (kind(c, "type_alias_declaration") ;
+    kind(c, "interface_declaration")).

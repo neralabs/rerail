@@ -1,6 +1,5 @@
 //! Where a rule reads `calls`: a rule that reads it only positively (never under `not`, a stop
-//! rule, a count or a position) matches nothing in a file where every `calls` is false. Also
-//! whether it reads `importTarget`, whose answer depends on files besides the one matched.
+//! rule, a count or a position) matches nothing in a file where every `calls` is false.
 
 use super::super::{AstMatcher, Semantic, stop_rule};
 use std::collections::BTreeSet;
@@ -13,21 +12,12 @@ pub(crate) fn calls_positive_only(matcher: &AstMatcher) -> bool {
     polarity.calls && !polarity.negative
 }
 
-/// Whether `matcher` or a utility it calls holds an `importTarget` term.
-pub(crate) fn reads_import_targets(matcher: &AstMatcher) -> bool {
-    let mut polarity = Polarity::default();
-    walk(matcher, false, &mut BTreeSet::new(), &mut polarity);
-    polarity.import_target
-}
-
 #[derive(Default)]
 struct Polarity {
     /// A `calls` term was found.
     calls: bool,
     /// One is read negatively, or where both readings matter.
     negative: bool,
-    /// An `importTarget` term was found.
-    import_target: bool,
 }
 
 /// Walks `matcher`'s terms. `negated` flips at `not`; a stop rule, a count, a position among
@@ -107,9 +97,8 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
                 both(rule, seen, out);
             }
         }
-        AstMatcher::Semantic(Semantic::ImportTarget(_)) => out.import_target = true,
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Semantic(Semantic::Resolves(_))
@@ -117,6 +106,7 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
         | AstMatcher::Semantic(Semantic::Arguments(_))
         | AstMatcher::Semantic(Semantic::Capture(_))
         | AstMatcher::Semantic(Semantic::Layout(_))
+        | AstMatcher::Semantic(Semantic::FilePath(_))
         | AstMatcher::Never => {}
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}

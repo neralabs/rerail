@@ -10,9 +10,6 @@ import {
 } from "../../../src/engine/native/native.js";
 import { applyCodeRuleConfig, resolveCodeRuleOptions } from "../../../src/engine/code-rule/code-rule-options.js";
 import { contentStorePath } from "../../../src/engine/native/rerail-build.js";
-import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
-
-const SECRET_NAMES = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
 
 /** The reference binary intentionally retains these reviewed defects. */
 const REFERENCE_BUGS: Record<string, true> = { B1: true, B2: true, B3: true, B5: true, B6: true, B7: true, B11: true, B12: true, B13: true, B14: true, B15: true, B19: true };
@@ -224,7 +221,7 @@ describe("semantic acceptance", () => {
       const root = mkdtempSync(join(tmpdir(), "rerail-semantic-async-storage-"));
       const native = new (loadNativeBinding().CodeRuleDslWorkspace!)();
       try {
-        const attachment = native.enableStorageAsync(root, contentStorePath(), SECRET_NAMES);
+        const attachment = native.enableStorageAsync(root, contentStorePath());
         expect(attachment).toBeInstanceOf(Promise);
         let continued = false;
         void Promise.resolve().then(() => { continued = true; });
@@ -287,7 +284,7 @@ describe("semantic acceptance", () => {
         execFileSync("git", ["init", "--quiet"], { cwd: root });
         execFileSync("git", ["add", "."], { cwd: root });
         execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
-        await native.enableStorageAsync(root, contentStorePath(), SECRET_NAMES);
+        await native.enableStorageAsync(root, contentStorePath());
         native.addCodeRule(packageCodeRule());
         const revision = await indexRepository(native);
         const results = [await allPages(native)];
@@ -323,11 +320,11 @@ describe("semantic acceptance", () => {
         execFileSync("git", ["init", "--quiet"], { cwd: root });
         execFileSync("git", ["add", "."], { cwd: root });
         execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "first"], { cwd: root });
-        await first.enableStorageAsync(root, contentStorePath(), SECRET_NAMES);
+        await first.enableStorageAsync(root, contentStorePath());
         writeFileSync(join(root, "pkg", "a.py"), "value = 2\n");
         execFileSync("git", ["add", "."], { cwd: root });
         execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "second"], { cwd: root });
-        await second.enableStorageAsync(root, contentStorePath(), SECRET_NAMES);
+        await second.enableStorageAsync(root, contentStorePath());
         second.addCodeRule(compile([clause("fresh", { regex: "2" })]));
         const revision = await indexRepository(second);
         const result = JSON.parse(await second.applyAsync(JSON.stringify({ revision: revision + 1, files: [], removed: [] }))).evaluation as Result;

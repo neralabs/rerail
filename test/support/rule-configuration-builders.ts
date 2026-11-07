@@ -79,8 +79,6 @@ export function testBundle(overrides: { noConsoleRevision?: number; honourSuppre
     id: "lint",
     name: "Lint",
     version: null,
-    packageName: null,
-    publisher: "rerail",
     category: "language",
     covers: "TypeScript",
     reason: "TypeScript files",

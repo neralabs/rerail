@@ -11,10 +11,12 @@
 //   For Rust and Python too, the `.generated` infix of the generated-file convention (#20) is not part of
 //   the stem: `builtins.generated.rs` is checked as `builtins`.
 // Exemption `data-roots`: `fixtures/**` and `packs/<id>/upstream/**` name files after upstream tools and
-// engine modules (fixtures/README.md: generators are `generate_<tool>.<ext>` beside their expected findings).
+// engine modules (fixtures/README.md: generators are `generate_<tool>.<ext>` beside their recordings).
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
 // Exemption `fixture-trees`: files below any `fixtures/` directory mimic the projects under test (framework
 // route files such as `pages/_app.tsx` or `app/(shop)/[id]/`); #3 decides where they may live.
+// Exemption `react-components`: under `playground/ui/src/`, React's convention names a component's `.tsx`
+// file after the component (PascalCase) and a hook's file after the hook (`useThing`, camelCase).
 
 import { extension, finding, isDataPath, isVendored, sortFindings } from "../lib.mjs";
 
@@ -32,7 +34,10 @@ function scriptProblem(path) {
   const base = segments.pop();
   const parts = base.split(".");
   parts.pop();
-  if (!KEBAB.test(parts[0] ?? "") || !parts.slice(1).every((part) => SUFFIX.test(part))) {
+  const react =
+    path.startsWith("playground/ui/src/") &&
+    ((base.endsWith(".tsx") && /^[A-Z][A-Za-z0-9]*$/.test(parts[0])) || /^use[A-Z][A-Za-z0-9]*$/.test(parts[0]));
+  if (!react && (!KEBAB.test(parts[0] ?? "") || !parts.slice(1).every((part) => SUFFIX.test(part)))) {
     return `${base} is not kebab-case`;
   }
   const bad = segments.find((segment) => !segment.startsWith(".") && !KEBAB.test(segment));

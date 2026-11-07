@@ -1,0 +1,30 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.input doc, node, field
+.decl in_scope(d: number)
+.decl m6(n: node)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("impl/sqlite/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/postgres/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/mariadb/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/doltdb/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/mongodb/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/neo4j/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/l1595_llm_cache/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("impl/common/**", p).
+out_scope(d) :- doc(d, p, _), glob("impl/read_through/**", p).
+out_scope(d) :- doc(d, p, _), glob("impl/sqlite/native_async_wrapper.py", p).
+out_scope(d) :- doc(d, p, _), glob("impl/sqlite/connection.py", p).
+m6(n) :- field(v2, "function", n), node(_, v2, "call", _, _).
+m6(n) :- field(v3, "attribute", n), node(_, v3, "attribute", _, _), field(v4, "function", v3), node(_, v4, "call", _, _).
+m6(n) :- field(v5, "name", n), node(_, v5, "function_definition", _, _).
+.output violation

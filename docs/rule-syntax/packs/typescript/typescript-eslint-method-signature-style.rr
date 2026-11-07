@@ -1,0 +1,55 @@
+.policy "typescript-eslint-method-signature-style" revision 4
+.description "Declare methods in TypeScript interfaces and object types as function properties, not method shorthand; property style is checked more strictly."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-b.rr"
+//   type_child
+
+// typescript-eslint's method-signature-style: methods of interfaces and object types are written one way.
+//   "property" (the default):  interface I { m(a: T): R }      → m: (a: T) => R   (checked more strictly)
+//   "method":                  interface I { m: (a: T) => R }  → m(a: T): R
+// Accessors (`get g(): T`) are left alone. The fix rewrites the member, except when its return type uses `this`,
+// inside a namespace or module (where interfaces merge), or (here) when another method has the same key: the
+// plugin then joins the overloads into one intersection, `m: ((a: A) => R) & ((b: B) => R)`.
+.violation method_signature_style(at: node, id: symbol, msg: symbol) code "@typescript-eslint/method-signature-style"
+    "{msg}"
+    suppress eslint "@typescript-eslint/method-signature-style"
+    suppress oxlint "method-signature-style"
+    fix safe to_property "Write the method as a property"
+    fix safe to_method "Write the property as a method"
+method_signature_style(m, "errorMethod", "Shorthand method signature is forbidden. Use a function property instead.") :-
+    !option("option", "method"), plain_method(m).
+method_signature_style(p, "errorProperty", "Function property signature is forbidden. Use a method shorthand instead.") :-
+    option("option", "method"), fn_property(p, _).
+
+// plain_method(m): a method signature, not get or set, in an interface or object type.
+.decl plain_method(m: node)
+plain_method(m) :- kind(m, "method_signature"), !op(m, "get"), !op(m, "set"), child(b, m, _),
+    (kind(b, "interface_body") ; kind(b, "object_type")).
+// fn_property(p, f): a property signature typed with a function type f: `p: () => void`, `p?: (() => void)`.
+.decl fn_property(p: node, f: node)
+fn_property(p, f) :- kind(p, "property_signature"), field(p, "type", ta), child(ta, t, _), !kind(t, "comment"),
+    type_child(t, f), kind(f, "function_type").
+
+// The parts of the rewrite: the key with `[…]`, `?` and `readonly` as written; type parameters and parameters;
+// the return type, `any` when there is none.
+.decl key_text(m: node, k: symbol)
+key_text(m, k) :- field(m, "name", n), text(n, x), (op(m, "?"), q = "?" ; !op(m, "?"), q = ""),
+    (op(m, "readonly"), r = "readonly " ; !op(m, "readonly"), r = ""), k = cat(r, cat(x, q)).
+.decl params_text(f: node, s: symbol)
+params_text(f, cat(t, p)) :- field(f, "parameters", ps), text(ps, p), field(f, "type_parameters", tp), text(tp, t).
+params_text(f, p) :- field(f, "parameters", ps), text(ps, p), !field(f, "type_parameters", _).
+.decl returns(m: node, r: symbol)
+returns(m, r) :- plain_method(m), field(m, "return_type", ta), child(ta, t, _), !kind(t, "comment"), text(t, r).
+returns(m, "any") :- plain_method(m), !field(m, "return_type", _).
+.decl no_fix(m: node)
+no_fix(m) :- plain_method(m), field(m, "return_type", ta), has(ta, _, "this_type").
+no_fix(m) :- plain_method(m), within(m, g), ts_module_decl(g).   // in a namespace, module or `declare global`
+no_fix(m) :- plain_method(m), key_text(m, k), child(b, m, _), child(b, o, _), o != m, plain_method(o), key_text(o, k).
+to_property(m, _, _) :- plain_method(m), !no_fix(m), key_text(m, k), params_text(m, p), returns(m, r)
+    => replace(m, `$k: $p => $r`).
+// No fix for a readonly property: the plugin's `readonly m(): R` is no valid member.
+to_method(p, _, _) :- fn_property(p, f), !op(p, "readonly"), key_text(p, k), params_text(f, a), field(f, "return_type", t), text(t, r)
+    => replace(p, `$k$a: $r`).

@@ -1,0 +1,26 @@
+.policy "ruff-pgh004-blanket-noqa" revision 2
+.description "Name specific rule codes in noqa comments instead of suppressing every check, and put a colon before the codes; a blanket noqa hides unrelated problems."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PGH004 (pygrep-hooks): a `# noqa` that silences every code: no codes, or codes without the colon (which
+// Ruff reads as a blanket). Also a file-wide `# ruff: noqa` or `# flake8: noqa` with no codes. A file whose own
+// `# ruff: noqa: …` lists PGH004 is exempt. A blanket `noqa` does not hide this finding, so there is no
+// suppression line.
+//   x = 1  # noqa                ← PGH004
+//   x = 2  # noqa X100           ← PGH004: missing colon
+//   # ruff: noqa                 ← PGH004: file-wide
+//   x = 2  # noqa: X100          not reported
+//   x = 2  # noqa : X300         not reported: Ruff allows the space
+#include "python/misc2-noqa.rr"
+
+.violation PGH004(at: node, msg: symbol) code "PGH004" "{msg}"
+PGH004(c, "Replace the blanket `noqa` with the codes it should silence, as in `# noqa: F401`, so other problems on this line still surface; delete it if nothing needs silencing.") :-
+    noqa_blanket(c, "none"), !pgh004_exempt(c).
+PGH004(c, "Add a colon after `noqa` before the codes, as in `# noqa: F401`; without it the comment silences every check on the line, not just those codes.") :-
+    noqa_blanket(c, "missing"), !pgh004_exempt(c).
+PGH004(c, "Name the specific rule codes in this file-wide `noqa` comment, as in `# ruff: noqa: F401`, instead of silencing every check for the whole file.") :-
+    noqa_file_blanket(c), !pgh004_exempt(c).
+.decl pgh004_exempt(c: node)
+pgh004_exempt(c) :- kind(c, "comment"), docof(c, d), noqa_file_exempts(d, "PGH004").

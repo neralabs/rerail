@@ -1,0 +1,22 @@
+.policy "typescript-eslint-ban-tslint-comment" revision 4
+.description "Remove TSLint enable and disable comments; TSLint is deprecated and they no longer do anything."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-text.rr"
+//   js_comment(c, t, v)
+
+// typescript-eslint's ban-tslint-comment: a comment whose value starts (after blanks) with a TSLint switch,
+// `tslint:enable` or `tslint:disable`, optionally `-line` or `-next-line`, then `:`, a blank or the end.
+//   // tslint:disable-next-line         reported, and removed by the fix
+//   /* tslint:enable:no-console */      reported
+//   // tslint:disabled                  fine: not a switch
+//   // here tslint:disable is quoted    fine: the value must start with it
+.violation ban_tslint_comment(at: node) code "@typescript-eslint/ban-tslint-comment"
+    "Delete the \"{at}\" comment; TSLint is deprecated and nothing reads it."
+    suppress eslint "@typescript-eslint/ban-tslint-comment"
+    suppress oxlint "ban-tslint-comment"
+    fix safe remove_comment "Remove the TSLint comment"
+ban_tslint_comment(c) :- js_comment(c, _, v), match("\\s*tslint:(?:enable|disable)(?:-line|-next-line)?(?:[:\\s][\\s\\S]*)?", v).
+remove_comment(c) => delete(c).

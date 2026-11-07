@@ -19,8 +19,8 @@ const LINKING_TERMINAL_MARKERS = [
 ] as const;
 
 /**
- * `TERM_PROGRAM` of terminals that draw OSC 8. OMP's own list (pi-tui `KNOWN_TERMINALS`), plus Orca, whose links
- * draw in Claude Code's status line.
+ * `TERM_PROGRAM` of terminals that draw OSC 8. OMP's own list (pi-tui `KNOWN_TERMINALS`), plus Orca, whose links were
+ * verified in Claude Code's status line (docs/in-session-surfaces.md).
  */
 const LINKING_TERMINAL_PROGRAMS = new Set(["kitty", "ghostty", "wezterm", "iterm.app", "vscode", "alacritty", "orca"]);
 

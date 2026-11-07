@@ -1,14 +1,9 @@
-# Rerail rule pack: JavaScript and TypeScript (ESLint core and eslint-plugin-unicorn)
+# Rerail rule pack: JavaScript and TypeScript (ESLint core)
 
-121 code rules for JavaScript and TypeScript source, with their default options: 118 ported from ESLint 10.11.0's core
-rules and 3 from eslint-plugin-unicorn 76.0.0, which run on `.js`, `.jsx`, `.mjs` and `.cjs` files only, as unicorn
-lints them. 36 start on; 85 start off (`"on": false`) because neither tool's `recommended` configuration turns them
-on, so they are experimental. Each shipped rule is scored against its tool's own findings on the tool's test cases and
-on their rename variants (each case with its identifiers renamed, keeping literals and the names' order, and linted by
-the tool again: `holds-under-rename`), and against the labelled lines of real-code samples
-([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with every
-disagreement declared in `divergences.json`. The conformance check
-([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules and reports the candidates.
+71 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
+24 start on; 47 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
+Each shipped rule is scored against ESLint's own findings on ESLint's test cases, through the engine's production
+workspace path, with every disagreement declared in `divergences.json` (none today).
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack javascript"`, against the
 [pack structure and validation contract](../../docs/pack-format.md).
@@ -19,13 +14,12 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack java
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's (and candidate's) upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with ESLint |
-| `upstream/eslint/` | ESLint's copied test cases (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
-| `upstream/generate.mjs` | ESLint's generator |
-| `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases with their rename variants, its expected findings, its generator (`generate.mjs`), and its real-code samples' `samples.lock` and `SAMPLES.md` |
-| `upstream/<tool>/gates.yaml` | The tool's upstream manifest: its pins, approved configurations, the file types it lints and the facts of every rule the pack ports ([docs/upstream.md](../../docs/upstream.md)) |
+| `upstream/eslint/` | ESLint's copied test cases (`fixtures/`) and its recording (`fixtures.expected.json`) |
+| `upstream/generate.mjs` | ESLint's recorder |
+| `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases, its recording and its recorder (`generate.mjs`) |
+| `upstream/<tool>/gates.yaml`, `recording.lock`, `goldens.tsv` | The port readiness gates' manifest for the tool, the lock naming its recordings (`recording.json`, `corpus.json`, kept out of git, by sha256) and its goldens ([docs/port-readiness.md](../../docs/port-readiness.md)) |
 | `candidates/rules/` | Ports of ESLint and eslint-plugin-unicorn rules still being evaluated: listed in `conformance.json`, scored and reported, never gated, never shipped |
-| `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
-| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
+| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
 The pack is recommended for a repository with JavaScript or TypeScript source files. Files under test, script and
 fixture folders, test and spec files, and configuration files (`*.config.*`, `.*rc.*`) do not count.
@@ -38,15 +32,15 @@ TypeScript they report overloads, declaration merges and type names, and with bo
 port would report the same violation again. `no-loss-of-precision` and `prefer-spread`, which typescript-eslint leaves
 to the core rule on TypeScript, run on every ECMA file.
 
-Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
-([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
-under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/javascript.ts`) runs each tool's generator
-against the pinned tool versions and upstream commit (the generator's header lists them):
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/javascript.ts`) runs each tool's recorder against the pinned tool versions and upstream
+commit (the recorder's header lists them):
 
 ```sh
 npm run fixtures:derive -- --pack javascript                                 # every tool
 npm run fixtures:derive -- --pack javascript --tool eslint-plugin-unicorn    # one
-npm run fixtures:stage -- --pack javascript --tool eslint-plugin-unicorn     # copy what changed into upstream/eslint-plugin-unicorn/publish/
+npm run fixtures:push -- --pack javascript --tool eslint-plugin-unicorn      # on your own branch: archive it and rewrite its test-data.lock
 ```
 
 Scoring one rule with every false positive and false negative printed:
@@ -61,7 +55,7 @@ What each rule matches beyond its one-line description: exact matching, edge cas
 
 ### `eslint-accessor-pairs`
 
-Port of ESLint accessor-pairs. Default options: setWithoutGet true, getWithoutSet false, enforceForClassMembers true, enforceForTSTypes false. Covers object literals, classes (static and instance members paired separately) and property descriptors passed to Object.defineProperty, Reflect.defineProperty, Object.create or Object.defineProperties. Static keys pair by ESLint's getStaticPropertyName; other keys by their tokens. A descriptor is only the third argument of defineProperty; a decorated class accessor is reported at its first decorator, where ESLint's node starts.
+Port of ESLint accessor-pairs. Default options: setWithoutGet true, getWithoutSet false, enforceForClassMembers true, enforceForTSTypes false. Covers object literals, classes (static and instance members paired separately) and property descriptors passed to Object.defineProperty, Reflect.defineProperty, Object.create or Object.defineProperties. Static keys pair by ESLint's getStaticPropertyName; other keys by their tokens.
 
 ### `eslint-arrow-body-style`
 
@@ -73,7 +67,7 @@ Port of ESLint capitalized-comments, default "always". Tests the first non-white
 
 ### `eslint-class-methods-use-this`
 
-Port of ESLint class-methods-use-this, default options. Flags non-static, non-constructor methods and class fields initialized with a function/arrow whose own body never uses this or super. Nested functions, static blocks and nested class field initializers have their own this; arrows share it. An accessor field (AccessorProperty) is not treated as a field. As in ESLint, a function expression that is an instance method's computed key (`[function () {}]() {}`) is checked as a method too and reported at the method. JavaScript files only.
+Port of ESLint class-methods-use-this, default options. Flags non-static, non-constructor methods and class fields initialized with a function/arrow whose own body never uses this or super. Nested functions, static blocks and nested class field initializers have their own this; arrows share it. An accessor field (AccessorProperty) is not treated as a field.
 
 ### `eslint-default-case`
 
@@ -109,7 +103,7 @@ Port of ESLint guard-for-in. Accepted bodies: empty, an if statement, or a block
 
 ### `eslint-id-length`
 
-Port of ESLint id-length, default min 2 (graphemes), no max, properties always. Covers variables, parameters, functions, classes, members, imports, destructuring targets and assigned properties. As ESLint's parent-type table does, it also checks a class declaration's superclass identifier (`extends B`), the identifier key of a class method or field (`[a]() {}`), an arrow function's bare identifier body (`() => a`), a private name assigned through a member (`a.b.#x = …`) and a TypeScript parameter property only when it has a default; a class expression's name is not checked. Identifier names compare and are measured by their cooked name (`value: { name: true }`), so an escaped identifier counts its decoded graphemes (`\u0061` counts 1), and a private name is measured without its `#`. Any `min` and `max` fill the length regexes, and `exceptions` (exact names) and `exceptionPatterns` exempt a name in both directions, as ESLint's do. Two limits: `min` and `max` must be from 0 to 200 (ESLint takes any integer; here the bound is a regex repetition count, which the engine refuses when negative and past its size limit somewhat above 200, so the rule does not compile), and each `exceptionPatterns` entry is read as a Rust `regex` pattern, not as a JavaScript `RegExp` with the `u` flag, so lookaround and backreferences are refused.
+Port of ESLint id-length, default min 2 (graphemes), no max, properties always. Covers variables, parameters, functions, classes, members, imports, destructuring targets and assigned properties.
 
 ### `eslint-max-classes-per-file`
 
@@ -177,7 +171,7 @@ Port of ESLint no-dupe-class-members. Static member names follow ESLint's getSta
 
 ### `eslint-no-dupe-else-if`
 
-Port of ESLint no-dupe-else-if, ESLint's set cover written as nested quantifiers. A test is reported when it, or (for an `&&` test) one of its `&&` operands, has every `||` operand O covered: some earlier test of the else-if chain (`else if` only, not `else { if … }`) has an `||` operand whose `&&` operands each equal some `&&` operand of O. Operands split through parentheses (ESTree has none); "for every" is `not` over the failing operand, "some operand of O" climbs from a candidate through `&&` and parentheses to O (`compare` text `node`), and operands compare by tokens with `||`/`&&` in either order (ESLint's equal). No depth bound beyond the engine's utility recursion limit (256). Checked against ESLint 10.11.0 on its fixtures and on 4,500 random else-if chains (operand depth 3–4, nested chains): no difference.
+Port of ESLint no-dupe-else-if. Flags an else-if test that repeats an earlier test of the chain, is an operand of an earlier `||` test, or is an `&&` whose operand repeats an earlier test (one level only). Tests are compared by tokens, with `||`/`&&` operands in either order (ESLint's equal). Divergence: ESLint's full or/and set-cover over the whole chain is not expressed.
 
 ### `eslint-no-dupe-keys`
 
@@ -213,7 +207,7 @@ Port of ESLint no-eq-null. Reports `==` and `!=` with a `null` operand, looking 
 
 ### `eslint-no-eval`
 
-Port of ESLint no-eval, default allowIndirect false. Indirect uses flagged: references to the global eval; eval read from a global object (global/window/globalThis, when declared by the configured languageOptions or at the top level of a script); and `this.eval` where `this` is the global object (top level of a script or CommonJS file, or a non-strict function via `resolves.this` with `sloppyFunctions`, strictness from languageOptions) whose call binds the default `this`. Which calls rebind `this` (methods, bind/call/apply, thisArg callbacks, capitalized constructors) is ESLint's heuristic, approximated structurally. Shadowing resolved with `resolves`. In a script, a top-level declaration of `eval` with an initializer (`var`/`let`/`const`, destructured, or a `for-in/of` `var` head) is reported at its name, as ESLint reports that write reference to the global eval variable.
+Port of ESLint no-eval, default allowIndirect false. Indirect uses flagged: references to the global eval; eval read from a global object (global/window/globalThis, when declared by the configured languageOptions or at the top level of a script); and `this.eval` where `this` is the global object (top level of a script or CommonJS file, or a non-strict function via `resolves.this` with `sloppyFunctions`, strictness from languageOptions) whose call binds the default `this`. Which calls rebind `this` (methods, bind/call/apply, thisArg callbacks, capitalized constructors) is ESLint's heuristic, approximated structurally. Shadowing resolved with `resolves`.
 
 ### `eslint-no-extend-native`
 
@@ -245,7 +239,7 @@ Port of ESLint no-iterator. Member accesses whose static property name (getStati
 
 ### `eslint-no-labels`
 
-Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. On the real-code samples (`docs/upstream.md#samples`), its labels in Flow-annotated files are declared divergences (`not-comparable` in `divergences.json`): the pinned ESLint cannot parse those files.
+Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define.
 
 ### `eslint-no-lonely-if`
 
@@ -253,11 +247,11 @@ Port of ESLint no-lonely-if. Only when the else block's braces are not necessary
 
 ### `eslint-no-loss-of-precision`
 
-Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's `toPrecision(n)` at their own count `n` of significant digits (a float's trailing zeros count, an integer's do not; `n` is spelled out as decimal text by `replace` steps), as ESLint compares them, so `9223372036854775808`, which a double stores exactly, passes, and overflow to Infinity, underflow to zero and more than 100 digits report; hex and octal literals checked like binary by significant-bit span.
+Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's (String(v) through `transform` with `value: true`, overflow to Infinity and underflow to zero included); hex and octal literals checked like binary by significant-bit span.
 
 ### `eslint-no-magic-numbers`
 
-Port of ESLint no-magic-numbers. Numeric literals (with a leading unary +/-) are flagged except variable initialisers, object properties and their keys (plain, computed, getter, setter and method keys in object literals and patterns; class member keys are flagged), member assignments (an assignment to a possibly parenthesised identifier is flagged), parseInt radixes (the second argument by position, comments ignored, of `parseInt`, `Number.parseInt`, `(Number).parseInt`, `Number['parseInt']` or ``Number[`parseInt`]``) and JSX containers. Class fields are read in both the JavaScript (`field_definition`) and TypeScript (`public_field_definition`) grammars. Options (ignore, ignoreArrayIndexes, ignoreDefaultValues, ignoreClassFieldInitialValues, enforceConst, detectObjects, ...) in the `options` define.
+Port of ESLint no-magic-numbers. Numeric literals (with a leading unary +/-) are flagged except variable initialisers, object properties, member assignments, parseInt radixes and JSX containers. Options (ignore, ignoreArrayIndexes, ignoreDefaultValues, ignoreClassFieldInitialValues, enforceConst, detectObjects, ...) in the `options` define.
 
 ### `eslint-no-multi-assign`
 
@@ -299,10 +293,6 @@ Only flags `Object()` / `new Object()` without arguments when `Object` resolves 
 
 Matches member accesses whose static property name (ESLint getStaticPropertyName) is `__proto__`: a non-computed name with identifier escapes decoded, or a string or substitution-free template index by its cooked value.
 
-### `eslint-no-prototype-builtins`
-
-Port of ESLint no-prototype-builtins. On the real-code samples (`docs/upstream.md#samples`), its labels in Flow-annotated files are declared divergences (`not-comparable` in `divergences.json`): the pinned ESLint cannot parse those files.
-
 ### `eslint-no-redeclare`
 
 Flags each definition after the first in the same scope (`binds.redefines`); with builtinGlobals, definitions of a configured or `/* global */`-declared global (`binds.builtin`). Inside `/* global */` comments it reports per item (M12a eslintDirective parse): an item naming a builtin/configured global, one an identifier declares in the global scope, or one an earlier global comment names.
@@ -317,7 +307,7 @@ Matches string literals and untagged, substitution-free template literals whose 
 
 ### `eslint-no-self-assign`
 
-Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. On the real-code samples (`docs/upstream.md#samples`), its labels in Flow-annotated files are declared divergences (`not-comparable` in `divergences.json`): the pinned ESLint cannot parse those files.
+Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Unrolled to 3 nested containers.
 
 ### `eslint-no-self-compare`
 
@@ -367,6 +357,10 @@ Fix removes the label only when no comment sits between label and body, the body
 
 Uses `binds.used: false` on the private name: writes alone don't count as use for fields and methods, any reference counts for accessors. Reported at the last declaration. ESLint 10.11.0 defaults.
 
+### `eslint-no-unused-vars`
+
+Covers variables, parameters, caught errors, imports, types and type parameters. Reported where ESLint reports (the last write from the variable's own function, else its first definition) via `binds` and `resolves.write: "last"`; options filter on those. Also flags names matching an ignore pattern that are in fact used. An unused `/* global */` name with no declaration is reported at the name in the first comment that declares it (first three names of a comment).
+
 ### `eslint-no-useless-call`
 
 thisArg must be token-equal (ESLint equalTokens) to the object `f` is read from, or null/undefined when `f` is not a member access.
@@ -389,7 +383,7 @@ Flags an empty constructor only in a class without `extends`; otherwise a constr
 
 ### `eslint-one-var`
 
-Port of ESLint one-var with default options (`always`). var scope is the enclosing function, let/const scope the enclosing block. `using` and `await using` declarations (JavaScript files only: the TypeScript grammar has no `using_declaration`) are block-scoped kinds of their own under `always` (the default, or the `using`/`awaitUsing`/`initialized` options); their `consecutive` and `never` modes are not modelled.
+Port of ESLint one-var with default options (`always`). var scope is the enclosing function, let/const scope the enclosing block. `using` declarations are not modelled (grammar gap).
 
 ### `eslint-operator-assignment`
 
@@ -397,7 +391,7 @@ Default option `always`. References compared like ESLint's isSameReference witho
 
 ### `eslint-prefer-destructuring`
 
-Checks declarations and assignments, array and object. Object destructuring only where the target name equals the property name. Array: plain (non-optional) access with an integer literal index (Number.isInteger); super and #private accesses skipped. `using` and `await using` declarators are skipped, as ESLint skips them. Fix (object declarations only) as ESLint: only when no comment lies outside the object.
+Checks declarations and assignments, array and object. Object destructuring only where the target name equals the property name. Array: plain (non-optional) access with an integer literal index (Number.isInteger); super and #private accesses skipped. Fix (object declarations only) as ESLint: only when no comment lies outside the object.
 
 ### `eslint-prefer-exponentiation-operator`
 
@@ -409,7 +403,7 @@ Flags `parseInt` / `Number.parseInt` (global, scope-resolved) with a string lite
 
 ### `eslint-prefer-object-has-own`
 
-Flags `Object.prototype.hasOwnProperty.call`, `Object.hasOwnProperty.call` and `({}).hasOwnProperty.call` when Object is the global. The `({})` form has no Object token to resolve and keeps an approximate scope graph: an `Object` parameter, declaration or import in scope silences it, as does a `/* global Object: off */` comment, which leaves ESLint no Object variable.
+Flags `Object.prototype.hasOwnProperty.call`, `Object.hasOwnProperty.call` and `({}).hasOwnProperty.call` when Object is the global. The `({})` form has no Object token to resolve and keeps an approximate scope graph.
 
 ### `eslint-prefer-spread`
 
@@ -441,7 +435,7 @@ Flags an identifier declarator when an earlier identifier declarator of the same
 
 ### `eslint-strict`
 
-Default `safe` mode: `global` for CommonJS or globalReturn, else `function`. Each check gated on the case's languageOptions as ESLint picks the mode: module code reports every directive as 'module'; impliedStrict (outside modules) as 'implied'. A missing directive is reported at the function as espree places it: a method's at its parameter list. A function in a method's computed key is outside the method. Non-simple parameters are read in both grammars (JavaScript's `assignment_pattern`/patterns, TypeScript's parameter wrappers).
+Default `safe` mode: `global` for CommonJS or globalReturn, else `function`. Each check gated on the case's languageOptions as ESLint picks the mode: module code reports every directive as 'module'; impliedStrict (outside modules) as 'implied'.
 
 ### `eslint-use-isnan`
 
@@ -453,7 +447,7 @@ Default requireStringLiterals false. Also flags the global `undefined` (scope-re
 
 ### `eslint-vars-on-top`
 
-A var must sit directly in a program, function body or static block, preceded only by declarations (after a leading run of directives and imports, except in static blocks). A top-level `declare var` (TypeScript) is a var at the top of the program, reported from `declare` as typescript-eslint places it.
+A var must sit directly in a program, function body or static block, preceded only by declarations (after a leading run of directives and imports, except in static blocks).
 
 ### `eslint-yoda`
 

@@ -13,24 +13,20 @@ const COVERAGE_EXAMPLES: usize = 3;
 
 /// A witness's violation id and reported (anchored) span, and whether the anchor fell back to the
 /// witness span. Complete results, result pages and stored pages order and identify violations by
-/// these, so every result path agrees on them. A witness without a span is identified by its path
-/// and the empty range at its start.
+/// these, so every result path agrees on them.
 fn violation_identity(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     witness: &Witness,
-) -> (String, Option<Span>, bool) {
+) -> (String, Span, bool) {
     let (span, fallback) = violations::anchored_span(&clause.violation.anchor, witness);
-    let (start, end) = witness
-        .span
-        .map_or((0, 0), |span| (span.start_byte, span.end_byte));
     let mut id = violation_id(
         &code_rule.id,
         &clause.id,
         &clause.violation.code,
         &witness.path,
-        start as u64,
-        end as u64,
+        witness.span.start_byte as u64,
+        witness.span.end_byte as u64,
     );
     // `each`: violations at one witness differ by the binding they report, so its range joins the id.
     if let Some(binding) = clause
@@ -48,8 +44,11 @@ fn violation_identity(
 pub(crate) fn violation_from_witness(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
-    witness: Witness,
+    mut witness: Witness,
 ) -> Value {
+    if let Some(violation) = witness.sql_violation.take() {
+        return violation;
+    }
     let (id, span, fallback) = violation_identity(code_rule, clause, &witness);
     let mode = code_rule
         .scope
@@ -63,21 +62,20 @@ pub(crate) fn violation_from_witness(
         "mode": mode.as_str(),
         "message": witness.message.unwrap_or_else(|| clause.violation.message.clone()),
         "path": witness.path,
+        "span": span,
         "captures": witness.captures,
         "variables": if fallback { json!({ "anchorFallback": true }) } else { json!({}) },
     });
-    let object = violation.as_object_mut().expect("finding object");
-    // A violation about the whole file has no span.
-    if let Some(span) = span {
-        object.insert("span".to_owned(), json!(span));
-    }
     if let Some(fix) = witness.fix {
-        object.insert("fix".to_owned(), fix);
+        violation
+            .as_object_mut()
+            .expect("finding object")
+            .insert("fix".to_owned(), fix);
     }
     violation
 }
 
-pub(super) fn violation_id(
+pub(in crate::code_rule_dsl) fn violation_id(
     code_rule: &str,
     clause: &str,
     code: &str,

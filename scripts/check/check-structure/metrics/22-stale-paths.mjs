@@ -3,7 +3,7 @@
 // Predicate: no tracked text file mentions a retired location: `rerail-fixtures/` (the old fixtures
 // repository), `tempo-oracles` (its earlier name), `code-rule-dsl/rules/opt-in` and `policies/rule-packs`
 // (the pre-pack rule homes). Each occurrence is a finding at its line.
-// Exemption `history`: `CHANGELOG.md`, `.changelog/*.md` and `.changeset/*.md` record what changed, old paths included.
+// Exemption `history`: `CHANGELOG.md` and `.changeset/*.md` record what changed, old paths included.
 // Exemption `structure-gate`: this gate (`scripts/check-structure*`), its tests in `test/structure/` and
 // docs/repository-structure.md name the stale paths in order to forbid them.
 
@@ -18,7 +18,7 @@ export const STALE = ["rerail-fixtures/", "tempo-oracles", "code-rule-dsl/rules/
 function exempt(path) {
   return (
     path === "CHANGELOG.md" ||
-    /^\.(?:changelog|changeset)\/[^/]+\.md$/.test(path) ||
+    /^\.changeset\/[^/]+\.md$/.test(path) ||
     path === "docs/repository-structure.md" ||
     isStructureGate(path)
   );

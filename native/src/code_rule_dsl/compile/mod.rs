@@ -5,15 +5,15 @@ mod binding_tests;
 mod binds;
 mod compare;
 pub(crate) mod config;
-mod define;
+pub(super) mod define;
 mod dialect;
 pub(crate) mod documents;
-mod evidence;
+pub(super) mod evidence;
 #[cfg(test)]
 mod examples_tests;
 mod format_args;
-mod import_target;
 mod layout;
+mod line_state;
 mod nth_child;
 pub(crate) mod options;
 mod order;
@@ -32,11 +32,11 @@ use super::language::adapter::{Refusal, gate};
 use super::language::{CodeRuleLanguage, Semantic, Support};
 use super::matcher::{
     AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
-    UtilOrigin, UtilTable, collect_variables, reads_import_targets, reads_values,
+    UtilOrigin, UtilTable, collect_variables, reads_values,
 };
 use super::model::{
-    Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexSource,
-    RuleMode, ViolationSpec,
+    Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexLines,
+    RegexOptions, RegexSource, RuleMode, ViolationSpec,
 };
 use super::soundness::sound_under_errors;
 use super::violations;
@@ -258,11 +258,20 @@ fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
         .map_err(|error| invalid(format!("{path}: {error}")))
 }
 
-/// The code rule's id, scope, clauses and required capabilities.
+type CompiledDocument = (
+    String,
+    RuleMode,
+    CodeRuleScope,
+    Vec<CompiledClause>,
+    Value,
+    Option<usize>,
+);
+
+/// The code rule's id, scope, clauses, required capabilities, and aggregate reporting gate.
 pub(super) fn compile_document(
     document: &Value,
     capabilities: &Capabilities,
-) -> Result<(String, RuleMode, CodeRuleScope, Vec<CompiledClause>, Value)> {
+) -> Result<CompiledDocument> {
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
     let root = object(document, "/")?;
@@ -297,6 +306,32 @@ pub(super) fn compile_document(
     if clauses.is_empty() {
         return Err(invalid("/clauses must not be empty"));
     }
+    let gates = clauses
+        .iter()
+        .filter_map(|clause| clause.get("define")?.get("report_when"))
+        .collect::<Vec<_>>();
+    if gates.len() > 1 {
+        return Err(invalid("report_when must be declared once per document"));
+    }
+    let report_count_gt = gates
+        .first()
+        .copied()
+        .map(|value| {
+            let gate = object(value, "/report_when")?;
+            reject_unknown(gate, &["count"], "/report_when")?;
+            let count = object(
+                gate.get("count")
+                    .ok_or_else(|| invalid("/report_when/count is required"))?,
+                "/report_when/count",
+            )?;
+            reject_unknown(count, &["gt"], "/report_when/count")?;
+            count
+                .get("gt")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| invalid("/report_when/count/gt must be a nonnegative integer"))
+        })
+        .transpose()?;
     let defines = Defines {
         utils: collect_defines(clauses, capabilities)?,
         options,
@@ -344,6 +379,7 @@ pub(super) fn compile_document(
         scope,
         compiled,
         json!({ "ast": ast, "llm": requires_llm }),
+        report_count_gt,
     ))
 }
 
@@ -358,7 +394,11 @@ fn compile_clause(
     let clause = object(value, path)?;
     reject_unknown(
         clause,
-        &["id", "forbid", "require_each", "budget", "llm", "violation"],
+        if cfg!(test) {
+            &["id", "forbid", "require_each", "budget", "relational", "llm", "violation"]
+        } else {
+            &["id", "forbid", "require_each", "budget", "llm", "violation"]
+        },
         path,
     )?;
     let id = required_str(value, "id", path)?.to_owned();
@@ -498,6 +538,16 @@ fn compile_clause(
                 distinct,
             }
         }
+        #[cfg(test)]
+        "relational" => ClauseKind::Relational(
+            crate::code_rule_dsl::residency::admission::relational::compile::compile(
+                &clause["relational"],
+                &format!("{path}/relational"),
+                capabilities,
+                defines,
+                required_ast,
+            )?,
+        ),
         "llm" => {
             *requires_llm = true;
             ClauseKind::Llm
@@ -514,16 +564,30 @@ fn compile_clause(
         &kind,
         &format!("{path}/violation"),
     )?;
+    #[cfg(test)]
+    let data_layer = clause.get("relational").and_then(|relational| {
+        crate::code_rule_dsl::waves::relational::compile::compile(
+            relational,
+            &format!("{path}/relational"),
+            capabilities,
+            defines,
+            required_ast,
+        )
+        .ok()
+        .map(std::sync::Arc::new)
+    });
     Ok(CompiledClause {
         id,
         violation,
         kind,
         synthetic: false,
         decision: false,
+        #[cfg(test)]
+        data_layer,
     })
 }
 
-fn compile_query(
+pub(in crate::code_rule_dsl) fn compile_query(
     value: &Value,
     path: &str,
     capabilities: &Capabilities,
@@ -531,6 +595,124 @@ fn compile_query(
     required_ast: &mut BTreeSet<(String, String)>,
 ) -> Result<Query> {
     compile_query_as(value, path, capabilities, defines, required_ast, false)
+}
+
+fn compile_regex_options(
+    spec: &Map<String, Value>,
+    path: &str,
+    capabilities: &Capabilities,
+) -> Result<RegexOptions> {
+    let patterns = |value: Option<&Value>, at: &str| -> Result<Vec<Regex>> {
+        let Some(value) = value else {
+            return Ok(Vec::new());
+        };
+        let values = value
+            .as_array()
+            .ok_or_else(|| invalid(format!("{at} must be an array")))?;
+        if values.len() > 64 {
+            return Err(invalid(format!("{at} allows at most 64 patterns")));
+        }
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, value)| {
+                let at = format!("{at}/{i}");
+                let text = bounded_text(
+                    Some(value),
+                    &at,
+                    "maxRegexPatternBytes",
+                    capabilities.limits.max_regex_pattern_bytes,
+                )?;
+                Regex::new(text).map_err(|error| invalid(format!("{at}: {error}")))
+            })
+            .collect()
+    };
+    let lines = spec
+        .get("lines")
+        .map(|value| -> Result<RegexLines> {
+            if spec.get("source").and_then(Value::as_str) != Some("file.content") {
+                return Err(invalid(format!("{path}/regex/lines requires file.content")));
+            }
+            let at = format!("{path}/regex/lines");
+            let value = object(value, &at)?;
+            reject_unknown(
+                value,
+                &[
+                    "include",
+                    "exclude",
+                    "first",
+                    "terminators",
+                    "state",
+                    "indentation",
+                ],
+                &at,
+            )?;
+            let first = match value.get("first") {
+                None => false,
+                Some(value) => value
+                    .as_bool()
+                    .ok_or_else(|| invalid(format!("{at}/first must be boolean")))?,
+            };
+            Ok(RegexLines {
+                include: patterns(value.get("include"), &format!("{at}/include"))?,
+                exclude: patterns(value.get("exclude"), &format!("{at}/exclude"))?,
+                first,
+                lf_only: match value.get("terminators").and_then(Value::as_str) {
+                    None if !value.contains_key("terminators") => false,
+                    Some("python") => false,
+                    Some("lf") => true,
+                    _ => return Err(invalid(format!("{at}/terminators must be python or lf"))),
+                },
+                state: value
+                    .get("state")
+                    .map(|v| {
+                        line_state::state(
+                            v,
+                            &format!("{at}/state"),
+                            capabilities.limits.max_regex_pattern_bytes,
+                        )
+                    })
+                    .transpose()?,
+                indentation: value
+                    .get("indentation")
+                    .map(|v| {
+                        line_state::indentation(
+                            v,
+                            &format!("{at}/indentation"),
+                            capabilities.limits.max_regex_pattern_bytes,
+                        )
+                    })
+                    .transpose()?,
+            })
+        })
+        .transpose()?;
+    let content = spec
+        .get("content")
+        .map(|v| -> Result<(Vec<Regex>, Vec<Regex>)> {
+            let at = format!("{path}/regex/content");
+            if spec.get("source").and_then(Value::as_str) != Some("file.content") {
+                return Err(invalid(format!("{at} requires file.content")));
+            }
+            let value = object(v, &at)?;
+            reject_unknown(value, &["include", "exclude"], &at)?;
+            Ok((
+                patterns(value.get("include"), &format!("{at}/include"))?,
+                patterns(value.get("exclude"), &format!("{at}/exclude"))?,
+            ))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(RegexOptions {
+        include: patterns(spec.get("include"), &format!("{path}/regex/include"))?,
+        exclude: patterns(spec.get("exclude"), &format!("{path}/regex/exclude"))?,
+        content_include: content.0,
+        content_exclude: content.1,
+        lines,
+        paths: spec
+            .get("paths")
+            .map(|value| compile_scope(Some(value)))
+            .transpose()?,
+    })
 }
 
 /// `compile_query`, for a `calls` term's seed query where `seed`: its rules cannot hold `calls`.
@@ -543,8 +725,8 @@ fn compile_query_as(
     seed: bool,
 ) -> Result<Query> {
     let query = object(value, path)?;
-    reject_unknown(query, &["regex", "ast", "select_when", "file"], path)?;
-    let forms = ["regex", "ast", "select_when", "file"]
+    reject_unknown(query, &["regex", "ast", "select_when"], path)?;
+    let forms = ["regex", "ast", "select_when"]
         .into_iter()
         .filter(|key| query.contains_key(*key))
         .collect::<Vec<_>>();
@@ -559,7 +741,13 @@ fn compile_query_as(
                 query.get("regex").expect("form exists"),
                 &format!("{path}/regex"),
             )?;
-            reject_unknown(regex, &["source", "pattern"], &format!("{path}/regex"))?;
+            reject_unknown(
+                regex,
+                &[
+                    "source", "pattern", "include", "exclude", "lines", "paths", "content",
+                ],
+                &format!("{path}/regex"),
+            )?;
             let pattern = bounded_text(
                 regex.get("pattern"),
                 &format!("{path}/regex/pattern"),
@@ -583,15 +771,8 @@ fn compile_query_as(
                 regex: Regex::new(pattern)
                     .map_err(|error| invalid(format!("{path}/regex/pattern: {error}")))?,
                 source,
+                options: Box::new(compile_regex_options(regex, path, capabilities)?),
             })
-        }
-        "file" => {
-            let file = object(
-                query.get("file").expect("form exists"),
-                &format!("{path}/file"),
-            )?;
-            reject_unknown(file, &[], &format!("{path}/file"))?;
-            Ok(Query::File)
         }
         "ast" => {
             let ast = object(
@@ -602,6 +783,7 @@ fn compile_query_as(
                 ast,
                 &[
                     "language",
+                    "syntax",
                     "rule",
                     "utils",
                     "constraints",
@@ -613,6 +795,16 @@ fn compile_query_as(
                 ],
                 &format!("{path}/ast"),
             )?;
+            let invalid_syntax = match ast.get("syntax") {
+                None => None,
+                Some(Value::String(value)) if value == "valid" => Some(false),
+                Some(Value::String(value)) if value == "invalid" => Some(true),
+                Some(_) => {
+                    return Err(invalid(format!(
+                        "{path}/ast/syntax must be valid or invalid"
+                    )));
+                }
+            };
             let language_name = ast
                 .get("language")
                 .and_then(Value::as_str)
@@ -822,7 +1014,21 @@ fn compile_query_as(
                 ast.get("languageOptions"),
             ))
             .map_err(|error| invalid(error.to_string()))?;
-            let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt, seed);
+            // The query's content (its `ast` with options substituted, and the shared utilities it
+            // reaches): what a lowered fact label is keyed by (`MatchTree::Fact`), so equal queries
+            // lower to equal plans.
+            let source: [u8; 32] = {
+                use sha2::{Digest as _, Sha256};
+                let mut digest = Sha256::new();
+                digest.update(salt.as_bytes());
+                digest.update(serde_json::to_string(ast).map_err(|error| invalid(error.to_string()))?.as_bytes());
+                digest.finalize().into()
+            };
+            let calls = crate::code_rule_dsl::calls::CallsCollector::new(
+                salt,
+                seed,
+                capabilities.limits.max_regex_pattern_bytes,
+            );
             let mut bindable = BTreeSet::new();
             let origins = util_origins(&utils, language_name)?;
             for (dialect, language) in &grammars {
@@ -988,12 +1194,21 @@ fn compile_query_as(
                     violations::ast_captures(util, &table, &mut summaries, &mut names);
                 }
                 bindable.extend(names.into_iter().map(str::to_owned));
+                {
+                    // Share utility summaries with capture ordering; rebuilding them for
+                    // every utility makes a linear chain quadratic during compilation.
+                    let mut captures = scope.captures.borrow_mut();
+                    bindable.extend(captures.binds(&matcher));
+                    for util in table.shared_rules() {
+                        bindable.extend(captures.binds(util));
+                    }
+                }
                 if !matches!(matcher, AstMatcher::Never) {
                     let anchors = Arc::new(AnchorPlan::compile(&matcher));
                     let three_valued = reads_values(&matcher, &mut BTreeSet::new());
-                    let text = (!three_valued)
-                        .then(|| RequiredText::of(&matcher).map(Arc::new))
-                        .flatten();
+                    // Requirements read only source-text tests, never values, through monotone
+                    // connectives: a file missing one fails the rule outright, unknown or not.
+                    let text = RequiredText::of(&matcher).map(Arc::new);
                     matchers.push(GrammarMatcher {
                         language: *language,
                         document: (side == Side::Guest)
@@ -1002,7 +1217,7 @@ fn compile_query_as(
                         other_utils: others.iter().map(|(_, table)| Arc::clone(table)).collect(),
                         crosses,
                         sound_under_errors: sound_under_errors(&matcher),
-                        import_target: reads_import_targets(&matcher),
+                        invalid_syntax,
                         three_valued,
                         matcher,
                         anchors,
@@ -1011,10 +1226,8 @@ fn compile_query_as(
                         file: file.clone(),
                         applies,
                         source_types: source_types.clone(),
-                        package_type_gate: options
-                            .as_deref()
-                            .is_some_and(|options| options.package_type_module_system),
                         transform: transform.clone(),
+                        source: (source, *language),
                     });
                 }
             }
@@ -1084,19 +1297,13 @@ fn compile_query_as(
                             "{transform_path}/{name}: `${name}` is already a capture of the query"
                         )));
                     }
-                    for (index, source) in trans.source_names().enumerate() {
-                        let known = transform.contains(source)
-                            || bindable.contains(source)
-                            || groups.contains(source);
-                        if !known {
-                            let key = if index == 0 { "source" } else { "digits" };
-                            return Err(invalid(format!(
-                                "{transform_path}/{name}/{key}: `${source}` names no capture the query can bind"
-                            )));
-                        }
-                    }
                     let source = trans.source_name();
                     let group = groups.contains(source);
+                    if !transform.contains(source) && !bindable.contains(source) && !group {
+                        return Err(invalid(format!(
+                            "{transform_path}/{name}/source: `${source}` names no capture the query can bind"
+                        )));
+                    }
                     if group && trans.reads_value() {
                         let kind = ast["transform"][name.as_str()]
                             .as_object()
@@ -1309,7 +1516,7 @@ fn compile_query_as(
             }
             required_ast.insert((language_name.to_owned(), grammar));
             Ok(Query::Ast {
-                matchers: matchers.into(),
+                matchers,
                 calls: terms,
             })
         }
@@ -1421,11 +1628,13 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
         )));
     }
     Ok(ViolationSpec {
+        input_only: false,
         code: required_str(value, "code", path)?.to_owned(),
         message: required_str(value, "message", path)?.to_owned(),
         anchor,
         message_template: None,
         fix: None,
+        fix_template: None,
         node_regexes: Vec::new(),
         each: violation
             .get("each")

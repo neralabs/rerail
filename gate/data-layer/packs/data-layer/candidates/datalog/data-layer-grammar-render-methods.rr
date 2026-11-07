@@ -1,0 +1,102 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.input doc, node, child, field, text, name, strprefix
+.decl never(n: node)
+.decl k0(kind: symbol)
+k0("function_definition").
+.decl k1(kind: symbol)
+k1("class_definition").
+.decl k2(kind: symbol)
+k2("call").
+.decl k3(kind: symbol)
+k3("concatenated_string"). k3("string").
+.decl in_scope(d: number)
+.decl m106(n: node)
+.decl m112(n: node)
+.decl m115(n: node)
+.decl m119(n: node)
+.decl m15(n: node)
+.decl m21(n: node)
+.decl m24(n: node)
+.decl m28(n: node)
+.decl m3(n: node)
+.decl m31(n: node)
+.decl m38(n: node)
+.decl m41(n: node)
+.decl m42(n: node)
+.decl m44(n: node)
+.decl m56(n: node)
+.decl m6(n: node)
+.decl m62(n: node)
+.decl m65(n: node)
+.decl m76(n: node)
+.decl m82(n: node)
+.decl m85(n: node)
+.decl m97(n: node)
+.decl out_scope(d: number)
+.decl u104(n: node)
+.decl u13(n: node)
+.decl u54(n: node)
+.decl u74(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+m3(n) :- child(v2, n, _), node(_, v2, "concatenated_string", _, _).
+m6(n) :- node(_, n, "string", _, _), strprefix(n, v1), contains("f", v1), !m3(n).
+m6(n) :- node(_, n, "concatenated_string", _, _), child(n, v4, _), node(_, v4, "string", _, _), strprefix(v4, v5), contains("f", v5).
+m6(n) :- node(_, n, "format_specifier", _, _).
+m15(n) :- node(_, n, "identifier", _, _), never(n).
+m15(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v14), node(_, v14, "identifier", _, _), never(v14).
+m21(n) :- m15(n), name(n, v16), contains("Sql", v16).
+m21(n) :- node(_, n, "identifier", _, _), text(n, v17), contains("Sql", v17).
+m21(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v18), name(v18, v19), contains("Sql", v19).
+m21(n) :- node(_, n, "subscript", _, _), field(n, "value", v20), u13(v20).
+u13(n) :- m21(n).
+m24(n) :- field(n, "name", v22), node(_, v22, "identifier", _, _), text(v22, v23), v23 = "".
+m28(n) :- inside(n, v25, k2), node(_, v25, "call", _, _), field(v25, "function", v26), node(_, v26, "identifier", _, _), text(v26, v27), v27 = "GrammarException".
+m31(n) :- child(v30, n, _), node(_, v30, "concatenated_string", _, _).
+m38(n) :- strprefix(n, v37), contains("f", v37).
+m41(n) :- child(n, v39, _), node(_, v39, "string", _, _), strprefix(v39, v40), contains("f", v40).
+m42(n) :- node(_, n, "string", _, _), !m38(n).
+m42(n) :- node(_, n, "concatenated_string", _, _), !m41(n).
+m44(n) :- child(v43, n, _), node(_, v43, "concatenated_string", _, _).
+m56(n) :- node(_, n, "identifier", _, _), never(n).
+m56(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v55), node(_, v55, "identifier", _, _), never(v55).
+m62(n) :- m56(n), name(n, v57), contains("Sql", v57).
+m62(n) :- node(_, n, "identifier", _, _), text(n, v58), contains("Sql", v58).
+m62(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v59), name(v59, v60), contains("Sql", v60).
+m62(n) :- node(_, n, "subscript", _, _), field(n, "value", v61), u54(v61).
+u54(n) :- m62(n).
+m65(n) :- field(n, "name", v63), node(_, v63, "identifier", _, _), text(v63, v64), v64 = "".
+m76(n) :- node(_, n, "identifier", _, _), never(n).
+m76(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v75), node(_, v75, "identifier", _, _), never(v75).
+m82(n) :- m76(n), name(n, v77), contains("Sql", v77).
+m82(n) :- node(_, n, "identifier", _, _), text(n, v78), contains("Sql", v78).
+m82(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v79), name(v79, v80), contains("Sql", v80).
+m82(n) :- node(_, n, "subscript", _, _), field(n, "value", v81), u74(v81).
+u74(n) :- m82(n).
+m85(n) :- field(n, "name", v83), node(_, v83, "identifier", _, _), text(v83, v84), v84 = "".
+m97(n) :- node(_, n, "identifier", _, _), text(n, v89), v89 = "static".
+m97(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v90), node(_, v90, "identifier", _, _), text(v90, v91), v91 = "static", field(n, "object", v92), node(_, v92, "identifier", _, _), text(v92, v93), (v93 = "SF" ; v93 = "SqlFragment").
+m97(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v94), node(_, v94, "identifier", _, _), text(v94, v95), v95 = "static", field(n, "object", v96), node(_, v96, "attribute", _, _).
+m106(n) :- node(_, n, "identifier", _, _), never(n).
+m106(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v105), node(_, v105, "identifier", _, _), never(v105).
+m112(n) :- m106(n), name(n, v107), contains("Sql", v107).
+m112(n) :- node(_, n, "identifier", _, _), text(n, v108), contains("Sql", v108).
+m112(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v109), name(v109, v110), contains("Sql", v110).
+m112(n) :- node(_, n, "subscript", _, _), field(n, "value", v111), u104(v111).
+u104(n) :- m112(n).
+m115(n) :- field(n, "name", v113), node(_, v113, "identifier", _, _), text(v113, v114), v114 = "".
+m119(n) :- field(n, "name", v117), node(_, v117, "identifier", _, _), text(v117, v118), v118 = "".
+.output violation

@@ -44,7 +44,7 @@ describe("the Follow .gitignore setting on the page", () => {
     writes()[0]!.answer(200, { repository: { followGitignore: false } });
     await saving;
     expect(data.followGitignore).toBe(false);
-    expect(toast).toHaveBeenCalledWith("New sessions include Git-ignored files.");
+    expect(toast).toHaveBeenCalledWith("Files Git ignores are checked in sessions started from now on.");
   });
 
   it("puts the setting back and says why when the write fails", async () => {
@@ -54,7 +54,7 @@ describe("the Follow .gitignore setting on the page", () => {
     await saving;
 
     expect(data.followGitignore).toBe(true);
-    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Couldn’t change Follow \.gitignore\. PUT \/api\/repository\/follow-gitignore answered 403/u));
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Could not save: /u));
   });
 
   it("leaves another repository's page alone when the answer comes after a switch", async () => {

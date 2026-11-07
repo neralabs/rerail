@@ -1,1 +1,0 @@
-`rerail rules test --json` lists every match and every file the rule could not check, and counts the binary files it skipped; `rerail rules test --help` shows the draft format. Large repositories no longer stop it with `workspace buffer exceeds 40 MiB`, and a draft's error names the field it gets wrong.

@@ -10,7 +10,7 @@
  */
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
+import { languageFor, NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
   CodeRuleEdit,
@@ -108,8 +108,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     for (const lane of this.#lanes.values()) lane.enforcer.updateSettings(settings);
   }
 
-  /** Whether the lane that owns `path` reads it: a listed file in a code rule's scope, an unlisted one in a text-reading rule's (`acceptsPath` of the enforcer). */
   acceptsPath(path: string): boolean {
+    if (languageFor(path) === undefined) return false;
     const routed = this.#route(path);
     return routed !== undefined && routed.lane.enforcer.acceptsPath(routed.path);
   }

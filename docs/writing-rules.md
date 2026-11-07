@@ -70,10 +70,8 @@ changes nothing.
 ## Two kinds of rule
 
 **A code rule** checks the files the agent edits: imports across a layer boundary, a call that bypasses a helper, a blocking call
-in async code, an old path still written in a `Justfile`, a file in the wrong folder. It is a `rerail.policy/v1` document with a
-scope (globs) and clauses (a `regex` over a file's text or path, a `file` query, or a syntax query over Python, JavaScript,
-TypeScript, PHP or Blade). See [Writing a code rule](../skills/rerail-create/references/code-rules.md), and for rules over
-text and paths in any file, [Writing path and text rules](path-and-text-rules.md).
+in async code. It is a `rerail.policy/v1` document with a scope (globs) and clauses (a `regex`, or a syntax query over Python,
+JavaScript, TypeScript, PHP or Blade). See [Writing a code rule](../skills/rerail-create/references/code-rules.md).
 
 **A command rule** checks the commands the agent runs: force pushes, `--no-verify`, publishing. It is a conversation rule with a
 structural `match` over `input.command`. See [Writing a command rule](../skills/rerail-create/references/conversation-rules.md)
@@ -81,44 +79,17 @@ and, for regex technique, [tool-call-rules.md](tool-call-rules.md).
 
 ## Testing a draft
 
-A draft is the rule plus the cases it must catch and let through. It is not the bare rule: `rerail rules test` and
-`rerail rules add` read this envelope, and `rerail rules test --help` prints it.
+A draft is the rule plus the cases it must catch and let through:
 
 ```json
-{
-  "kind": "code",
-  "rule": { "format": "rerail.policy/v1", "id": "local:…", "revision": 1, "mode": "steer", "description": "…", "scope": { "include": ["…"], "exclude": [] }, "clauses": ["…"] },
-  "cases": {
-    "caught": [{ "path": "src/a.ts", "content": "…" }],
-    "passed": [{ "path": "src/a.ts", "content": "…" }]
-  }
-}
+{ "kind": "code", "rule": { "…": "…" }, "cases": { "caught": [{ "path": "src/a.ts", "content": "…" }], "passed": [] } }
 ```
-
-| Field | What it holds |
-|---|---|
-| `kind` | `code` |
-| `rule` | the rule document |
-| `folder` | optional: the repository folder to add the rule at, instead of the whole repository |
-| `cases.caught`, `cases.passed` | files the rule must catch, and files it must let pass: `{ "path", "content" }` |
-
-[Writing path and text rules](path-and-text-rules.md#text-in-files) has complete drafts to start from.
 
 ```sh
-rerail rules test draft.json            # validate, run the cases, list the matches across the repo; writes nothing
-rerail rules test draft.json --json     # the same, listing every match and every file the rule could not check
+rerail rules test draft.json            # validate, run the cases, count matches across the repo; writes nothing
 rerail rules add draft.json             # store it in your library and add it, on, to this repo
-rerail rules approve <id>               # after reading it: it steers instead of running in Log
 rerail rules export --output rules.json # your rules, to read or edit one
 ```
-
-The text report shows the first five matches and the count; `--json` lists them all. A match on a file's path, or of a
-`file` query, names the file with no line. The report also counts the binary files in the rule's scope, which no rule
-reads.
-
-The repo pass never reads hidden files and folders, files whose names usually hold secrets (`*.pem`, `id_rsa*`, `.ssh/`,
-…), or files Git ignores unless you turned the repository's Follow .gitignore setting off. It counts how many it left
-out, without names. See [Reference](reference.md#scan-and-settings-controls) for the full list.
 
 **Before adding a draft, check:**
 - **Cases.** Every case comes out right, including a near miss: code that looks like a violation but is not.
@@ -135,56 +106,4 @@ the fix ladder for a rule that misfires.
 - **Log (`log`)** keeps a record and tells no one. Use it for a rule you are trying out, or one the existing code breaks too
   often to steer on.
 
-A rule from `/rerail-create` is never `block`, and belongs to the repository it was made in, unless you keep it to one worktree.
-
-## Approving a rule
-
-A rule you add with `rerail rules add`, or a coding agent writes, runs in Log until you approve what it says: a steer is text
-every coding agent in the repository acts on, so a person reads it first. `/rerail-create` asks after its read-back and runs
-`rerail rules approve <id>` on your yes; you can also approve on the rule's page in the dashboard. An edit waits again. The
-same holds for a worktree's own rules and for packs Rerail does not publish ([approval](rule-scoping.md#approval)).
-
-## A rule for one worktree only
-
-A rule can belong to one worktree instead of the whole repository: an experiment on a branch, a migration in progress, a
-convention you are trying out before the rest of the team. Put its rule document (the draft's `rule`, without the cases) in a
-JSON file in the worktree's `.rerail/rules/` folder:
-
-```text
-feature/                  a linked worktree of the repository
-└── .rerail/
-    └── rules/
-        ├── no-legacy-client.json
-        └── use-new-logger.json
-```
-
-Each file is one rule, on, in its own mode. Rerail runs them in that worktree only, for every folder in it; the repository's
-main checkout and its other worktrees never see them. An edit to a file applies at the agent's next edit, with nothing else
-to do. There is nothing to install or add, but the worktree must be started and its repository set up, as for any rule, and
-each rule runs in Log until you approve it (`rerail rules approve <id>` in the worktree), again after each edit.
-
-`/rerail-create` writes a rule there when you ask for this worktree only, or pick it under **Change something** in the
-read-back. To check a file you wrote yourself, `rerail rules test .rerail/rules/<name>.json` validates it and counts its
-matches across the repo, as it does a draft; it has no cases to run, so a draft with cases is still the way to prove a rule.
-
-To see what Rerail loaded, whether it runs, and why a file was left out (invalid, an id another rule already has, a rule the
-engine cannot run), run `rerail packs list` in the worktree:
-
-```text
-This worktree's own rules, in /src/acme-web-feature/.rerail/rules (pack worktree, here only): 2
-  Not running: this repo is not set up yet, so no rule runs here. `rerail start` sets it up.
-  local:no-legacy-client (code, steer)
-    waiting for approval, runs in Log until then: rerail rules approve local:no-legacy-client
-  local:use-new-logger (code, log)
-  left out: draft.json: clauses Too small: expected array to have >=1 items
-```
-
-The `Not running` line shows only while Rerail is off in the worktree or the repo is not set up.
-
-The dashboard, opened for the worktree (`rerail manage`), shows them as the pack **This worktree**. Turning the pack or one of
-its rules on or off there changes this worktree only. Its Overview names every file that was left out, with why, until the
-file is fixed or removed.
-
-**Keep the folder out of Git** unless you mean to share it: a committed `.rerail/rules/` runs in every checkout of that branch
-that has Rerail started, and its messages reach the coding agent there. Add `.rerail/rules/` to `.git/info/exclude` to keep it
-local. [A worktree's own rules](rule-packs.md#a-worktrees-own-rules) has every check Rerail makes.
+A rule from `/rerail-create` is never `block`, and belongs to the repository it was made in.

@@ -1,0 +1,53 @@
+// python/misc2-noqa: suppression and type-checker comments as Ruff's lexers read them, for pygrep-hooks'
+// PGH003 (blanket `type: ignore`) and PGH004 (blanket `noqa`).
+//
+// Interface
+//   noqa_blanket(c, colon)     comment c's inline `# noqa` covers every code. colon is "missing" when codes follow
+//                              without the colon (`# noqa F401`, which still silences everything), else "none"
+//   noqa_file_blanket(c)       own-line comment c is `# ruff: noqa` or `# flake8: noqa` with no codes
+//   noqa_file_exempts(d, code) document d has an own-line `# ruff: noqa: …` (or flake8) listing code. Ruff's
+//                              lexer stops at the first word that is not a code: `# ruff: noqa: F401 not PGH004`
+//                              does not list PGH004
+//   own_line_comment(c)        no token comes before comment c on its line
+//   type_ignore_blanket(c)     some `#` of c starts `type: ignore` or `pyright: ignore` with no `[codes]`
+//
+// How Ruff lexes an inline noqa (noqa.rs). It looks for the first `#` that is followed, after whitespace, by
+// `noqa` in any case. After that word: the end, or a `#`, is a blanket; a `:` (after optional whitespace) starts
+// codes; other text after whitespace is a blanket too; any other character (`# noqaX`) makes the comment no
+// directive at all. A file exemption is the same after `ruff` or `flake8` and a colon, on a line of its own.
+//
+//   x = 1  # noqa                     noqa_blanket(c, "none")
+//   x = 2  # noqa X100                noqa_blanket(c, "missing")
+//   x = 2  # noqa : X300              no row: codes, the colon may follow whitespace
+//   # ruff: noqa                      noqa_file_blanket(c)
+//   # ruff: noqa: PGH004              noqa_file_exempts(d, "PGH004")
+//   f()  # type: ignore               type_ignore_blanket(c)
+//   f()  # type: ignore[misc]         no row
+
+// noqa_after(c, r): r is the text after the first `# noqa` of comment c.
+.decl noqa_after(c: node, r: symbol)
+noqa_after(c, R) :- kind(c, "comment"), match(".*?#\\s*[nN][oO][qQ][aA](?<R>.*)", c).
+.decl noqa_blanket(c: node, colon: symbol)
+noqa_blanket(c, "none") :- noqa_after(c, R), noqa_all_tail(R), !match("\\s+[\\s,]*[A-Z]+[0-9]+.*", R).
+noqa_blanket(c, "missing") :- noqa_after(c, R), noqa_all_tail(R), match("\\s+[\\s,]*[A-Z]+[0-9]+.*", R).
+// noqa_all_tail(r): what follows `noqa` makes it a blanket: nothing, a `#`, or whitespace not then a colon.
+.decl noqa_all_tail(r: symbol)
+noqa_all_tail(R) :- noqa_after(_, R), (R = "" ; prefix("#", R) ; match("\\s+(?:[^\\s:].*)?", R)).
+
+.decl noqa_file_after(c: node, r: symbol)
+noqa_file_after(c, R) :- kind(c, "comment"), own_line_comment(c),
+    match(".*?#\\s*(?:ruff|flake8)\\s*:\\s*[nN][oO][qQ][aA](?<R>.*)", c).
+.decl noqa_file_blanket(c: node)
+noqa_file_blanket(c) :- noqa_file_after(c, R), (R = "" ; prefix("#", R) ; match("\\s+(?:[^\\s:].*)?", R)).
+.decl noqa_file_exempts(d: number, code: symbol)
+noqa_file_exempts(d, "PGH004") :- noqa_file_after(c, R), docof(c, d),
+    match("\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]+)*PGH004(?:[\\s,#].*)?", R).
+
+.decl own_line_comment(c: node)
+own_line_comment(c) :- kind(c, "comment"), !token_before(c, _).
+own_line_comment(c) :- kind(c, "comment"), token_before(c, t), line(t, lt), line(c, l), lt < l.
+
+// Ruff (blanket_type_ignore.rs): at any `#`, whitespace, `type` or `pyright`, a colon right away, whitespace,
+// `ignore`; then nothing, or another comment, is a blanket. `ignore[...]` names codes (an empty `[]` too).
+.decl type_ignore_blanket(c: node)
+type_ignore_blanket(c) :- kind(c, "comment"), match(".*#\\s*(?:type|pyright):\\s*ignore\\s*(?:#.*)?", c).

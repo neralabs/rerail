@@ -837,7 +837,9 @@ impl Classifier<'_> {
                         self.walk(item, non, found)?;
                     }
                 }
-                let legacy = self.table.reading.target_minor() < 13
+                // Stub tables carry their target minor. Outside stubs, 0 means the latest
+                // grammar, which has no legacy keyword fields.
+                let legacy = matches!(self.table.reading.python_minor, 1..13)
                     && match positional.as_slice() {
                         [_] => true,
                         [_, second] => {

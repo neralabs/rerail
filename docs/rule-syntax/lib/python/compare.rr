@@ -1,0 +1,87 @@
+// python/compare: are two expressions the same, as Ruff's ComparableExpr says? One structural comparison for the
+// rules that ask (RUF019, RUF034, C414, C420, SIM101, PT014).
+//
+// Interface
+//   cmp_same_ask(a, b)   the rule lists the pairs it asks about
+//   cmp_same(a, b)       a and b are the same expression
+//
+// What counts as the same
+//   - Parentheses, comments, quotes and trailing commas do not matter: `(a)` is `a`, `f(1,)` is `f(1)`,
+//     `f"{x}"` is `f'{x}'`.
+//   - Literals compare by value: `0x10` is `16`, `1.0` is `1.00`, `'a'` is `"a"`, `"a" "b"` is `"ab"`, `b"x"` is
+//     `b'x'`. Ints, floats and complex numbers differ (`1` is not `1.0`), as do str, bytes and f-strings (`"a"` is
+//     not `b"a"` or `f"a"`).
+//   - A tuple is a tuple however it is written: the target `a, b` (tree-sitter's pattern_list), `(a, b)`
+//     (tuple_pattern), the value `a, b` (expression_list) and the display `(a, b)` are all Ruff's Tuple; a
+//     `[a, b]` target (list_pattern) is a List.
+//   - Everything else compares by kind, operators and children, in order: `a + b` is `a+b`, not `b + a`.
+//   e.g.  cmp_same(<d[ k ]>, <d[k]>)       cmp_same(<0x10>, <16>)       not cmp_same(<a.b>, <a.c>)
+//         for a, b in z: (a, b)            cmp_same(<(a, b)>, <a, b>)
+#include "python/pyflakes.rr"
+
+.decl cmp_same_ask(a: node, b: node)
+.decl cmp_same(a: node, b: node)
+cmp_same(a, b) :- cmp_same_ask(a, b), unparen(a, x), unparen(b, y), same_node(x, y).
+
+// same_kind(x, k): x's kind for the comparison: the tuple and list spellings above are one kind.
+.decl same_kind(x: node, k: symbol)
+same_kind(x, k) :- same_some(x), kind(x, k0), (same_alias(k0, k) ; !same_alias(k0, _), k = k0).
+.decl same_alias(k: symbol, as: symbol)
+same_alias("pattern_list", "tuple"). same_alias("tuple_pattern", "tuple"). same_alias("expression_list", "tuple").
+same_alias("list_pattern", "list").
+
+// same_pair(x, y): the asks, carried down to children at the same position of nodes of the same kind.
+.decl same_pair(x: node, y: node)
+same_pair(x, y) :- cmp_same_ask(a, b), unparen(a, x), unparen(b, y).
+same_pair(u, v) :- same_pair(x, y), !same_leaf(x, _, _), same_kind(x, k), same_kind(y, k), same_child(x, i, c),
+    same_child(y, i, d), unparen(c, u), unparen(d, v).
+// same_some(x): x is an asked expression or inside one; the relations below are computed only there.
+.decl same_some(x: node)
+same_some(x) :- (cmp_same_ask(x, _) ; cmp_same_ask(_, x)).
+same_some(x) :- (cmp_same_ask(a, _) ; cmp_same_ask(_, a)), within(x, a).
+// same_child(x, i, c): the i-th child of x that is not a comment.
+.decl same_child(x: node, i: number, c: node)
+same_child(x, i, c) :- same_some(x), child(x, c, j), !kind(c, "comment"),
+    i = count : { child(x, c0, j0), j0 < j, !kind(c0, "comment") }.
+
+// same_leaf(x, t, v): x compares by value: tag t and value v. A float by its value as a double (`1.0`, `1.00`,
+// `1_0.0`, `10.` all "10"), as Ruff compares f64s; an imaginary number by its digits.
+.decl same_leaf(x: node, t: symbol, v: symbol)
+same_leaf(x, "str", v) :- same_some(x), plain_str(x, v).
+same_leaf(x, "bytes", v) :- same_some(x), string_form(x, "bytes"), value(x, v).
+same_leaf(n, "bytes", v) :- same_some(n), kind(n, "concatenated_string"), child(n, s0, 0), string_form(s0, "bytes"),
+    v = join w by i sep "" : { child(n, s, i), kind(s, "string"), value(s, w) }.
+same_leaf(x, "int", v) :- same_some(x), kind(x, "integer"), !same_imaginary(x), value(x, v).
+same_leaf(x, "float", to_string(to_float(@replace_all(t, "_", "")))) :- same_some(x), kind(x, "float"),
+    !same_imaginary(x), text(x, t).
+same_leaf(x, "complex", @lower(@replace_all(t, "_", ""))) :- same_imaginary(x), text(x, t).
+// An f-string's opening token: its prefix letters, not its quotes (`f"`, `F'` are both "f"). The closing quote is
+// the same for every string.
+same_leaf(x, "start", @lower(@replace_all(t, "[\"']", ""))) :- same_some(x), kind(x, "string_start"), text(x, t).
+same_leaf(x, "end", "") :- same_some(x), kind(x, "string_end").
+same_leaf(x, k, t) :- same_some(x), kind(x, k), !same_literal(x), count : { child(x, _, _) } = 0, text(x, t).
+.decl same_imaginary(x: node)  // `2j`: tree-sitter calls it an integer or a float
+same_imaginary(x) :- same_some(x), (kind(x, "integer") ; kind(x, "float")), text(x, t), match(".*[jJ]", t).
+.decl same_literal(x: node)
+same_literal(x) :- same_some(x), (plain_str(x, _) ; string_form(x, "bytes") ; kind(x, "integer") ; kind(x, "float")).
+same_literal(x) :- same_some(x), kind(x, "concatenated_string"), child(x, s0, 0), string_form(s0, "bytes").
+same_literal(x) :- same_some(x), (kind(x, "string_start") ; kind(x, "string_end")).
+
+// same_node(x, y): bottom up. Leaves by value; others by kind, the same operator tokens, and every child.
+.decl same_node(x: node, y: node)
+same_node(x, y) :- same_pair(x, y), same_leaf(x, t, v), same_leaf(y, t, v).
+same_node(x, y) :- same_pair(x, y), !same_leaf(x, _, _), !same_leaf(y, _, _), same_kind(x, k), same_kind(y, k),
+    !same_op_differs(x, y), same_arity(x, n), same_arity(y, n), same_upto(x, y, n).
+.decl same_arity(x: node, n: number)
+same_arity(x, n) :- same_some(x), n = count : { same_child(x, _, _) }.
+// same_upto(x, y, i): the first i children are the same (a chain, so the recursion stays positive).
+.decl same_upto(x: node, y: node, i: number)
+same_upto(x, y, 0) :- same_pair(x, y).
+same_upto(x, y, i + 1) :- same_upto(x, y, i), same_child(x, i, c), same_child(y, i, d), unparen(c, u), unparen(d, v),
+    same_node(u, v).
+// Commas and a tuple's parentheses are punctuation, not operators.
+.decl same_op_differs(x: node, y: node)
+same_op_differs(x, y) :- same_pair(x, y), op(x, o), !op(y, o), !same_punct(o).
+same_op_differs(x, y) :- same_pair(x, y), op(y, o), !op(x, o), !same_punct(o).
+.decl same_punct(o: symbol)
+same_punct(","). same_punct("("). same_punct(")").

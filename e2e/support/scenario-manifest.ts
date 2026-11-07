@@ -9,7 +9,7 @@ export const MINUTE = 60_000;
 export const HOUR = 60 * MINUTE;
 export const DAY = 24 * HOUR;
 
-export const SCENARIO_NAMES = ["no-packs", "packs-no-session", "mature", "multi-repo", "not-set-up", "stopped", "awaiting-approval"] as const;
+export const SCENARIO_NAMES = ["no-packs", "packs-no-session", "mature", "multi-repo", "not-set-up", "stopped"] as const;
 export type ScenarioName = (typeof SCENARIO_NAMES)[number];
 
 export function isScenarioName(value: string): value is ScenarioName {

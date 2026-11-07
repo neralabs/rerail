@@ -23,10 +23,7 @@ async function directory(prefix: string): Promise<string> {
 
 type EcmaDialect = "typescript" | "tsx" | "javascript";
 
-/**
- * Every TypeScript, TSX and JavaScript routing case: the dialect the path's file is evaluated as, or undefined when no
- * language lists it (such a file is read as text, and only for rules that read text).
- */
+/** Every TypeScript, TSX and JavaScript routing case: the dialect the path's file is evaluated as, or undefined. */
 const ROUTES: ReadonlyArray<readonly [string, EcmaDialect | undefined]> = [
   ["index.ts", "typescript"],
   ["src/deep/nested/module/service.ts", "typescript"],
@@ -122,13 +119,13 @@ describe("TypeScript, TSX and JavaScript host routing", () => {
   it.each(ROUTES)("routes %s to %s through every host table", (path, dialect) => {
     expect(languageFor(path)).toBe(dialect);
     expect(codeRuleDialectForPath(path)).toBe(dialect);
-    expect(generatedEditPaths("write", { path })).toEqual([path]);
+    expect(generatedEditPaths("write", { path })).toEqual(dialect === undefined ? [] : [path]);
   });
 
   it.each([
     ["the native repository index (Git checkout)", true],
     ["the host's directory walk", false],
-  ])("audits each file as its dialect through %s, never under ignored directories, and no unlisted file for AST rules", async (_name, git) => {
+  ])("audits each file as its dialect through %s, never under ignored directories", async (_name, git) => {
     const root = await routingTree(git);
     const expected = Object.fromEntries(
       ROUTES.flatMap(([path, dialect]) =>
@@ -138,7 +135,7 @@ describe("TypeScript, TSX and JavaScript host routing", () => {
     await expect(auditRouting(root)).resolves.toEqual({ status: "completed", routed: expected, failures: [] });
   });
 
-  it("labels the files a command writes by dialect, unlisted ones as text, skipping ignored directories", async () => {
+  it("labels the files a command writes by dialect, skipping ignored directories and other names", async () => {
     const root = await directory("rerail-ts-routing-bridge-");
     await mkdir(join(root, "src"));
     const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => ({
@@ -157,7 +154,7 @@ describe("TypeScript, TSX and JavaScript host routing", () => {
       }
       await bridge.finish("shell-1");
       const edits = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, edit.language]));
-      expect(Object.fromEntries(edits)).toEqual(Object.fromEntries(ROUTES.map(([path, dialect]) => [path, dialect ?? "text"])));
+      expect(Object.fromEntries(edits)).toEqual(Object.fromEntries(ROUTES.filter(([, dialect]) => dialect !== undefined)));
     } finally {
       await bridge.close();
     }

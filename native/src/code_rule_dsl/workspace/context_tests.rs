@@ -254,7 +254,6 @@ fn stored_workspace(
         workspace_id,
         snapshot_id: snapshot,
         owner,
-        secret_names: Default::default(),
         _maintenance: None,
     });
     workspace.add_code_rule(code_rule, None).unwrap();
@@ -746,86 +745,6 @@ fn a_derived_server_graph_follows_removals_configuration_and_manifest_edits() {
         &[],
     );
     assert_eq!(reported(), ["app/page.tsx", "lib/hook.ts"]);
-    workspace.close();
-}
-
-/// A workspace deriving `package` for files the host sent none for reads which files npm publishes
-/// from the manifest's `files` and the `.npmignore` or `.gitignore` entries in its folder: a
-/// request that sends, edits or removes one of them alone changes its package's files, and a
-/// manifest edit keeps the ignore files the workspace holds.
-#[test]
-fn a_derived_publication_follows_ignore_file_edits_and_removals() {
-    let _slot = WORKSPACE_TEST_SLOT.lock();
-    let code_rule = compile(
-        "publication",
-        json!([{
-            "id": "unpublished",
-            "violation": { "anchor": "witness.span", "code": "UNPUBLISHED", "message": "unpublished" },
-            "forbid": { "ast": { "language": "typescript",
-                "file": { "package": { "published": false } }, "rule": { "kind": "program" } } }
-        }]),
-    );
-    let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&code_rule, None).unwrap();
-    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
-    let reported = || {
-        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
-            .into_iter()
-            .map(|(path, _, _)| path)
-            .collect::<Vec<_>>()
-    };
-    apply_host(
-        &workspace,
-        1,
-        json!([
-            file("pkg/package.json", "json", "{}"),
-            file("pkg/index.js", "javascript", "export {};\n"),
-            file("pkg/test/a.js", "javascript", "export {};\n"),
-        ]),
-        &[],
-    );
-    assert!(reported().is_empty());
-    // The `.gitignore` decides without `files` or a `.npmignore`.
-    apply_host(
-        &workspace,
-        2,
-        json!([file("pkg/.gitignore", "text", "test\n")]),
-        &[],
-    );
-    assert_eq!(reported(), ["pkg/test/a.js"]);
-    // A `.npmignore` replaces it.
-    apply_host(
-        &workspace,
-        3,
-        json!([file("pkg/.npmignore", "text", "index.js\n")]),
-        &[],
-    );
-    assert_eq!(reported(), ["pkg/index.js"]);
-    // A manifest edit keeps the ignore files.
-    apply_host(
-        &workspace,
-        4,
-        json!([file("pkg/package.json", "json", r#"{ "name": "pkg" }"#)]),
-        &[],
-    );
-    assert_eq!(reported(), ["pkg/index.js"]);
-    // `main` is always published.
-    apply_host(
-        &workspace,
-        5,
-        json!([file(
-            "pkg/package.json",
-            "json",
-            r#"{ "main": "index.js" }"#
-        )]),
-        &[],
-    );
-    assert!(reported().is_empty());
-    // Removing the `.npmignore` gives the `.gitignore` back its say.
-    apply_host(&workspace, 6, json!([]), &["pkg/.npmignore"]);
-    assert_eq!(reported(), ["pkg/test/a.js"]);
-    apply_host(&workspace, 7, json!([]), &["pkg/.gitignore"]);
-    assert!(reported().is_empty());
     workspace.close();
 }
 
@@ -1599,206 +1518,6 @@ fn repository_index_reports_unreadable_sources_as_failures() {
     workspace.close();
 }
 
-/// A file the host lists no language for is read as `text` for a code rule that reads text and
-/// left unread for an AST-only one; one holding a NUL is binary and dropped without a failure.
-#[test]
-fn repository_index_reads_unlisted_text_files_only_for_code_rules_that_read_text() {
-    let _slot = WORKSPACE_TEST_SLOT.lock();
-    let files: &[(&str, &[u8])] = &[
-        ("Justfile", b"build:\n\techo TODO\n"),
-        ("logo.bin", b"TODO\0\x01"),
-        ("ok.py", b"print(1)\n"),
-    ];
-    let todo = compile(
-        "todo",
-        json!([{ "id": "todo", "violation": { "anchor": "witness.span", "code": "T",
-            "message": "todo" },
-          "forbid": { "regex": { "source": "file.content", "pattern": "TODO" } } }]),
-    );
-    for (tag, code_rule, indexed, violations) in [
-        (
-            "unlisted-ast",
-            print_code_rule(),
-            vec!["ok.py"],
-            vec![("ok.py".to_owned(), "print".to_owned(), 0)],
-        ),
-        (
-            "unlisted-text",
-            todo,
-            vec!["Justfile", "ok.py"],
-            vec![("Justfile".to_owned(), "todo".to_owned(), 13)],
-        ),
-    ] {
-        let directory = committed_repository(tag, files);
-        let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
-        workspace.add_code_rule(&code_rule, None).unwrap();
-        let failures = index_until_done(&workspace, u32::MAX)
-            .iter()
-            .flat_map(|response| response["failures"].as_array().cloned().unwrap_or_default())
-            .collect::<Vec<_>>();
-        assert_eq!(failures, Vec::<Value>::new(), "{tag}");
-        {
-            let state = workspace.state.lock().unwrap();
-            let mut paths = state.files.keys().map(String::as_str).collect::<Vec<_>>();
-            paths.sort_unstable();
-            assert_eq!(paths, indexed, "{tag}");
-            if let Some(justfile) = state.files.get("Justfile") {
-                assert_eq!(justfile.input.language, "text");
-            }
-        }
-        assert_eq!(
-            located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES)),
-            violations,
-            "{tag}"
-        );
-        workspace.close();
-    }
-}
-
-/// An unlisted file named like a secret, by its own name or a folder on its path, as the storage's
-/// secret names judge it, is no source: a code rule that reads text neither indexes it nor reports
-/// it. A listed file is read whatever its name.
-#[test]
-fn repository_index_skips_unlisted_files_named_like_secrets() {
-    let _slot = WORKSPACE_TEST_SLOT.lock();
-    let files: &[(&str, &[u8])] = &[
-        (".env", b"TOKEN=TODO\n"),
-        (".NPMRC", b"//registry/:_authToken=TODO\n"),
-        (".ssh/config", b"Host TODO\n"),
-        ("Justfile", b"build:\n\techo TODO\n"),
-        ("config/secrets.yaml", b"token: TODO\n"),
-        ("infra/terraform.tfstate", b"{\"TODO\": 1}\n"),
-        ("keys/server.pem", b"-----BEGIN TODO-----\n"),
-        ("secrets/id_rsa", b"TODO\n"),
-    ];
-    let directory = committed_repository("sensitive-unlisted", files);
-    let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
-    workspace
-        .state
-        .lock()
-        .unwrap()
-        .storage
-        .as_mut()
-        .unwrap()
-        .secret_names = StdArc::new(
-        super::secret_names::SecretNames::compile(&super::secret_names::SecretNamePatterns {
-            files: [
-                ".env",
-                ".npmrc",
-                "id_rsa*",
-                "*.pem",
-                "*.tfstate",
-                "secrets.*",
-            ]
-            .map(str::to_owned)
-            .to_vec(),
-            folders: vec![".ssh".to_owned()],
-        })
-        .unwrap(),
-    );
-    let todo = compile(
-        "todo",
-        json!([{ "id": "todo", "violation": { "anchor": "witness.span", "code": "T",
-            "message": "todo" },
-          "forbid": { "regex": { "source": "file.content", "pattern": "TODO" } } }]),
-    );
-    workspace.add_code_rule(&todo, None).unwrap();
-    let task = || {
-        let mut task = WorkspaceIndexTask::for_test(
-            Arc::clone(&workspace.state),
-            Arc::clone(&workspace.closed),
-            u32::MAX,
-        );
-        task.options
-            .source_languages
-            .insert(".yaml".to_owned(), "yaml".to_owned());
-        task
-    };
-    let mut failures = Vec::new();
-    loop {
-        let response: Value = serde_json::from_str(&task().compute().unwrap()).unwrap();
-        failures.extend(response["failures"].as_array().cloned().unwrap_or_default());
-        if response["done"] != json!(false) {
-            break;
-        }
-    }
-    assert_eq!(failures, Vec::<Value>::new());
-    {
-        let state = workspace.state.lock().unwrap();
-        let mut paths = state.files.keys().map(String::as_str).collect::<Vec<_>>();
-        paths.sort_unstable();
-        assert_eq!(paths, vec!["Justfile", "config/secrets.yaml"]);
-    }
-    assert_eq!(
-        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES)),
-        vec![
-            ("Justfile".to_owned(), "todo".to_owned(), 13),
-            ("config/secrets.yaml".to_owned(), "todo".to_owned(), 7),
-        ]
-    );
-    workspace.close();
-}
-
-/// An unlisted file over the per-file budget is binary, and dropped without a failure, where its
-/// first 8000 bytes hold a NUL (Git's test); otherwise, and for any listed file, it is reported
-/// over budget.
-#[test]
-fn repository_index_drops_oversized_unlisted_binaries_and_reports_oversized_text() {
-    let _slot = WORKSPACE_TEST_SLOT.lock();
-    let text = "TODO\n".repeat(40);
-    let mut binary = b"TODO\0".to_vec();
-    binary.extend_from_slice(text.as_bytes());
-    let mut late_binary = vec![b'a'; 8000];
-    late_binary.extend_from_slice(b"\0TODO\n");
-    let files: &[(&str, &[u8])] = &[
-        ("Justfile", b"build:\n\techo TODO\n"),
-        ("NOTES", text.as_bytes()),
-        ("late.bin", &late_binary),
-        ("listed.py", &binary),
-        ("video.bin", &binary),
-    ];
-    let directory = committed_repository("oversized-unlisted", files);
-    let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
-    let todo = compile(
-        "todo",
-        json!([{ "id": "todo", "violation": { "anchor": "witness.span", "code": "T",
-            "message": "todo" },
-          "forbid": { "regex": { "source": "file.content", "pattern": "TODO" } } }]),
-    );
-    workspace.add_code_rule(&todo, None).unwrap();
-    let mut failures = index_until_done(&workspace, 64)
-        .iter()
-        .flat_map(|response| response["failures"].as_array().cloned().unwrap_or_default())
-        .map(|failure| {
-            (
-                failure["path"].as_str().unwrap().to_owned(),
-                failure["code"].as_str().unwrap().to_owned(),
-            )
-        })
-        .collect::<Vec<_>>();
-    failures.sort();
-    assert_eq!(
-        failures,
-        vec![
-            ("NOTES".to_owned(), "budget-exceeded".to_owned()),
-            ("late.bin".to_owned(), "budget-exceeded".to_owned()),
-            ("listed.py".to_owned(), "budget-exceeded".to_owned()),
-        ],
-        "only an oversized unlisted file with a NUL in its first 8000 bytes is dropped silently"
-    );
-    {
-        let state = workspace.state.lock().unwrap();
-        let mut paths = state.files.keys().map(String::as_str).collect::<Vec<_>>();
-        paths.sort_unstable();
-        assert_eq!(paths, vec!["Justfile"]);
-    }
-    assert_eq!(
-        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES)),
-        vec![("Justfile".to_owned(), "todo".to_owned(), 13)]
-    );
-    workspace.close();
-}
-
 /// Whether a snapshot in the store at `store` holds `path`.
 fn snapshot_holds(store: &std::path::Path, path: &str) -> bool {
     rusqlite::Connection::open(store)
@@ -2418,7 +2137,7 @@ fn running_out_of_work_in_a_pass_over_some_clauses_is_never_stored() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("partial-pass");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
-    // `a`, a regex clause with one match, polls its allowance once, before `b` runs.
+    // `a` polls before scanning and once for its match, before `b` runs.
     let code_rule = compile(
         "partial-pass",
         json!([
@@ -2435,7 +2154,7 @@ fn running_out_of_work_in_a_pass_over_some_clauses_is_never_stored() {
     let file = json!([{ "path": "partial.py", "language": "python", "source": "print(1)\n" }]);
     // `a` runs and is stored; the ceiling stops `b`, which is not.
     let first = stored_workspace(&store, "/partial-pass", &code_rule);
-    TEST_CLAUSE_WORK_CEILING.set(Some(1));
+    TEST_CLAUSE_WORK_CEILING.set(Some(2));
     let capped = apply_json(&first, 1, file.clone());
     TEST_CLAUSE_WORK_CEILING.set(None);
     assert_eq!(
@@ -2585,8 +2304,8 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
             "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
         })
     };
-    // Every element reads each one before it: quadratic in the list, with no text to rule a
-    // file out.
+    // Enough roots to exhaust the clause allowance even when candidate selection and sibling
+    // checks share their work. No required literal rules the file out before matching.
     let costly = json!({
         "id": "costly", "violation": { "anchor": "witness.span", "code": "SLOW", "message": "slow" },
         "forbid": { "ast": { "language": "python", "rule": {
@@ -2596,7 +2315,7 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
         "clause-allowance",
         json!([print("before"), costly, print("after")]),
     );
-    let numbers = (0..3_000)
+    let numbers = (0..30_000)
         .map(|n| n.to_string())
         .collect::<Vec<_>>()
         .join(", ");
@@ -3171,7 +2890,7 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
             bytes,
             "{path} {clause}"
         );
-        assert_eq!(value["version"], 4, "{path} {clause}");
+        assert_eq!(value["version"], 3, "{path} {clause}");
     }
 
     for revision in 2..=3 {
@@ -3882,7 +3601,7 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     let lookup = |tape_id| SearchKindLookup {
         tape_id,
         index_version: POSITIONAL_INDEX_VERSION,
-        kind_tokens: vec![kind_index_token(call)],
+        kind_tokens: vec![kind_index_token(crate::code_rule_dsl::language::GrammarDialect::Python, call).unwrap()],
     };
     assert_eq!(
         store
@@ -4218,94 +3937,6 @@ fn a_symlinked_folder_pointing_outside_the_root_holds_no_manifest() {
         package("vendor/x.js"),
         Some(json!({ "folder": "", "type": "unset" }))
     );
-}
-
-/// On disk, a host's `package` facts carry the manifest's `private` and each file's own
-/// `published`, read from the manifest's `files` and `main` and its folder's `.npmignore` (a
-/// regular file, never a symlink): one reader reads each manifest once for every file below it,
-/// and the manifest's digest, which reuse keys carry, follows its ignore files.
-#[test]
-fn host_package_facts_read_private_and_each_files_publication_on_disk() {
-    let directory = TempDir::new("package-publication");
-    let root = directory.0.clone();
-    std::fs::create_dir_all(root.join("lib")).unwrap();
-    std::fs::create_dir_all(root.join("pkg")).unwrap();
-    std::fs::write(
-        root.join("package.json"),
-        r#"{ "files": ["lib"], "main": "main.js", "private": true }"#,
-    )
-    .unwrap();
-    std::fs::write(root.join(".npmignore"), "lib/x.js\n").unwrap();
-    std::fs::write(root.join("pkg/package.json"), "{}").unwrap();
-    let absolute = |path: &str| root.join(path).to_string_lossy().into_owned();
-    let reader = crate::code_rule_dsl::PackageFactsReader::new(root.to_string_lossy().into_owned());
-    let facts = |path: &str| {
-        reader
-            .facts("javascript".to_owned(), absolute(path))
-            .map(|facts| (facts.folder, facts.private, facts.published))
-    };
-    assert_eq!(
-        facts("lib/a.js"),
-        Some((String::new(), Some(true), Some(true)))
-    );
-    assert_eq!(
-        facts("lib/x.js"),
-        Some((String::new(), Some(true), Some(false)))
-    );
-    assert_eq!(
-        facts("src/b.js"),
-        Some((String::new(), Some(true), Some(false)))
-    );
-    assert_eq!(
-        facts("main.js"),
-        Some((String::new(), Some(true), Some(true)))
-    );
-    assert_eq!(
-        facts("pkg/a.js"),
-        Some(("pkg".to_owned(), None, Some(true)))
-    );
-    let one_shot = crate::code_rule_dsl::package_facts(
-        "javascript".to_owned(),
-        absolute("lib/x.js"),
-        root.to_string_lossy().into_owned(),
-    )
-    .expect("the root manifest");
-    assert_eq!(
-        (one_shot.private, one_shot.published),
-        (Some(true), Some(false))
-    );
-    // The digest follows the ignore files.
-    let digest = || {
-        *crate::code_rule_dsl::package_manifest::Manifests::new(root.clone())
-            .of_file(&root.join("pkg/a.js"))
-            .expect("the package's manifest")
-            .digest()
-    };
-    let before = digest();
-    std::fs::write(root.join("pkg/.gitignore"), "a.js\n").unwrap();
-    assert_ne!(digest(), before);
-    let reader = crate::code_rule_dsl::PackageFactsReader::new(root.to_string_lossy().into_owned());
-    assert_eq!(
-        reader
-            .facts("javascript".to_owned(), absolute("pkg/a.js"))
-            .and_then(|facts| facts.published),
-        Some(false)
-    );
-    // A symlinked ignore file is not read.
-    #[cfg(unix)]
-    {
-        std::fs::remove_file(root.join("pkg/.gitignore")).unwrap();
-        std::fs::write(root.join("ignore-all"), "*\n").unwrap();
-        std::os::unix::fs::symlink(root.join("ignore-all"), root.join("pkg/.npmignore")).unwrap();
-        let reader =
-            crate::code_rule_dsl::PackageFactsReader::new(root.to_string_lossy().into_owned());
-        assert_eq!(
-            reader
-                .facts("javascript".to_owned(), absolute("pkg/a.js"))
-                .and_then(|facts| facts.published),
-            Some(true)
-        );
-    }
 }
 
 /// A clean tree's reuse follows the configuration a nested package's `extends` reaches outside

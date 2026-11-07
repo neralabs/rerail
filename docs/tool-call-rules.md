@@ -300,63 +300,40 @@ quotes and line anchors. For anything command-shaped, read `input.command`.
 For each rule, list at least one command it must flag, one near-miss it must pass, and — if it reads
 the command line — a tool *result* that echoes the command and must pass.
 
-**2. Run them through the engine.** Put the rule and its cases in one draft file. A structural rule is stored
-under the `conversation` kind, and a tool call's case carries its arguments as stable JSON in both `text` and
-`input`; a tool result has `text` only:
+**2. Run them through the engine.** Add the rule to `fixtures/host/tool-call-rules/rules.json` and its
+cases to `test/engine/catalog/tool-call-rules.test.ts`, or try it ad hoc:
 
-```json
-{
-  "kind": "conversation",
-  "rule": {
-    "id": "oss:no-force-push",
-    "mode": "steer",
-    "match": { "field": "input.command", "regex": "\\bgit\\s+push\\b[^\\n]*\\s--force(?:\\s|=|$)" },
-    "sample": { "source": "tool:Bash", "boundary": "tool-call" },
-    "action": { "content": "Do not force-push: it rewrites published history. Ask the user first." },
-    "repeat": { "mode": "always" }
-  },
-  "cases": {
-    "caught": [
-      { "source": "tool:Bash", "boundary": "tool-call", "text": "{\"command\":\"git push --force origin main\"}", "input": "{\"command\":\"git push --force origin main\"}" }
-    ],
-    "passed": [
-      { "source": "tool:Bash", "boundary": "tool-call", "text": "{\"command\":\"git push --force-with-lease origin main\"}", "input": "{\"command\":\"git push --force-with-lease origin main\"}" },
-      { "source": "tool:Bash", "boundary": "tool-call", "text": "hint: use 'git push --force' to overwrite" }
-    ]
-  }
-}
+```ts
+import { resolve } from "node:path";
+import { ConversationRuleRegistry, stableJsonText } from "./src/engine/index.js";
+
+const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
+registry.replace([rule]);
+
+const input = stableJsonText({ command: "git push --force origin main" })!;
+registry.match({ source: "tool:Bash", boundary: "tool-call", text: input, input }, { respectRepeat: false });
+// → [{ ruleId: "oss:no-force-push", kind: "structural", action: { … } }]
 ```
 
 ```sh
-rerail rules test no-force-push.draft.json
+npx vitest run test/engine/catalog/tool-call-rules.test.ts
 ```
 
-`rerail rules test` validates the rule, regex included, and runs every case without storing anything; it
-exits non-zero when a case fails. `rerail rules test --help` prints the draft format. To have your coding
-agent draft the rule and its cases for you, run `/rerail-create`.
+**3. Measure noise before blocking.** `candidate-rules/oss-tool-rules/` checks each pattern against
+the commands your own repository already sanctions (scripts, CI, docs). A rule that matches
+sanctioned commands — `rm -rf` in a cleanup script — should use `mode: "steer"`, not `"block"`, until it is narrowed.
 
-**3. Measure noise before blocking.** Search the commands your own repository already sanctions (scripts,
-CI, docs) with the same pattern. `rg` uses the same Rust dialect; write the pattern with single backslashes:
+**4. Install it** with the daemon running (`rerail daemon start`): store it in your library and add it to
+the repository it should run in.
 
 ```sh
-rg '\bgit\s+push\b[^\n]*\s--force(?:\s|=|$)' scripts .github docs
+curl -X PUT http://127.0.0.1:4737/api/library-rules/oss:no-force-push \
+  -H 'content-type: application/json' \
+  -d "{\"kind\": \"conversation\", \"rule\": $(cat no-force-push.json), \"checkout\": \"$PWD\", \"attach\": true}"
 ```
 
-A rule that matches sanctioned commands — `rm -rf` in a cleanup script — should use `mode: "steer"`, not
-`"block"`, until it is narrowed.
-
-**4. Install it.** `rerail rules add` stores the rule in your library and adds it to the repository of the
-current checkout (`--repo <dir>` for another), at the draft's `folder` or the whole repository:
-
-```sh
-rerail rules add no-force-push.draft.json
-```
-
-A rule you write runs in Log until a person approves it with `rerail rules approve oss:no-force-push` or in
-the dashboard ([approval](rule-scoping.md#approval)).
-
-Changing the tool-call rules in Rerail's own tests (`fixtures/host/tool-call-rules/`) follows
-[CONTRIBUTING.md](../CONTRIBUTING.md).
+The body is validated before it is stored, regex included; an invalid rule is rejected with
+`400 invalid-request`. The checkout must be one Rerail has recorded (run `rerail start` there first). (Structural rules are stored under the `conversation` kind for now.)
 
 ## Errors you will meet
 

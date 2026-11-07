@@ -1,0 +1,18 @@
+.policy "bandit-b407-import-xml-expat" revision 2
+.description "Avoid importing xml.dom.expatbuilder to parse XML; it is open to XML attacks, so use defusedxml."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B407 (its B001 blacklist): an import of xml.dom.expatbuilder or a name in it.
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+//   import xml.dom.expatbuilder                 B407
+//   from xml.dom import expatbuilder            B407
+//   import xml.dom                              not reported
+//   importlib.import_module("xml.dom.expatbuilder") B407: a call that imports a listed module (exactly)
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B407(at: node) code "B407"
+    "xml.dom.expatbuilder parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B407"
+B407(n) :- blacklisted(n, "B407").

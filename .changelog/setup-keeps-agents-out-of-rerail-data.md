@@ -1,1 +1,0 @@
-Set-up keeps Claude Code's sandboxed commands and file tools, and the Cursor CLI's file tools, out of Rerail's data (the Rerail home and `~/.cache/rerail`); Rerail's own commands keep working, and `rerail install --remove` takes out exactly what it added. Codex, the Cursor editor, OMP and Pi have no setting for this; the installation guide says what each can reach.

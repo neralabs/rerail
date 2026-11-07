@@ -604,7 +604,7 @@ clauses:
       expect(result.status).toBe("completed");
       expect(result.violations.map((item) => item.span?.startByte)).toEqual([0, source.lastIndexOf("execute_async()")]);
     });
-    it("matches file paths without inspecting file contents, naming the file with no span", () => {
+    it("matches file paths without inspecting file contents", () => {
       const compiled = compileJson([
         {
           violation: violation("REQUIRED_FILE"),
@@ -621,8 +621,11 @@ clauses:
       );
 
       expect(result.violations).toHaveLength(1);
-      expect(result.violations[0]).toMatchObject({ code: "REQUIRED_FILE", path: ".required.json" });
-      expect(result.violations[0]).not.toHaveProperty("span");
+      expect(result.violations[0]).toMatchObject({
+        code: "REQUIRED_FILE",
+        path: ".required.json",
+        span: { startLine: 0 },
+      });
     });
     it("selects repository witnesses only when another query has evidence", () => {
       const compiled = compileJson([
@@ -649,8 +652,7 @@ clauses:
       );
 
       expect(violating.violations).toHaveLength(1);
-      expect(violating.violations[0]).toMatchObject({ path: ".baseline.json" });
-      expect(violating.violations[0]).not.toHaveProperty("span");
+      expect(violating.violations[0]).toMatchObject({ path: ".baseline.json", span: { startLine: 0 } });
       expect(compliant).toMatchObject({ violations: [], status: "completed" });
     });
     it("applies portable include and exclude scopes before matching", () => {
@@ -3349,7 +3351,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("file-local name resolution (M
   it("separates TypeScript values from types and honors /* global */ comments only when asked", async () => {
     const source = "/* global jQuery */\ninterface Window { x: number }\nlet w: Window = window;\njQuery(alert);\n";
     const values = { ...astForbid({ resolves: { global: ["Window", "window", "alert", "jQuery"] } }, "typescript"), id: "plain" };
-    const directives = { ...astForbid({ resolves: { global: ["alert", "jQuery"], directives: "eslint" } }, "typescript"), id: "eslint" };
+    const directives = { ...astForbid({ resolves: { global: ["alert"], directives: "eslint" } }, "typescript"), id: "eslint" };
     const files = [{ language: "typescript" as const, path: "a.ts", source }];
     const { actual, full } = await workspaceAndFull([values, directives], files);
     expect(actual.violations).toEqual(full.violations);

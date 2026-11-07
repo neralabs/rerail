@@ -8,12 +8,10 @@ import { parseRuleDraft, testRuleDraft } from "../../src/cli/rule-draft.js";
 
 /**
  * The `/rerail-create` skill (`skills/rerail-create/`): every rule draft it shows the agent is a fenced `json draft` block, and
- * each one must be valid with every case right, as `rerail rules test` would report it. Its Markdown links must resolve. The
- * drafts of `docs/path-and-text-rules.md`, which people copy, are held to the same bar.
+ * each one must be valid with every case right, as `rerail rules test` would report it. Its Markdown links must resolve.
  */
 
 const SKILL = resolve("skills", "rerail-create");
-const GUIDE = resolve("docs", "path-and-text-rules.md");
 
 async function markdownFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true, recursive: true });
@@ -23,12 +21,11 @@ async function markdownFiles(directory: string): Promise<string[]> {
 const files = await markdownFiles(SKILL);
 const texts = new Map(await Promise.all(files.map(async file => [file, await readFile(file, "utf8")] as const)));
 
-function draftsOf(name: string, text: string): Array<{ name: string; json: string }> {
-  return [...text.matchAll(/^```json draft\n([\s\S]*?)^```$/gmu)].map((match, index) => ({ name: `${name} #${index + 1}`, json: match[1]! }));
-}
-
-const drafts = [...texts].flatMap(([file, text]) => draftsOf(file.slice(SKILL.length + 1), text));
-const guideDrafts = draftsOf("docs/path-and-text-rules.md", await readFile(GUIDE, "utf8"));
+const drafts = [...texts].flatMap(([file, text]) =>
+  [...text.matchAll(/^```json draft\n([\s\S]*?)^```$/gmu)].map((match, index) => ({
+    name: `${file.slice(SKILL.length + 1)} #${index + 1}`,
+    json: match[1]!,
+  })));
 
 let repo = "";
 
@@ -48,7 +45,7 @@ describe("rerail-create skill drafts", () => {
     expect(kinds).toContain("conversation");
   });
 
-  it.each([...drafts, ...guideDrafts])("$name is valid and every case is right", async ({ json }) => {
+  it.each(drafts)("$name is valid and every case is right", async ({ json }) => {
     const report = await testRuleDraft(parseRuleDraft(JSON.parse(json)), repo);
     expect(report.valid).toBe(true);
     expect(report.cases.filter(result => !result.ok)).toEqual([]);

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, RerailHost } from "../../../src/engine/adapter-contract.js";
 import type { CodeRuleAuditor, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
-import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
@@ -47,8 +47,7 @@ async function fixture({ deliverBackground, host = "claude-code", prepare, audit
       steerDelivery = options.steerDelivery;
       return {
         openWorkspace: async () => { opened.resolve(); },
-        // As rules without a text clause: the session's own files under `sessions/` are no sources.
-        acceptsPath: path => languageFor(path) !== undefined,
+        acceptsPath: () => true,
         auditGeneratedEdits: auditGeneratedEdits?.(options.steerDelivery)
           ?? (async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] })),
         close: async () => undefined,

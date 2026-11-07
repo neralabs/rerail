@@ -4,6 +4,7 @@
   "capabilities": [
     "syntax"
   ],
+  "corpora": [],
   "tools": [
     {
       "name": "examplelint",

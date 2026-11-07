@@ -1,1 +1,0 @@
-Dependency updates, with no change in behavior: the native engine moves to ast-grep 0.51, gix 0.90, rusqlite 0.41, sha2 0.11, jemalloc 0.7 and num-bigint 0.5, and the package to @babel/parser 8, diff 9 and hono 4.13.14.

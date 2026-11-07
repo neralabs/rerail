@@ -6,7 +6,6 @@ export type {
   CodeRuleDslCalls,
   CodeRuleDslFileCondition,
   CodeRuleDslFormatArgs,
-  CodeRuleDslImportTarget,
   CodeRuleDslLanguageOptions,
   CodeRuleDslLayout,
   CodeRuleDslParse,
@@ -20,7 +19,6 @@ import type {
   CodeRuleDslBinds,
   CodeRuleDslCalls,
   CodeRuleDslFormatArgs,
-  CodeRuleDslImportTarget,
   CodeRuleDslLayout,
   CodeRuleDslParse,
   CodeRuleDslResolves,
@@ -66,5 +64,4 @@ export interface CodeRuleDslSemanticAstRuleFields {
    */
   embedded?: CodeRuleDslAstRule;
   calls?: CodeRuleDslCalls;
-  importTarget?: CodeRuleDslImportTarget;
 }

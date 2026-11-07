@@ -192,19 +192,6 @@ describe("Rerail API over HTTP", () => {
       .rules[codeRule.id]!.rerails).toBe(2);
   });
 
-  it("lists a rule taken out of the rules it reports while it has violations in range, marked removed", async () => {
-    // No library rules: the violation's rule is not among the rules reported.
-    seedAudit({ at: 2_000, violations: [flagged] });
-
-    const removed = (await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000")).rules[flagged.ruleId];
-    expect(removed).toMatchObject({ measured: true, distinctViolations: 1, removed: true });
-    // Outside the range it has nothing to show, so it is not listed.
-    expect((await getJson<{ rules: Record<string, unknown> }>("/api/rules/activity?since=3000")).rules).not.toHaveProperty([flagged.ruleId]);
-    // Back among the rules reported, it is no longer marked.
-    addLibraryRules();
-    expect((await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000")).rules[flagged.ruleId]).not.toHaveProperty("removed");
-  });
-
   it("lists violations newest first, paged, and filtered by rule", async () => {
     const other = { ...flagged, id: "violation-other", ruleId: MOCK_CODE_RULES[1]!.id, path: "web/src/z.ts" };
     seedAudit({ at: 1_000, violations: [flagged] });

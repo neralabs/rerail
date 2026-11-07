@@ -5,8 +5,7 @@ Each command file points the agent here, with the installed package's path.
 
 | Skill | Command | What it does |
 |---|---|---|
-| [rerail-create](rerail-create/SKILL.md) | `/rerail-create` (`$rerail-create` in Codex) | Suggests rules from the repo's sessions and standards. Writes, tests and tunes a rule, and adds it only after the person says yes: to the repo, or to this worktree only in its `.rerail/rules/`. |
-| [rerail-bug-report](rerail-bug-report/SKILL.md) | `/rerail-bug-report` (`$rerail-bug-report` in Codex) | Works out whether a problem is an engine bug, a bug in a rule that ships with Rerail, or a bug in the person's own rule. Helps fix their own rule, and offers to report the other two in an issue |
+| [rerail-create](rerail-create/SKILL.md) | `/rerail-create` (`$rerail-create` in Codex) | Suggests rules from the repo's sessions and standards. Writes, tests and tunes a rule, and adds it only after the person says yes. |
 
 A skill is Markdown for the agent: `SKILL.md`, plus `references/` that it reads when a step names one, and `examples/` (for
 `rerail-create`, [a rule an OMP session made for this repository](rerail-create/examples/no-hand-edits-to-generated-files.md),

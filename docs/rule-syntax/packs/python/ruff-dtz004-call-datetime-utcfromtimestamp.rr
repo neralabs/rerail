@@ -1,0 +1,17 @@
+.policy "ruff-dtz004-call-datetime-utcfromtimestamp" revision 2
+.description "Use datetime.fromtimestamp with a timezone instead of utcfromtimestamp; utcfromtimestamp returns a naive datetime with no zone information."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff DTZ004 (flake8-datetimez): `datetime.datetime.utcfromtimestamp(ts)`, which returns a naive datetime
+// holding UTC, so other code reads it as local time. A call followed by `.astimezone()` (through any
+// `.replace(…)`) is not reported. Reported at the call. Only in a file that imports datetime.
+//   datetime.datetime.utcfromtimestamp(1234)                  ← DTZ004
+//   datetime.datetime.utcfromtimestamp(1234).astimezone()     not reported
+#include "python/datetime.rr"
+
+.violation DTZ004(at: node) code "DTZ004"
+    "Replace `utcfromtimestamp(ts)` with `fromtimestamp(ts, tz=datetime.timezone.utc)` for an aware UTC datetime. Keep it only where the value is mixed with naive datetimes that cannot change too."
+    suppress ruff "DTZ004"
+DTZ004(c) :- dt_call(c, "datetime.datetime.utcfromtimestamp"), !then_astimezone(c).

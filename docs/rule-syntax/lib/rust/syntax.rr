@@ -1,0 +1,155 @@
+// rust/syntax: the tree-sitter-rust 0.24 shapes that Clippy's syntax-level (early) lints read.
+//
+// Clippy runs on rustc's AST after macro expansion; tree-sitter parses the source as written. Where they differ:
+//   - macros: a macro_rules! body, and the arguments of a call `m!(…)`, are token trees. Their tokens are
+//     leaves (identifier, integer_literal, metavariable, a token_tree per bracket group), never expressions
+//     or patterns; keywords and punctuation are anonymous tokens. Clippy skips most code that comes from an
+//     expansion, so rules leave macro_rules! bodies out (in_macro_def), or read their token trees on purpose.
+//   - attributes: `#[…]` is an attribute_item, a sibling before what it applies to; `#![…]` is an
+//     inner_attribute_item inside it. Both hold an `attribute`: a path, then arguments as a token_tree.
+//   - `_` in a pattern, and `,`, are anonymous tokens, not nodes: rules read them through core's tokens.
+//   - parentheses: `(a)` is a parenthesized_expression, as rustc's ExprKind::Paren; `(a, b)` a
+//     tuple_expression; `()` a unit_expression. Comments are named children wherever they occur.
+//
+// What a rule gets from this library:
+//   in_macro_def(n)              n is inside a macro_rules! definition
+//   transcribed(n)               n is in a macro_rules! transcriber, the right side of `(…) => {…}`
+//   expr_tokens(n)               token tree n holds expressions Clippy will see: n is transcribed, or in
+//                                the arguments of a std macro that takes expressions (assert_eq!, vec!, …)
+//   has_comment(n)               n has a comment among its children
+//   paren_inner(p, e)            parenthesized expression p wraps e: `(e)`, comments aside
+//   sole_group(p, t)             token tree p's brackets hold token tree t and nothing else: `((x))`
+//   binary(e, op, l, r)          e is `l op r`
+//   arith_op(op), shift_op(op), bitwise_op(op)   + - * / %;  << >>;  & | ^
+//   macro_name(m, x)             macro invocation m calls x: `std::vec![…]` gives "vec"
+//   attr_name(a, x)              attribute item a is #[x…] or #![x…]: x is its path, "allow", "clippy::msrv"
+//   attached(a, n)               outer attribute a applies to n, the next item, field, statement or arm
+//   has_attr(n, x)               n carries an outer attribute named x: #[test] fn f() {}
+//   msrv_of(n, x)                the innermost #[clippy::msrv = "x"] over n (on an enclosing item, or #![…]
+//                                in an enclosing module or file): Clippy holds back lints newer than x there.
+//                                An outer attribute gets the msrv of the item it is attached to.
+//   msrv_older(n, v)             msrv_of(n) is older than v, a version a Clippy lint needs ("1.53")
+//   format_string(s)             string literal s is the format string of a std printing macro, which Clippy
+//                                never sees as a literal: println!("{}", x), write!(f, "{}", x)
+//   opaque_macro(m)              m is concat!, stringify!, env! or include*!: its literals never reach Clippy
+//   struct_field(s, i, f)        f is the i-th field of struct s: a field_declaration, or for a tuple struct
+//                                its field's type (tuple fields have no node of their own)
+//   field_vis(f, v)              v is field f's visibility modifier: `pub`, `pub(crate)`, …
+//
+// Builds on core only: the tape, tokens (first_token, last_token, token_before, token_after) and the axes.
+
+.decl in_macro_def(n: node)
+in_macro_def(n) :- inside(n, _, "macro_definition").
+.decl transcribed(n: node)
+transcribed(n) :- kind(r, "macro_rule"), field(r, "right", t), (n = t ; within(n, t)).
+
+.decl expr_tokens(n: node)
+expr_tokens(n) :- kind(n, "token_tree"), transcribed(n).
+expr_tokens(n) :- kind(n, "token_tree"), inside(n, m, "macro_invocation"), macro_name(m, x), std_expr_macro(x).
+// macro_name(m, x): `assert_eq!(…)` and `std::assert_eq!(…)` are both "assert_eq".
+.decl macro_name(m: node, x: symbol)
+macro_name(m, x) :- kind(m, "macro_invocation"), field(m, "macro", p), kind(p, "identifier"), text(p, x).
+macro_name(m, x) :- kind(m, "macro_invocation"), field(m, "macro", p), field(p, "name", i), text(i, x).
+// std's macros whose arguments are expressions (a format string first, for the printing ones).
+.decl std_expr_macro(name: symbol)
+std_expr_macro("assert"). std_expr_macro("assert_eq"). std_expr_macro("assert_ne"). std_expr_macro("debug_assert").
+std_expr_macro("debug_assert_eq"). std_expr_macro("debug_assert_ne"). std_expr_macro("vec").
+std_expr_macro("print"). std_expr_macro("println"). std_expr_macro("eprint"). std_expr_macro("eprintln").
+std_expr_macro("format"). std_expr_macro("write"). std_expr_macro("writeln"). std_expr_macro("panic").
+std_expr_macro("dbg").
+
+// format_string(s): the macro's format argument, by position: println!(fmt, …), write!(dst, fmt, …),
+// assert!(cond, fmt, …), assert_eq!(a, b, fmt, …). Arguments are counted by the commas between the token
+// tree's elements.
+.decl format_string(s: node)
+format_string(s) :- macro_args(m, t), macro_name(m, x), format_pos(x, k), child(t, s, _),
+    (kind(s, "string_literal") ; kind(s, "raw_string_literal")), arg_index(t, s, k),
+    token_before(s, b), (text(b, "(") ; text(b, "[") ; text(b, "{") ; text(b, ",")),
+    token_after(s, a), (text(a, ")") ; text(a, "]") ; text(a, "}") ; text(a, ",")).
+.decl format_pos(name: symbol, k: number)
+format_pos("print", 0). format_pos("println", 0). format_pos("eprint", 0). format_pos("eprintln", 0).
+format_pos("format", 0). format_pos("panic", 0). format_pos("write", 1). format_pos("writeln", 1).
+format_pos("assert", 1). format_pos("debug_assert", 1). format_pos("assert_eq", 2). format_pos("assert_ne", 2).
+format_pos("debug_assert_eq", 2). format_pos("debug_assert_ne", 2).
+.decl macro_args(m: node, t: node)
+macro_args(m, t) :- kind(m, "macro_invocation"), child(m, t, _), kind(t, "token_tree").
+// arg_index(t, c, k): element c of token tree t is in argument k, from 0.
+.decl arg_index(t: node, c: node, k: number)
+arg_index(t, c, 0) :- format_args(t), child(t, c, 0).
+arg_index(t, d, k + w) :- arg_index(t, c, k), next_sibling(c, d), w = count : { gap_token(c, g), text(g, ",") }.
+.decl format_args(t: node)
+format_args(t) :- macro_args(m, t), macro_name(m, x), format_pos(x, _).
+.decl gap_token(c: node, g: span)   // the tokens between element c and the next one
+gap_token(c, g) :- format_args(t), child(t, c, _), token_after(c, g), next_sibling(c, d), !first_token(d, g).
+gap_token(c, h) :- gap_token(c, g), token_after(g, h), next_sibling(c, d), !first_token(d, h).
+.decl opaque_macro(m: node)
+opaque_macro(m) :- macro_name(m, x), (x = "concat" ; x = "stringify" ; x = "env" ; x = "option_env" ;
+    prefix("include", x)).
+
+.decl comment_kind(k: symbol)
+comment_kind("line_comment"). comment_kind("block_comment").
+.decl has_comment(n: node)
+has_comment(n) :- child(n, c, _), kind(c, k), comment_kind(k).
+
+// ---- expressions --------------------------------------------------------------------------------------------
+.decl paren_inner(p: node, e: node)
+paren_inner(p, e) :- kind(p, "parenthesized_expression"), child(p, e, _), kind(e, k), !comment_kind(k).
+// sole_group(p, t): t comes right after p's opening bracket and right before its closing one.
+.decl sole_group(p: node, t: node)
+sole_group(p, t) :- kind(p, "token_tree"), child(p, t, _), kind(t, "token_tree"),
+    first_token(p, o), token_before(t, o), last_token(p, c), token_after(t, c).
+
+// The operator is the binary expression's one anonymous token.
+.decl binary(e: node, op: symbol, l: node, r: node)
+binary(e, op, l, r) :- kind(e, "binary_expression"), op(e, op), field(e, "left", l), field(e, "right", r).
+.decl arith_op(op: symbol)
+arith_op("+"). arith_op("-"). arith_op("*"). arith_op("/"). arith_op("%").
+.decl shift_op(op: symbol)
+shift_op("<<"). shift_op(">>").
+.decl bitwise_op(op: symbol)
+bitwise_op("&"). bitwise_op("|"). bitwise_op("^").
+
+// ---- attributes and items --------------------------------------------------------------------------------------
+.decl attr_name(a: node, x: symbol)
+attr_name(a, x) :- (kind(a, "attribute_item") ; kind(a, "inner_attribute_item")), child(a, t, 0),
+    kind(t, "attribute"), child(t, p, 0), (kind(p, "identifier") ; kind(p, "scoped_identifier")), text(p, x).
+// attached(a, n): attributes and comments may stack: `#[test] /// doc #[inline] fn f()` attaches all to f.
+.decl attached(a: node, n: node)
+attached(a, n) :- kind(a, "attribute_item"), next_sibling(a, n), !attr_or_comment(n).
+attached(a, n) :- kind(a, "attribute_item"), next_sibling(a, x), attr_or_comment(x), attached_via(x, n).
+.decl attached_via(x: node, n: node)
+attached_via(x, n) :- attr_or_comment(x), next_sibling(x, n), !attr_or_comment(n).
+attached_via(x, n) :- attr_or_comment(x), next_sibling(x, y), attr_or_comment(y), attached_via(y, n).
+.decl attr_or_comment(n: node)
+attr_or_comment(n) :- kind(n, "attribute_item").
+attr_or_comment(n) :- kind(n, k), comment_kind(k).
+.decl has_attr(n: node, x: symbol)
+has_attr(n, x) :- attached(a, n), attr_name(a, x).
+
+// msrv_of(n, x): rules test the version with core's semver: @semver_subset(x, "<1.17") = 1 means older.
+// Clippy also reads `msrv` in clippy.toml and `rust-version` in Cargo.toml; those are not read here.
+.pragma "magic-transform" "msrv_of,msrv_cover"
+.decl msrv_of(n: node, x: symbol)
+msrv_of(n, x) :- msrv_cover(n, _, _), k = max d : { msrv_cover(n, _, d) }, msrv_cover(n, s, k), msrv_scope(s, x).
+.decl msrv_cover(n: node, s: node, depth: number)
+msrv_cover(n, s, d) :- msrv_scope(s, _), (n = s ; within(n, s)), ast_depth(s, d).
+msrv_cover(a, s, d) :- kind(a, "attribute_item"), attached(a, n), msrv_cover(n, s, d).
+.decl msrv_older(n: node, v: symbol)
+msrv_older(n, v) :- msrv_of(n, x), msrv_gate(v), @semver_subset(x, cat("<", v)) = 1.
+.decl msrv_gate(v: symbol)  // the versions this pack's lints wait for
+msrv_gate("1.17"). msrv_gate("1.53"). msrv_gate("1.81").
+.decl msrv_scope(s: node, x: symbol)  // the node a clippy::msrv attribute governs
+msrv_scope(n, x) :- attr_name(a, "clippy::msrv"), attached(a, n), attr_value(a, x).
+msrv_scope(p, x) :- kind(a, "inner_attribute_item"), attr_name(a, "clippy::msrv"), child(p, a, _), attr_value(a, x).
+.decl attr_value(a: node, x: symbol)  // #[name = "x"]
+attr_value(a, x) :- child(a, t, 0), kind(t, "attribute"), field(t, "value", v), str(v, x).
+
+.decl struct_field(s: node, i: number, f: node)
+struct_field(s, i, f) :- kind(s, "struct_item"), field(s, "body", l), kind(l, "field_declaration_list"),
+    child(l, f, i), kind(f, "field_declaration").
+struct_field(s, i, t) :- kind(s, "struct_item"), field(s, "body", l), kind(l, "ordered_field_declaration_list"),
+    child(l, t, i), field(l, "type", t).
+.decl field_vis(f: node, v: node)
+field_vis(f, v) :- kind(f, "field_declaration"), child(f, v, _), kind(v, "visibility_modifier").
+field_vis(t, v) :- child(l, t, _), kind(l, "ordered_field_declaration_list"), next_sibling(v, t),
+    kind(v, "visibility_modifier").

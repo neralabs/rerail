@@ -1,0 +1,26 @@
+.policy "ruff-pth118-os-path-join" revision 2
+.description "Use Path objects with the slash operator or joinpath instead of os.path.join or os.sep.join; pathlib reads better than joining path strings."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH118 (flake8-use-pathlib): every call of `os.path.join` or `os.sep.join`, however it is imported.
+// The message says `/` for `os.path.join(a, b)`, `joinpath` when a positional argument is `*parts`, and
+// `Path(*parts)` for `os.sep.join`. Reported at the callee.
+//   os.path.join(a, b)                   ← PTH118: `Path(a) / b`
+//   os.path.join(a, *parts)              ← PTH118: `Path(a).joinpath(*parts)`
+//   os.sep.join(parts)                   ← PTH118: `Path(*parts)`
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)   call_item(c, a, j)   (python/ruff)
+
+.violation PTH118(at: node, msg: symbol) code "PTH118" "{msg}"
+    suppress ruff "PTH118"
+PTH118(f, "Build the path with `Path(first) / second` instead of `os.path.join(first, second)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects.") :-
+    pth_call(c, "os.path.join", f), !join_unpacked(c).
+PTH118(f, "Use `Path(first).joinpath(*parts)` instead of `os.path.join(first, *parts)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects.") :-
+    pth_call(c, "os.path.join", f), join_unpacked(c).
+PTH118(f, "Use `Path(*parts)` instead of `os.sep.join(parts)`, with `str()` where a string is needed. Leave it if the result is not a filesystem path or a part may be empty or absolute.") :-
+    pth_call(_, "os.sep.join", f).
+// join_unpacked(c): a positional `*parts` (a `**kw` is a keyword, and does not count).
+.decl join_unpacked(c: node)
+join_unpacked(c) :- call_item(c, a, _), kind(a, "list_splat").

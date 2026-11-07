@@ -94,13 +94,25 @@
               "any": [
                 {
                   "has": {
-                    "field": "function",
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
                     "matches": "it-cycle-count"
                   }
                 },
                 {
                   "has": {
-                    "field": "function",
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
                     "matches": "it-repeat"
                   },
                   "all": [
@@ -114,7 +126,20 @@
                               "has": {
                                 "stopBy": "neighbor",
                                 "not": {
-                                  "matches": "not-positional"
+                                  "any": [
+                                    {
+                                      "kind": "keyword_argument"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat"
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "regex": "^[(),]$"
+                                    }
+                                  ]
                                 }
                               },
                               "min": 1,
@@ -139,7 +164,20 @@
                               "has": {
                                 "stopBy": "neighbor",
                                 "not": {
-                                  "matches": "not-positional"
+                                  "any": [
+                                    {
+                                      "kind": "keyword_argument"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat"
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "regex": "^[(),]$"
+                                    }
+                                  ]
                                 }
                               },
                               "min": 2,
@@ -148,13 +186,39 @@
                             "has": {
                               "stopBy": "neighbor",
                               "not": {
-                                "matches": "not-positional"
+                                "any": [
+                                  {
+                                    "kind": "keyword_argument"
+                                  },
+                                  {
+                                    "kind": "dictionary_splat"
+                                  },
+                                  {
+                                    "kind": "comment"
+                                  },
+                                  {
+                                    "regex": "^[(),]$"
+                                  }
+                                ]
                               },
                               "matches": "none-literal",
                               "follows": {
                                 "stopBy": "end",
                                 "not": {
-                                  "matches": "not-positional"
+                                  "any": [
+                                    {
+                                      "kind": "keyword_argument"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat"
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "regex": "^[(),]$"
+                                    }
+                                  ]
                                 }
                               }
                             }
@@ -166,13 +230,22 @@
                               "all": [
                                 {
                                   "has": {
-                                    "field": "name",
-                                    "regex": "^(times)$"
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^(times)$",
+                                    "precedes": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^=$"
+                                    }
                                   }
                                 },
                                 {
                                   "has": {
-                                    "field": "value",
+                                    "stopBy": "neighbor",
+                                    "follows": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^=$"
+                                    },
                                     "matches": "none-literal"
                                   }
                                 }
@@ -186,7 +259,13 @@
                 },
                 {
                   "has": {
-                    "field": "function",
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
                     "matches": "it-repeat"
                   },
                   "all": [
@@ -242,32 +321,6 @@
                   }
                 }
               ]
-            },
-            "trivia": {
-              "any": [
-                {
-                  "kind": "comment"
-                },
-                {
-                  "kind": "line_continuation"
-                }
-              ]
-            },
-            "not-positional": {
-              "any": [
-                {
-                  "kind": "keyword_argument"
-                },
-                {
-                  "kind": "dictionary_splat"
-                },
-                {
-                  "matches": "trivia"
-                },
-                {
-                  "regex": "^[(),]$"
-                }
-              ]
             }
           },
           "rule": {
@@ -284,26 +337,16 @@
             },
             "all": [
               {
-                "any": [
-                  {
-                    "pattern": "$CALL",
-                    "has": {
-                      "field": "function",
-                      "matches": "callee-zip"
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
                     }
                   },
-                  {
-                    "has": {
-                      "field": "function",
-                      "kind": "list_splat",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "matches": "callee-zip",
-                        "pattern": "$CALL"
-                      }
-                    }
-                  }
-                ]
+                  "matches": "callee-zip"
+                }
               },
               {
                 "has": {
@@ -313,7 +356,20 @@
                     "has": {
                       "stopBy": "neighbor",
                       "not": {
-                        "matches": "not-positional"
+                        "any": [
+                          {
+                            "kind": "keyword_argument"
+                          },
+                          {
+                            "kind": "dictionary_splat"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[(),]$"
+                          }
+                        ]
                       },
                       "matches": "infinite"
                     }
@@ -324,7 +380,20 @@
                         "has": {
                           "stopBy": "neighbor",
                           "not": {
-                            "matches": "not-positional"
+                            "any": [
+                              {
+                                "kind": "keyword_argument"
+                              },
+                              {
+                                "kind": "dictionary_splat"
+                              },
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^[(),]$"
+                              }
+                            ]
                           }
                         },
                         "min": 2
@@ -344,7 +413,7 @@
         }
       },
       "violation": {
-        "anchor": "capture.CALL",
+        "anchor": "witness.span",
         "code": "B905",
         "message": "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended.",
         "suppress": {

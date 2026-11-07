@@ -1,18 +1,17 @@
-// Inside `src/` so every copy of the native sources (release builds) carries it; the
-// library compiles it only for tests.
+// Inside `src/` so every checkout copy of the native sources (the playground, release
+// builds) carries it; the library compiles it only for tests.
 #[path = "src/build_identity.rs"]
 mod identity;
 #[path = "src/build_languages.rs"]
 mod languages;
 
-use identity::{grammar_build_id, hex, locked_version};
+use identity::{grammar_build_id, hex, locked_version, parser_cache_key};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn main() {
     napi_build::setup();
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    check_names_table(&manifest);
     let lock_text = std::fs::read_to_string(
         manifest
             .parent()
@@ -232,8 +231,8 @@ fn committed_parser(grammar: &VendoredGrammar, json: &str, generator: &str) -> S
         format!("regenerate it with `node {GENERATOR}` (about 15 minutes) and commit {path}");
     let bytes = std::fs::read(&path)
         .unwrap_or_else(|error| panic!("{path} is unreadable ({error}): {regenerate}"));
-    if bytes.starts_with(LFS_POINTER) {
-        panic!("{path} is a Git LFS pointer, not the file: run `{LFS_REMEDY}` (CONTRIBUTING.md)");
+    if bytes.starts_with(b"version https://git-lfs") {
+        panic!("{path} is a Git LFS pointer: run `git lfs pull` (CONTRIBUTING.md)");
     }
     let mut parser = String::new();
     flate2::read::GzDecoder::new(bytes.as_slice())
@@ -249,32 +248,6 @@ fn committed_parser(grammar: &VendoredGrammar, json: &str, generator: &str) -> S
     parser
 }
 
-/// What a Git LFS pointer file starts with: a checkout without Git LFS holds these in place of the
-/// binaries `.gitattributes` stores in LFS.
-const LFS_POINTER: &[u8] = b"version https://git-lfs";
-const LFS_REMEDY: &str = "git lfs install && git lfs pull";
-
-/// The Unicode names table `include_bytes!` embeds (`value/names.rs`): it must be the table, not
-/// its Git LFS pointer, or every Python `\N{...}` escape fails at run time.
-fn check_names_table(manifest: &Path) {
-    let relative = "src/code_rule_dsl/value/names/names.bin";
-    let path = manifest.join(relative);
-    println!("cargo:rerun-if-changed={}", path.display());
-    let bytes = std::fs::read(&path).unwrap_or_else(|error| {
-        panic!("native/{relative} is unreadable ({error}): run `{LFS_REMEDY}`")
-    });
-    if bytes.starts_with(LFS_POINTER) {
-        panic!(
-            "native/{relative} is a Git LFS pointer, not the names table: run `{LFS_REMEDY}` (CONTRIBUTING.md)"
-        );
-    }
-    if !bytes.starts_with(b"TNAMES01") {
-        panic!(
-            "native/{relative} is not a names table (no TNAMES01 header): run `{LFS_REMEDY}`, or regenerate it with scripts/generate/value/names.py"
-        );
-    }
-}
-
 fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
     for input in grammar.inputs {
         println!("cargo:rerun-if-changed={input}");
@@ -283,20 +256,72 @@ fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
     let source = grammar.source;
     let json = std::fs::read_to_string(format!("{source}/grammar.json"))
         .unwrap_or_else(|error| panic!("{name} grammar is unreadable: {error}"));
-    let parser = if grammar.committed_parser {
-        committed_parser(grammar, &json, generator)
-    } else {
-        generate_parser(grammar, &json)
-    };
     let parser_path = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
         .join(format!("{name}_parser.c"));
-    std::fs::write(&parser_path, parser).expect("generated parser is writable");
-    cc::Build::new()
-        .include(grammar.headers)
-        .file(parser_path)
-        .file(format!("{source}/scanner.c"))
-        .warnings(false)
-        .compile(&format!("tree-sitter-{name}"));
+    if grammar.committed_parser {
+        let parser = committed_parser(grammar, &json, generator);
+        std::fs::write(&parser_path, parser).expect("generated parser is writable");
+    } else {
+        // Rust-only edits rerun this script for the engine identity. Reuse a parser generated from
+        // this grammar.json, version and generator, including after a bounded build was interrupted.
+        let stamp_path = parser_path.with_extension("sha256");
+        let key = parser_cache_key(
+            generator.as_bytes(),
+            json.as_bytes(),
+            &format!("{:?}", grammar.version),
+        );
+        if !parser_path.is_file()
+            || std::fs::read_to_string(&stamp_path).ok().as_deref() != Some(&key)
+        {
+            let parser = generate_parser(grammar, &json);
+            std::fs::write(&parser_path, parser).expect("generated parser is writable");
+            std::fs::write(stamp_path, key).expect("parser fingerprint is writable");
+        }
+    }
+    // Every engine edit reruns this script for the engine identity; recompiling the grammars' C
+    // each time cost ~5 s. The library is rebuilt only when its inputs or the C toolchain settings
+    // change, and otherwise linked as `cc` links it.
+    let library = format!("tree-sitter-{name}");
+    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
+    let archive = out_dir.join(format!("lib{library}.a"));
+    let compiled_stamp = out_dir.join(format!("{library}.compiled.sha256"));
+    let scanner = format!("{source}/scanner.c");
+    let mut inputs = Sha256::new();
+    for variable in ["TARGET", "HOST", "OPT_LEVEL", "DEBUG", "PROFILE", "CC", "CFLAGS"] {
+        println!("cargo:rerun-if-env-changed={variable}");
+        inputs.update(variable.as_bytes());
+        inputs.update(std::env::var(variable).unwrap_or_default().as_bytes());
+    }
+    // Python's scanner frees and reallocates its indent and delimiter stacks each time the parser restores its state
+    // (`deserialize`); through the system allocator that was 6% of a parse (macOS's `free` reads the clock). With
+    // this define its arrays use the allocator the parser has (`install_tree_sitter_allocator`: jemalloc). Python's
+    // scanner allocates nothing else through `array.h` that it frees with `free`.
+    let reuse_allocator = name == "python";
+    if reuse_allocator {
+        inputs.update(b"TREE_SITTER_REUSE_ALLOCATOR");
+    }
+    let mut headers = Vec::new();
+    collect_sources(Path::new(grammar.headers), &mut headers);
+    headers.sort();
+    for path in std::iter::once(parser_path.clone())
+        .chain(std::iter::once(PathBuf::from(&scanner)))
+        .chain(headers)
+    {
+        inputs.update(path.to_string_lossy().as_bytes());
+        inputs.update(std::fs::read(&path).expect("grammar C input is readable"));
+    }
+    let key = hex(&inputs.finalize());
+    if archive.is_file() && std::fs::read_to_string(&compiled_stamp).ok().as_deref() == Some(&key) {
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
+        println!("cargo:rustc-link-lib=static={library}");
+        return;
+    }
+    let mut build = cc::Build::new();
+    if reuse_allocator {
+        build.define("TREE_SITTER_REUSE_ALLOCATOR", None);
+    }
+    build.include(grammar.headers).file(parser_path).file(scanner).warnings(false).compile(&library);
+    std::fs::write(compiled_stamp, key).expect("compiled grammar fingerprint is writable");
 }
 
 /// Where the engine's tests read the conformance fixtures: `RERAIL_ORACLES_DIR` if set (relative

@@ -9,8 +9,6 @@ import {
   loadRuleCatalog,
   setUpRepository,
   upsertLibraryRule,
-  approve,
-  ruleSubject,
   type ConversationRule,
 } from "../../src/engine/index.js";
 import { RerailDaemon } from "../../src/daemon/index.js";
@@ -22,7 +20,6 @@ import {
   hostCli,
   hostCommand,
   readDeliveries,
-  removeHostAuth,
   requireBuilt,
   run,
   sandboxAvailable,
@@ -74,9 +71,8 @@ function seedSmokeRules(rerailHome: string, project: string, conversationRule: C
   const database = openRerailDatabase(databasePath);
   try {
     const ruleCatalog = loadRuleCatalog();
-    for (const stored of [upsertLibraryRule(database, ruleCatalog, rule, "code"), upsertLibraryRule(database, ruleCatalog, conversationRule, "conversation")]) {
-      approve(database, ruleSubject(stored.document.rule.id, stored.payloadHash));
-    }
+    upsertLibraryRule(database, ruleCatalog, rule, "code");
+    upsertLibraryRule(database, ruleCatalog, conversationRule, "conversation");
     const { repositoryKey } = recordCheckout(database, project);
     setUpRepository(database, repositoryKey, {
       packs: [],
@@ -461,14 +457,7 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
     } finally {
       if (previousRerailHome === undefined) delete process.env.RERAIL_HOME;
       else process.env.RERAIL_HOME = previousRerailHome;
-      if (sandbox !== undefined) {
-        // The credential copy goes first and on its own, so a recursive delete that fails partway cannot leave it behind.
-        try {
-          await removeHostAuth(sandbox);
-        } finally {
-          await rm(sandbox, { recursive: true, force: true });
-        }
-      }
+      if (sandbox !== undefined) await rm(sandbox, { recursive: true, force: true });
     }
   }
 }

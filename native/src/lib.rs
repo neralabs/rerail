@@ -7,16 +7,17 @@ mod build_identity;
 #[cfg(test)]
 mod build_languages;
 mod code_rule_dsl;
+/// The engine's tools without Node (`rerail-engine dump` / `asm`).
+pub use code_rule_dsl::tools;
 pub mod content_store;
 pub mod git_ignore;
 pub mod git_workspace;
 mod main_instance;
 mod model;
-mod panic_boundary;
 pub mod process;
 mod rules;
 
-use model::{ModelFingerprint, load_model, verify_model};
+use model::{ModelFingerprint, load_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
 use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
@@ -116,33 +117,8 @@ pub fn health() -> Health {
     }
 }
 
-/// What `verify_model` found: `problem` and `file` are absent where the model matches its manifest.
-#[napi(object)]
-pub struct ModelCheck {
-    /// `missing`, `unreadable`, `invalid-manifest` or `checksum-mismatch`.
-    pub problem: Option<String>,
-    /// The file in the model directory at fault, `manifest.json` included.
-    pub file: Option<String>,
-}
-
-/// Checks the model directory at `model_path` against its `manifest.json` (every file's SHA-256),
-/// as a session's attach does, without loading the model.
-#[napi(catch_unwind)]
-pub fn verify_model_files(model_path: String) -> ModelCheck {
-    match verify_model(Path::new(&model_path)) {
-        Ok(()) => ModelCheck {
-            problem: None,
-            file: None,
-        },
-        Err(fault) => ModelCheck {
-            problem: Some(fault.problem.to_owned()),
-            file: Some(fault.file.to_owned()),
-        },
-    }
-}
-
 /// Check a pattern against the regex dialect and size limit structural rule conditions compile with.
-#[napi(catch_unwind)]
+#[napi]
 pub fn validate_regex(pattern: String) -> Result<()> {
     rules::compile_regex(&pattern)
         .map(|_| ())
@@ -217,11 +193,21 @@ pub fn native_memory_profile() -> String {
     .to_string()
 }
 
-/// Tell SQLite and jemalloc to discard free pages after a workspace eviction.
+/// SQLite's allocator set when the library loads, before anything can initialize SQLite
+/// (`content_store::sqlite_on_jemalloc`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[used]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+static SQLITE_ALLOCATOR: extern "C" fn() = {
+    extern "C" fn install() {
+        content_store::sqlite_on_jemalloc();
+    }
+    install
+};
+
+/// Return allocator pages after eviction closes idle SQLite connections.
 pub(crate) fn release_allocator_memory() {
-    // SAFETY: SQLite owns its global allocator; the maximum request asks every connection to
-    // release reclaimable page-cache memory.
-    unsafe { rusqlite::ffi::sqlite3_release_memory(i32::MAX) };
     // Background threads, where available, decay pages between applies too.
     #[cfg(not(windows))]
     let _ = tikv_jemalloc_ctl::background_thread::write(true);
@@ -253,7 +239,7 @@ pub struct ConversationEngine {
 
 #[napi]
 impl ConversationEngine {
-    #[napi(factory, catch_unwind)]
+    #[napi(factory)]
     pub fn load(model_path: String, max_input_tokens: u32) -> Result<Self> {
         if max_input_tokens == 0 {
             return Err(Error::new(
@@ -278,7 +264,7 @@ impl ConversationEngine {
     pub fn fingerprint(&self) -> ModelFingerprint {
         self.fingerprint.clone()
     }
-    #[napi(catch_unwind)]
+    #[napi]
     pub fn embed_texts(&self, texts: Vec<String>) -> Result<Vec<Float32Array>> {
         if texts.iter().any(|text| text.trim().is_empty()) {
             return Err(Error::new(
@@ -317,7 +303,7 @@ impl ConversationEngine {
             })
             .collect()
     }
-    #[napi(catch_unwind)]
+    #[napi]
     pub fn token_counts(&self, texts: Vec<String>) -> Result<Vec<u32>> {
         texts
             .iter()
@@ -338,7 +324,7 @@ impl ConversationEngine {
             .collect()
     }
 
-    #[napi(catch_unwind)]
+    #[napi]
     pub fn fit_texts(
         &self,
         texts: Vec<String>,
@@ -408,36 +394,25 @@ impl ConversationEngine {
             .collect()
     }
 
-    #[napi(catch_unwind)]
+    #[napi]
     pub fn replace_rules(&mut self, rules: Vec<NativeRuleInput>) -> Result<CompileSummary> {
         self.rules.replace(&self.encoder, rules)
     }
 
-    #[napi(catch_unwind)]
+    #[napi]
     pub fn upsert_rules(&mut self, rules: Vec<NativeRuleInput>) -> Result<CompileSummary> {
         self.rules.upsert(&self.encoder, rules)
     }
 
-    #[napi(catch_unwind)]
+    #[napi]
     pub fn remove_rules(&mut self, ids: Vec<String>) -> u32 {
         self.rules.remove(ids)
     }
 
-    #[napi(catch_unwind)]
+    #[napi]
     pub fn match_text(&self, sample: NativeSample) -> Result<Vec<NativeMatch>> {
         self.rules.match_sample(&self.encoder, sample)
     }
-}
-
-/// `bytes` as lower-case hex, two digits a byte: how a SHA-256 digest is written.
-pub(crate) fn lower_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
 }
 
 #[cfg(all(test, not(windows)))]

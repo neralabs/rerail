@@ -18,10 +18,18 @@ export const MINIMUM_RULES = 12;
 
 const nonEmpty = z.string().min(1);
 
-const toolSchema = z.strictObject({ name: nonEmpty, version: nonEmpty });
+const corpusSchema = z.strictObject({
+  name: nonEmpty,
+  repository: nonEmpty,
+  commit: nonEmpty,
+  /** Directories (or files) under the corpus checkout that are scored; posix, relative. */
+  paths: z.array(nonEmpty).min(1),
+  /** `path.matchesGlob` patterns over the corpus-relative path; a match is never evaluated nor scored. */
+  exclude: z.array(nonEmpty).default([]),
+});
+export type PackCorpus = z.infer<typeof corpusSchema>;
 
-/** A file a port's document reads: its path, which must be in the document's scope, and its content. */
-const exampleSchema = z.strictObject({ path: nonEmpty, text: nonEmpty });
+const toolSchema = z.strictObject({ name: nonEmpty, version: nonEmpty });
 
 const ruleSchema = z.strictObject({
   /** The id of the document it ports (`policy`), in pack.json's style: see `RULE_PACK_RULE_ID`. */
@@ -34,21 +42,9 @@ const ruleSchema = z.strictObject({
   /**
    * `path.matchesGlob` patterns over the tool's fixture paths: the rule is evaluated and scored only on the fixture
    * units they match, the tests its upstream configuration ran on (one rule option variant, say). Default: every
-   * unit.
+   * unit. Corpora are always scored whole.
    */
   fixtures: z.array(nonEmpty).min(1).optional(),
-  /**
-   * The file types this port covers, when it covers fewer than its tool-pack (`gates.yaml`'s `upstream.lints`,
-   * narrowed by `rerail.in_scope`): `loads`'s in-scope check then asks for these alone. A tool with one port per
-   * language (lizard) names each port's own. Each must be one of the tool-pack's types (`declared-lints`).
-   */
-  lints: z.array(z.string().regex(/^(?:\.[a-z0-9]+)+$/u, "a file type such as .py or .blade.php")).min(1).optional(),
-  /**
-   * A candidate's example pair, which pack.json cannot hold while it does not list the rule: check 3 of the pack
-   * validation contract runs it as it runs a shipped rule's. The pair moves to the rule's pack.json `examples` when it
-   * ships, so a shipped port carries none.
-   */
-  examples: z.strictObject({ caught: exampleSchema, passes: exampleSchema }).optional(),
 });
 export type PackRule = z.infer<typeof ruleSchema>;
 
@@ -85,40 +81,34 @@ export type CapabilityExemption = z.infer<typeof exemptionSchema>;
 const suppressionExemptionSchema = z.strictObject({ rule: nonEmpty, reason: z.string().trim().min(20) });
 export type SuppressionExemption = z.infer<typeof suppressionExemptionSchema>;
 
-const familySchema = z.enum(CODE_RULE_LANGUAGE_FAMILIES);
-
 export const packSchema = z
   .strictObject({
     pack: z.string().regex(/^[a-z0-9][a-z0-9-]*$/u),
-    /**
-     * The language family its ports are written in, or the families, for a pack whose ports span languages (the
-     * complexity pack's one rule per language).
-     */
-    family: z.union([familySchema, z.array(familySchema).min(1)]),
+    family: z.enum(CODE_RULE_LANGUAGE_FAMILIES),
     /** Every capability the pack declares; T4 needs a rule for each, T2 an oracle for each. */
     capabilities: z.array(nonEmpty).min(1),
     /** Declared capabilities T4 covers by exemption instead of a rule. */
     exemptCapabilities: z.array(exemptionSchema).default([]),
     /** Ports exempt from carrying their upstream tool's suppression comment, each with its reason. */
     suppressionExemptions: z.array(suppressionExemptionSchema).default([]),
+    corpora: z.array(corpusSchema),
     tools: z.array(toolSchema),
     rules: z.array(ruleSchema),
-    /** Expected-findings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
+    /** Recordings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
     oracles: nonEmpty.optional(),
   })
   .superRefine((pack, context) => {
     const issue = (message: string): void => context.addIssue({ code: "custom", message });
     const duplicates = (values: readonly string[]): string[] => values.filter((value, index) => values.indexOf(value) !== index);
     for (const id of duplicates(pack.rules.map(rule => rule.id))) issue(`duplicate rule id ${id}`);
+    for (const name of duplicates(pack.corpora.map(corpus => corpus.name))) issue(`duplicate corpus ${name}`);
     for (const name of duplicates(pack.tools.map(tool => tool.name))) issue(`duplicate tool ${name}`);
     for (const capability of duplicates(pack.capabilities)) issue(`duplicate capability ${capability}`);
-    for (const family of duplicates(packFamilies(pack))) issue(`duplicate family ${family}`);
     for (const capability of duplicates(pack.exemptCapabilities.map(exemption => exemption.capability))) issue(`duplicate exemption for ${capability}`);
     const tools = new Set(pack.tools.map(tool => tool.name));
     const capabilities = new Set(pack.capabilities);
     for (const rule of pack.rules) {
       if (!tools.has(rule.upstream.tool)) issue(`${rule.id}: upstream tool ${rule.upstream.tool} is not in tools`);
-      if (rule.examples !== undefined && !isCandidate(rule)) issue(`${rule.id}: ships, so its examples belong in pack.json`);
       for (const capability of rule.capabilities)
         if (!capabilities.has(capability)) issue(`${rule.id}: capability ${capability} is not declared by the pack`);
     }
@@ -130,14 +120,9 @@ export const packSchema = z
   });
 export type Pack = z.infer<typeof packSchema>;
 
-/** The language families of `pack`'s ports: its `family`, one or several. */
-export function packFamilies(pack: Pick<Pack, "family">): readonly z.infer<typeof familySchema>[] {
-  return typeof pack.family === "string" ? [pack.family] : pack.family;
-}
-
 const findingSchema = z.strictObject({
   rule: nonEmpty,
-  /** Posix path relative to the fixtures directory. */
+  /** Posix path relative to the fixtures directory or the corpus checkout. */
   path: nonEmpty,
   /** 1-based. */
   line: z.number().int().positive(),
@@ -153,77 +138,47 @@ export type UpstreamFinding = z.infer<typeof findingSchema>;
  */
 const unitSchema = z.union([nonEmpty, z.array(nonEmpty).min(1)]);
 
-/** A unit's key in `source.units`: its path, or the first path of a multi-file unit. */
-export function unitKey(unit: z.infer<typeof unitSchema>): string {
-  return typeof unit === "string" ? unit : unit[0]!;
-}
-
-/**
- * The language upstream linted an ECMA unit under, beyond ESLint's flat-config defaults for its extension
- * (scripts/pack-data/eslint-expected.mjs `unitLanguage`): its `ecmaVersion`, `sourceType` and `parserOptions`, never
- * `globals`. The runner evaluates the unit under it (`inUnitLanguage` in runner.ts).
- */
-const unitLanguageSchema = z
-  .strictObject({
-    ecmaVersion: z.union([z.literal("latest"), z.number().int().positive()]).optional(),
-    sourceType: z.enum(["script", "module", "commonjs"]).optional(),
-    parserOptions: z.record(z.string(), z.unknown()).optional(),
-  })
-  .refine(language => Object.keys(language).length > 0, "an empty languageOptions: leave it out");
-export type UnitLanguage = z.infer<typeof unitLanguageSchema>;
-
-/** Where a unit came from upstream. */
-const unitOriginSchema = z.strictObject({
-  /** The upstream rules (names as in `rules`) whose tests the unit was written from. */
+const fixtureSourceSchema = z.strictObject({
+  kind: z.literal("fixtures"),
+  /** Upstream repository URL `@` commit the fixture files were copied from. */
+  origin: nonEmpty,
+  /** Every upstream rule the run reported; each is scored over every unit. */
   rules: z.array(nonEmpty).min(1),
-  /**
-   * A rename variant: the key of the unit it is a renamed copy of (identifiers and string and number literal
-   * contents changed, `scripts/pack-data/rename/`), labelled by upstream like any unit.
-   */
-  renamedFrom: nonEmpty.optional(),
-  /** The language upstream linted the unit under, where its test case set one (a rename variant's is its original's). */
-  languageOptions: unitLanguageSchema.optional(),
+  files: z.array(unitSchema).min(1),
 });
-export type UnitOrigin = z.infer<typeof unitOriginSchema>;
 
-const fixtureSourceSchema = z
-  .strictObject({
-    kind: z.literal("fixtures"),
-    /** Upstream repository URL `@` commit the fixture files were copied from. */
-    origin: nonEmpty,
-    /** Every upstream rule the run reported; each is scored over every unit. */
-    rules: z.array(nonEmpty).min(1),
-    files: z.array(unitSchema).min(1),
-    /** Each unit's upstream origin, by `unitKey`; a unit without an entry (Rerail's own probes) has no known origin. */
-    units: z.record(nonEmpty, unitOriginSchema).optional(),
-  })
-  .superRefine((source, context) => {
-    const units = source.units ?? {};
-    const keys = new Set(source.files.map(unitKey));
-    const issue = (message: string): void => context.addIssue({ code: "custom", path: ["units"], message });
-    for (const [key, origin] of Object.entries(units)) {
-      if (!keys.has(key)) issue(`${key}: not a listed unit`);
-      if (origin.renamedFrom === undefined) continue;
-      const original = units[origin.renamedFrom];
-      if (original === undefined || original.renamedFrom !== undefined) issue(`${key}: renamedFrom ${origin.renamedFrom} is not an original unit with an origin`);
-      else if (JSON.stringify(original.languageOptions) !== JSON.stringify(origin.languageOptions)) issue(`${key}: its languageOptions differ from its original's, ${origin.renamedFrom}`);
-    }
-  });
+const corpusSourceSchema = z.strictObject({
+  kind: z.literal("corpus"),
+  name: nonEmpty,
+  repository: nonEmpty,
+  commit: nonEmpty,
+  rules: z.array(nonEmpty).min(1),
+  /** Corpus-relative files the tool could not analyse (`php -l` rejects them, …); never scored. */
+  skipped: z.array(nonEmpty).default([]),
+  /**
+   * Lines of scored files the tool did not analyse, read from its own reports (a function Psalm stops analysing at an
+   * undefined closure `use` variable, …): no finding on them, the tool's or Rerail's, is scored for the tool's rules.
+   */
+  unanalysed: z
+    .array(z.strictObject({ path: nonEmpty, startLine: z.number().int().positive(), endLine: z.number().int().positive() }))
+    .default([]),
+});
 
-export const expectedFindingsSchema = z.strictObject({
+export const recordingSchema = z.strictObject({
   tool: nonEmpty,
   version: nonEmpty,
-  source: fixtureSourceSchema,
+  source: z.discriminatedUnion("kind", [fixtureSourceSchema, corpusSourceSchema]),
   findings: z.array(findingSchema),
 });
-export type ExpectedFindings = z.infer<typeof expectedFindingsSchema>;
-export type FixtureExpectedFindings = ExpectedFindings & { source: z.infer<typeof fixtureSourceSchema> };
+export type Recording = z.infer<typeof recordingSchema>;
+export type FixtureRecording = Recording & { source: z.infer<typeof fixtureSourceSchema> };
+export type CorpusRecording = Recording & { source: z.infer<typeof corpusSourceSchema> };
 
 export const DIVERGENCE_KINDS = ["upstream-wrong", "not-comparable", "rerail-unknown"] as const;
 const divergenceSchema = z.strictObject({
   /** Pack rule id. */
   rule: nonEmpty,
-  /** `fixtures` or `samples` (matched by a sample's evaluation path, `<sample-id>/<source.path>`); omitted, every source. */
+  /** `fixtures` or a corpus name; omitted, it applies to every source. */
   source: nonEmpty.optional(),
   path: nonEmpty,
   line: z.number().int().positive(),
@@ -243,7 +198,7 @@ const rulePackExamplesSchema = z.object({ rules: z.array(z.object({ document: no
 export interface LoadedPack {
   pack: Pack;
   directory: string;
-  /** Root of the per-tool expected findings: `<oracles>/<tool>/fixtures.expected.json`. */
+  /** Root of the per-tool recordings: `<oracles>/<tool>/{fixtures,corpus-<name>}.expected.json`. */
   oraclesDirectory: string;
   divergences: Divergence[];
   /**
@@ -264,7 +219,7 @@ function parseJson<T>(path: string, schema: z.ZodType<T>): T {
   return parsed.data;
 }
 
-/** The conformance pack in `directory` (its conformance.json; expected findings under `upstream/` unless it sets `oracles`). */
+/** The conformance pack in `directory` (its conformance.json; recordings under `upstream/` unless it sets `oracles`). */
 export function loadPack(directory: string): LoadedPack {
   const pack = parseJson(join(directory, CONFORMANCE_FILE), packSchema);
   const divergencesPath = join(directory, "divergences.json");
@@ -293,7 +248,7 @@ export function listPortedPacks(): string[] {
     .sort(compareDeterministicStrings);
 }
 
-export function fixturesExpectedPath(loaded: LoadedPack, tool: string): string {
+export function fixturesRecordingPath(loaded: LoadedPack, tool: string): string {
   return join(loaded.oraclesDirectory, tool, "fixtures.expected.json");
 }
 
@@ -301,6 +256,22 @@ export function fixturesDirectory(loaded: LoadedPack, tool: string): string {
   return join(loaded.oraclesDirectory, tool, "fixtures");
 }
 
-export function loadExpectedFindings(path: string): ExpectedFindings {
-  return parseJson(path, expectedFindingsSchema);
+export function corpusRecordingPath(loaded: LoadedPack, tool: string, corpus: string): string {
+  return join(loaded.oraclesDirectory, tool, `corpus-${corpus}.expected.json`);
+}
+
+export function loadRecording(path: string): Recording {
+  return parseJson(path, recordingSchema);
+}
+
+/**
+ * Pinned corpora are gitignored checkouts under `.rerail/corpora/<pack>/<name>`. A worktree nested inside the main
+ * checkout shares its corpora, so the nearest ancestor holding `.rerail/corpora/<pack>` is the default.
+ */
+export function defaultCorpusRoot(pack: string): string {
+  for (let directory = RERAIL_ROOT; ; directory = dirname(directory)) {
+    const candidate = join(directory, ".rerail", "corpora", pack);
+    if (existsSync(candidate)) return candidate;
+    if (dirname(directory) === directory) return join(RERAIL_ROOT, ".rerail", "corpora", pack);
+  }
 }

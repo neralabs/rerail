@@ -1,0 +1,16 @@
+.policy "ruff-ytt101-sys-version-slice3" revision 2
+.description "Use sys.version_info instead of slicing the first three characters of sys.version; the slice truncates a two-digit minor version."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff YTT101 (flake8-2020): `sys.version[:3]`, the version as three characters. On Python 3.10 it is "3.1".
+//   sys.version[:3]          ← YTT101
+//   version[:3]              ← YTT101 after `from sys import version`
+//   sys.version[:i]          not reported: only an int literal
+#include "python/misc2-version.rr"
+
+.violation YTT101(at: node) code "YTT101"
+    "Use `sys.version_info[:2]` (a tuple) instead of `sys.version[:3]`; the slice truncates a two-digit minor version such as 3.10 to 3.1."
+    suppress ruff "YTT101"
+YTT101(v) :- ytt_version_upto(v, "3").

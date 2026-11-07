@@ -1,0 +1,26 @@
+.policy "clippy-int-plus-one" revision 3
+.description "Use a strict comparison in Rust instead of a non-strict one that adds or subtracts one; it states the bound directly."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   binary(e, op, l, r)   e is `l op r`;   lit_one(e)   the integer literal 1 (1u8, 0x1, …)
+
+// Clippy's int_plus_one (complexity): a non-strict comparison against a value one off, where a strict one
+// says it directly. Reported at the comparison.
+//   x >= y + 1   x >= 1 + y   x - 1 >= y   -1 + x >= y      (better: x > y)
+//   y + 1 <= x   1 + y <= x   y <= x - 1   y <= -1 + x      (better: y < x)
+//   x >= y + (1)   (-1) + x >= y   x > y                      not reported
+// Clippy's lint is for integers; with no types, this reads the syntax alone (`x >= y + 1` on floats too).
+.violation int_plus_one(at: node, msg: symbol) code "int_plus_one" "{msg}"
+    suppress clippy "clippy::int_plus_one", "clippy::all", "clippy::complexity", "warnings"
+int_plus_one(e, "Use > and drop the one here, e.g. x > y instead of x >= y + 1 or x - 1 >= y.") :-
+    binary(e, ">=", l, r), (plus_one(r) ; minus_one(l)).
+int_plus_one(e, "Use < and drop the one here, e.g. x < y instead of x + 1 <= y or x <= y - 1.") :-
+    binary(e, "<=", l, r), (plus_one(l) ; minus_one(r)).
+.decl plus_one(e: node)   // y + 1, 1 + y
+plus_one(e) :- binary(e, "+", a, b), (lit_one(a) ; lit_one(b)).
+.decl minus_one(e: node)  // x - 1, -1 + x
+minus_one(e) :- binary(e, "-", _, b), lit_one(b).
+minus_one(e) :- binary(e, "+", a, _), kind(a, "unary_expression"), op(a, "-"), child(a, o, 0), lit_one(o).

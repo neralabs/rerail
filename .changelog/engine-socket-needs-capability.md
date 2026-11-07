@@ -1,1 +1,0 @@
-The engine socket hooks send events to now needs the daemon's access capability, as every other daemon endpoint does, so a sandboxed command that can reach the socket but not the Rerail home can no longer have the daemon write where it names. Hooks need no change; a `rerail events` stream from an earlier version stops until restarted.

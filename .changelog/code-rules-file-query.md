@@ -1,1 +1,0 @@
-A new `file` query, `{ "forbid": { "file": {} } }`, reports every file in a rule's scope, for rules that say a file should not exist. A match on a file's path, or of a `file` query, names the file with no line number, once per file.

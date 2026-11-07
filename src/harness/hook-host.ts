@@ -5,7 +5,7 @@ import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
-import { daemonEngineEndpoint, engineEndpointAt, runningDaemonEngineEndpoint, type EngineEndpoint } from "../runtime/daemon-control.js";
+import { daemonEngineSocket, runningDaemonEngineSocket } from "../runtime/daemon-control.js";
 import {
   bindSteerReceipt,
   withSessionLock,
@@ -102,23 +102,22 @@ export async function runHostHook(
     const session: AdapterSession = { host, sessionId, cwd: workspace };
 
     if (options.embedder === undefined) {
-      let endpoint: EngineEndpoint | undefined;
+      let socketPath: string | undefined;
       try {
-        const named = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
-        endpoint = named !== undefined ? await engineEndpointAt(named)
-          : startsSession ? await daemonEngineEndpoint(true) : await runningDaemonEngineEndpoint();
+        socketPath = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET
+          ?? (startsSession ? await daemonEngineSocket(true) : await runningDaemonEngineSocket());
       } catch (error) {
         throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error });
       }
-      if (endpoint === undefined) return {};
+      if (socketPath === undefined) return {};
       const configuration = {
         storageRoot,
         databasePath,
         modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
         workspaceRoot: workspace,
       };
-      const engine = endpoint;
-      const ingest = (event: AdapterEvent) => ingestEngineEvent(engine, event, configuration).catch((error: unknown) => {
+      const enginePath = socketPath;
+      const ingest = (event: AdapterEvent) => ingestEngineEvent(enginePath, event, configuration).catch((error: unknown) => {
         throw unreachable(error);
       });
       const output = await handle({ ingest }, storageRoot);

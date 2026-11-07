@@ -2,10 +2,10 @@
 
 Rerail reads Blade templates with a Rust port of Forte 1.1.0 (github.com/fortephp/forte, tag
 `v1.1.0`, commit 9c9597d0b7, MIT, by John Koster), the fault-tolerant Blade parser Blade's own
-tooling reads templates with. It replaced tree-sitter-blade 0.12.2 (b5291d1), which reported an
-`ERROR` in hundreds of real templates ([T1](#t1-templates-with-an-error); minimal repros of each
-error class are in `fixtures/blade/blade/grammar-gaps/repros/`, every one of which Forte reads
-without an error).
+tooling reads templates with. It replaced tree-sitter-blade 0.12.2 (b5291d1), which failed on
+real Blade: the templates it parsed with an `ERROR` were 218 of 325 in BookStack, 25 of 197 in
+Filament, 258 of 554 in Bagisto and 21 of 127 in laravel/framework (minimal repros of each error
+class: `fixtures/blade/blade/grammar-gaps/repros/`, every one of which Forte reads without an error).
 This document says what is ported and why, the tree Rerail reads, how rules and the view use it,
 how parity with Forte is decided, and how the port is wired into the engine.
 
@@ -94,7 +94,7 @@ directives or 256 conditions (`TreeBuilder.php:35-42`, messages `Maximum element
 
 ## Rerail's tree
 
-`forte/tree.rs` reads a parse as ast-grep-core's `Doc` (`BladeDoc`, nodes `BladeNode`),
+`forte/tree.rs` reads a parse as ast-grep-core 0.45.3's `Doc` (`BladeDoc`, nodes `BladeNode`),
 as `literal/mod.rs` reads its sub-trees (`SubTree`/`SubDoc`/`SubNode`), with node ids that never
 collide with tapes' or tree-sitter's (`ID_FLAG`, a tree ordinal, the preorder index).
 `tree::parse_tree`, which tapes, patterns and the view parse with, uses Forte's default directives
@@ -201,8 +201,8 @@ tree builder one per token and one per iteration of every search. On the corpora
 spends at most 1.4 steps per byte (the whole parse); on the suite's templates and their
 prefixes at most 2.7 in the lexer and 3.7 in the tree builder. Where Forte's work is
 quadratic the budget ends it: 20,000 unclosed `@section('a')` (260 KB, each searching to the
-end for its `@endsection`), 200 KB of `<? ` (bogus-comment retries) or of `<a <A x` (TSX
-retries). Nothing recurses: Forte's two recursions
+end for its `@endsection`; 5 s in PHP), 200 KB of `<? ` (bogus-comment retries, 19 ms to the
+budget) or of `<a <A x` (TSX retries, 41 ms). Nothing recurses: Forte's two recursions
 (template literals in `ScanPrimitives`, and `createConditionalComment` calling `processToken`)
 run on explicit stacks, so nesting costs heap, not the thread's stack; the scans of
 `findLineEnding` and of quoted attribute values, which rescan to the end of the source in PHP,
@@ -299,12 +299,23 @@ positive the port keeps (parity), not a port bug. The view reads those templates
 
 ## Performance
 
-`benchmark_forte_throughput` (release build, every template of a corpus, one process per parser
-and corpus) measures throughput and the growth of peak resident memory while parsing, one tree
-alive at a time. `port` is the lexer and tree builder (Forte's flat arrays); `port + tree` adds
-Rerail's tree over them (`tree::parse_tree`), the counterpart of tree-sitter's tree. On the four
-pinned corpora the port parsed 12 to 24 times as fast as tree-sitter-blade, and 4 to 7 times with
-Rerail's tree built; its peak memory was 26 to 39 % of tree-sitter's, 45 to 65 % with the tree.
+Release build, Apple M5 Max, macOS 26.6, median of 10 runs over every template of a corpus,
+one process per parser and corpus (`benchmark_forte_throughput`). Peak memory is the growth of
+the process's peak resident set while parsing, one tree alive at a time, over its peak after
+reading the templates. `port` is the lexer and tree builder (Forte's flat arrays); `port + tree`
+adds Rerail's tree over them (`tree::parse_tree`), the counterpart of tree-sitter's tree.
+Ten other agents shared the machine, so the absolute numbers are noisy; the ratios held across
+two runs.
+
+| Corpus | Bytes | port MB/s | port + tree MB/s | tree-sitter-blade MB/s | port peak | port + tree peak | tree-sitter peak |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| BookStack | 506,131 | 224 | 77 | 18.6 | 1.2 MB | 1.7 MB | 3.0 MB |
+| Filament | 562,189 | 385 | 147 | 23.2 | 1.7 MB | 3.1 MB | 4.8 MB |
+| Bagisto | 5,078,393 | 694 | 260 | 38.3 | 1.6 MB | 3.1 MB | 6.1 MB |
+| laravel/framework | 99,180 | 335 | 103 | 13.9 | 1.0 MB | 1.3 MB | 2.9 MB |
+
+The port parses 12 to 24 times as fast as tree-sitter-blade, and 4 to 7 times with Rerail's tree
+built; its peak is 26 to 39 % of tree-sitter's, 45 to 65 % with the tree.
 
 ## Wiring
 
@@ -339,11 +350,11 @@ Rerail's tree built; its peak memory was 26 to 39 % of tree-sitter's, 45 to 65 %
 ### Results
 
 Reports over the pinned corpora (the Bagisto, BookStack and Filament checkouts and laravel's 127
-templates), Forte against tree-sitter-blade on the same rules and oracles. Templates with a syntax
-error are in [T1](#t1-templates-with-an-error).
+templates), Forte against tree-sitter-blade on the same rules and oracles.
 
 | Check | BookStack | Filament | Bagisto | laravel |
 |---|---|---|---|---|
+| templates with a syntax error (T1), tree-sitter → Forte | 218 → 0 | 25 → 0 | 258 → 18 | 21 → 0 |
 | tape ⇄ tree parity (`benchmark_blade_worktree_oracle_parity`): templates, differences | 325, 0 | 197, 0 | 554, 0 | 127, 0 |
 | bytes Blade copies the view reads (`benchmark_blade_region_parity`), tree-sitter → Forte | 146,417 → 146,469 of 146,469 | 181,426 → 181,895 of 181,895 | 655,190 → 655,672 of 655,672 | |
 | region disagreements, tree-sitter → Forte | 6 → 0 | 51 → 0 | 76 → 36 | |

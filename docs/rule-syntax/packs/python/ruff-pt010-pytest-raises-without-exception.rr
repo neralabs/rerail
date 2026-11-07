@@ -1,0 +1,18 @@
+.policy "ruff-pt010-pytest-raises-without-exception" revision 2
+.description "Name the expected exception when using pytest.raises; a call with no exception, match or check fails at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT010 (flake8-pytest-style): `pytest.raises()` with no expected exception, `match=` or `check=`, which
+// fails when run. The exception counts by position (before any `*args`) or as `expected_exception=`.
+//   with pytest.raises(): …               ← PT010
+//   with pytest.raises(match="boom"): …   not reported (pytest 8.4 allows it)
+#include "python/pytest.rr"
+//   exc_call(c, q), exc_argument(c, k, i, a), kwarg(c, k, v)
+
+.violation PT010(at: node, f: symbol) code "PT010"
+    "Pass the exception class this block should raise as the first argument to `{f}`; with no exception class, `match=` or `check=` the call fails when run."
+    suppress ruff "PT010"
+PT010(g, x) :- exc_call(c, "pytest.raises"), !exc_argument(c, "expected_exception", 0, _), !kwarg(c, "match", _),
+    !kwarg(c, "check", _), field(c, "function", g0), unparen(g0, g), text(g, x).

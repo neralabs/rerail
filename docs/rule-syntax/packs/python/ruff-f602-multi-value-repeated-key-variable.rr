@@ -1,0 +1,20 @@
+.policy "ruff-f602-multi-value-repeated-key-variable" revision 2
+.description "Avoid repeating the same variable as a key in a Python dict literal; the later value silently overwrites the earlier one."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F602 (pyflakes): a dict display repeats a variable as a key; the later entry silently replaces the
+// earlier one. Only plain names count (`self.x` keys do not), and every repeat after the first is reported.
+//   {a: 1, a: 2}              ← F602 at the second a
+//   {a: 1, "a": 2}            not reported: a variable and a string
+#include "python/pyflakes.rr"
+
+.violation F602(at: node, x: symbol) code "F602"
+    "Remove or merge the repeated key `{x}` in this dict; the later value silently overwrites the earlier one."
+    suppress ruff "F602"
+F602(e, x) :- name_key(d, i, e, x), name_key(d, j, _, x), j < i.
+// name_key(d, i, e, x): dict display d's i-th entry has the name x as its key (through parentheses).
+.decl name_key(d: node, i: number, e: node, x: symbol)
+name_key(d, i, e, x) :- kind(d, "dictionary"), child(d, p, i), kind(p, "pair"), field(p, "key", k), unparen(k, e),
+    kind(e, "identifier"), text(e, x).

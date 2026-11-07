@@ -11,12 +11,12 @@ structure review on PR #1 plus #25, the generated-file manifest.
 |---|---|
 | `src/engine/`, `src/hosts/<harness>/`, `src/<layer>/` | The TypeScript package, one directory per layer, each with an `index.ts` entry point |
 | `native/` | The Rust engine; it compiles only from here (#4) |
-| `packs/<id>/` | A rule pack: `pack.json`, `package.json`, `README.md`, `LICENSE`, `NOTICE`, `rules/` (shipped), `candidates/` (scored, never shipped), `upstream/<tool>/` (generators and locks; the test data, expected findings included, is not in git: one archive per tool, in S3, named by its `test-data.lock`, #3), `licenses/` |
+| `packs/<id>/` | A rule pack: `pack.json`, `package.json`, `README.md`, `LICENSE`, `NOTICE`, `rules/` (shipped), `candidates/` (scored, never shipped), `upstream/<tool>/` (recordings; their test data is not in git: one archive per tool, in S3, named by its `test-data.lock`, #3), `licenses/` |
 | `fixtures/<family>/<feature>/` | Engine and host test data; `<feature>` names an engine module (#10) |
 | `fixtures/packs/` | Pack-validator inputs |
 | `test/`, `integration/` | Unit and integration tests; helpers in `support/` |
 | `e2e/` | The dashboard's Playwright browser specs over seeded scenarios (`e2e/README.md`); helpers in `support/` |
-| `plugins/<agent>/` | The installer plugins the Claude, OpenAI and Cursor plugin directories list (`claude/`, `codex/`, `cursor/`): one skill each, `install`, that runs `npx @neralabs/rerail@<version> setup --relay`; no hooks or binaries (`plugins/README.md`) |
+| `playground/` | The rule playground, its own npm package |
 | `scripts/generate/` | Generators of engine, host and pack data, listed in `scripts/generate/README.md` |
 
 ## Running the gate
@@ -60,36 +60,29 @@ Exemption `engine-test-inputs`: a rule document may be an engine or host test in
 belong in a pack. A benchmark or test that needs a pack's rule references the pack's document.
 Exemption `validator-inputs`: `fixtures/packs/**`, whose pack format puts rule documents in `rules/`.
 
-### 3. Fixture data outside `fixtures/` and `packs/*/upstream`, pack test data in git or unpinned, or pack data waiting to publish — target 0
+### 3. Fixture data outside `fixtures/` and `packs/*/upstream`, or pack test data in git or unpinned — target 0
 
 A file is fixture data when a directory in its path is `fixtures`/`__fixtures__`; it is a
-`*.expected.json` expected findings or `*.cases.json` case list; it is a code-rule document; it sits in a test
+`*.expected.json` recording or `*.cases.json` case list; it is a code-rule document; it sits in a test
 root (`test/`, `integration/`, `conformance/`, `benchmark/`) and is not TS/JS source or Markdown; or it sits
 in `test/`/`integration/` with a fixture name. It may live only under `fixtures/` or `packs/<id>/upstream/`.
-Exemptions: `packs/<id>/candidates/**` (pack data), `gate-pins` (the conformance gate's lists,
-`conformance/languages/ungated-rules.json` and `conformance/languages/pending.json`, and
-`scripts/pack-data/runtimes/**`, the manifests that pin each runtime the derivation runs upstream on) and, for
+Exemptions: `packs/<id>/candidates/**` (pack data), `gate-pins` (the port readiness gates' pinned inputs and workers:
+`conformance/port-readiness/*.json`, `conformance/recorders/port-readiness/runtimes/**` and the recorder's Python and PHP workers) and, for
 code-rule documents, `packs/<id>/rules/**`.
 
-No tracked file is pack test data in the pulled layout either: a path `PACK_FIXTURE_PATTERNS` in
-`scripts/s3/pack-fixtures.mjs` matches (`packs/*/upstream/*/` `fixtures/**`, `tests/**`, `*.expected.json`,
-`cases.json`, `*.cases.json`, `fixtures.upstream-check.json`, `lizard-*.tsv`, `authored/**`, `provenance.json`,
-`LICENSES.md`; CONTRIBUTING.md, "Pack
-test data"). Each tool-pack's test data, derived and authored alike, is one archive in S3 that the tool directory's
-`test-data.lock` pins by sha256. A pull request that adds or changes the data stages it under the tool-pack's tracked
-`publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`), and this metric fails once per tool-pack while
-any `publish/` is tracked ("Pack data waiting to publish"), naming the workflow to run. **Publish pack data**
-(`.github/workflows/pack-data-publish.yml`) uploads it after a code owner approves, then commits the new locks and
-deletes `publish/` on the pull request's branch, so the pull request cannot merge before its data is in S3 and its
-locks name it.
+No tracked file is pack test data either: a path `PACK_FIXTURE_PATTERNS` in `scripts/s3/pack-fixtures.mjs` matches
+(`packs/*/upstream/*/` `fixtures/**`, `tests/**`, `*.expected.json`, `cases.json`, `*.cases.json`,
+`fixtures.upstream-check.json`, `lizard-*.tsv`, `authored/**`; CONTRIBUTING.md, "Pack test data"). Each tool-pack's
+test data, derived and authored alike, is one archive in S3 that the tool directory's `test-data.lock` pins by
+sha256. A pull request that adds or changes the data tracks it with `git add -f` for review, and fails this metric
+until a maintainer runs `npm run fixtures:push -- --from <ref>` in a trusted worktree of main, which archives and
+uploads it and prints the new lock, and the pull request commits the lock and untracks the data with `git rm --cached`.
 
-Every tool directory (a `packs/<id>/upstream/<tool>/` that holds a tracked file outside `publish/`; files directly
-under `packs/<id>/upstream/`, such as `common.py`, are not in one) has a tracked `test-data.lock`, unless the
-tool-pack's `publish/` is tracked (the publish writes the lock), and `parseLock` in `scripts/s3/test-data-archive.mjs`
-accepts it: `{ "format": 1, "sha256", "files", "bytes" }` with a 64-digit lowercase hex sha256 and non-negative
-integer counts. A `samples.lock`, which pins the tool-pack's real-code samples archive the same way, is optional, and
-`parseLock` must accept it too. A missing lock is a finding at the path it would have; a malformed one carries
-`parseLock`'s message. These checks have no exemptions.
+Every tool directory (a `packs/<id>/upstream/<tool>/` that holds a tracked file; files directly under
+`packs/<id>/upstream/`, such as `common.py`, are not in one) has a tracked `test-data.lock`, and `parseLock` in
+`scripts/s3/test-data-archive.mjs` accepts it: `{ "format": 1, "sha256", "files", "bytes" }` with a 64-digit
+lowercase hex sha256 and non-negative integer counts. A missing lock is a finding at the path it would have; a
+malformed one carries `parseLock`'s message. These checks have no exemptions.
 
 ### 4. Engine source roots — target 1 (`native/`)
 
@@ -103,12 +96,12 @@ the item a `#[cfg(test)]` attribute applies to: its brace-matched body (comments
 literals skipped), or up to its `;` when it has none. `#[cfg(test)] mod tests;` declares a module in
 another file and exempts nothing after it.
 
-### 5. Test roots — target `test/`, `integration/`, `e2e/`
+### 5. Test roots — target `test/`, `integration/`, `e2e/` (+ `playground/`)
 
 Every test file is under `test/`, `integration/` or `e2e/` (the dashboard's Playwright browser specs, kept out of
 `test/` because vitest runs every spec file under it).
-Exemption: `data-roots` (upstream projects' copied tests). Rust `#[cfg(test)]` modules are part of the crate and not
-counted.
+Exemptions: `playground-package` (`playground/` is its own package) and `data-roots` (upstream projects'
+copied tests). Rust `#[cfg(test)]` modules are part of the crate and not counted.
 
 ### 6. Generators follow one known pattern — target 0 misplaced
 
@@ -117,7 +110,7 @@ file's `Generated by <path>; do not edit.` header names, and any script named `g
 `generate-*` (extension `.mjs .cjs .js .ts .mts .py .php`). Each is under `scripts/generate/`, never beside
 its output in `native/src/` or `src/`, whatever its name (`scripts/generate/schema/schema-sql.ts`, not
 `src/engine/storage/schema-sql.ts`).
-Exemption `data-roots`: pack generators sit beside the expected findings they write, under `fixtures/` or
+Exemption `data-roots`: recorders sit beside the recordings they write, under `fixtures/` or
 `packs/<id>/upstream/`; generated files there are not scanned for headers.
 
 ### 7. One location pattern for licences — target 100%
@@ -130,8 +123,10 @@ For each rule document of a pack, REUSE's resolved licence (REUSE.toml: the last
 - `packs/<id>/rules/**`: equal (the package's licence describes exactly what it ships);
 - `packs/<id>/candidates/**`: only terms the pack declares (Rerail's own probe rules are Apache-2.0 alone).
 
-Copied pack test data is not in git, so metric 7 checks rule documents only. `packs/<id>/licenses/<project>/UPSTREAM.md`
-records copied files by pattern, and pack check 6 checks the pulled data against those patterns.
+And for each file a `packs/<id>/licenses/<project>/UPSTREAM.md` table lists as copied (a row whose upstream path is
+`none` is Rerail's and is skipped): the resolved licence names the one that UPSTREAM.md records
+(`License: <SPDX id>`; `MIT OR Apache-2.0` names MIT), and the resolved `SPDX-FileCopyrightText` names a holder besides Rerail. A copied file left to
+the catch-all annotation passes `reuse lint` but fails here.
 
 ## Contract conformance
 
@@ -151,13 +146,13 @@ No JS/TS file under `packs/` imports a path resolving into `src/`, or `@neralabs
 
 Every `fixtures/<family>/<feature>/` names a top-level module of `native/src/code_rule_dsl/`
 (`<feature>.rs` or `<feature>/`, not `mod.rs`/`test_support.rs`) or a documented group: `upstream` (tool
-tests and expected findings ahead of a pack) or `licenses`.
+recordings ahead of a pack) or `licenses`.
 Exemption `non-engine-families`: the children of `fixtures/host/` and `fixtures/packs/` are areas.
 
 ### 11. No orphan fixture families or packs — target 0
 
 Every `fixtures/<family>/` has `languages/<family>.json` or `packs/<family>/`, or is a declared shared
-family: `ecma` (ECMAScript oracles shared by the javascript and typescript languages and their packs),
+family: `ecma` (ECMAScript recordings shared by the javascript and typescript languages and their packs),
 `host` and `packs` (not tied to a language). Every pack holds at least one rule document in `rules/`, or in
 `candidates/rules/` while it ships none because all its ports are candidates.
 
@@ -168,7 +163,7 @@ family: `ecma` (ECMAScript oracles shared by the javascript and typescript langu
 A directory holding a `.ts .tsx .mts .cts .js .mjs .cjs .rs .py .php .sh` file directly holds at most 25
 tracked files directly.
 Exemptions: `pack-data` (`packs/<id>/{rules,candidates,upstream,licenses}/**`, one file per rule or
-test case), `fixture-data` (`fixtures/**`), `vendored` (`native/grammars/**`).
+recording), `fixture-data` (`fixtures/**`), `vendored` (`native/grammars/**`).
 
 ### 13. Import-direction violations — target 0
 
@@ -176,10 +171,11 @@ This metric is the result of the layer boundary lint, `scripts/check/check-bound
 (`checkBoundaries(root, { files })`; run alone as `npm run check:boundaries`). Its rules, stated in its header
 and tested in `test/structure/boundaries.test.mjs`: `engine-isolation` (`src/engine/` imports no other
 layer), `host-isolation` (no host imports another), `layer-order` (each layer imports only the layers
-listed for it, the order in `src/README.md`), `src-self-contained` (`src/` imports nothing outside `src/`) and
+listed for it, the order in `src/README.md`), `src-self-contained` (`src/` imports nothing outside `src/`),
 `entry-points` (code outside `src/` imports a layer's `index.ts` or `src/index.ts`; unit tests under
 `test/<layer>/` may import their own layer's internals, and a vitest mock seam names the module it
-replaces). The metric fails when the lint is not tracked.
+replaces) and `playground-public-api` (`playground/` imports only the package's `exports`, in code and in
+tsconfig `paths`). The metric fails when the lint is not tracked.
 
 ### 14. Production reads `fixtures/`; one root resolver per language — target 0; ≤1 per language
 
@@ -224,7 +220,8 @@ TS/JS file basenames (first dot part; later parts lowercase) and their directori
 Python file names are snake_case. The `.generated` infix (#20) is not part of a stem: `builtins.generated.rs`
 is checked as `builtins`.
 Exemptions: `data-roots` (named after upstream tools and engine modules), `vendored`, `fixture-trees`
-(framework route files such as `pages/_app.tsx`).
+(framework route files such as `pages/_app.tsx`), `react-components` (under `playground/ui/src/`, a
+component's `.tsx` file is PascalCase and a hook's file is `useThing`).
 
 ## Hygiene
 
@@ -241,7 +238,7 @@ A file is generated when named `*.generated.*` or when its first five lines say 
 at-sign generated tag, or say "do not edit". Each is named `*.generated.*` or listed in
 `scripts/generate/README.md`, and when commentable (not JSON, not binary) carries
 `Generated by <generator path>; do not edit.` within its first three lines, naming a tracked file.
-Exemptions: `data-roots` (pack test data follows the fixtures convention), `tool-owned` (`*.lock`,
+Exemptions: `data-roots` (recordings follow the fixtures convention), `tool-owned` (`*.lock`,
 `package-lock.json`, `.changeset/README.md`); the manifest and this gate are not scanned.
 
 ### 21. Top-level directories have a README — target 100%
@@ -263,7 +260,7 @@ names the row's.
 
 No tracked text file mentions `rerail-fixtures/`, `tempo-oracles`, `code-rule-dsl/rules/opt-in` or
 `policies/rule-packs`.
-Exemptions: `history` (`CHANGELOG.md`, `.changelog/*.md`, `.changeset/*.md`) and `structure-gate` (this page, the gate, its tests).
+Exemptions: `history` (`CHANGELOG.md`, `.changeset/*.md`) and `structure-gate` (this page, the gate, its tests).
 
 ### 23. Shipped rules come only from `packs/*` — target `packs/*` only
 

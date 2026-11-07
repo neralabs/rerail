@@ -12,8 +12,6 @@ import {
   openRerailDatabase,
   addAttachment,
   upsertLibraryRule,
-  approve,
-  ruleSubject,
   type ConversationRule,
 } from "../src/engine/index.js";
 import { OmpMessageContentSource, OmpWatermarkStore, SqlitePresentationPreferenceStore } from "../src/runtime/index.js";
@@ -98,12 +96,10 @@ describe("installed OMP extension in standalone host", () => {
 
   test("steers on a conversation rule added to the repository after the session started", async () => {
     const cwd = await isolate();
-    // In the library, approved by the person who wrote it, and the repository is set up, but the rule is not added
-    // anywhere yet.
+    // In the library and the repository is set up, but the rule is not added anywhere yet.
     const repositoryKey = setUpTestRepository(cwd);
     const store = openRerailDatabase(defaultRerailDatabasePath());
-    const stored = upsertLibraryRule(store, loadRuleCatalog(), checkoutRule("db:checkout"), "conversation");
-    approve(store, ruleSubject(stored.document.rule.id, stored.payloadHash));
+    upsertLibraryRule(store, loadRuleCatalog(), checkoutRule("db:checkout"), "conversation");
     let host: OmpHost | undefined;
     try {
       host = await OmpHost.start(cwd, [

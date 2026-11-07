@@ -4,7 +4,6 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symli
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import ignore from "ignore";
 import { sql } from "drizzle-orm";
 import { openSqliteDatabase } from "../../src/engine/index.js";
 import {
@@ -74,12 +73,6 @@ async function readJson(path: string): Promise<Record<string, unknown>> {
 /** The registered hook line: the recorded node, with node from PATH as the fallback once it is gone. */
 function hookLine(nodePath: string, root: string, executable: string): string {
   return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${nodePath} ${join(root, "dist", executable)}`;
-}
-
-/** The registered status line: the same fallback, with the settings path after the script for a project's settings. */
-function statusCommand(nodePath: string, root: string, settingsPath?: string): string {
-  const command = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' ${nodePath} ${join(root, "dist", "hosts", "claude", "claude-status.js")}`;
-  return settingsPath === undefined ? command : `${command} ${settingsPath}`;
 }
 
 async function backups(path: string): Promise<string[]> {
@@ -171,39 +164,18 @@ describe("detectHarnesses", () => {
     expect(command).toContain(`${join(root, "dist")}/`);
   });
 
-  it("registers Codex's Windows hook as a PowerShell command with spaces, quotes and accents kept literal", async () => {
-    const { home } = await fixture();
-    // A profile folder with a space, an apostrophe, a typographic quote PowerShell also ends a string at, and accents.
-    const profile = join(dirname(home), "José O'Brien ‘García’ $x %y%");
-    const root = join(profile, ".rerail", "current");
-    await mkdir(join(root, "dist"), { recursive: true });
-    await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
-    const nodePath = String.raw`C:\Users\José O'Brien\AppData\Local\nvm\v24.9.0\node.exe`;
-    const path = join(home, ".codex", "hooks.json");
+  it("quotes Windows hook commands without POSIX backslash escaping", async () => {
+    const { home, root } = await fixture();
+    const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["codex"] });
+    const hooks = (await readJson(join(home, ".codex", "hooks.json"))).hooks as Record<
+      string,
+      Array<{ hooks: Array<{ command: string }> }>
+    >;
+    const command = hooks.SessionStart?.[0]?.hooks[0]?.command;
     const hookPath = join(root, "dist", "hosts", "codex", "codex-hook.js");
-    // The `cmd` form earlier set-ups wrote, `%` doubled for cmd; registering replaces it.
-    const [cmdNode, cmdHook] = [nodePath, hookPath].map(value => `"${value.replaceAll("%", "%%")}"`);
-    const cmdForm = `cmd /d /c "if exist ${cmdNode} (${cmdNode} ${cmdHook}) else (node ${cmdHook})"`;
-    await seed(path, { hooks: { SessionStart: [{ hooks: [{ type: "command", command: cmdForm }] }] } });
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["codex"] as const };
-
-    await registerHarnesses(windows);
-    const commands = () => readJson(path).then(value => Object.values(value.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>)
-      .flatMap(groups => groups.flatMap(group => group.hooks.map(hook => hook.command))));
-    // Codex hands the command to PowerShell, which would split the `cmd` form's nested double quotes at the space. In
-    // single quotes only a quote is special: doubled, it stands for itself.
-    const node = String.raw`'C:\Users\José O''Brien\AppData\Local\nvm\v24.9.0\node.exe'`;
-    const hook = `'${hookPath.replace("O'Brien ‘García’", "O''Brien ‘‘García’’")}'`;
-    const command = `$LASTEXITCODE = 1; if (Test-Path -LiteralPath ${node}) { & ${node} ${hook} } else { node ${hook} }; exit $LASTEXITCODE`;
-    expect(await commands()).toEqual(Array(5).fill(command));
-    expect(change((await registerHarnesses(windows)).changes, "codex", "hooks.json").action).toBe("unchanged");
-
-    const upgradedNode = String.raw`C:\Program Files\nodejs\node.exe`;
-    await registerHarnesses({ ...windows, nodePath: upgradedNode });
-    expect(await commands()).toEqual(Array(5).fill(command.replaceAll(node, String.raw`'C:\Program Files\nodejs\node.exe'`)));
-
-    await unregisterHarnesses(windows);
-    expect(await readJson(path)).toEqual({});
+    // cmd runs the recorded node when it is still installed, and node from PATH otherwise.
+    expect(command).toBe(`cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (node "${hookPath}")"`);
   });
 });
 
@@ -231,7 +203,7 @@ describe("Claude Code settings.json", () => {
     expect(await backups(path)).toHaveLength(1);
 
     const settings = await readJson(path);
-    expect(settings.permissions).toMatchObject(foreign.permissions);
+    expect(settings.permissions).toEqual(foreign.permissions);
     expect(settings.theme).toBe("dark");
     const hooks = settings.hooks as Record<string, unknown[]>;
     expect(Object.keys(hooks).sort()).toEqual(
@@ -345,141 +317,11 @@ describe("Claude Code settings.json", () => {
   });
 });
 
-interface IsolationSettings {
-  permissions?: { allow?: string[]; deny?: string[] };
-  sandbox?: {
-    enabled?: boolean;
-    excludedCommands?: string[];
-    filesystem?: { denyRead?: string[]; denyWrite?: string[]; allowRead?: string[] };
-  };
-}
-
-async function readIsolation(path: string): Promise<IsolationSettings> {
-  return await readJson(path) as IsolationSettings;
-}
-
-/**
- * Whether the absolute Read rules (`Read(//path)`) in `deny` keep the agent's file tools from `relativePath` below
- * `directory`, matched as gitignore patterns from the filesystem root.
- */
-function readDenied(deny: readonly string[], directory: string, relativePath: string): boolean {
-  const patterns = deny.filter(rule => rule.startsWith("Read(//")).map(rule => rule.slice("Read(//".length, -1));
-  return ignore().add(patterns).ignores(join(directory, relativePath).slice(1));
-}
-
-describe("Claude Code data isolation", () => {
-  async function isolationFixture(settings: unknown) {
-    const { options, path, original } = await claudeFixture(settings);
-    const rerailHome = join(dirname(options.home), "rerail-home");
-    vi.stubEnv("RERAIL_HOME", rerailHome);
-    return { options, path, original: original!, rerailHome, cache: join(options.home, ".cache", "rerail") };
-  }
-
-  const userSettings = {
-    permissions: { allow: ["Bash(git:*)"], deny: ["Read(./.env)"] },
-    sandbox: { enabled: true, filesystem: { denyRead: ["~/.aws"] }, excludedCommands: ["docker *"] },
-  };
-
-  it("denies the agent the Rerail home and the cache, lets Rerail's CLI out of the sandbox, and removal restores the file", async () => {
-    const { options, path, original, rerailHome, cache } = await isolationFixture(userSettings);
-    await registerHarnesses(options);
-    const settings = await readIsolation(path);
-
-    expect(settings.sandbox?.enabled).toBe(true);
-    expect(settings.sandbox?.filesystem?.denyRead).toEqual(["~/.aws", rerailHome, cache]);
-    expect(settings.sandbox?.filesystem?.denyWrite).toEqual([rerailHome, cache]);
-    // Sandboxed commands may still read the installed package inside the denied home, and nothing else there.
-    expect(settings.sandbox?.filesystem?.allowRead).toEqual([join(rerailHome, "current"), join(rerailHome, "versions")]);
-    expect(settings.sandbox?.excludedCommands).toEqual([
-      "docker *", `${options.nodePath} ${join(options.root, "dist", "cli", "cli.js")} *`, `${join(rerailHome, "bin", "rerail")} *`, "rerail *",
-    ]);
-    const deny = settings.permissions?.deny ?? [];
-    expect(deny).toEqual(expect.arrayContaining(["Read(./.env)", `Edit(/${rerailHome}/**)`, `Edit(/${cache}/**)`, `Read(/${cache}/**)`]));
-    expect(settings.permissions?.allow).toEqual(userSettings.permissions.allow);
-    for (const data of ["access-token", "daemon.json", "rerail.sqlite", "rerail.sqlite-wal", "rerail.sqlite.pre-update", "daemon.log", "device-secrets/key", "profiles/work/rerail.sqlite"]) {
-      expect(readDenied(deny, rerailHome, data)).toBe(true);
-    }
-    // `/rerail-create` has the agent read its skill, and files its references name, in the installed package.
-    for (const code of ["current/skills/rerail-create/SKILL.md", "current/package.json", "versions/1.0.0/native/src/code_rule_dsl/capabilities.json"]) {
-      expect(readDenied(deny, rerailHome, code)).toBe(false);
-    }
-    expect(readDenied(deny, cache, "content-v1.sqlite")).toBe(true);
-
-    expect(change((await registerHarnesses(options)).changes, "claude-code", "settings.json").action).toBe("unchanged");
-    expect(await readIsolation(path)).toEqual(settings);
-
-    await unregisterHarnesses(options);
-    expect(await readFile(path, "utf8")).toBe(original);
-  });
-
-  it("keeps an entry the person already had when Rerail's go, and removes the objects it created", async () => {
-    const cacheRule = (home: string) => `Read(/${join(home, ".cache", "rerail")}/**)`;
-    const { options, path } = await claudeFixture();
-    const own = { theme: "dark", permissions: { deny: [cacheRule(options.home)] } };
-    const original = await seed(path, own);
-    vi.stubEnv("RERAIL_HOME", join(dirname(options.home), "rerail-home"));
-    await registerHarnesses(options);
-    expect((await readIsolation(path)).permissions?.deny?.filter(rule => rule === cacheRule(options.home))).toHaveLength(1);
-    await unregisterHarnesses(options);
-    expect(await readFile(path, "utf8")).toBe(original);
-  });
-
-  it("moves the denies to a new RERAIL_HOME when set-up runs again", async () => {
-    const { options, path, original, rerailHome } = await isolationFixture(userSettings);
-    await registerHarnesses(options);
-    const moved = join(dirname(options.home), "moved-home");
-    vi.stubEnv("RERAIL_HOME", moved);
-    await registerHarnesses(options);
-    const text = await readFile(path, "utf8");
-    expect(text).not.toContain(rerailHome);
-    const settings = await readIsolation(path);
-    expect(settings.sandbox?.filesystem?.denyRead).toContain(moved);
-    expect(settings.permissions?.deny).toContain(`Edit(/${moved}/**)`);
-    await unregisterHarnesses(options);
-    expect(await readFile(path, "utf8")).toBe(original);
-  });
-
-  it("leaves a Rerail home that holds the home directory open, and still denies the cache", async () => {
-    const { options, path } = await claudeFixture();
-    vi.stubEnv("RERAIL_HOME", options.home);
-    await registerHarnesses(options);
-    const settings = await readIsolation(path);
-    const cache = join(options.home, ".cache", "rerail");
-    expect(settings.sandbox?.filesystem?.denyRead).toEqual([cache]);
-    expect(settings.sandbox?.filesystem?.denyWrite).toEqual([cache]);
-    expect(settings.sandbox?.filesystem?.allowRead).toBeUndefined();
-    expect(settings.permissions?.deny).toEqual([`Edit(/${cache}/**)`, `Read(/${cache}/**)`]);
-  });
-
-  it("writes only the file tools' rules on native Windows, where commands run unsandboxed", async () => {
-    const { options, path, rerailHome } = await isolationFixture(undefined);
-    await registerHarnesses({ ...options, platform: "win32" });
-    const settings = await readIsolation(path);
-    expect(settings.sandbox).toBeUndefined();
-    expect(settings.permissions?.deny).toContain(`Edit(/${rerailHome}/**)`);
-  });
-
-  it("keeps entries another root registered when removing this one", async () => {
-    const { options, path } = await isolationFixture(userSettings);
-    await registerHarnesses(options);
-    const registered = await readFile(path, "utf8");
-    const other = await packageInstall(options, "other");
-    await unregisterHarnesses({ ...options, root: other });
-    expect(await readIsolation(path)).toMatchObject(JSON.parse(registered) as object);
-  });
-
-  it("refuses a sandbox setting that is not an object without writing", async () => {
-    const { options, path, original } = await isolationFixture({ sandbox: true });
-    await expect(registerHarnesses(options)).rejects.toThrow(`"sandbox" in ${path}`);
-    expect(await readFile(path, "utf8")).toBe(original);
-  });
-});
-
 describe("Claude Code status-line ownership", () => {
   it("composes a command without copying it into settings, and restores all metadata", async () => {
     const statusLine = { type: "command", command: "sh ~/my-status.sh --compact", padding: 2, refreshInterval: 1000 };
     const { options, path, original } = await claudeFixture({ permissions: { allow: ["Read"] }, statusLine });
-    const installedCommand = statusCommand(options.nodePath, options.root);
+    const installedCommand = `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")}`;
     await registerHarnesses(options);
     expect((await readJson(path)).statusLine).toEqual({ ...statusLine, command: installedCommand });
     expect(readClaudeStatusCommand(options.home)).toEqual(statusLine);
@@ -501,7 +343,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(managed);
     const settings = await readJson(path);
     expect(settings.statusLine).toMatchObject({
-      ...statusLine, command: statusCommand(managed.nodePath, managed.root),
+      ...statusLine, command: `${managed.nodePath} ${join(managed.root, "dist", "hosts", "claude", "claude-status.js")}`,
     });
     expect(readClaudeStatusCommand(options.home)).toEqual(statusLine);
     for (const groups of Object.values(settings.hooks as Record<string, { hooks: { command: string }[] }[]>)) {
@@ -584,7 +426,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(options);
     expect(await readJson(rootPath)).toEqual({
       ...rootSettings,
-      statusLine: { ...rootStatus, command: statusCommand(options.nodePath, options.root, rootPath) },
+      statusLine: { ...rootStatus, command: `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")} ${rootPath}` },
     });
     expect(readClaudeStatusCommand(options.home, rootPath)).toEqual(rootStatus);
     expect(readClaudeStatusCommand(options.home)).toEqual(globalStatus);
@@ -594,7 +436,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(upgraded);
     const installed = await readJson(rootPath);
     expect(installed.statusLine).toEqual({
-      ...rootStatus, command: statusCommand(upgraded.nodePath, upgraded.root, rootPath),
+      ...rootStatus, command: `${upgraded.nodePath} ${join(upgraded.root, "dist", "hosts", "claude", "claude-status.js")} ${rootPath}`,
     });
     await registerHarnesses(upgraded);
     expect(await readJson(rootPath)).toEqual(installed);
@@ -691,7 +533,7 @@ describe("Claude Code status-line ownership", () => {
 
     await registerHarnesses(options);
     const settings = await readJson(settingsPath);
-    expect(settings.statusLine).toEqual({ ...statusLine, command: statusCommand(options.nodePath, options.root), refreshInterval: 5 });
+    expect(settings.statusLine).toEqual({ ...statusLine, command: `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")}`, refreshInterval: 5 });
     expect(readClaudeStatusRegistration(options.home)).toMatchObject({ previous: null });
     expect((settings.hooks as Record<string, unknown>).Stop)
       .toEqual([{ hooks: [{ type: "command", command: hookLine(options.nodePath, options.root, "hosts/claude/claude-hook.js") }] }]);
@@ -716,7 +558,7 @@ describe("Claude Code status-line ownership", () => {
     });
     await registerHarnesses(options);
     const installed = await readJson(path);
-    expect(installed.statusLine).toEqual({ ...replaced, command: statusCommand(options.nodePath, options.root) });
+    expect(installed.statusLine).toEqual({ ...replaced, command: `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")}` });
     expect(readClaudeStatusRegistration(options.home)).toMatchObject({ previous: null });
     expect(readClaudeStatusRegistration(options.home)?.previousInherited).toBeUndefined();
     expect(readClaudeStatusCommand(options.home)).toBeUndefined();
@@ -733,7 +575,7 @@ describe("Claude Code status-line ownership", () => {
 
   it("replaces its own status line when this home has no record of it", async () => {
     const { options, path } = await claudeFixture();
-    const installedCommand = statusCommand(options.nodePath, options.root);
+    const installedCommand = `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")}`;
     await seed(path, { statusLine: { type: "command", command: installedCommand } });
     await registerHarnesses(options);
     expect((await readJson(path)).statusLine).toEqual({ type: "command", command: installedCommand, refreshInterval: 5 });
@@ -750,7 +592,7 @@ describe("Claude Code status-line ownership", () => {
     });
     await registerHarnesses(options);
     expect((await readJson(localPath)).statusLine).toEqual({
-      type: "command", command: statusCommand(options.nodePath, options.root, localPath), refreshInterval: 5,
+      type: "command", command: `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")} ${localPath}`, refreshInterval: 5,
     });
     const registration = readClaudeStatusRegistration(options.home, localPath);
     expect(registration).toMatchObject({ previous: null });
@@ -767,7 +609,7 @@ describe("Claude Code status-line ownership", () => {
     await seed(path, { statusLine: { type: "command", command: `/old/node ${join(other, "dist", "hosts", "claude", "claude-status.js")} ${path}` } });
     await registerHarnesses(options);
     expect((await readJson(path)).statusLine).toEqual({
-      type: "command", command: statusCommand(options.nodePath, options.root, path), refreshInterval: 5,
+      type: "command", command: `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")} ${path}`, refreshInterval: 5,
     });
     expect(readClaudeStatusRegistration(options.home, path)).toMatchObject({ previous: null });
     expect(readClaudeStatusCommand(options.home, path)).toBeUndefined();
@@ -790,9 +632,7 @@ describe("Claude Code status-line ownership", () => {
     const project = readClaudeStatusRegistration(options.home, path)!;
     const database = openSqliteDatabase(claudeStatusDatabasePath(options.home));
     try {
-      expect(database.all(sql`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)).toEqual([
-        { name: "harness_added_settings_entries" }, { name: "harness_status_lines" },
-      ]);
+      expect(database.all(sql`SELECT name FROM sqlite_master WHERE type = 'table'`)).toEqual([{ name: "harness_status_lines" }]);
       // Former installations used project-version stamps; recovery must ignore those versions.
       database.run(sql`PRAGMA user_version = 999`);
     } finally { database.$client.close(); }
@@ -835,7 +675,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(options);
     expect(readClaudeStatusCommand(options.home, path)).toEqual(statusLine);
     expect((await readJson(path)).statusLine).toMatchObject({
-      ...statusLine, command: statusCommand(options.nodePath, options.root, path),
+      ...statusLine, command: `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")} ${path}`,
     });
     expect(await readFile(rootPath, "utf8")).toBe(rootOriginal);
     await unregisterHarnesses(options);
@@ -868,14 +708,8 @@ describe("Claude Code commands", () => {
     for (const file of commandFiles) expect(change(first.changes, "claude-code", file).action).toBe("created");
     expect((await readdir(directory)).sort()).toEqual(commandFiles);
     for (const file of commandFiles) {
-      const text = await readFile(join(directory, file), "utf8");
       // Enumerated per invocation: no command may run `daemon`, `mcp-bridge` or anything else the launcher offers.
-      expect(text).not.toContain(`Bash(${command} *)`);
-      // `rules import --approve` approves every rule of a dump, and approving is the person's: no grant reaches it.
-      const allowed = [...(text.match(/^allowed-tools: (.*)$/mu)?.[1] ?? "").matchAll(/Bash\((.*?)\)(?:, |$)/gu)].map(match => match[1]!);
-      for (const line of [`${command} rules import rules.json`, `${command} rules import rules.json --approve`]) {
-        expect(allowed.filter(pattern => pattern.endsWith(" *") ? line.startsWith(pattern.slice(0, -1)) : line === pattern)).toEqual([]);
-      }
+      expect(await readFile(join(directory, file), "utf8")).not.toContain(`Bash(${command} *)`);
     }
 
     const overview = await read("rerail");
@@ -900,8 +734,6 @@ describe("Claude Code commands", () => {
     expect(create).toContain(
       `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
     );
-    // Approving a rule is the person's: Claude Code asks them before the agent runs it.
-    expect(create).not.toMatch(/allowed-tools:.*rules approve/u);
     expect(create).toContain("\"$ARGUMENTS\"");
     expect(create).toContain(`Read ${root}/skills/rerail-create/SKILL.md and follow it.`);
     // The removal is never pre-approved: Claude Code asks the person before it runs.
@@ -1116,17 +948,6 @@ describe("Codex hooks.json", () => {
     expect(change(again.changes, "codex", join("rerail-show-me", "SKILL.md")).action).toBe("created");
     expect(again.notes).not.toContainEqual(trust);
   });
-
-  it("removes each skill's folder with the skill, unless something else is in it", async () => {
-    const { home, root, nodePath } = await fixture();
-    const skills = join(home, ".codex", "skills");
-    await mkdir(join(skills, "mine"), { recursive: true });
-    await registerHarnesses({ root, home, nodePath, harnesses: ["codex"] });
-    await writeFile(join(skills, "rerail-help", "notes.md"), "kept");
-    await unregisterHarnesses({ root, home, nodePath, harnesses: ["codex"] });
-    expect((await readdir(skills)).sort()).toEqual(["mine", "rerail-help"]);
-    expect(await readdir(join(skills, "rerail-help"))).toEqual(["notes.md"]);
-  });
 });
 
 describe("legacy package-root cutover", () => {
@@ -1169,8 +990,7 @@ describe("legacy package-root cutover", () => {
     }
     expect(((await readJson(join(options.home, ".cursor", "hooks.json"))).hooks as Record<string, unknown>).sessionStart)
       .toEqual([{ command: hookLine(options.nodePath, options.root, "hosts/cursor/cursor-hook.js") }]);
-    // The other install's entry gives this install its place.
-    expect((await readJson(join(options.home, ".pi", "agent", "settings.json"))).packages).toEqual([options.root, foreignRoot]);
+    expect((await readJson(join(options.home, ".pi", "agent", "settings.json"))).packages).toEqual([foreignRoot, options.root]);
   });
 
   it("replaces what another install of this package registered: hooks, status line, extension link, MCP entry and Pi package", async () => {
@@ -1205,7 +1025,7 @@ describe("legacy package-root cutover", () => {
 
     await registerHarnesses(options);
     const settings = await readJson(settingsPath);
-    expect(settings.statusLine).toEqual({ ...statusLine, command: statusCommand(options.nodePath, options.root), refreshInterval: 5 });
+    expect(settings.statusLine).toEqual({ ...statusLine, command: `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")}`, refreshInterval: 5 });
     expect((settings.hooks as Record<string, unknown>).Stop)
       .toEqual([{ hooks: [{ type: "command", command: hookLine(options.nodePath, options.root, "hosts/claude/claude-hook.js") }] }]);
     expect(((await readJson(join(options.home, ".codex", "hooks.json"))).hooks as Record<string, unknown>).Stop)
@@ -1415,34 +1235,6 @@ describe("Cursor hooks.json", () => {
     expect(change(report.changes, "cursor", "hooks.json").action).toBe("unchanged");
     expect(await readdir(join(home, ".cursor"))).toEqual([]);
   });
-
-  it("denies the Cursor CLI's file tools Rerail's data in an existing cli-config.json, and removal restores it", async () => {
-    const { home, root, nodePath } = await fixture();
-    const rerailHome = join(dirname(home), "rerail-home");
-    vi.stubEnv("RERAIL_HOME", rerailHome);
-    const path = join(home, ".cursor", "cli-config.json");
-    const original = await seed(path, { version: 1, permissions: { allow: ["Shell(ls)"], deny: ["Read(.env*)"] } });
-    const options = { root, home, nodePath, harnesses: ["cursor"] as const };
-
-    await registerHarnesses(options);
-    const cache = join(home, ".cache", "rerail");
-    const { permissions } = await readIsolation(path);
-    expect(permissions?.allow).toEqual(["Shell(ls)"]);
-    expect(permissions?.deny).toEqual(expect.arrayContaining([
-      "Read(.env*)", `Write(${rerailHome}/**)`, `Write(${cache}/**)`, `Read(${cache}/**)`, `Read(${rerailHome}/access-token*)`,
-    ]));
-    expect(permissions?.deny).not.toContain(`Read(${rerailHome}/**)`);
-    expect(change((await registerHarnesses(options)).changes, "cursor", "cli-config.json").action).toBe("unchanged");
-
-    await unregisterHarnesses(options);
-    expect(await readFile(path, "utf8")).toBe(original);
-  });
-
-  it("does not create cli-config.json for a Cursor without the CLI", async () => {
-    const { home, root, nodePath } = await fixture();
-    await registerHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
-    await expect(lstat(join(home, ".cursor", "cli-config.json"))).rejects.toMatchObject({ code: "ENOENT" });
-  });
 });
 
 describe("Pi settings.json", () => {
@@ -1477,136 +1269,6 @@ describe("Pi settings.json", () => {
     await unregisterHarnesses({ root, home, nodePath, harnesses: ["pi"] });
     expect(await readJson(path)).toEqual({ theme: "dark" });
   });
-
-  // Pi's package gallery installs `npm:@neralabs/rerail`; Pi tells a package by its source, so that entry and the path
-  // set-up registers are two packages, and the second fails to load on the tools both register.
-  it("replaces Rerail's npm source with this install in its place, leaving other npm packages, and says so", async () => {
-    const { home, root, nodePath } = await fixture();
-    const path = join(home, ".pi", "agent", "settings.json");
-    const others = ["npm:@neralabs/rerail-pack-typescript", "npm:@neralabs/rerailx", "npm:@other/pkg@1.0.0"];
-    await seed(path, { theme: "dark", packages: ["npm:@first/pkg", "npm:@neralabs/rerail", ...others] });
-
-    const dryRun = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"], dryRun: true });
-    expect(change(dryRun.changes, "pi", "settings.json"))
-      .toMatchObject({ action: "updated", detail: `register ${root} in Pi packages, replacing npm:@neralabs/rerail (dry run)` });
-    expect((await readJson(path)).packages).toEqual(["npm:@first/pkg", "npm:@neralabs/rerail", ...others]);
-
-    const first = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
-    expect(change(first.changes, "pi", "settings.json"))
-      .toMatchObject({ action: "updated", detail: `register ${root} in Pi packages, replacing npm:@neralabs/rerail` });
-    expect(await readJson(path)).toEqual({ theme: "dark", packages: ["npm:@first/pkg", root, ...others] });
-
-    const second = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
-    expect(change(second.changes, "pi", "settings.json"))
-      .toMatchObject({ action: "unchanged", detail: `register ${root} in Pi packages: already in place` });
-    expect(await backups(path)).toHaveLength(1);
-
-    await unregisterHarnesses({ root, home, nodePath, harnesses: ["pi"] });
-    expect(await readJson(path)).toEqual({ theme: "dark", packages: ["npm:@first/pkg", ...others] });
-  });
-
-  it("replaces a versioned npm source, and keeps this install's own entry, in its place and with its filters, over it", async () => {
-    const { home, root, nodePath } = await fixture();
-    const path = join(home, ".pi", "agent", "settings.json");
-    await seed(path, { packages: ["npm:@neralabs/rerail@0.1.0", "npm:@other/pkg"] });
-    const report = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
-    expect(change(report.changes, "pi", "settings.json").detail).toBe(`register ${root} in Pi packages, replacing npm:@neralabs/rerail@0.1.0`);
-    expect((await readJson(path)).packages).toEqual([root, "npm:@other/pkg"]);
-
-    const own = { source: root, extensions: [] };
-    await seed(path, { packages: ["npm:@neralabs/rerail", "npm:@other/pkg", own, "npm:@neralabs/rerail@latest", { source: "npm:@neralabs/rerail@0.1.0", skills: [] }] });
-    const again = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
-    expect(change(again.changes, "pi", "settings.json").detail)
-      .toBe(`register ${root} in Pi packages, removing npm:@neralabs/rerail, npm:@neralabs/rerail@latest and npm:@neralabs/rerail@0.1.0`);
-    expect((await readJson(path)).packages).toEqual(["npm:@other/pkg", own]);
-  });
-
-  it("gives this install the place and filters of another install's object entry when it has none of its own", async () => {
-    const options = await fixture();
-    const path = join(options.home, ".pi", "agent", "settings.json");
-    const previous = await packageInstall(options, "previous home");
-    await seed(path, { packages: ["npm:@other/pkg", { source: previous, skills: [] }, "npm:@neralabs/rerail"] });
-    const report = await registerHarnesses({ ...options, harnesses: ["pi"] });
-    expect(change(report.changes, "pi", "settings.json").detail)
-      .toBe(`register ${options.root} in Pi packages, replacing ${previous}, removing npm:@neralabs/rerail`);
-    expect((await readJson(path)).packages).toEqual(["npm:@other/pkg", { source: options.root, skills: [] }]);
-  });
-
-  it("replaces the source of an object entry for Rerail's npm package and keeps its filters", async () => {
-    const { home, root, nodePath } = await fixture();
-    const path = join(home, ".pi", "agent", "settings.json");
-    const other = { source: "npm:@other/pkg", skills: [] };
-    await seed(path, { packages: [other, { source: "npm:@neralabs/rerail@^0.1.0", skills: [] }] });
-
-    const first = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
-    expect(change(first.changes, "pi", "settings.json").detail).toBe(`register ${root} in Pi packages, replacing npm:@neralabs/rerail@^0.1.0`);
-    expect((await readJson(path)).packages).toEqual([other, { source: root, skills: [] }]);
-
-    const second = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
-    expect(change(second.changes, "pi", "settings.json").action).toBe("unchanged");
-
-    await unregisterHarnesses({ root, home, nodePath, harnesses: ["pi"] });
-    expect((await readJson(path)).packages).toEqual([other]);
-  });
-
-  it("removes Rerail's npm source in every form, and no other npm package, when it removes the managed install only", async () => {
-    const options = await fixture();
-    const path = join(options.home, ".pi", "agent", "settings.json");
-    const packages = ["npm:@neralabs/rerail", { source: "npm:@neralabs/rerail@0.1.0", extensions: [] }, "npm:@neralabs/rerail-pack-node", "npm:@other/pkg"];
-    await seed(path, { packages });
-    const managed = await packageInstall(options, "rerail home");
-    vi.stubEnv("RERAIL_HOME", dirname(managed));
-
-    // A checkout registered with `--root` never wrote the npm source, so its removal leaves it.
-    const checkout = await unregisterHarnesses({ ...options, harnesses: ["pi"] });
-    expect(change(checkout.changes, "pi", "settings.json").action).toBe("unchanged");
-    expect((await readJson(path)).packages).toEqual(packages);
-
-    const report = await unregisterHarnesses({ ...options, root: managed, harnesses: ["pi"] });
-    expect(change(report.changes, "pi", "settings.json")).toMatchObject({ action: "updated", detail: "remove rerail from Pi packages" });
-    expect((await readJson(path)).packages).toEqual(["npm:@neralabs/rerail-pack-node", "npm:@other/pkg"]);
-  });
-});
-
-describe("OMP plugin install of Rerail", () => {
-  const ompPluginNote = "OMP also loads Rerail from its plugin install, so two copies run: remove that one with omp plugin uninstall @neralabs/rerail.";
-
-  /** What `omp plugin install @neralabs/rerail` leaves: the package in OMP's plugin folder, and OMP's plugin lockfile. */
-  async function ompPlugin(home: string, lock?: unknown): Promise<string> {
-    const plugins = join(home, ".omp", "plugins");
-    const copy = join(plugins, "node_modules", "@neralabs", "rerail");
-    await mkdir(join(copy, "dist"), { recursive: true });
-    await writeFile(join(copy, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.0" }));
-    await seed(join(plugins, "package.json"), { dependencies: { "@neralabs/rerail": "0.1.0" } });
-    if (lock !== undefined) await seed(join(plugins, "omp-plugins.lock.json"), lock);
-    return copy;
-  }
-
-  it("tells the person when OMP loads its plugin install of Rerail beside this one, and changes nothing of it", async () => {
-    const { home, root, nodePath } = await fixture();
-    const copy = await ompPlugin(home, { plugins: { "@neralabs/rerail": { version: "0.1.0", enabledFeatures: null, enabled: true } }, settings: {} });
-    const report = await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] });
-    expect(report.notes).toContain(ompPluginNote);
-    expect(await readJson(join(copy, "package.json"))).toEqual({ name: "@neralabs/rerail", version: "0.1.0" });
-    expect(await readlink(join(home, ".omp", "agent", "extensions", "rerail"))).toBe(root);
-
-    expect((await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] })).notes).not.toContain(ompPluginNote);
-    expect((await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
-  });
-
-  it("says nothing of a plugin install OMP has disabled, one that links to this install, or none", async () => {
-    const { home, root, nodePath } = await fixture();
-    expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
-
-    await ompPlugin(home, { plugins: { "@neralabs/rerail": { version: "0.1.0", enabledFeatures: null, enabled: false } }, settings: {} });
-    expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
-
-    const copy = join(home, ".omp", "plugins", "node_modules", "@neralabs", "rerail");
-    await rm(copy, { recursive: true });
-    await symlink(root, copy);
-    await rm(join(home, ".omp", "plugins", "omp-plugins.lock.json"));
-    expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
-  });
 });
 
 describe("OMP extensions symlink", () => {
@@ -1634,8 +1296,6 @@ describe("OMP extensions symlink", () => {
     const removed = await unregisterHarnesses({ root: otherRoot, home, nodePath, harnesses: ["omp"] });
     expect(change(removed.changes, "omp", "rerail").action).toBe("updated");
     await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
-    // The extensions folder held only the link, so it goes too.
-    await expect(lstat(dirname(link))).rejects.toMatchObject({ code: "ENOENT" });
 
     const again = await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] });
     expect(change(again.changes, "omp", "rerail").action).toBe("unchanged");

@@ -1,0 +1,654 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f722-forward-annotation-syntax-error",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Keep string type annotations and other forward references valid Python expressions; a syntax error there breaks type checking and runtime evaluation.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "forward-annotation-syntax-error",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "error-within": {
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "concatenated_string"
+                            }
+                          ]
+                        },
+                        {
+                          "parse": {
+                            "grammar": "annotation",
+                            "kind": "ERROR"
+                          }
+                        }
+                      ],
+                      "capture": "C"
+                    },
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "concatenated_string"
+                            }
+                          ]
+                        },
+                        {
+                          "matches": "error-within"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "jaxtyping-shape": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript",
+                    "has": {
+                      "field": "value",
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "jaxtyping"
+                        ],
+                        "prefix": true
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "jaxtyping"
+                            ],
+                            "prefix": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "parse": {
+                      "grammar": "annotation",
+                      "kind": "ERROR"
+                    },
+                    "pattern": "$C"
+                  },
+                  {
+                    "matches": "error-within"
+                  }
+                ]
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "typing.no_type_check",
+                              "_typeshed.no_type_check",
+                              "typing_extensions.no_type_check"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "matches": "jaxtyping-shape"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "F722",
+        "message": "Syntax error in forward annotation",
+        "each": "C",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F722"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "forward-annotation-semantic-syntax-error",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "semantic-error-within": {
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "concatenated_string"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "semantic-error"
+                    }
+                  ]
+                }
+              }
+            },
+            "semantic-error": {
+              "any": [
+                {
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "kind": "ERROR",
+                      "capture": "E"
+                    }
+                  }
+                },
+                {
+                  "matches": "semantic-error-within"
+                }
+              ]
+            },
+            "jaxtyping-shape": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript",
+                    "has": {
+                      "field": "value",
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "jaxtyping"
+                        ],
+                        "prefix": true
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "jaxtyping"
+                            ],
+                            "prefix": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ]
+              },
+              {
+                "matches": "semantic-error"
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "typing.no_type_check",
+                              "_typeshed.no_type_check",
+                              "typing_extensions.no_type_check"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "matches": "jaxtyping-shape"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.E",
+        "code": "F722",
+        "message": "Syntax error in forward annotation",
+        "each": "E",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F722"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "forward-annotation-await-outside-function",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "await-outside-function-within": {
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "concatenated_string"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "await-outside-function"
+                    }
+                  ]
+                }
+              }
+            },
+            "await-outside-function": {
+              "any": [
+                {
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "await",
+                      "not": {
+                        "any": [
+                          {
+                            "matches": "function-scoped"
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "matches": "function-scoped"
+                            }
+                          }
+                        ]
+                      },
+                      "capture": "A"
+                    }
+                  }
+                },
+                {
+                  "matches": "await-outside-function-within"
+                }
+              ]
+            },
+            "function-scoped": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^:$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda"
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "kind": "for_in_clause"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generator_expression"
+                  }
+                },
+                {
+                  "kind": "if_clause",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generator_expression"
+                  }
+                },
+                {
+                  "kind": "for_in_clause",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generator_expression"
+                  },
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "for_in_clause"
+                  }
+                }
+              ]
+            },
+            "jaxtyping-shape": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript",
+                    "has": {
+                      "field": "value",
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "jaxtyping"
+                        ],
+                        "prefix": true
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "jaxtyping"
+                            ],
+                            "prefix": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ]
+              },
+              {
+                "matches": "await-outside-function"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "class_definition"
+                    },
+                    "kind": "function_definition",
+                    "field": "body"
+                  }
+                }
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "typing.no_type_check",
+                              "_typeshed.no_type_check",
+                              "typing_extensions.no_type_check"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "matches": "jaxtyping-shape"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "F722",
+        "message": "Remove the `await` from this string annotation; it is not valid outside a function.",
+        "each": "A",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F722"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

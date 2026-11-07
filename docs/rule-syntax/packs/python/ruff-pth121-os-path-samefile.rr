@@ -1,0 +1,16 @@
+.policy "ruff-pth121-os-path-samefile" revision 2
+.description "Use the samefile method of a Path object instead of os.path.samefile; pathlib reads better than string-based os.path functions."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH121 (flake8-use-pathlib): every call of `os.path.samefile`, however it is imported. Reported at
+// the callee.
+//   os.path.samefile("a", "b")           ← PTH121: `Path("a").samefile("b")`
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
+
+.violation PTH121(at: node) code "PTH121"
+    "Use `Path(first).samefile(second)` instead of `os.path.samefile(first, second)`; leave it for bytes paths, which `Path` rejects."
+    suppress ruff "PTH121"
+PTH121(f) :- pth_call(_, "os.path.samefile", f).

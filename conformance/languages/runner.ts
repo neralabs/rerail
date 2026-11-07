@@ -1,10 +1,12 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
+import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
 import { z } from "zod";
-import { isPackFixture, packFixtureAbsence, requirePackFixture, samplesTree } from "../../scripts/s3/pack-fixtures.mjs";
-import { LABELS_SUFFIX, SAMPLE_ID, sampleLabelsSchema } from "../../scripts/samples/format.js";
+import { isPackFixture, packFixtureAbsence, requirePackFixture } from "../../scripts/s3/pack-fixtures.mjs";
 import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
 import {
+  IGNORED_DIRECTORIES,
   languageFor,
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
@@ -16,39 +18,36 @@ import {
   codeRuleLanguageEmbedVias,
   compareDeterministicStrings,
   isUnreadFailure,
-  UNREAD_FAILURE_HEAD,
 } from "../../src/engine/index.js";
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import {
+  corpusRecordingPath,
+  defaultCorpusRoot,
   fixturesDirectory,
-  fixturesExpectedPath,
-  loadExpectedFindings,
+  fixturesRecordingPath,
+  loadRecording,
   coversFixture,
   documentPath,
   isCandidate,
   MINIMUM_RULES,
-  packFamilies,
   RERAIL_ROOT,
-  unitKey,
+  type CorpusRecording,
   type Divergence,
-  type FixtureExpectedFindings,
+  type FixtureRecording,
   type LoadedPack,
+  type PackCorpus,
   type PackRule,
-  type ExpectedFindings,
-  type UnitLanguage,
-  type UnitOrigin,
-  type UpstreamFinding,
+  type Recording,
 } from "./pack.js";
-import { GATES_MANIFEST, parseGatesManifest } from "./manifest.js";
-import { EXAMPLE_LIMIT, renameVacuity, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
-import { precisionRecall, scoreSamples, scoreSource, type JudgedSample, type Point, type SourceScore } from "./score.js";
+import { EXAMPLE_LIMIT, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
+import { precisionRecall, scoreSource, type Point } from "./score.js";
 
 /** The production repository audit's batching and paging (`code-rule-enforcer.ts`). */
 const AUDIT_BATCH_FILES = 32;
 const AUDIT_CHUNK_BYTES = 1024 * 1024;
 const RESULT_PAGE_BYTES = 8 * 1024 * 1024;
 
-export interface SourceFile {
+interface SourceFile {
   path: string;
   language: CodeRuleSourceLanguage;
   source: string;
@@ -76,43 +75,14 @@ interface Evaluation {
 }
 
 /**
- * One evaluation of a pack's scoring (`planPack`): a fixture unit, or a rule over its samples. Every process that makes
- * the same plan has the same jobs, so any of them can run one, and its result is structured-clone data that travels.
- * `weight` estimates its work against the others of its `source`, for splitting them evenly. Jobs of one `group` share
- * what a process compiles for them (a fixture unit's language, `unitLanguageRules`), so they are best run together.
- */
-export interface Job {
-  source: "fixtures" | typeof SAMPLES_SOURCE;
-  weight: number;
-  group: string;
-  run(): Promise<JobResult>;
-}
-
-/** What one job found. */
-export interface JobResult {
-  /** The errors its evaluation records, which the report lists where the job is (`ErrorLog`). */
-  errors: string[];
-  /** Each workspace it evaluated: the pack rules in it (by id), what they reported, and the probed syntax errors. */
-  workspaces: { rules: string[]; evaluation: Evaluation; syntaxErrors: Map<string, SyntaxErrorLocation> }[];
-  /** A sample rule's clean samples its applicability probe admits (`admittedPaths`); none where it has no clean one. */
-  admitted?: ReadonlySet<string>;
-}
-
-/** A pack's errors in report order: those its plan records as it reads, and where each job's go. */
-type ErrorLog = (string | { job: number })[];
-
-/**
  * The repository audit's path through the production workspace: every code rule added to one workspace, sources applied
- * in 32-file / 1 MiB batches with global relations deferred, one closing apply, then results paged out. `root` is the
- * folder the files' paths are relative to, which import targets resolve against as the daemon resolves them against
- * its workspace root.
+ * in 32-file / 1 MiB batches with global relations deferred, one closing apply, then results paged out.
  */
-export async function evaluateWorkspace(codeRules: readonly NativeCompiledCodeRuleDsl[], files: readonly SourceFile[], root?: string): Promise<Evaluation> {
+async function evaluateWorkspace(codeRules: readonly NativeCompiledCodeRuleDsl[], files: readonly SourceFile[]): Promise<Evaluation> {
   const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
   const started = performance.now();
   try {
     for (const codeRule of codeRules) workspace.addCodeRule(codeRule);
-    if (root !== undefined) workspace.setRoot(resolve(root));
     let revision = 0;
     let batch: SourceFile[] = [];
     let bytes = 0;
@@ -164,37 +134,6 @@ function unreadLocation(failure: Page["failures"][number]): SyntaxErrorLocation 
 }
 
 /**
- * Whether `failure` is a `source-incomplete` the engine reports because a file was read with syntax errors, in this or
- * another file, rather than because a file could not be read at all. The code alone cannot tell them apart: the engine
- * also reports unreadable, binary and released sources (`cannot read workspace source: …`, `Binary source cannot be
- * evaluated`, `source released while the content store was busy …`) as `source-incomplete`, and those stay engine
- * failures. So the message decides, one entry per engine source of a parse-induced message (native/src/code_rule_dsl/):
- * - "file has syntax errors": a clause unsound under errors skipped the file (workspace/evaluate.rs), here without the
- *   probe's confirmation (`SYNTAX_ERROR_FAILURE` otherwise);
- * - "file did not parse: …" (`UNREAD_FAILURE_HEAD`): the parser did not read the file (soundness.rs `UNREAD`), here
- *   without the first error's location (`unreadLocation` otherwise);
- * - "query source is incomplete": a `select_when` row in a file read around errors (eval/mod.rs);
- * - "A cross-file query source is incomplete": a cross-file query's row is unknown (workspace/global.rs);
- * - "subject evidence in this file is incomplete", "evidence is incomplete in …" and "count N of `key` is a lower
- *   bound: evidence is incomplete in …": a `require_each` or `budget` over evidence some file did not yield in full
- *   (eval/evidence.rs).
- * Only the samples treat these as reading in part; on the fixtures they stay engine failures.
- */
-function isParseIncomplete(failure: Page["failures"][number]): boolean {
-  if (failure.code !== "source-incomplete") return false;
-  const { message } = failure;
-  return (
-    message === SYNTAX_ERROR_FAILURE.message ||
-    message.startsWith(`${UNREAD_FAILURE_HEAD}: `) ||
-    message === "query source is incomplete" ||
-    message === "A cross-file query source is incomplete" ||
-    message === "subject evidence in this file is incomplete" ||
-    message.startsWith("evidence is incomplete in ") ||
-    /^count \d+ of `.*` is a lower bound: evidence is incomplete in /su.test(message)
-  );
-}
-
-/**
  * The first syntax error the grammar reports in each of `files` that skipped a clause with `SYNTAX_ERROR_FAILURE`.
  * A probe clause sound under errors (it matches `ERROR` nodes, which are never witnesses, so it reports nothing) is
  * evaluated over those files through the same workspace path; its `source-partial` failure confirms the syntax error
@@ -211,8 +150,7 @@ async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, 
   if (failed.size === 0) return locations;
   const runtime = loadNativeBinding().CodeRuleDslRuntime;
   const violation = { anchor: "witness.span", code: "SYNTAX-PROBE", message: "syntax probe" };
-  const families: readonly string[] = packFamilies(loaded.pack);
-  const probes = CODE_RULE_AST_LANGUAGES.filter(language => families.includes(codeRuleLanguageFamily(language))).map(language =>
+  const probes = CODE_RULE_AST_LANGUAGES.filter(language => codeRuleLanguageFamily(language) === loaded.pack.family).map(language =>
     runtime.compile(
       JSON.stringify({
         format: "rerail.policy/v1",
@@ -246,9 +184,7 @@ interface CompiledRule {
   rule: PackRule;
   /** The code rule document's `id`, which every violation and failure of the rule carries as `ruleId`. */
   policyId: string;
-  /** The code rule document's text, for its applicability probe (`applicabilityProbe`). */
-  document: string;
-  readonly compiled: NativeCompiledCodeRuleDsl;
+  compiled: NativeCompiledCodeRuleDsl;
 }
 
 const codeRuleDocumentSchema = z.object({
@@ -256,11 +192,8 @@ const codeRuleDocumentSchema = z.object({
   clauses: z.array(z.object({ id: z.string(), violation: z.object({ code: z.string() }).optional() })).min(1),
 });
 
-/**
- * Compiles each rule's code rule; a code rule whose clauses report another code than the upstream rule is an error.
- * With `compiles`, the rules another plan of the pack compiled, the rules are those, each compiled when first evaluated.
- */
-function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: string[], compiles?: ReadonlySet<string>): CompiledRule[] {
+/** Compiles each rule's code rule; a code rule whose clauses report another code than the upstream rule is an error. */
+function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: string[]): CompiledRule[] {
   const runtime = loadNativeBinding().CodeRuleDslRuntime;
   const seen = new Map<string, string>();
   return rules.flatMap(rule => {
@@ -275,10 +208,7 @@ function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: st
         if (clause.violation !== undefined && clause.violation.code !== rule.upstream.rule)
           throw new Error(`clause ${clause.id} reports code ${clause.violation.code}, not the upstream rule ${rule.upstream.rule}`);
       }
-      if (compiles === undefined) return [{ rule, policyId: document.id, document: text, compiled: runtime.compile(text, "json", capabilitiesJson()) }];
-      if (!compiles.has(rule.id)) return [];
-      let compiled: NativeCompiledCodeRuleDsl | undefined;
-      return [{ rule, policyId: document.id, document: text, get compiled() { return (compiled ??= runtime.compile(text, "json", capabilitiesJson())); } }];
+      return [{ rule, policyId: document.id, compiled: runtime.compile(text, "json", capabilitiesJson()) }];
     } catch (error) {
       errors.push(`${rule.id}: ${relative(RERAIL_ROOT, path)}: ${error instanceof Error ? error.message : String(error)}`);
       return [];
@@ -286,181 +216,8 @@ function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: st
   });
 }
 
-/** Whether an AST query's `language` is an ECMA one, whose queries take ESLint's `languageOptions`. */
-const isEcmaQuery = (language: unknown): boolean =>
-  typeof language === "string" && (CODE_RULE_AST_LANGUAGES as readonly string[]).includes(language) && codeRuleLanguageFamily(language as (typeof CODE_RULE_AST_LANGUAGES)[number]) === "ecma";
-
-/**
- * What a code rule's AST query spells of a unit's language (`UnitLanguage`): `ecmaVersion` and `sourceType` as they are,
- * `parserOptions.ecmaFeatures`' `globalReturn` and `impliedStrict` (the engine reads no other parser option of
- * espree's), and typescript-eslint's `jsxPragma`, `jsxFragmentName` and `lib`, which a query spells at the top of its
- * `languageOptions`. Anything else is the parser's alone (`ecmaFeatures.jsx` is the extension's).
- */
-export function queryLanguageOptions(language: UnitLanguage): JsonObject {
-  const options: JsonObject = {};
-  if (language.ecmaVersion !== undefined) options.ecmaVersion = language.ecmaVersion;
-  if (language.sourceType !== undefined) options.sourceType = language.sourceType;
-  const parserOptions = language.parserOptions ?? {};
-  const features = isJsonObject(parserOptions.ecmaFeatures) ? parserOptions.ecmaFeatures : {};
-  const ecmaFeatures = Object.fromEntries(["globalReturn", "impliedStrict"].filter(key => typeof features[key] === "boolean").map(key => [key, features[key]]));
-  if (Object.keys(ecmaFeatures).length > 0) options.parserOptions = { ecmaFeatures };
-  for (const key of ["jsxPragma", "jsxFragmentName", "lib"]) if (parserOptions[key] !== undefined) options[key] = parserOptions[key];
-  return options;
-}
-
-/**
- * Keeps every `resolves` under `query` (a query without `languageOptions`) reading globals as it does without them,
- * once the merge gives the query the unit's `languageOptions`. Without them a `global: [names]` read is the list alone
- * (the name is unbound, whether or not a configuration declares it), with `directives: "eslint"` less the names a
- * `/* global x: off *\/` comment removes; with them, the name must also be a declared global. So a list without
- * `directives` is marked `declared: false`, and a list with `directives` (which `declared: false` would stop reading)
- * gets its names declared in the query's `globals`, where only `off` removes them, as before. `global: true` and
- * `unresolved` read the declared globals of a configuration either way (ESLint's latest module globals by default),
- * so the unit's, which the tool linted the case under, replace the defaults; but a query that both declares listed
- * names and reads one of those is refused, since the declared names would change what they match, and so is a
- * `resolves` whose `global` or `declared` is spelt any other way. Returns the names to declare.
- */
-function keepUndeclaredGlobals(query: JsonObject, where: string): string[] {
-  const declare = new Set<string>();
-  let readsConfiguration = false;
-  const visit = (value: unknown): void => {
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (!isJsonObject(value)) return;
-    const resolves = value.resolves;
-    if (isJsonObject(resolves)) {
-      const listed = Array.isArray(resolves.global) && resolves.global.every(name => typeof name === "string");
-      if (resolves.declared !== undefined || (resolves.global !== undefined && !listed && resolves.global !== true)) {
-        throw new Error(`inUnitLanguage: ${where} has a resolves it cannot keep reading globals as it does without languageOptions (${JSON.stringify(resolves).slice(0, 200)})`);
-      }
-      if (resolves.global === true || resolves.unresolved !== undefined) readsConfiguration = true;
-      if (listed && resolves.directives === undefined) resolves.declared = false;
-      else if (listed) for (const name of resolves.global as string[]) declare.add(name);
-    }
-    for (const inner of Object.values(value)) visit(inner);
-  };
-  visit(query);
-  if (declare.size > 0 && readsConfiguration) {
-    throw new Error(`inUnitLanguage: ${where} declares the names its /* global */-reading list holds and also reads the configuration's declared globals (global: true or unresolved), which those names would change`);
-  }
-  return [...declare].sort();
-}
-
-/**
- * A code rule document with `language` (a unit's) merged into the `languageOptions` of each ECMA AST clause, every
- * case of a clause chosen by a document option included: the unit's language replaces the rule's `ecmaVersion`,
- * `sourceType` and typescript-eslint options and adds to its `ecmaFeatures`; the rule's `globals` stay. A query that
- * had no `languageOptions` keeps reading its listed globals as unbound names (`keepUndeclaredGlobals`); shared
- * definitions compile apart from any query's options, so they need none. A language with nothing the engine reads
- * leaves the document as it is. A shape the walk does not read (a clause other than a `forbid` or a define, a reference
- * among the clauses, a query an option builds other than by `cases`, a language or `languageOptions` an option builds)
- * throws: it could hold an AST query the merge would miss.
- */
-export function inUnitLanguage(documentText: string, language: UnitLanguage): string {
-  const options = queryLanguageOptions(language);
-  // Nothing of the unit's language is the engine's to read (its parserOptions are the parser's alone).
-  if (Object.keys(options).length === 0) return documentText;
-  const document = JSON.parse(documentText) as JsonObject;
-  const merge = (query: JsonObject, where: string): void => {
-    if (!isEcmaQuery(query.language)) return;
-    const declare = isJsonObject(query.languageOptions) ? [] : keepUndeclaredGlobals(query, where);
-    const own: JsonObject = isJsonObject(query.languageOptions) ? query.languageOptions : declare.length > 0 ? { globals: Object.fromEntries(declare.map(name => [name, "readonly"])) } : {};
-    const merged: JsonObject = { ...own, ...options };
-    if (isJsonObject(options.parserOptions) && isJsonObject(own.parserOptions)) {
-      const ownFeatures = isJsonObject(own.parserOptions.ecmaFeatures) ? own.parserOptions.ecmaFeatures : {};
-      merged.parserOptions = { ...own.parserOptions, ecmaFeatures: { ...ownFeatures, ...(options.parserOptions.ecmaFeatures as JsonObject) } };
-    }
-    query.languageOptions = merged;
-  };
-  // Every shape the walk knows; any other one could hold an AST query the merge would miss, so it fails loudly.
-  const unknownShape = (where: string, value: unknown): never => {
-    throw new Error(`inUnitLanguage: ${where} has a shape it does not read (${JSON.stringify(value).slice(0, 200)}); teach it, or its AST queries go without the unit's language`);
-  };
-  // A value an option chooses (`cases`, `default`): each case is read as the value it stands for.
-  const choices = (where: string, value: JsonObject): unknown[] => {
-    if (!isJsonObject(value.cases)) return unknownShape(where, value);
-    return [...Object.values(value.cases), ...(value.default === undefined ? [] : [value.default])];
-  };
-  const visitAst = (where: string, ast: unknown): void => {
-    if (!isJsonObject(ast)) return unknownShape(where, ast);
-    if (ast.$option !== undefined) {
-      for (const variant of choices(where, ast)) visitAst(`${where} (a case)`, variant);
-      return;
-    }
-    if (typeof ast.language !== "string") return unknownShape(`${where}'s language`, ast.language);
-    if (ast.languageOptions !== undefined && (!isJsonObject(ast.languageOptions) || JSON.stringify(ast.languageOptions).includes('"$option"'))) {
-      return unknownShape(`${where}'s languageOptions`, ast.languageOptions);
-    }
-    merge(ast, where);
-  };
-  const visitQuery = (where: string, query: unknown): void => {
-    if (!isJsonObject(query)) return unknownShape(where, query);
-    if (query.$option !== undefined) {
-      for (const variant of choices(where, query)) visitQuery(`${where} (a case)`, variant);
-      return;
-    }
-    if (query.ast !== undefined) visitAst(`${where}.ast`, query.ast);
-    else if (isJsonObject(query.select_when)) {
-      visitQuery(`${where}.select_when.select`, query.select_when.select);
-      visitQuery(`${where}.select_when.exists`, query.select_when.exists);
-    } else if (query.regex === undefined) unknownShape(where, query);
-  };
-  const clauses = document.clauses;
-  if (!Array.isArray(clauses)) return unknownShape("the document's clauses", clauses);
-  for (const [index, clause] of clauses.entries()) {
-    const where = `clause ${index}`;
-    if (!isJsonObject(clause) || clause.$option !== undefined) unknownShape(where, clause);
-    else if (clause.forbid !== undefined) visitQuery(`${where}.forbid`, clause.forbid);
-    // A define's shared utilities compile apart from any query's options (see above).
-    else if (clause.define === undefined) unknownShape(where, clause);
-  }
-  return JSON.stringify(document);
-}
-
-/**
- * The rules as a unit with a recorded language (`source.units[key].languageOptions`) is evaluated with: each rule's code
- * rule recompiled with that language in its AST clauses (`inUnitLanguage`), once per rule and distinct language. The
- * engine's languageOptions are per query, not per file, so a unit of its own language takes its own copy of the rule.
- * A copy that does not compile is an error (in `errors`, the unit's), and the rule is not evaluated on the unit.
- * `oneLanguage` keeps only the last language's copies, for a process given its units grouped by language (`Job.group`):
- * a pack's copies in every language take gigabytes.
- */
-function unitLanguageRules(oneLanguage: boolean): (rules: readonly CompiledRule[], language: UnitLanguage | undefined, unit: string, errors: string[]) => CompiledRule[] {
-  const cache = new Map<string, CompiledRule | string>();
-  let last: string | undefined;
-  return (rules, language, unit, errors) => {
-    if (language === undefined) return [...rules];
-    const key = JSON.stringify(language);
-    if (oneLanguage && key !== last) cache.clear();
-    last = key;
-    return rules.flatMap(entry => {
-      const cacheKey = `${entry.policyId}\0${key}`;
-      let compiled = cache.get(cacheKey);
-      if (compiled === undefined) {
-        const document = inUnitLanguage(entry.document, language);
-        // Nothing of the language reaches the rule's queries: the rule as compiled already is the unit's.
-        if (document === entry.document) {
-          cache.set(cacheKey, entry);
-          return [entry];
-        }
-        try {
-          compiled = { rule: entry.rule, policyId: entry.policyId, document: entry.document, compiled: loadNativeBinding().CodeRuleDslRuntime.compile(document, "json", capabilitiesJson()) };
-        } catch (error) {
-          compiled = error instanceof Error ? error.message : String(error);
-        }
-        cache.set(cacheKey, compiled);
-      }
-      if (typeof compiled !== "string") return [compiled];
-      errors.push(`${entry.rule.id}: does not compile in the language of fixture unit ${unit} (${key}): ${compiled}`);
-      return [];
-    });
-  };
-}
-
 /** Byte offset → upstream coordinates: the engine's line (the family's linter's terminators), code points from line start. */
-export function pointOf(violation: Page["violations"][number], sources: ReadonlyMap<string, Buffer>): Point {
+function pointOf(violation: Page["violations"][number], sources: ReadonlyMap<string, Buffer>): Point {
   if (violation.path === undefined || violation.span === undefined) throw new Error(`${violation.ruleId}: a finding without a path or span cannot be scored`);
   const source = sources.get(violation.path);
   if (source === undefined) throw new Error(`${violation.ruleId}: finding in ${violation.path}, which was not evaluated`);
@@ -472,119 +229,25 @@ export function pointOf(violation: Page["violations"][number], sources: Readonly
 /** What Rerail reported for one pack rule over one source. */
 interface RuleActual {
   points: Point[];
-  /** Engine failures, other than `source-partial`, the syntax-error skips below and `isParseIncomplete`, per path. */
-  engineFailurePaths: Map<string, number>;
-  /** Of those, the ones naming no file: rule-level, so they count wherever the rule is scored. */
-  pathlessEngineFailures: number;
+  /** Failures other than `source-partial` and the syntax-error skips below. */
+  engineFailures: number;
   partialPaths: Set<string>;
-  /** `isParseIncomplete` failures other than the syntax-error skips below, per path, and those naming no file. */
-  incompletePaths: Map<string, number>;
-  pathlessIncomplete: number;
   /** Files this rule's clauses skipped with `SYNTAX_ERROR_FAILURE` or as unread (`isUnreadFailure`), at the first syntax error. */
   syntaxErrorFiles: Map<string, SyntaxErrorLocation>;
-  /** Fixture units (`unitKey`) whose evaluation reported a failure of this rule naming no file. */
-  pathlessUnits: Set<string>;
 }
 
-const noActual = (): RuleActual => ({
-  points: [],
-  engineFailurePaths: new Map(),
-  pathlessEngineFailures: 0,
-  partialPaths: new Set(),
-  incompletePaths: new Map(),
-  pathlessIncomplete: 0,
-  syntaxErrorFiles: new Map(),
-  pathlessUnits: new Set(),
-});
-
-const total = (counts: ReadonlyMap<string, number>, paths: (path: string) => boolean = () => true): number =>
-  [...counts].reduce((sum, [path, count]) => (paths(path) ? sum + count : sum), 0);
-
-/** A scored fixture unit: its key (`unitKey`), its source paths, and its upstream origin when `source.units` has one. */
-interface ScoredUnit {
-  key: string;
-  paths: readonly string[];
-  origin: UnitOrigin | undefined;
-}
-
-interface FixturesRun {
-  /** Per pack rule id, over the original units. */
-  actual: Map<string, RuleActual>;
-  /** Per pack rule id, over the rename variants (`source.units[key].renamedFrom`), scored apart from the originals. */
-  renamedActual: Map<string, RuleActual>;
-  /** Per tool: its expected findings, or the reason there are none. */
-  expectedByTool: Map<string, ExpectedFindings | string>;
-  /** `tool\0path` of every file evaluated; the expected findings list every file upstream ran on. */
-  scored: ReadonlySet<string>;
-  /** Per tool, every unit evaluated, rename variants included. */
-  units: Map<string, ScoredUnit[]>;
-  summary: SourceSummary;
-}
-
-/** The real-code samples as a source, as divergences and report rows name it. */
-export const SAMPLES_SOURCE = "samples";
-
-interface SamplesRun {
+interface SourceRun {
+  /** `fixtures` or the corpus name, as divergences name it. */
+  name: string;
+  /** `fixtures` or `corpus:<name>`, as report rows name it. */
+  label: string;
   /** Per pack rule id. */
   actual: Map<string, RuleActual>;
-  /** Per pack rule id, the samples judged for it; a rule no sample has a key for has no samples row. */
-  judged: Map<string, JudgedSample[]>;
-  /** Per pack rule id, the clean samples its scope and its clauses' `file` conditions admit (`applicabilityProbe`). */
-  admitted: Map<string, ReadonlySet<string>>;
-  /** Rules whose tool's samples tree is missing: the run's errors name each, and none of their divergences is stale. */
-  unscored: ReadonlySet<string>;
+  /** Per tool: its recording, or the reason there is none. */
+  recordings: Map<string, Recording | string>;
+  /** Paths evaluated; upstream findings elsewhere are out of scope. */
+  scored: ReadonlySet<string>;
   summary: SourceSummary;
-}
-
-type JsonObject = Record<string, unknown>;
-const isJsonObject = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** Matches a file's root node alone, whatever its grammar: the one node inside no other. */
-const ROOT_NODE = { not: { inside: { regex: "[\\s\\S]" } } };
-
-/**
- * The applicability probe of a code rule document: the same document (scope, options) whose AST clauses each match
- * only the file's root node, keeping the clause's language and `file` condition. It reports a file exactly when the
- * rule's scope and some clause's `file` condition admit it, whatever the file holds. Undefined when the document has
- * no AST clause: its scope alone decides then, and the rule's own evaluation applies it.
- */
-export function applicabilityProbe(documentText: string): string | undefined {
-  const document = JSON.parse(documentText) as JsonObject;
-  const clauses = Array.isArray(document.clauses) ? document.clauses.filter(isJsonObject) : [];
-  const probes = clauses.flatMap((clause, index) => {
-    const body = isJsonObject(clause.forbid) ? clause.forbid : isJsonObject(clause.require) ? clause.require : undefined;
-    if (!isJsonObject(body?.ast)) return [];
-    const ast = body.ast;
-    // A clause chosen by a document option (`$option`) applies where any of its cases does.
-    const variants = ast.$option !== undefined && isJsonObject(ast.cases) ? [...Object.values(ast.cases), ast.default].filter(isJsonObject) : [ast];
-    return variants.flatMap((variant, position) => {
-      if (typeof variant.language !== "string") return [];
-      const kept: JsonObject = { language: variant.language, rule: ROOT_NODE };
-      for (const key of ["file", "languageOptions", "embedded"] as const) if (variant[key] !== undefined) kept[key] = variant[key];
-      return [{ id: `applies-${index}-${position}`, forbid: { ast: kept }, violation: { anchor: "witness.span", code: "APPLIES-PROBE", message: "the rule applies to this file" } }];
-    });
-  });
-  if (probes.length === 0) return undefined;
-  // Clauses that only define (options, utilities) stay: the probe's options resolve as the rule's do.
-  const defining = clauses.filter(clause => clause.forbid === undefined && clause.require === undefined);
-  return JSON.stringify({ ...document, clauses: [...defining, ...probes] });
-}
-
-/** The paths of `files` the rule's applicability probe reports: where its scope and `file` conditions admit it. */
-async function admittedPaths(entry: CompiledRule, files: readonly SourceFile[], judged: readonly string[], errors: string[]): Promise<ReadonlySet<string>> {
-  const probe = applicabilityProbe(entry.document);
-  if (probe === undefined) return new Set(judged);
-  let compiled: NativeCompiledCodeRuleDsl;
-  try {
-    compiled = loadNativeBinding().CodeRuleDslRuntime.compile(probe, "json", capabilitiesJson());
-  } catch (error) {
-    // Fail closed: no clean sample counts as silence for a rule whose applicability cannot be asked.
-    errors.push(`${entry.rule.id} (${SAMPLES_SOURCE}): its applicability probe does not compile: ${error instanceof Error ? error.message : String(error)}`);
-    return new Set();
-  }
-  const evaluation = await evaluateWorkspace([compiled], files);
-  const reported = new Set(evaluation.violations.flatMap(violation => (violation.path === undefined ? [] : [violation.path])));
-  return new Set(judged.filter(path => reported.has(path)));
 }
 
 /** Collects each rule's violations and failures; `syntaxErrors` holds the probe-confirmed syntax-error files. */
@@ -593,13 +256,12 @@ function collectActual(
   evaluation: Evaluation,
   sources: ReadonlyMap<string, Buffer>,
   syntaxErrors: ReadonlyMap<string, SyntaxErrorLocation>,
-  actual: Map<string, RuleActual>,
-  unit?: string,
+  actual: SourceRun["actual"],
 ): void {
   const byCodeRule = new Map(compiled.map(entry => [entry.policyId, entry.rule.id]));
   const slot = (rule: string): RuleActual => {
     let entry = actual.get(rule);
-    if (entry === undefined) actual.set(rule, (entry = noActual()));
+    if (entry === undefined) actual.set(rule, (entry = { points: [], engineFailures: 0, partialPaths: new Set(), syntaxErrorFiles: new Map() }));
     return entry;
   };
   for (const entry of compiled) slot(entry.rule.id);
@@ -618,22 +280,12 @@ function collectActual(
       slot(rule).syntaxErrorFiles.set(unread.path, unread);
     } else if (located !== undefined && failure.code === SYNTAX_ERROR_FAILURE.code && failure.message === SYNTAX_ERROR_FAILURE.message) {
       slot(rule).syntaxErrorFiles.set(located.path, located);
-    } else if (isParseIncomplete(failure)) {
-      const entry = slot(rule);
-      if (failure.path === undefined) entry.pathlessIncomplete += 1;
-      else entry.incompletePaths.set(failure.path, (entry.incompletePaths.get(failure.path) ?? 0) + 1);
-    } else {
-      const entry = slot(rule);
-      if (failure.path === undefined) entry.pathlessEngineFailures += 1;
-      else entry.engineFailurePaths.set(failure.path, (entry.engineFailurePaths.get(failure.path) ?? 0) + 1);
-    }
-    if (failure.path === undefined && unit !== undefined) slot(rule).pathlessUnits.add(unit);
+    } else slot(rule).engineFailures += 1;
   }
 }
 
 function familyLanguages(loaded: LoadedPack): Set<string> {
-  const families: readonly string[] = packFamilies(loaded.pack);
-  return new Set(Object.values(CODE_RULE_DIALECTS).filter(dialect => families.includes(dialect.family)).map(dialect => dialect.label));
+  return new Set(Object.values(CODE_RULE_DIALECTS).filter(dialect => dialect.family === loaded.pack.family).map(dialect => dialect.label));
 }
 
 /** A fixture's text; pack test data missing from the checkout fails with the instruction to pull it. */
@@ -641,21 +293,25 @@ function readCaseSource(path: string): string {
   return readFileSync(isPackFixture(path) ? requirePackFixture(path) : path, "utf8");
 }
 
-/** The expected findings at `path`, checked against the pack's pins, or why it cannot be used. */
-function pinnedExpectedFindings(loaded: LoadedPack, tool: string, path: string): ExpectedFindings | string {
+/** The recording at `path`, checked against the pack's pins, or why it cannot be used. */
+function pinnedRecording(loaded: LoadedPack, tool: string, path: string, corpus: PackCorpus | undefined): Recording | string {
   const where = relative(RERAIL_ROOT, path);
-  if (!existsSync(path)) return packFixtureAbsence(path) ?? `no expected findings at ${where}`;
-  let findingsFile: ExpectedFindings;
+  if (!existsSync(path)) return packFixtureAbsence(path) ?? `no recording at ${where}`;
+  let recording: Recording;
   try {
-    findingsFile = loadExpectedFindings(path);
+    recording = loadRecording(path);
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
   const version = loaded.pack.tools.find(entry => entry.name === tool)?.version;
-  if (findingsFile.tool !== tool) return `${where} records ${findingsFile.tool}, not ${tool}`;
-  if (findingsFile.version !== version) return `${where} records ${tool} ${findingsFile.version}; the pack pins ${version}`;
-  if (findingsFile.source.kind !== "fixtures") return `${where} does not hold fixtures expected findings`;
-  return findingsFile;
+  if (recording.tool !== tool) return `${where} records ${recording.tool}, not ${tool}`;
+  if (recording.version !== version) return `${where} records ${tool} ${recording.version}; the pack pins ${version}`;
+  if (corpus === undefined && recording.source.kind !== "fixtures") return `${where} is not a fixtures recording`;
+  if (corpus !== undefined) {
+    if (recording.source.kind !== "corpus" || recording.source.name !== corpus.name) return `${where} is not a recording of corpus ${corpus.name}`;
+    if (recording.source.commit !== corpus.commit) return `${where} records ${corpus.name} at ${recording.source.commit}; the pack pins ${corpus.commit}`;
+  }
+  return recording;
 }
 
 /**
@@ -663,35 +319,29 @@ function pinnedExpectedFindings(loaded: LoadedPack, tool: string, path: string):
  * code rule in a workspace, so candidates evaluated beside the shipped ports would spend the shipped ports' budget and
  * change their verdicts, which a candidate must never do. Production never runs candidates beside shipped rules either.
  */
-async function evaluateApart(rules: readonly CompiledRule[], files: readonly SourceFile[], root?: string): Promise<[CompiledRule[], Evaluation][]> {
+async function evaluateApart(rules: readonly CompiledRule[], files: readonly SourceFile[]): Promise<[CompiledRule[], Evaluation][]> {
   const groups = [rules.filter(entry => !isCandidate(entry.rule)), rules.filter(entry => isCandidate(entry.rule))].filter(group => group.length > 0);
   const evaluations: [CompiledRule[], Evaluation][] = [];
-  for (const group of groups) evaluations.push([group, await evaluateWorkspace(group.map(entry => entry.compiled), files, root)]);
+  for (const group of groups) evaluations.push([group, await evaluateWorkspace(group.map(entry => entry.compiled), files)]);
   return evaluations;
 }
 
-/**
- * The fixture tier as evaluations (`Job`), one per unit, and the run their results make. Every unit is read, and the
- * errors its reading records go into `log`, in order; a unit's own errors (a rule that does not compile in its
- * language) are its job's, logged where the unit is.
- */
-function planFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], log: ErrorLog, jobs: Job[], oneLanguage: boolean): (results: readonly JobResult[]) => FixturesRun {
+async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], errors: string[]): Promise<SourceRun> {
   const languages = familyLanguages(loaded);
-  const expectedByTool: FixturesRun["expectedByTool"] = new Map();
-  const tools: string[] = [];
-  const inLanguage = unitLanguageRules(oneLanguage);
-  const planned: { tool: string; key: string; origin: UnitOrigin | undefined; files: SourceFile[]; job: number }[] = [];
-  for (const tool of toolsOf(compiled)) {
-    const toolExpected = pinnedExpectedFindings(loaded, tool, fixturesExpectedPath(loaded, tool));
-    expectedByTool.set(tool, toolExpected);
-    if (typeof toolExpected === "string") continue;
-    const source = (toolExpected as FixtureExpectedFindings).source;
+  const actual: SourceRun["actual"] = new Map();
+  const recordings: SourceRun["recordings"] = new Map();
+  const scored = new Set<string>();
+  const summary: SourceSummary = { source: "fixtures", units: 0, files: 0, bytes: 0, skipped: 0, outsideScope: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
+  for (const tool of [...new Set(compiled.map(entry => entry.rule.upstream.tool))].sort(compareDeterministicStrings)) {
+    const recording = pinnedRecording(loaded, tool, fixturesRecordingPath(loaded, tool), undefined);
+    recordings.set(tool, recording);
+    if (typeof recording === "string") continue;
+    const source = (recording as FixtureRecording).source;
     const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
-    tools.push(tool);
     for (const unit of source.files) {
       const paths = typeof unit === "string" ? [unit] : unit;
-      const covering = rules.filter(entry => paths.some(path => coversFixture(entry.rule, path)));
-      if (covering.length === 0) continue;
+      const unitRules = rules.filter(entry => paths.some(path => coversFixture(entry.rule, path)));
+      if (unitRules.length === 0) continue;
       const files: SourceFile[] = [];
       // A unit's package.json and module configurations are no sources: they ride along so the engine reads the
       // sources' manifest facts and import aliases.
@@ -703,269 +353,164 @@ function planFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], log
           continue;
         }
         if (language === undefined || !languages.has(language)) {
-          log.push(`fixtures ${tool}: ${path} is not a ${packFamilies(loaded.pack).join(" or ")} source by the host's routing`);
+          errors.push(`fixtures ${tool}: ${path} is not a ${loaded.pack.family} source by the host's routing`);
           continue;
         }
         files.push({ path, language, source: readCaseSource(join(fixturesDirectory(loaded, tool), path)) });
       }
       if (files.length === 0) continue;
-      const key = unitKey(unit);
-      const origin = source.units?.[key];
-      const job = jobs.length;
-      log.push({ job });
-      jobs.push({
-        source: "fixtures",
-        // The covering rules' documents stand for their clauses' work; the unit's own bytes add a little to each.
-        weight: covering.reduce((size, entry) => size + entry.document.length, 0) * (1 + [...manifests, ...files].reduce((bytes, file) => bytes + file.source.length, 0) / 1024),
-        group: origin?.languageOptions === undefined ? "" : JSON.stringify(origin.languageOptions),
-        run: async () => {
-          const errors: string[] = [];
-          // A unit linted under its test case's own language is evaluated under it too.
-          const unitRules = inLanguage(covering, origin?.languageOptions, key, errors);
-          const workspaces: JobResult["workspaces"] = [];
-          for (const [group, evaluation] of await evaluateApart(unitRules, [...manifests, ...files], fixturesDirectory(loaded, tool))) {
-            workspaces.push({ rules: group.map(entry => entry.rule.id), evaluation, syntaxErrors: await syntaxErrorLocations(loaded, evaluation, files) });
-          }
-          return { errors, workspaces };
-        },
-      });
-      planned.push({ tool, key, origin, files, job });
-    }
-  }
-  return results => {
-    const byId = new Map(compiled.map(entry => [entry.rule.id, entry]));
-    const actual: FixturesRun["actual"] = new Map();
-    const renamedActual: FixturesRun["renamedActual"] = new Map();
-    const scored = new Set<string>();
-    const units: FixturesRun["units"] = new Map(tools.map(tool => [tool, []]));
-    const summary: SourceSummary = { source: "fixtures", units: 0, files: 0, bytes: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
-    for (const { tool, key, origin, files, job } of planned) {
-      // A rename variant's findings are scored apart from the originals' (`renamed` on the row).
-      const into = origin?.renamedFrom === undefined ? actual : renamedActual;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
-      for (const { rules, evaluation, syntaxErrors } of results[job]!.workspaces) {
-        collectActual(rules.map(id => byId.get(id)!), evaluation, sources, syntaxErrors, into, key);
+      for (const [group, evaluation] of await evaluateApart(unitRules, [...manifests, ...files])) {
+        collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
         summary.evaluationMs += evaluation.ms;
       }
       for (const file of files) scored.add(`${tool}\0${file.path}`);
-      units.get(tool)!.push({ key, paths: files.map(file => file.path), origin });
       summary.units += 1;
       summary.files += files.length;
       summary.bytes += [...sources.values()].reduce((total, bytes) => total + bytes.length, 0);
     }
-    summary.evaluationMs = Math.round(summary.evaluationMs);
-    summary.syntaxErrorFiles = syntaxErrorSummary(actual);
-    return { actual, renamedActual, expectedByTool, scored, units, summary };
-  };
-}
-
-/** The tools of `compiled`'s rules, each once, in order. */
-function toolsOf(compiled: readonly CompiledRule[]): string[] {
-  return [...new Set(compiled.map(entry => entry.rule.upstream.tool))].sort(compareDeterministicStrings);
+  }
+  summary.evaluationMs = Math.round(summary.evaluationMs);
+  summary.syntaxErrorFiles = syntaxErrorSummary(actual);
+  return { name: "fixtures", label: "fixtures", actual, recordings, scored, summary };
 }
 
 /** Every file of a source some rule skipped for its syntax errors, each once, in path order. */
-function syntaxErrorSummary(actual: Map<string, RuleActual>): SourceSummary["syntaxErrorFiles"] {
+function syntaxErrorSummary(actual: SourceRun["actual"]): SourceSummary["syntaxErrorFiles"] {
   const files = new Map<string, SyntaxErrorLocation>();
   for (const rule of actual.values()) for (const [path, point] of rule.syntaxErrorFiles) files.set(path, point);
   const sorted = [...files.values()].sort((left, right) => compareDeterministicStrings(left.path, right.path));
   return { count: sorted.length, files: sorted };
 }
 
-/** Every regular file under `directory`, as a posix path relative to `root`, in path order. */
-function filesUnder(root: string, directory: string): string[] {
-  return readdirSync(directory, { withFileTypes: true })
-    .flatMap(entry => {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) return filesUnder(root, path);
-      return entry.isFile() ? [relative(root, path).split(sep).join("/")] : [];
-    })
-    .sort(compareDeterministicStrings);
+async function walk(root: string, directory: string, files: string[]): Promise<void> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOTDIR") return undefined;
+    throw error;
+  });
+  if (entries === undefined) {
+    files.push(relative(root, directory).split(sep).join("/"));
+    return;
+  }
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (!IGNORED_DIRECTORIES.has(entry.name)) await walk(root, path, files);
+    } else if (entry.isFile()) files.push(relative(root, path).split(sep).join("/"));
+  }
 }
 
-/** A judged file of a sample with its labels; the sample's other files ride along as its context, never judged. */
-interface Sample {
-  /** `<sample-id>/<source.path>`: the workspace path it is evaluated under and divergences name it by. */
-  path: string;
-  /** Pack rule id → labelled lines; `[]` is clean for the rule, and a rule with no key does not judge the sample. */
-  expected: Record<string, number[]>;
-  context: string[];
-}
-
-/**
- * The samples in a tool-pack's samples tree (scripts/samples/format.ts): each directory at its top is a sample, and each
- * file in it with a labels file beside it is judged. Files at the top (LICENSES.md, the extraction marker) are no
- * samples. A labels key that is no rule of the tool in the pack is an error: the labels name rules by their pack id.
- */
-function readSamples(loaded: LoadedPack, tool: string, directory: string, errors: string[]): Sample[] {
-  const where = `${SAMPLES_SOURCE} ${tool}`;
-  const toolRules = new Set(loaded.pack.rules.filter(rule => rule.upstream.tool === tool).map(rule => rule.id));
-  const ids = readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareDeterministicStrings);
-  const samples: Sample[] = [];
-  for (const id of ids) {
-    if (!SAMPLE_ID.test(id)) {
-      errors.push(`${where}: ${id} is no sample id (<source>-<path slug>-<first 12 of its sha256>)`);
-      continue;
-    }
-    const files = filesUnder(directory, join(directory, id));
-    const judged = new Set(files.filter(path => path.endsWith(LABELS_SUFFIX)).map(path => path.slice(0, -LABELS_SUFFIX.length)));
-    const context = files.filter(path => !path.endsWith(LABELS_SUFFIX) && !judged.has(path));
-    for (const path of judged) {
-      const labelsPath = `${path}${LABELS_SUFFIX}`;
-      let json: unknown;
-      try {
-        json = JSON.parse(readFileSync(join(directory, labelsPath), "utf8"));
-      } catch (error) {
-        errors.push(`${where}: ${labelsPath}: ${error instanceof Error ? error.message : String(error)}`);
-        continue;
-      }
-      const parsed = sampleLabelsSchema.safeParse(json);
-      if (!parsed.success) {
-        errors.push(`${where}: ${labelsPath}: ${z.prettifyError(parsed.error)}`);
-        continue;
-      }
-      if (path !== `${id}/${parsed.data.source.path}`) {
-        errors.push(`${where}: ${labelsPath} labels ${parsed.data.source.path}, which is not the file beside it`);
-        continue;
-      }
-      if (!files.includes(path)) {
-        errors.push(`${where}: ${labelsPath} labels a file the sample does not hold`);
-        continue;
-      }
-      const unknown = Object.keys(parsed.data.expected).filter(rule => !toolRules.has(rule));
-      if (unknown.length > 0) errors.push(`${where}: ${path} is labelled for ${unknown.join(", ")}, no ${tool} rule of the ${loaded.pack.pack} pack`);
-      const expected = Object.fromEntries(Object.entries(parsed.data.expected).map(([rule, labels]) => [rule, labels.map(label => label.line)]));
-      samples.push({ path, expected, context });
+async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], corpus: PackCorpus, corpusRoot: string, errors: string[]): Promise<SourceRun | undefined> {
+  const directory = join(corpusRoot, corpus.name);
+  if (!existsSync(directory)) {
+    errors.push(`corpus ${corpus.name}: no checkout at ${directory} (clone ${corpus.repository} at ${corpus.commit})`);
+    return undefined;
+  }
+  if (existsSync(join(directory, ".git"))) {
+    const head = execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    if (head !== corpus.commit) {
+      errors.push(`corpus ${corpus.name}: ${directory} is at ${head}; the pack pins ${corpus.commit}`);
+      return undefined;
     }
   }
-  return samples;
-}
+  const recordings: SourceRun["recordings"] = new Map();
+  const skipped = new Set<string>();
+  for (const tool of [...new Set(compiled.map(entry => entry.rule.upstream.tool))].sort(compareDeterministicStrings)) {
+    const path = corpusRecordingPath(loaded, tool, corpus.name);
+    // A corpus recording covers the shipped ports: a tool with only candidates may have none, and they skip the corpus.
+    if (!existsSync(path) && compiled.every(entry => entry.rule.upstream.tool !== tool || isCandidate(entry.rule))) continue;
+    const recording = pinnedRecording(loaded, tool, path, corpus);
+    recordings.set(tool, recording);
+    if (typeof recording !== "string") for (const path of (recording as CorpusRecording).source.skipped) skipped.add(path);
+  }
 
-/**
- * The pack's real-code samples, per tool-pack from its samples tree (`directoryOf`; undefined when it has none), as
- * evaluations (`Job`), one per rule, and the run their results make. Each rule is evaluated alone over the samples
- * labelled for it, their context files riding along first as a fixture unit's manifests do: a file's AST work budget is
- * shared by the rules beside it, so a rule's verdict never depends on which other rules a sample is labelled for. A tree
- * that cannot be had fails the rules of its tool alone, since a conformance leg restores only its own tool-pack's data.
- * Errors go into `log` as `planFixtures` records them.
- */
-function planSamples(
-  loaded: LoadedPack,
-  compiled: readonly CompiledRule[],
-  directoryOf: (tool: string) => string | undefined,
-  log: ErrorLog,
-  jobs: Job[],
-): (results: readonly JobResult[]) => SamplesRun {
   const languages = familyLanguages(loaded);
-  const judged: SamplesRun["judged"] = new Map();
-  const unscored = new Set<string>();
-  const planned: { entry: CompiledRule; files: SourceFile[]; all: SourceFile[]; job: number }[] = [];
-  for (const tool of toolsOf(compiled)) {
-    const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
-    let directory: string | undefined;
-    try {
-      directory = directoryOf(tool);
-      if (directory !== undefined && !existsSync(directory)) throw new Error(`no samples tree at ${directory}`);
-    } catch (error) {
-      for (const entry of rules) {
-        log.push(`${entry.rule.id} (${SAMPLES_SOURCE}): ${error instanceof Error ? error.message : String(error)}`);
-        unscored.add(entry.rule.id);
-      }
-      continue;
-    }
-    if (directory === undefined) continue;
-    const tree = directory;
-    const readErrors: string[] = [];
-    const read = readSamples(loaded, tool, tree, readErrors);
-    log.push(...readErrors);
-    const samples = read.filter(sample => {
-      const language = languageFor(sample.path);
-      if (language !== undefined && languages.has(language)) return true;
-      log.push(`${SAMPLES_SOURCE} ${tool}: ${sample.path} is not a ${packFamilies(loaded.pack).join(" or ")} source by the host's routing`);
-      return false;
-    });
-    const texts = new Map<string, string>();
-    const fileOf = (path: string, language: CodeRuleSourceLanguage): SourceFile => {
-      let source = texts.get(path);
-      if (source === undefined) texts.set(path, (source = readFileSync(join(tree, path), "utf8")));
-      return { path, language, source };
-    };
-    for (const entry of rules) {
-      const labelled = samples.filter(sample => sample.expected[entry.rule.id] !== undefined);
-      if (labelled.length === 0) continue;
-      judged.set(entry.rule.id, labelled.map(sample => ({ path: sample.path, lines: sample.expected[entry.rule.id]! })));
-      const context = labelled.flatMap(sample =>
-        sample.context.flatMap(path => {
-          const language = languageFor(path);
-          return language === undefined ? [] : [fileOf(path, language)];
-        }),
-      );
-      const files = labelled.map(sample => fileOf(sample.path, languageFor(sample.path)!));
-      const all = [...context, ...files];
-      const clean = labelled.filter(sample => sample.expected[entry.rule.id]!.length === 0).map(sample => sample.path);
-      const job = jobs.length;
-      log.push({ job });
-      jobs.push({
-        source: SAMPLES_SOURCE,
-        // The rule's document stands for its clauses' work over the files; its applicability probe reads them again.
-        weight: (clean.length > 0 ? 2 : 1) * entry.document.length * all.reduce((bytes, file) => bytes + file.source.length, 0),
-        group: "",
-        run: async () => {
-          const errors: string[] = [];
-          const evaluation = await evaluateWorkspace([entry.compiled], all);
-          const syntaxErrors = await syntaxErrorLocations(loaded, evaluation, all);
-          const admitted = clean.length > 0 ? await admittedPaths(entry, all, clean, errors) : undefined;
-          return { errors, workspaces: [{ rules: [entry.rule.id], evaluation, syntaxErrors }], ...(admitted === undefined ? {} : { admitted }) };
-        },
-      });
-      planned.push({ entry, files, all, job });
-    }
+  const candidates: string[] = [];
+  for (const path of corpus.paths) await walk(directory, join(directory, path), candidates);
+  const files: SourceFile[] = [];
+  for (const path of [...new Set(candidates)].sort(compareDeterministicStrings)) {
+    const language = languageFor(path);
+    if (language === undefined || !languages.has(language) || skipped.has(path)) continue;
+    if (corpus.exclude.some(pattern => matchesGlob(path, pattern))) continue;
+    files.push({ path, language, source: await readFile(join(directory, path), "utf8") });
   }
-  return results => {
-    const actual: SamplesRun["actual"] = new Map();
-    const admitted: SamplesRun["admitted"] = new Map();
-    const evaluated = new Map<string, number>();
-    const judgedPaths = new Set<string>();
-    let evaluationMs = 0;
-    for (const { entry, files, all, job } of planned) {
-      const result = results[job]!;
-      const { evaluation, syntaxErrors } = result.workspaces[0]!;
-      const sources = new Map(all.map(file => [file.path, Buffer.from(file.source, "utf8")]));
-      collectActual([entry], evaluation, sources, syntaxErrors, actual);
-      evaluationMs += evaluation.ms;
-      for (const [path, bytes] of sources) evaluated.set(path, bytes.length);
-      for (const file of files) judgedPaths.add(file.path);
-      if (result.admitted !== undefined) admitted.set(entry.rule.id, result.admitted);
-    }
-    const summary: SourceSummary = {
-      source: SAMPLES_SOURCE,
-      units: judgedPaths.size,
-      files: evaluated.size,
-      bytes: [...evaluated.values()].reduce((total, bytes) => total + bytes, 0),
+  const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
+  const manifests = await corpusManifests(directory, files);
+  const actual: SourceRun["actual"] = new Map();
+  let evaluationMs = 0;
+  for (const [group, evaluation] of await evaluateApart(compiled, [...manifests, ...files])) {
+    collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+    evaluationMs += evaluation.ms;
+  }
+  const scored = new Set<string>();
+  for (const tool of recordings.keys()) for (const file of files) scored.add(`${tool}\0${file.path}`);
+  return {
+    name: corpus.name,
+    label: `corpus:${corpus.name}`,
+    actual,
+    recordings,
+    scored,
+    summary: {
+      source: `corpus:${corpus.name}`,
+      units: 1,
+      files: files.length,
+      bytes: [...sources.values()].reduce((total, bytes) => total + bytes.length, 0),
+      skipped: skipped.size,
+      outsideScope: 0,
       syntaxErrorFiles: syntaxErrorSummary(actual),
       evaluationMs: Math.round(evaluationMs),
-    };
-    return { actual, judged, admitted, unscored, summary };
+    },
   };
 }
 
 /**
- * Whether a unit's file rides along with its sources rather than being one: a package.json, a `.npmignore` or
- * `.gitignore` (as the engine's `ignore_file_directory` names them), or a project configuration (a `.json` file named
- * `tsconfig…` or `jsconfig…`, as the engine's `is_module_config` names them).
+ * The package.json files at or above the corpus's sources, up to the checkout, which a host reads for their manifest
+ * facts, and each package's project configuration chain (`moduleConfigFiles`: its tsconfig.json or jsconfig.json and
+ * the bases it extends), whose jsxImportSource and import aliases the engine reads: they ride along as fixture units'
+ * do, no sources, whether or not the corpus's paths walk them. A package.json that is no regular file has no fields,
+ * as a host reads it.
+ */
+async function corpusManifests(directory: string, files: readonly SourceFile[]): Promise<SourceFile[]> {
+  const folders = new Set<string>();
+  for (const file of files) {
+    let folder = file.path;
+    do {
+      folder = posix.dirname(folder);
+      if (folders.has(folder)) break;
+      folders.add(folder);
+    } while (folder !== ".");
+  }
+  const manifests: SourceFile[] = [];
+  const configurations = new Set<string>();
+  for (const folder of [...folders].sort(compareDeterministicStrings)) {
+    const path = folder === "." ? "package.json" : `${folder}/package.json`;
+    const absolute = join(directory, path);
+    const entry = lstatSync(absolute, { throwIfNoEntry: false });
+    if (entry === undefined) continue;
+    manifests.push({ path, language: languageFor(path)!, source: entry.isFile() ? await readFile(absolute, "utf8") : "" });
+    for (const configuration of loadNativeBinding().moduleConfigFiles(directory, folder === "." ? "" : folder))
+      configurations.add(configuration);
+  }
+  for (const path of [...configurations].sort(compareDeterministicStrings))
+    manifests.push({ path, language: languageFor(path)!, source: await readFile(join(directory, path), "utf8") });
+  return manifests;
+}
+
+/**
+ * Whether a unit's file rides along with its sources rather than being one: a package.json, or a project configuration
+ * (a `.json` file named `tsconfig…` or `jsconfig…`, as the engine's `is_module_config` names them).
  */
 function ridesAlong(path: string): boolean {
-  return /^(?:package\.json|\.npmignore|\.gitignore|(?:ts|js)config[^/]*\.json)$/.test(basename(path));
+  return /^(?:package\.json|(?:ts|js)config[^/]*\.json)$/.test(basename(path));
 }
 
 export interface RunOptions {
   /** Pack rule ids to score; all when omitted. */
   rules?: readonly string[];
   fixtures: boolean;
-  /** Score the pack's real-code samples (every tool with a samples.lock or samples staged under `publish/samples/`). */
-  samples: boolean;
-  /** Test seam: a tool's samples tree; default samplesTree() from pack-fixtures.mjs, the locked set overlaid with the staged one. */
-  samplesDirectory?: (tool: string) => string | undefined;
+  /** Corpus names to score. */
+  corpora: readonly string[];
+  corpusRoot?: string;
   date: string;
 }
 
@@ -980,25 +525,50 @@ function engineInfo(): { path: string; version: string } {
   return { path: relative(RERAIL_ROOT, path), version: `${loadNativeBinding().health().kernelVersion}${built}` };
 }
 
-/** A row's fields that come from its scoring rather than from the rule. */
-interface Scored {
-  score: SourceScore;
-  reviewed: readonly Point[];
-  cleanSamples: number;
-  silentCleanSamples: number;
-  judgedSamples: number;
-  ownUnits: number;
-  silentOwnUnits: number;
-  upstreamFindings: number;
-  renamed: RuleRow["renamed"];
-  engineFailures: number;
-  contextFailures: number;
-  partialFiles: number;
-  syntaxErrorFiles: readonly SyntaxErrorLocation[];
-}
-
-function rowOf({ rule }: CompiledRule, loaded: LoadedPack, source: string, scored: Scored, used: Set<Divergence>): RuleRow {
-  const { score } = scored;
+function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: Set<Divergence>, errors: string[]): RuleRow | undefined {
+  const { rule } = entry;
+  const recording = run.recordings.get(rule.upstream.tool);
+  if (recording === undefined) return undefined;
+  if (typeof recording === "string") {
+    errors.push(`${rule.id} (${run.label}): ${recording}`);
+    return undefined;
+  }
+  if (!recording.source.rules.includes(rule.upstream.rule)) {
+    // Candidates are scored on the fixtures, and on a corpus only where its recording covers them.
+    if (isCandidate(rule) && recording.source.kind === "corpus") return undefined;
+    errors.push(`${rule.id} (${run.label}): the ${rule.upstream.tool} recording does not cover ${rule.upstream.rule}`);
+    return undefined;
+  }
+  // Lines the tool did not analyse: its silence there is no verdict, so neither side's findings are scored.
+  const unanalysed = recording.source.kind === "corpus" ? recording.source.unanalysed : [];
+  const analysed = (point: Point): boolean =>
+    !unanalysed.some(region => region.path === point.path && region.startLine <= point.line && point.line <= region.endLine);
+  let left = 0;
+  const expected: Point[] = [];
+  for (const finding of recording.findings) {
+    if (finding.rule !== rule.upstream.rule) continue;
+    // A rule scoped to part of the fixtures (`fixtures`) is scored only there; other units ran another configuration.
+    if (run.name === "fixtures" && !coversFixture(rule, finding.path)) continue;
+    if (!run.scored.has(`${rule.upstream.tool}\0${finding.path}`)) {
+      // A corpus recording covers the whole checkout; a fixtures recording lists every file it ran on.
+      if (run.name === "fixtures") errors.push(`${rule.id} (fixtures): ${finding.path} is not among the recording's files`);
+      else run.summary.outsideScope += 1;
+      continue;
+    }
+    if (rule.match === "line+column" && finding.column === undefined) {
+      errors.push(`${rule.id} (${run.label}): ${finding.path}:${finding.line} has no column; the rule matches line+column`);
+      continue;
+    }
+    const point = { path: finding.path, line: finding.line, ...(rule.match === "line+column" ? { column: finding.column! } : {}) };
+    if (analysed(point)) expected.push(point);
+    else left += 1;
+  }
+  const rerail: RuleActual = run.actual.get(rule.id) ?? { points: [], engineFailures: 0, partialPaths: new Set(), syntaxErrorFiles: new Map() };
+  const claimed = rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
+  const actual = claimed.filter(analysed);
+  left += claimed.length - actual.length;
+  const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === run.name));
+  const score = scoreSource(expected, actual, rule.match, applicable);
   for (const entry of score.explained) used.add(entry.divergence);
   return {
     rule: rule.id,
@@ -1006,26 +576,17 @@ function rowOf({ rule }: CompiledRule, loaded: LoadedPack, source: string, score
     examples: loaded.exampled.has(documentPath(rule.policy)),
     upstream: rule.upstream,
     capabilities: rule.capabilities,
-    source,
+    source: run.label,
     tp: score.tp,
     fp: score.falsePositives.length,
     fn: score.falseNegatives.length,
     ...precisionRecall(score),
-    reviewed: scored.reviewed.length,
-    reviewedFindings: scored.reviewed.slice(0, EXAMPLE_LIMIT),
-    cleanSamples: scored.cleanSamples,
-    silentCleanSamples: scored.silentCleanSamples,
-    judgedSamples: scored.judgedSamples,
-    ownUnits: scored.ownUnits,
-    silentOwnUnits: scored.silentOwnUnits,
-    upstreamFindings: scored.upstreamFindings,
-    renamed: scored.renamed,
-    engineFailures: scored.engineFailures,
-    contextFailures: scored.contextFailures,
-    partialFiles: scored.partialFiles,
+    unanalysed: left,
+    engineFailures: rerail.engineFailures,
+    partialFiles: rerail.partialPaths.size,
     syntaxErrorFiles: {
-      count: scored.syntaxErrorFiles.length,
-      files: [...scored.syntaxErrorFiles].sort((left, right) => compareDeterministicStrings(left.path, right.path)).slice(0, EXAMPLE_LIMIT),
+      count: rerail.syntaxErrorFiles.size,
+      files: [...rerail.syntaxErrorFiles.values()].sort((left, right) => compareDeterministicStrings(left.path, right.path)).slice(0, EXAMPLE_LIMIT),
     },
     divergences: score.explained.map(({ side, point, divergence }) => ({ kind: divergence.kind, side, ...point, evidence: divergence.evidence })),
     falsePositives: score.falsePositives.slice(0, EXAMPLE_LIMIT),
@@ -1033,288 +594,78 @@ function rowOf({ rule }: CompiledRule, loaded: LoadedPack, source: string, score
   };
 }
 
-function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, used: Set<Divergence>, errors: string[]): RuleRow | undefined {
-  const { rule } = entry;
-  const { tool } = rule.upstream;
-  const toolExpected = run.expectedByTool.get(tool);
-  if (toolExpected === undefined) return undefined;
-  if (typeof toolExpected === "string") {
-    errors.push(`${rule.id} (fixtures): ${toolExpected}`);
-    return undefined;
-  }
-  if (!toolExpected.source.rules.includes(rule.upstream.rule)) {
-    errors.push(`${rule.id} (fixtures): the ${tool} expected findings do not cover ${rule.upstream.rule}`);
-    return undefined;
-  }
-  // A rule scoped to part of the fixtures (`fixtures`) is scored only there; other units ran another configuration.
-  const findings = toolExpected.findings.filter(finding => finding.rule === rule.upstream.rule && coversFixture(rule, finding.path));
-  const units = run.units.get(tool) ?? [];
-  const variantPaths = new Set(units.filter(unit => unit.origin?.renamedFrom !== undefined).flatMap(unit => unit.paths));
-  const expected: Point[] = [];
-  const expectedRenamed: Point[] = [];
-  for (const finding of findings) {
-    if (!run.scored.has(`${tool}\0${finding.path}`)) {
-      errors.push(`${rule.id} (fixtures): ${finding.path} is not among the expected findings' files`);
-      continue;
-    }
-    if (rule.match === "line+column" && finding.column === undefined) {
-      errors.push(`${rule.id} (fixtures): ${finding.path}:${finding.line} has no column; the rule matches line+column`);
-      continue;
-    }
-    (variantPaths.has(finding.path) ? expectedRenamed : expected).push({ path: finding.path, line: finding.line, ...(rule.match === "line+column" ? { column: finding.column! } : {}) });
-  }
-  const pointsOf = (rerail: RuleActual): Point[] => rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
-  const rerail = run.actual.get(rule.id) ?? noActual();
-  const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === "fixtures"));
-  return rowOf(entry, loaded, "fixtures", {
-    score: scoreSource(expected, pointsOf(rerail), rule.match, applicable),
-    reviewed: [],
-    cleanSamples: 0,
-    silentCleanSamples: 0,
-    judgedSamples: 0,
-    ...ownUnits(rule, units, findings, rerail),
-    upstreamFindings: expected.length,
-    renamed: variantPaths.size === 0 ? null : {
-      ...renamedScore(rule, units, findings, expectedRenamed, run.renamedActual.get(rule.id) ?? noActual(), pointsOf, applicable, used),
-      ...renameExemption(loaded, tool, rule.upstream.rule),
-    },
-    // On the fixtures, which the port must read as upstream does, every failure but `source-partial` and the T1
-    // syntax-error skips is an engine failure, parse-induced `source-incomplete` included.
-    engineFailures: total(rerail.engineFailurePaths) + rerail.pathlessEngineFailures + total(rerail.incompletePaths) + rerail.pathlessIncomplete,
-    contextFailures: 0,
-    partialFiles: rerail.partialPaths.size,
-    syntaxErrorFiles: [...rerail.syntaxErrorFiles.values()],
-  }, used);
-}
-
-/**
- * A rule's own upstream units and, of those, the silent ones: an original unit (no `renamedFrom`) the rule is scored on
- * whose origin names the rule's upstream rule, where upstream reports the rule nowhere and Rerail reads every file in
- * full and reports nothing. A unit with no origin is never the rule's own: its silence proves nothing about the rule.
- */
-function ownUnits(rule: PackRule, units: readonly ScoredUnit[], findings: readonly UpstreamFinding[], rerail: RuleActual): { ownUnits: number; silentOwnUnits: number } {
-  const own = units.filter(
-    unit => unit.origin !== undefined && unit.origin.renamedFrom === undefined && unit.origin.rules.includes(rule.upstream.rule) && unit.paths.some(path => coversFixture(rule, path)),
-  );
-  const upstreamReports = new Set(findings.map(finding => finding.path));
-  const reported = new Set(rerail.points.map(point => point.path));
-  const unsure = (path: string): boolean =>
-    reported.has(path) || rerail.engineFailurePaths.has(path) || rerail.incompletePaths.has(path) || rerail.partialPaths.has(path) || rerail.syntaxErrorFiles.has(path);
-  const silent = own.filter(unit => !rerail.pathlessUnits.has(unit.key) && unit.paths.every(path => !upstreamReports.has(path) && !unsure(path)));
-  return { ownUnits: own.length, silentOwnUnits: silent.length };
-}
-
-/** Each loaded pack's `rename_exempt` reasons by tool, then upstream rule: its gates.yaml files, each read once per run. */
-const renameExemptions = new WeakMap<LoadedPack, Map<string, ReadonlyMap<string, string>>>();
-
-/**
- * gates.yaml's `rename_exempt` for an upstream rule, as the row's `renamed.exempt`; none when the tool has no gates.yaml.
- * The gates.yaml is the tool-pack's beside the loaded pack (`upstream/<tool>/`), read once per pack and tool.
- */
-function renameExemption(loaded: LoadedPack, tool: string, upstreamRule: string): { exempt?: string } {
-  let byTool = renameExemptions.get(loaded);
-  if (byTool === undefined) renameExemptions.set(loaded, (byTool = new Map()));
-  let exemptions = byTool.get(tool);
-  if (exemptions === undefined) {
-    const { pack } = loaded.pack;
-    const path = join(loaded.directory, "upstream", tool, GATES_MANIFEST);
-    const label = `packs/${pack}/upstream/${tool}/${GATES_MANIFEST}`;
-    const manifest = existsSync(path) ? parseGatesManifest(readFileSync(path, "utf8"), label) : undefined;
-    if (manifest !== undefined && manifest.rerail.pack !== pack) throw new Error(`${label}: rerail.pack is ${manifest.rerail.pack}, but the manifest sits in packs/${pack}/`);
-    exemptions = new Map(Object.entries(manifest?.rules ?? {}).flatMap(([rule, facts]) => (facts.rename_exempt === undefined ? [] : [[rule, facts.rename_exempt] as const])));
-    byTool.set(tool, exemptions);
-  }
-  const exempt = exemptions.get(upstreamRule);
-  return exempt === undefined ? {} : { exempt };
-}
-
-/**
- * The rule scored on its tool's rename variants alone, as the originals are scored (holds-under-rename). An engine
- * failure on a variant fails the rule as on an original; a parse-induced `source-incomplete` is only counted, as a
- * sample's is. A variant whose original upstream reports the rule in, and which upstream reports it nowhere in, is
- * counted as renamed away: the renaming took a name the rule keys on, so the variant tests only its silence.
- */
-function renamedScore(
-  rule: PackRule,
-  units: readonly ScoredUnit[],
-  findings: readonly UpstreamFinding[],
-  expected: readonly Point[],
-  rerail: RuleActual,
-  pointsOf: (rerail: RuleActual) => Point[],
-  applicable: readonly Divergence[],
-  used: Set<Divergence>,
-): NonNullable<RuleRow["renamed"]> {
-  const score = scoreSource([...expected], pointsOf(rerail), rule.match, [...applicable]);
-  for (const entry of score.explained) used.add(entry.divergence);
-  const variants = units.filter(unit => unit.origin?.renamedFrom !== undefined && unit.paths.some(path => coversFixture(rule, path)));
-  const pathsOf = new Map(units.map(unit => [unit.key, unit.paths]));
-  const reported = new Set(findings.map(finding => finding.path));
-  return {
-    units: variants.length,
-    tp: score.tp,
-    fp: score.falsePositives.length,
-    fn: score.falseNegatives.length,
-    falsePositives: score.falsePositives.slice(0, EXAMPLE_LIMIT),
-    falseNegatives: score.falseNegatives.slice(0, EXAMPLE_LIMIT),
-    engineFailures: total(rerail.engineFailurePaths) + rerail.pathlessEngineFailures,
-    incomplete: total(rerail.incompletePaths) + rerail.pathlessIncomplete,
-    renamedAway: variants.filter(unit => (pathsOf.get(unit.origin!.renamedFrom!) ?? []).some(path => reported.has(path)) && !unit.paths.some(path => reported.has(path))).length,
-  };
-}
-
-/**
- * Scores a rule on the samples judged for it (`scoreSamples`). Only the judged files' findings and failures count, and
- * failures naming no file, which are the rule's; a context file is never judged, so its engine failures are listed
- * (`contextFailures`) and fail nothing. A file read in part (a T1 syntax error, `source-partial`, a parse-induced
- * `source-incomplete`) is no engine failure: the sample stays judged, and its labels decide.
- */
-function samplesRow(entry: CompiledRule, run: SamplesRun, loaded: LoadedPack, used: Set<Divergence>): RuleRow | undefined {
-  const { rule } = entry;
-  const samples = run.judged.get(rule.id);
-  if (samples === undefined) return undefined;
-  const judged = new Set(samples.map(sample => sample.path));
-  const rerail = run.actual.get(rule.id) ?? noActual();
-  const actual = rerail.points.filter(point => judged.has(point.path)).map(({ path, line }) => ({ path, line }));
-  const reported = new Set(actual.map(point => point.path));
-  const clean = samples.filter(sample => sample.lines.length === 0);
-  const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === SAMPLES_SOURCE));
-  const score = scoreSamples(samples, actual, applicable);
-  const readInPart = new Set([...rerail.partialPaths, ...rerail.incompletePaths.keys()].filter(path => judged.has(path)));
-  // A clean sample is stays-silent evidence only where the rule applies and read it in full and finished: its scope and
-  // a clause's `file` condition admit the file (silence where the rule never looks proves nothing), no report, no read
-  // in part, no engine failure there, and no failure naming no file, which leaves every file's answer in doubt.
-  const finished = rerail.pathlessEngineFailures + rerail.pathlessIncomplete === 0;
-  const admitted = run.admitted.get(rule.id) ?? new Set<string>();
-  const silent = clean.filter(
-    ({ path }) => finished && admitted.has(path) && !reported.has(path) && !rerail.syntaxErrorFiles.has(path) && !readInPart.has(path) && !rerail.engineFailurePaths.has(path),
-  );
-  return rowOf(entry, loaded, SAMPLES_SOURCE, {
-    score,
-    reviewed: score.reviewed,
-    cleanSamples: clean.length,
-    silentCleanSamples: silent.length,
-    judgedSamples: samples.length,
-    ownUnits: 0,
-    silentOwnUnits: 0,
-    upstreamFindings: 0,
-    renamed: null,
-    engineFailures: total(rerail.engineFailurePaths, path => judged.has(path)) + rerail.pathlessEngineFailures,
-    contextFailures: total(rerail.engineFailurePaths, path => !judged.has(path)),
-    partialFiles: readInPart.size + rerail.pathlessIncomplete,
-    syntaxErrorFiles: [...rerail.syntaxErrorFiles.values()].filter(file => judged.has(file.path)),
-  }, used);
-}
-
-/** The sources a divergence with no `source` applies to; it is stale only once each of them scored its rule. */
-const ALL_SOURCES = ["fixtures", SAMPLES_SOURCE] as const;
-
-/** A pack's scoring as its jobs, which any process making the same plan can run, and the report their results make. */
-export interface PackPlan {
-  jobs: readonly Job[];
-  /** The pack rules that compiled, by id, in order: what another plan of the pack takes as `compiles`. */
-  compiles: readonly string[];
-  /** The report, from every job's result, in job order. */
-  finish(results: readonly JobResult[]): T4Report;
-}
-
-/**
- * T4: the plan of scoring the pack's rules over its upstream fixtures and/or its real-code samples. Making it reads the
- * pack's data and compiles its rules; the evaluations are its jobs. The same pack and options make the same plan.
- * Given `compiles` (another plan's), it compiles each rule only when a job first evaluates it, and has the same jobs;
- * only a plan that compiled its rules itself, and so knows their errors, makes the report.
- */
-export function planPack(loaded: LoadedPack, options: RunOptions, compiles?: readonly string[]): PackPlan {
+/** T4: score the pack's rules over its upstream fixtures and/or pinned corpora. */
+export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<T4Report> {
   const { pack } = loaded;
+  const errors: string[] = [];
   const unknown = (options.rules ?? []).filter(id => !pack.rules.some(rule => rule.id === id));
   if (unknown.length > 0) throw new Error(`unknown rule(s) in ${pack.pack}: ${unknown.join(", ")}`);
+  const unknownCorpora = options.corpora.filter(name => !pack.corpora.some(corpus => corpus.name === name));
+  if (unknownCorpora.length > 0) throw new Error(`unknown corpus/corpora in ${pack.pack}: ${unknownCorpora.join(", ")}`);
   const selected = options.rules === undefined ? pack.rules : pack.rules.filter(rule => options.rules!.includes(rule.id));
-  const compileErrors: string[] = [];
-  const compiled = compileRules(loaded, selected, compileErrors, compiles === undefined ? undefined : new Set(compiles));
-  const log: ErrorLog = [...compileErrors];
-  const jobs: Job[] = [];
-  // A plan given the rules that compile runs jobs a parent shared out grouped by language (shards.ts).
-  const finishFixtures = options.fixtures && compiled.length > 0 ? planFixtures(loaded, compiled, log, jobs, compiles !== undefined) : undefined;
-  const directoryOf = options.samplesDirectory ?? ((tool: string) => samplesTree({ root: RERAIL_ROOT, pack: pack.pack, tool }));
-  const finishSamples = options.samples && compiled.length > 0 ? planSamples(loaded, compiled, directoryOf, log, jobs) : undefined;
+  const compiled = compileRules(loaded, selected, errors);
 
-  const finish = (results: readonly JobResult[]): T4Report => {
-    if (compiles !== undefined) throw new Error(`${pack.pack}: a plan given the rules that compile does not know their errors, so makes no report`);
-    if (results.length !== jobs.length) throw new Error(`${pack.pack}: ${results.length} job result(s) for ${jobs.length} job(s)`);
-    const errors = log.flatMap(entry => (typeof entry === "string" ? [entry] : results[entry.job]!.errors));
-    const fixtures = finishFixtures?.(results);
-    const samples = finishSamples?.(results);
-    const used = new Set<Divergence>();
-    const rows = [
-      ...(fixtures === undefined ? [] : compiled.flatMap(entry => fixturesRow(entry, fixtures, loaded, used, errors) ?? [])),
-      ...(samples === undefined ? [] : compiled.flatMap(entry => samplesRow(entry, samples, loaded, used) ?? [])),
-    ];
-    // A source scored a rule when it ran and had the rule's data. A divergence naming any other source applies to
-    // nothing and is never stale.
-    const scored = (source: string, rule: string): boolean =>
-      source === "fixtures" ? fixtures !== undefined : source === SAMPLES_SOURCE && samples !== undefined && !samples.unscored.has(rule);
-    const selectedIds = new Set(selected.map(rule => rule.id));
-    const stale = loaded.divergences.filter(
-      divergence =>
-        selectedIds.has(divergence.rule) &&
-        !used.has(divergence) &&
-        (divergence.source === undefined ? ALL_SOURCES.every(source => scored(source, divergence.rule)) : scored(divergence.source, divergence.rule)),
-    );
+  const runs: SourceRun[] = [];
+  if (options.fixtures && compiled.length > 0) runs.push(await runFixtures(loaded, compiled, errors));
+  const corpusRoot = options.corpusRoot ?? defaultCorpusRoot(pack.pack);
+  for (const name of options.corpora) {
+    if (compiled.length === 0) break;
+    const run = await runCorpus(loaded, compiled, pack.corpora.find(corpus => corpus.name === name)!, corpusRoot, errors);
+    if (run !== undefined) runs.push(run);
+  }
 
-    const capabilities: Record<string, string[]> = {};
-    for (const capability of pack.capabilities) capabilities[capability] = pack.rules.filter(rule => rule.capabilities.includes(capability)).map(rule => rule.id);
-    // An exemption stands only while no rule exercises the capability; once one does, the exemption is stale.
-    for (const { capability } of pack.exemptCapabilities) {
-      const rules = capabilities[capability]!;
-      if (rules.length > 0) errors.push(`stale exemption: capability ${capability} is covered by rule(s) ${rules.join(", ")}`);
-    }
-    const exempt = new Set(pack.exemptCapabilities.map(exemption => exemption.capability));
-    const report: T4Report = {
-      format: REPORT_FORMAT,
-      pack: pack.pack,
-      tier: "t4-rules",
-      date: options.date,
-      kernel: engineInfo(),
-      tools: pack.tools,
-      scope: { rules: selected.map(rule => rule.id), fixtures: options.fixtures, samples: options.samples },
-      coverage: {
-        rules: pack.rules.length,
-        minimumRules: MINIMUM_RULES,
-        capabilities,
-        uncovered: pack.capabilities.filter(capability => capabilities[capability]!.length === 0 && !exempt.has(capability)),
-        exempt: pack.exemptCapabilities,
-      },
-      sources: [fixtures, samples].flatMap(run => (run === undefined ? [] : [run.summary])),
-      rules: rows,
-      staleDivergences: stale.map(({ rule, source, path, line, kind }) => ({ rule, ...(source === undefined ? {} : { source }), path, line, kind })),
-      errors,
-      pass: false,
-    };
-    report.pass = reportFailures(report).length === 0;
-    return report;
+  const used = new Set<Divergence>();
+  const rows = runs.flatMap(run => compiled.flatMap(entry => rowFor(entry, run, loaded, used, errors) ?? []));
+  const scoredSources = new Set(runs.map(run => run.name));
+  const allSources = ["fixtures", ...pack.corpora.map(corpus => corpus.name)];
+  const selectedIds = new Set(selected.map(rule => rule.id));
+  const stale = loaded.divergences.filter(
+    divergence =>
+      selectedIds.has(divergence.rule) &&
+      !used.has(divergence) &&
+      (divergence.source === undefined ? allSources.every(source => scoredSources.has(source)) : scoredSources.has(divergence.source)),
+  );
+
+  const capabilities: Record<string, string[]> = {};
+  for (const capability of pack.capabilities) capabilities[capability] = pack.rules.filter(rule => rule.capabilities.includes(capability)).map(rule => rule.id);
+  // An exemption stands only while no rule exercises the capability; once one does, the exemption is stale.
+  for (const { capability } of pack.exemptCapabilities) {
+    const rules = capabilities[capability]!;
+    if (rules.length > 0) errors.push(`stale exemption: capability ${capability} is covered by rule(s) ${rules.join(", ")}`);
+  }
+  const exempt = new Set(pack.exemptCapabilities.map(exemption => exemption.capability));
+  const report: T4Report = {
+    format: REPORT_FORMAT,
+    pack: pack.pack,
+    tier: "t4-rules",
+    date: options.date,
+    kernel: engineInfo(),
+    corpora: pack.corpora.map(({ name, repository, commit }) => ({ name, repository, commit })),
+    tools: pack.tools,
+    scope: { rules: selected.map(rule => rule.id), fixtures: options.fixtures, corpora: [...options.corpora] },
+    coverage: {
+      rules: pack.rules.length,
+      minimumRules: MINIMUM_RULES,
+      capabilities,
+      uncovered: pack.capabilities.filter(capability => capabilities[capability]!.length === 0 && !exempt.has(capability)),
+      exempt: pack.exemptCapabilities,
+    },
+    sources: runs.map(run => run.summary),
+    rules: rows,
+    staleDivergences: stale.map(({ rule, source, path, line, kind }) => ({ rule, ...(source === undefined ? {} : { source }), path, line, kind })),
+    errors,
+    pass: false,
   };
-  return { jobs, compiles: compiled.map(entry => entry.rule.id), finish };
-}
-
-/** T4: score the pack's rules over its upstream fixtures and/or its real-code samples, every job here, one at a time. */
-export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<T4Report> {
-  const plan = planPack(loaded, options);
-  const results: JobResult[] = [];
-  for (const job of plan.jobs) results.push(await job.run());
-  return plan.finish(results);
+  report.pass = reportFailures(report).length === 0;
+  return report;
 }
 
 /**
- * Why a report fails, one line per problem; empty when it passes. On the fixtures, which the port must reproduce, an
- * unexplained FP or FN fails, and so does a shipped port with no fixture TP unless pack.json gives its rule examples:
- * divergences can excuse every finding of its fixtures, and a port that matches nothing must still show it catches
- * something. On the samples, which show a rule works on real code as intended, a missed label fails, as does a finding
- * on a clean sample; a report on a labelled sample's unlabelled line is only reviewed. A sample the grammar reads only
- * in part (a T1 syntax error, `source-partial`, a parse-induced `source-incomplete`: `isParseIncomplete`) is still
- * judged but fails nothing by itself: a sample judges the rule, and a label the partial read hides is a missed label.
- * A sample's context files are never judged, so their engine failures fail nothing either. Other engine failures fail
- * on both. On the fixtures' rename variants, scored apart, an unexplained FP or FN fails too, and so does an engine
- * failure other than a parse-induced `source-incomplete` (holds-under-rename). A candidate's row (a port under
- * `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
+ * Why a report fails, one line per problem; empty when it passes. An unexplained FP fails on every source; an
+ * unexplained FN only on the fixtures, which the port must reproduce: on a corpus, misses are the rule's recall. A
+ * shipped port with no fixture TP fails unless pack.json gives its rule examples: divergences can excuse every
+ * finding of its fixtures, and a port that matches nothing must still show it catches something. A candidate's row
+ * (a port under `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
  */
 export function reportFailures(report: T4Report): string[] {
   return [
@@ -1322,20 +673,10 @@ export function reportFailures(report: T4Report): string[] {
     ...report.rules.flatMap(row => {
       const problems: string[] = [];
       if (row.candidate) return problems;
-      const where = `${row.rule} (${row.source})`;
-      if (row.source === SAMPLES_SOURCE) {
-        if (row.fn > 0) problems.push(`${where}: ${row.fn} missed label(s), first ${JSON.stringify(row.falseNegatives[0])}`);
-        if (row.fp > 0) problems.push(`${where}: ${row.fp} finding(s) on clean samples, first ${JSON.stringify(row.falsePositives[0])}`);
-      } else {
-        if (row.fp > 0) problems.push(`${where}: ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
-        if (row.fn > 0) problems.push(`${where}: ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
-        if (row.tp === 0 && !row.examples) problems.push(`${where}: 0 TP and no examples in pack.json; nothing shows it catches anything`);
-        if (row.renamed !== null && row.renamed.fp > 0) problems.push(`${where}: ${row.renamed.fp} unexplained FP on rename variants, first ${JSON.stringify(row.renamed.falsePositives[0])}`);
-        if (row.renamed !== null && row.renamed.fn > 0) problems.push(`${where}: ${row.renamed.fn} unexplained FN on rename variants, first ${JSON.stringify(row.renamed.falseNegatives[0])}`);
-        if (row.renamed !== null && row.renamed.engineFailures > 0) problems.push(`${where}: ${row.renamed.engineFailures} engine failure(s) on rename variants`);
-        if (row.renamed !== null && renameVacuity(row.renamed) === "vacuous") problems.push(`${where}: the renaming took every finding from its ${row.renamed.renamedAway} rename variant(s) and none survives`);
-      }
-      if (row.engineFailures > 0) problems.push(`${where}: ${row.engineFailures} engine failure(s)`);
+      if (row.fp > 0) problems.push(`${row.rule} (${row.source}): ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
+      if (row.fn > 0 && row.source === "fixtures") problems.push(`${row.rule} (${row.source}): ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
+      if (row.tp === 0 && row.source === "fixtures" && !row.examples) problems.push(`${row.rule} (${row.source}): 0 TP and no examples in pack.json; nothing shows it catches anything`);
+      if (row.engineFailures > 0) problems.push(`${row.rule} (${row.source}): ${row.engineFailures} engine failure(s)`);
       return problems;
     }),
     ...report.staleDivergences.map(divergence => `${divergence.rule}: stale divergence ${divergence.path}:${divergence.line} (${divergence.kind}) explains nothing`),

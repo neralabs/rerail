@@ -14,7 +14,6 @@ import {
   defaultRerailDatabasePath,
 } from "../../src/engine/index.js";
 import {
-  DAEMON_KEEPS_RUNNING,
   RerailRuntime,
   type RerailRuntimeOptions,
   isRerailStarted,
@@ -37,11 +36,6 @@ const NO_PRINT = codeRuleSchema.parse({
     forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
   }],
 });
-
-/** The capability the test daemon requires; its `fetch`es carry it, as `rerail scan` and the dashboard do. */
-const ACCESS = "test-access-capability";
-const fetch = (input: string | URL, init: RequestInit & { headers?: Record<string, string> } = {}): Promise<Response> =>
-  globalThis.fetch(input, { ...init, headers: { "x-rerail-access": ACCESS, ...init.headers } });
 
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {
@@ -73,7 +67,7 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
   await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "s1", cwd: root } });
   const daemon = await RerailDaemon.start({
     version: "test", databasePath: database, workspaceRoot: root, port: 0,
-    stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"), accessToken: ACCESS,
+    stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"),
   });
   fixtures.push({ root, runtime, daemon });
   return { root, home, database, daemon, runtime, repositoryKey };
@@ -130,7 +124,6 @@ describe("rerail scan and settings CLI", () => {
     expect(notices.at(-1)).toBe([
       `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
       "  Start it again with /rerail-start.",
-      `  ${DAEMON_KEEPS_RUNNING}`,
       "",
       "  Rerail steered this session on one rule, test:no-print.",
       "  To turn off only that rule, say “turn that rule off”.",

@@ -17,9 +17,9 @@ export const renderSheet = renderPanel;
 
 /** Honour or ignore linter suppression comments for every rule of a pack. */
 function suppressPack(id, suppressions) {
-  const verb = suppressions === "ignore" ? "ignores" : "honours";
-  writes.setPackSuppressions(id, suppressions, `${packName(id)} now ${verb} suppression comments. Rules with their own setting keep it.`,
-    `Couldn’t change suppression comments for ${packName(id)}`);
+  writes.setPackSuppressions(id, suppressions, suppressions === "ignore"
+    ? `Suppression comments ignored in ${packName(id)}. A rule with its own setting keeps it.`
+    : `Suppression comments honoured in ${packName(id)}. A rule with its own setting keeps it.`);
 }
 
 export const sheetActions = {

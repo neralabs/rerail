@@ -3,18 +3,16 @@
 // package that merging it releases.
 //   - Packs: with changesets pending, `npm run version:packs` (each pack's version and CHANGELOG.md, then the lockfile).
 //   - Core: when core's version is released (its `v<version>` tag exists) and anything core ships has changed since
-//     that tag (coreChanges in core-paths.mjs), the next version (nextCoreVersion) in package.json and package-lock.json's
-//     root entries, the installer plugins' pins of it (PLUGIN_PINS), and the root CHANGELOG.md's section for it, dated
-//     today: the lead under the unreleased heading and the entries pending in .changelog/, whose files it deletes. A
-//     version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is left alone.
+//     that tag (coreChanges in core.mjs), the next version (nextCoreVersion) in package.json and package-lock.json's
+//     root entries, and the root CHANGELOG.md's unreleased section dated today as that version. A version not tagged
+//     yet is a release under way (release-pr.yml tags it before this runs), so core is left alone.
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags fetched.
 //
 //   node scripts/release/release-version.mjs <body.md>
 import { execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { changelogLead, changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
-import { coreChanges } from "./core-paths.mjs";
+import { changelogSection, CORE_NAME, coreChanges, coreTag, coreTagRefusal, nextCoreVersion, releaseChangelog, setLockVersion, setPackageVersion } from "./core.mjs";
 import { listPacks, readChangesets, ROOT } from "./packs.mjs";
 
 /** A changelog section longer than this is linked rather than quoted: a pull request description holds 65,536 characters. */
@@ -22,9 +20,7 @@ const QUOTED_NOTES = 12_000;
 /** How many of the core paths that changed the description lists. */
 const LISTED_CHANGES = 20;
 
-// A large buffer: the paths changed since the last core tag can run past Node's 1 MiB default (21,265 of them once the
-// pack test data left git), which failed the run with ENOBUFS.
-const run = (command, args) => execFileSync(command, args, { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28 });
+const run = (command, args) => execFileSync(command, args, { cwd: ROOT, encoding: "utf8" });
 const git = (args) => run("git", args).trim();
 const readText = (path) => readFileSync(join(ROOT, path), "utf8");
 
@@ -62,13 +58,10 @@ function versionCore() {
     console.log(`::warning title=Core not released::${coreRefusal}`);
     return null;
   }
-  const pending = readChangelogEntries(ROOT);
-  const changelog = releaseChangelog(readText("CHANGELOG.md"), version, new Date().toISOString().slice(0, 10), pending.map(({ entry }) => entry));
+  const changelog = releaseChangelog(readText("CHANGELOG.md"), version, new Date().toISOString().slice(0, 10));
   writeFileSync(join(ROOT, "package.json"), setPackageVersion(readText("package.json"), version));
   writeFileSync(join(ROOT, "package-lock.json"), `${JSON.stringify(setLockVersion(JSON.parse(readText("package-lock.json")), version), null, 2)}\n`);
-  for (const path of PLUGIN_PINS) writeFileSync(join(ROOT, path), setPluginVersion(readText(path), version));
   writeFileSync(join(ROOT, "CHANGELOG.md"), changelog.text);
-  for (const { path } of pending) rmSync(join(ROOT, path));
   console.log(`core ${current} -> ${version}: ${changes.length} shipped path(s) changed since ${tag}`);
   return { from: current, version, notes: changelog.notes, changes };
 }
@@ -105,9 +98,7 @@ if (rows.length === 0) {
     const more = core.changes.length > LISTED_CHANGES ? `, and ${core.changes.length - LISTED_CHANGES} more` : "";
     lines.push("", `Core is released because what it ships changed since \`${coreTag(core.from)}\`: ${listed}${more}.`);
     if (!core.notes) {
-      lines.push("", "> [!WARNING]", `> No changelog entry is pending in \`.changelog/\` and \`CHANGELOG.md\` has no unreleased notes, so ${core.version}'s says it has no changelog entries. To add notes, add entries in \`.changelog/\` on \`main\`: this pull request picks them up.`);
-    } else if (changelogLead(changelogSection(readText("CHANGELOG.md"), core.version)) === "") {
-      lines.push("", "> [!WARNING]", `> ${core.version}'s notes open with an entry and have no lead: CI fails this pull request until a paragraph saying what the release gives the people who upgrade is written at the top of \`## Unreleased\` on \`main\` (docs/release.md, "Release notes"). This pull request picks it up.`);
+      lines.push("", "> [!WARNING]", `> \`CHANGELOG.md\` has no unreleased section, so ${core.version}'s says it has no changelog entries. To add notes, add a \`## Unreleased\` section on \`main\`: this pull request picks it up.`);
     }
     lines.push("", ...notes(`${CORE_NAME} ${core.version}`, "CHANGELOG.md", core.version));
   }

@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   codeRuleSchema,
-  languageFor,
   NativeCodeRuleEnforcer,
   SqliteAuditControlStore,
   type AdapterDelivery,
@@ -180,42 +179,6 @@ describe("The rewind steer strategy", () => {
     }
   });
 
-  it("keeps no copy of a secret-like file's text, so it leaves that file as the edit left it and steers as a message", async () => {
-    const before = "TOKEN = 'sk-live-0123456789'\n";
-    const session = await strategySession({ strategy: "rewind", host: "omp", files: { "secrets.py": before } });
-    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    try {
-      const deliveries = await session.edit("w1", "secrets.py", `${before}NEEDLE = 1\n`);
-      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
-      expect(deliveries[0]).not.toHaveProperty("rewound");
-      expect(await readFile(join(session.root, "secrets.py"), "utf8")).toBe(`${before}NEEDLE = 1\n`);
-      expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/secrets\.py .*no copy/u));
-      const directory = createHash("sha256").update("strategy").digest("hex");
-      expect(await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8")).not.toContain("sk-live-0123456789");
-    } finally {
-      stderr.mockRestore();
-      await session.runtime.dispose();
-    }
-  });
-
-  it("puts back a file whose text holds a secret, while its session ledger keeps only the file's digest", async () => {
-    // Assembled from parts so no key-shaped literal sits in the file for secret scanners to refuse.
-    const key = ["sk-", "proj-", "Q7f2LmZ9xV4pR8tK1wN6bH3cJ5dS0gYa"].join("");
-    const before = `API_KEY = "${key}"\n`;
-    const session = await strategySession({ strategy: "rewind", host: "omp", files: { "config.py": before } });
-    try {
-      const deliveries = await session.edit("w1", "config.py", `${before}NEEDLE = 1\n`);
-      expect(deliveries).toEqual([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["config.py"] })]);
-      expect(await readFile(join(session.root, "config.py"), "utf8")).toBe(before);
-      const directory = createHash("sha256").update("strategy").digest("hex");
-      const ledger = await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8");
-      expect(ledger).not.toContain(key);
-      expect(ledger).toContain(createHash("sha256").update(before).digest("hex"));
-    } finally {
-      await session.runtime.dispose();
-    }
-  });
-
   it("still steers in the edit's result with what was rolled back when auditing the rollback fails", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const session = await strategySession({
@@ -259,8 +222,7 @@ describe("The rewind steer strategy", () => {
           let revision = 0;
           const auditor: CodeRuleAuditor = {
             openWorkspace: async () => undefined,
-            // As rules without a text clause: the session's own files under `sessions/` are no sources.
-            acceptsPath: path => languageFor(path) !== undefined,
+            acceptsPath: () => true,
             auditGeneratedEdits: async (_sessionId, batch) => {
               // Rerail's own rollback is the only batch audited in log mode.
               if (batch.mode === undefined) revision = batch.revision;

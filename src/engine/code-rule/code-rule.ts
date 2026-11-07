@@ -1,10 +1,9 @@
 import type { SteerRule } from "../adapter-contract.js";
 import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
-import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
-import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
+import { steerBlock, steerRules, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
 import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
@@ -181,23 +180,14 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
 export type CodeRuleDslQuery =
   | CodeRuleDslRegexQuery
   | CodeRuleDslAstQuery
-  | CodeRuleDslSelectWhenQuery
-  | CodeRuleDslFileQuery;
+  | CodeRuleDslSelectWhenQuery;
 
 export interface CodeRuleDslRegexQuery {
   regex: {
     source: "file.content" | "file.path";
-    /** Named groups (`(?<NAME>…)`) become the witness's captures; a `file.path` match's groups are text for the message, never an anchor. */
+    /** Named groups (`(?<NAME>…)`) become the witness's captures. */
     pattern: string;
   };
-}
-
-/**
- * Each file in the rule's scope, whatever its type, without reading it: one witness per file, at the file's path with
- * no line. In a `select_when.exists` it always holds.
- */
-export interface CodeRuleDslFileQuery {
-  file: Record<string, never>;
 }
 
 export interface CodeRuleDslAstQuery {
@@ -289,8 +279,7 @@ export type CodeRuleDslTransformation =
     }
   | { line: { source: string; default?: string; edge?: "start" | "end" } }
   | { lines: { source: string; default?: string } }
-  | { count: { source: string; default?: string } }
-  | { toPrecision: { source: string; default?: string; value?: boolean; digits: number | string } };
+  | { count: { source: string; default?: string } };
 
 /** A text condition: `regex` (unanchored) must match, `notRegex` must not; at least one. */
 export interface CodeRuleDslTextCondition {
@@ -335,12 +324,6 @@ export interface CodeRuleDslFileCondition {
    * `@builder.io/qwik`, `inferno`, `mithril`), `other` for the reverse, `unknown` for both, neither or no manifest.
    */
   jsxRuntime?: Array<"react" | "other" | "unknown">;
-  /**
-   * Every language: whether the file's text opens with a byte order mark (U+FEFF). Grammars read the mark as whitespace
-   * before the program, so no node's text, the program's included, holds it (eslint-plugin-n's `hashbang` reports it in
-   * a `bin` file).
-   */
-  byteOrderMark?: boolean;
 }
 
 /**
@@ -357,9 +340,9 @@ export interface CodeRuleDslPackageCondition {
   /**
    * The file's configured Node range is a subset of `subsetOf` (node-semver's `subset`). The configured range is
    * eslint-plugin-n's: `engines.node`, else the `devEngines.runtime` entry named `node`'s `version`, else `>=16.0.0`
-   * (also without a manifest); one that is no valid range falls through to the next. `notSubsetOf`: it is not.
+   * (also without a manifest); one that is no valid range falls through to the next.
    */
-  nodeVersion?: { subsetOf: string } | { notSubsetOf: string };
+  nodeVersion?: { subsetOf: string };
   /** The manifest lists one of these in `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`. Needs a manifest. */
   dependsOn?: string[];
   /** Over the file's path relative to the manifest's folder. Needs a manifest, `notRegex` too. */
@@ -380,18 +363,6 @@ export interface CodeRuleDslPackageCondition {
    * outside the graph; without such a manifest neither holds.
    */
   serverGraph?: boolean;
-  /** The manifest's `private` is `true`. Without a manifest neither `true` nor `false` holds. */
-  private?: boolean;
-  /**
-   * npm publishes the file, as eslint-plugin-n's `getNpmignore` reads it: a file is left out where the manifest's
-   * `files` whitelist leaves it out (each entry as `/<entry>` and `/<entry>/**` in node-ignore's gitignore semantics,
-   * `!` entries excluding at any depth, entries with braces or extglobs through globrex), or where its folder's
-   * `.npmignore` (else, without `files`, its `.gitignore`) ignores it (node-ignore, case-insensitive); never its `main`,
-   * `package.json`, or a top-level readme, licence, changelog or history file. Ignore files are regular files of at most
-   * 1 MiB (on disk never a symlink); without `files` or an ignore file, every file below the manifest is published.
-   * Without a manifest neither `true` nor `false` holds.
-   */
-  published?: boolean;
 }
 
 /** An inclusive version range; at least one bound. */
@@ -433,14 +404,6 @@ export interface CodeRuleDslLanguageOptions {
    * module (ESLint's default).
    */
   sourceType?: "script" | "module" | "commonjs";
-  /**
-   * How a file decides its module system where `sourceType` is omitted (the two cannot both be set). `file` (default):
-   * as `sourceType` describes. `package-type`: by its extension and its nearest `package.json`'s `type` alone, as
-   * eslint-plugin-n's configs give each file one: `.mjs` and `.mts` are `module`, `.cjs` and `.cts` `commonjs`, any
-   * other file `module` only where `type` is `module`, and `commonjs` where it is anything else, unset, or where there is
-   * no `package.json`; no syntax is read. The query's `when.sourceType` reads the same.
-   */
-  moduleSystem?: "file" | "package-type";
   /** Identifiers to declare global (`readonly`, `writable`) or to remove (`off`). At most 16384. */
   globals?: Record<string, CodeRuleDslGlobalSetting>;
   /**
@@ -688,70 +651,6 @@ export interface CodeRuleDslLayout {
   after?: CodeRuleDslLayoutGap;
 }
 
-/** `importTarget`'s module types, eslint-plugin-n's `ImportTarget#moduleType`. */
-export type CodeRuleDslImportTargetModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "data";
-
-/**
- * The import or require target a specifier node names, as eslint-plugin-n 18.4.1's `ImportTarget` reads it at default
- * options (JavaScript and TypeScript only; a Rerail extension). The node's value must be known without scope (as
- * `getStringIfConstant` reads it, converted as `String()` converts it); the specifier is that value up to its first
- * `!`. Each key listed must hold. A fact that does not apply to the target (`extensionSpelled` of a package,
- * `published` of a module with a name, `devDependency` or `declared` of a path, any of the last three where the
- * importing file has no `package.json`) holds for neither `true` nor `false`.
- *
- * Resolution is enhanced-resolve 5.26's, with the options the plugin gives it: conditions `node` and `require`, with
- * `import` for the `import` style and `import` and `types` for the `type` style; `main` and `index` only for the
- * `require` style or a package or built-in; the plugin's try extensions; its Node built-in table as a `false` fallback;
- * for a TypeScript file, its nearest `tsconfig.json`'s `paths` (through `extends`) as aliases and its extension map.
- * It reads the files the evaluation holds over the files on disk below the workspace root (`setRoot`), nothing above
- * it; a snapshot resolves among its own files.
- */
-export interface CodeRuleDslImportTarget {
-  /**
-   * The target's style where no ancestor decides it: `import` for an import or export source or an `import()`
-   * argument, `require` for a `require()` or `require.resolve()` argument. An ancestor call of `require` makes it
-   * `require`, an `import` declaration `import` (`type` for `import type`), an `export type … from` `type`, as the
-   * plugin's `getModuleStyle` reads them.
-   */
-  via: "import" | "require";
-  /** The specifier's module type is this one, or one listed. */
-  moduleType?: CodeRuleDslImportTargetModuleType | CodeRuleDslImportTargetModuleType[];
-  /** The specifier names a Node built-in module (`module.isBuiltin`, Node 26.5.0's names). */
-  builtin?: boolean;
-  /**
-   * The target has a file path (`filePath`): the file it resolves to, a relative or absolute path's own path where it
-   * does not resolve, or the specifier of an `import` of a `data:` or `http(s):` URL.
-   */
-  resolved?: boolean;
-  /** Resolution failed (`resolveError`); a module an alias or the built-in fallback ignores did not. */
-  failed?: boolean;
-  /**
-   * A relative or absolute specifier ends with the extension `file-extension-in-import` expects at its `always`
-   * default: the file's (a folder's `index` file's, or, where nothing is at the path, that of a file of its name with a
-   * try extension), mapped for a TypeScript file to the JavaScript extension it compiles to.
-   */
-  extensionSpelled?: boolean;
-  /**
-   * npm publishes the file a target with no module name names, as the importing file's package decides
-   * (`check-publish`'s `isPrivateFile`, negated: its `files`, `main`, `.npmignore` and `.gitignore`, read as
-   * `file.package.published` reads them); a file outside that package is not published.
-   */
-  published?: boolean;
-  /**
-   * The module is in the importing file's package's `devDependencies` and not its `dependencies`,
-   * `peerDependencies` or `optionalDependencies` (`check-publish`'s `isDevPackage`).
-   */
-  devDependency?: boolean;
-  /**
-   * The module is the importing file's package's own name or one any of its four dependency fields lists, or one the
-   * workspace root claiming the package (its `workspaces`, or `pnpm-workspace.yaml`) lists; a `type` import also
-   * counts its `@types` package (`check-extraneous`).
-   */
-  declared?: boolean;
-  /** In a TypeScript file, the specifier starts with a `paths` key of its `tsconfig.json`, wildcard trimmed (`hasTSAlias`). */
-  aliased?: boolean;
-}
-
 /**
  * The arguments of a format call and the fields of its template, as Ruff 0.16.9's Pyflakes rules read them (F504,
  * F505, F507, F522, F523, F524). It reads two captures the rule bound before it: `string`, the template's string literal
@@ -971,12 +870,6 @@ export interface CodeRuleDslValueTest {
    * by default. Rules that follow are not evaluated in files with syntax errors (`source-incomplete`).
    */
   follow?: boolean;
-  /**
-   * `true`: `eq`, `startsWith` and `regex` test what the node names rather than its value: ESTree's name (an identifier's,
-   * `\u` escapes decoded; a private name's without `#`) or a string literal's value; PHP's symbol name. A node without a
-   * name fails. Only those three predicates stand beside it; Python and Rust refuse it.
-   */
-  name?: boolean;
 }
 
 /**
@@ -1549,16 +1442,20 @@ function violationLocation(violation: CodeRuleViolation): string | undefined {
 /** Longest fix text rendered inline in a steer; a longer fix is cut with a note. */
 export const STEER_FIX_CHARS = 240;
 
-/**
- * The fix's lines under its finding: a deletion, a one-line replacement inline, or a longer one in a `~~~` fence. The
- * fix is code from the checkout, so it is {@link steerText} and cut to {@link STEER_FIX_CHARS} before it is fenced.
- */
+/** `text` as CommonMark inline code: a backtick fence longer than any backtick run in it, padded where it starts or ends with one. */
+function inlineCode(text: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/gu)].map(([run]) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const padding = text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${fence}${padding}${text}${padding}${fence}`;
+}
+
+/** The fix's lines under its finding: a deletion, a one-line replacement inline, or a longer one in a `~~~` fence. */
 function suggestedFix(fix: CodeRuleViolationFix): string {
   const { startLine, startColumn, endLine, endColumn } = fix.span;
   const range = `${startLine + 1}:${startColumn + 1}–${endLine + 1}:${endColumn + 1}`;
   if (fix.text === "") return `  Suggested fix: delete ${range}`;
-  const clean = steerText(fix.text);
-  const text = clean.length > STEER_FIX_CHARS ? `${clean.slice(0, STEER_FIX_CHARS)}… (truncated)` : clean;
+  const text = fix.text.length > STEER_FIX_CHARS ? `${fix.text.slice(0, STEER_FIX_CHARS)}… (truncated)` : fix.text;
   if (!text.includes("\n")) return `  Suggested fix: replace ${range} with ${inlineCode(text)}`;
   const longest = Math.max(0, ...[...text.matchAll(/^ *(~{3,})/gmu)].map(([, run]) => run!.length));
   const fence = `  ${"~".repeat(Math.max(3, longest + 1))}`;
@@ -1569,33 +1466,20 @@ function suggestedFix(fix: CodeRuleViolationFix): string {
 /** Where each rule a steer names was added from; undefined when the rule's provenance is not recorded. */
 export type SteerSourceOf = (ruleId: string) => SteerRuleSource | undefined;
 
-/**
- * What a steer says of a finding in a file named like one holding secrets (`secrets.yaml`, `.aws/credentials`):
- * the rule and the place, not the message, which may carry the file's text through the rule's metavariables, and not
- * the fix, which is a replacement of that text. The person reads the finding whole in the dashboard.
- */
-export const SECRET_FILE_FINDING_MESSAGE = "A finding here; its message and fix are withheld from this conversation because the file is named like one holding secrets. Open the rule in the dashboard for its guidance.";
-
-/**
- * Each violation as a steer finding, in the order given: its location, message and any fix; by rule and place only
- * in a file that is secret-like (`sensitive`: by name, unless the caller also judges where a link leads).
- */
-function steerFindings(violations: readonly CodeRuleViolation[], sensitive: (path: string) => boolean): SteerFinding[] {
-  return violations.map(violation => {
-    const secret = violation.path !== undefined && sensitive(violation.path);
-    return {
-      ruleId: violation.ruleId,
-      mode: violation.mode,
-      message: secret ? SECRET_FILE_FINDING_MESSAGE : violation.message,
-      location: violationLocation(violation),
-      fix: secret || violation.fix === undefined ? undefined : suggestedFix(violation.fix),
-    };
-  });
+/** Each violation as a steer finding, in the order given: its location, message and any fix. */
+function steerFindings(violations: readonly CodeRuleViolation[]): SteerFinding[] {
+  return violations.map(violation => ({
+    ruleId: violation.ruleId,
+    mode: violation.mode,
+    message: violation.message,
+    location: violationLocation(violation),
+    fix: violation.fix === undefined ? undefined : suggestedFix(violation.fix),
+  }));
 }
 
 /** The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default). */
 export function renderSteer(violations: readonly CodeRuleViolation[], trigger: SteerTrigger = { kind: "edit" }): string {
-  return steerBlock(trigger, steerFindings(violations, sensitiveByName));
+  return steerBlock(trigger, steerFindings(violations));
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
@@ -1605,17 +1489,14 @@ export function steerRuleIds(violations: readonly CodeRuleViolation[]): string[]
 
 /**
  * The rendered steer text with its contributing rule ids and rules (`steerRules`, each naming where it comes from);
- * the text is byte-identical to `renderSteer` when `sensitive` is `sensitiveByName`. `sensitive` judges which
- * violation paths are secret-like: a caller that knows the checkout the paths are relative to passes
- * `checkoutPathBoundary(root).sensitive`, so a file that links to a secret is judged as one.
+ * the text is byte-identical to `renderSteer`.
  */
 export function buildSteer(
   violations: readonly CodeRuleViolation[],
   trigger: SteerTrigger,
   sourceOf: SteerSourceOf = () => undefined,
-  sensitive: (path: string) => boolean = sensitiveByName,
 ): { content: string; ruleIds: string[]; rules: SteerRule[] } {
-  const findings = steerFindings(violations, sensitive);
+  const findings = steerFindings(violations);
   return {
     content: steerBlock(trigger, findings),
     ruleIds: steerRuleIds(violations),

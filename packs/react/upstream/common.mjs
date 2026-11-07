@@ -1,17 +1,16 @@
-// Shared by the React pack's generators (eslint-plugin-react/generate.mjs, eslint-plugin-react-hooks/generate.mjs):
-// the pins, the one ESLint configuration every expected-findings run is made with, fixture extraction from the upstream rule
-// tests (a stub RuleTester captures `run(name, rule, { valid, invalid })`), and the expected-findings runs.
+// Shared by the React pack's recorders (eslint-plugin-react/generate.mjs, eslint-plugin-react-hooks/generate.mjs):
+// the pins, the one ESLint configuration every recording is made with, fixture extraction from the upstream rule
+// tests (a stub RuleTester captures `run(name, rule, { valid, invalid })`), and the recording runs.
 // Run, through them, by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never
 // pull request CI).
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertPortableCase, isVariantPath, lint, pinnedRequire, REPOSITORY, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
-import { variantEntries, writeProvenance } from "../../../scripts/pack-data/provenance.mjs";
+import { assertCommit, assertPortableCase, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../conformance/recorders/eslint-record.mjs";
 
 export const UPSTREAM_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
-/** Exact versions every expected-findings run is made with (`.rerail/tools/react/package.json`). */
+/** Exact versions every recording is made with (`.rerail/tools/react/package.json`). */
 export const PINS = {
   eslint: "9.39.5",
   "eslint-plugin-react": "7.37.5",
@@ -20,60 +19,37 @@ export const PINS = {
   typescript: "5.9.3",
 };
 
-/**
- * The chosen upstream rules, per tool (the pack's `tools[].name`). Every expected-findings run enables all of them. The hooks
- * plugin's React Compiler rules have no RuleTester cases of their own here (upstream tests them through the compiler's
- * fixtures), so their answers come from the hooks rules' cases, and the real-code samples.
- */
+/** The chosen upstream rules, per tool (the pack's `tools[].name`). Every recording enables all of them. */
 export const RULES = {
   "eslint-plugin-react": [
     "react/button-has-type",
-    "react/iframe-missing-sandbox",
     "react/jsx-key",
     "react/jsx-no-comment-textnodes",
-    "react/jsx-no-constructed-context-values",
     "react/jsx-no-duplicate-props",
-    "react/jsx-no-leaked-render",
-    "react/jsx-no-script-url",
     "react/jsx-no-target-blank",
     "react/jsx-no-undef",
-    "react/no-access-state-in-setstate",
     "react/no-array-index-key",
     "react/no-children-prop",
     "react/no-danger",
     "react/no-danger-with-children",
-    "react/no-deprecated",
-    "react/no-did-mount-set-state",
-    "react/no-did-update-set-state",
     "react/no-direct-mutation-state",
     "react/no-find-dom-node",
     "react/no-is-mounted",
-    "react/no-object-type-as-default-prop",
     "react/no-render-return-value",
     "react/no-string-refs",
     "react/no-unescaped-entities",
-    "react/no-unknown-property",
-    "react/no-unsafe",
-    "react/no-unstable-nested-components",
+    "react/react-in-jsx-scope",
     "react/self-closing-comp",
     "react/void-dom-elements-no-children",
   ],
-  "eslint-plugin-react-hooks": [
-    "react-hooks/rules-of-hooks",
-    "react-hooks/exhaustive-deps",
-    "react-hooks/error-boundaries",
-    "react-hooks/globals",
-    "react-hooks/immutability",
-    "react-hooks/purity",
-    "react-hooks/refs",
-    "react-hooks/set-state-in-effect",
-    "react-hooks/set-state-in-render",
-    "react-hooks/static-components",
-  ],
+  "eslint-plugin-react-hooks": ["react-hooks/rules-of-hooks", "react-hooks/exhaustive-deps"],
 };
 export const ALL_RULES = Object.values(RULES).flat();
 
-/** The upstream checkouts the fixtures are extracted from, at the pinned commits. */
+/**
+ * The upstream checkouts the fixtures are extracted from, at the pinned commits. `derived` ends the licence record's
+ * sentence on the `derived` rows the port readiness recorder adds: how upstream's test helpers build the case it copies.
+ */
 export const UPSTREAM = {
   "eslint-plugin-react": {
     title: "eslint-plugin-react 7.37.5",
@@ -83,6 +59,7 @@ export const UPSTREAM = {
     checkout: "upstream-eslint-plugin-react",
     project: "eslint-plugin-react",
     license: "MIT (Copyright (c) 2014 Yannick Croissant)",
+    derived: ": `tests/helpers/parsers.js` copies each case once per parser and appends a `// features: [...], parser: ...` comment to its code",
   },
   "eslint-plugin-react-hooks": {
     title: "eslint-plugin-react-hooks 7.1.1",
@@ -92,6 +69,7 @@ export const UPSTREAM = {
     checkout: "upstream-react",
     project: "react",
     license: "MIT (Copyright (c) Meta Platforms, Inc. and affiliates.)",
+    derived: "; it is named by the sha256 of its code",
   },
 };
 
@@ -119,6 +97,14 @@ export const AUTHORED = {
       name: "jsx-import-source-emotion",
       extension: "jsx",
       code: "/** @jsxImportSource @emotion/react */\nexport const rows = items => items.map(i => <div>{i}</div>);\n",
+      errors: 1,
+    },
+    {
+      rule: "react/react-in-jsx-scope",
+      directory: "react-in-jsx-scope",
+      name: "jsx-import-source-preact",
+      extension: "jsx",
+      code: "/** @jsxImportSource preact */\nexport const Greeting = () => <p>Hello</p>;\n",
       errors: 1,
     },
   ],
@@ -161,13 +147,13 @@ function checkoutDirectory(kind) {
   }
 }
 
-/** `--tools <dir>` overrides the checkout's `.rerail/tools/react`. */
+/** `--tools <dir>` / `--corpora <dir>` override the checkout's `.rerail/tools/react` / `.rerail/corpora/react`. */
 export function options(argv) {
   const value = flag => {
     const index = argv.indexOf(flag);
     return index === -1 ? undefined : resolve(argv[index + 1]);
   };
-  return { tools: value("--tools") ?? checkoutDirectory("tools") };
+  return { tools: value("--tools") ?? checkoutDirectory("tools"), corpora: value("--corpora") ?? checkoutDirectory("corpora") };
 }
 
 export const JS_FILES = ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"];
@@ -230,14 +216,11 @@ export function resetDirectory(path) {
 }
 
 /**
- * Writes the extracted cases (`{ rule, directory, kind, index, code, errors, origin, from, detail, filename?,
- * extension?, drop? }`; `from` is the upstream test file, `detail` locates the case in it) and `tool`'s AUTHORED cases
- * under `<directory>/fixtures/`, a rename variant of each extracted case under `fixtures/renamed/`
- * (`writeRenameVariants`), records the pack configuration over them (every chosen rule on every source; the expected
- * findings hold `tool`'s rules, over the files ESLint parses, and each extracted case's origin, its rule), lists the
- * authored files in `<directory>/UPSTREAM.md` and checks each case: the rule's own finding count under the pack
- * configuration against the test's `errors`. The check's report goes to `<tools>/scratch/`. The kept entries it returns
- * hold the kept variants too (kind `renamed`, `of` the original's path), and `recorded` is withOrigins' result.
+ * Writes the extracted cases (`{ rule, directory, kind, index, code, errors, origin, filename?, extension?, drop? }`)
+ * and `tool`'s AUTHORED cases under `<directory>/fixtures/`, records the pack configuration over them (every chosen
+ * rule on every source; the recording holds `tool`'s rules, over the files ESLint parses), lists the authored files in
+ * `<directory>/UPSTREAM.md` and checks each case: the rule's own finding count under the pack configuration against
+ * the test's `errors`. The check's report goes to `<tools>/scratch/`.
  */
 export async function finishFixtures(require, tool, directory, cases, tools) {
   const { ESLint } = require("eslint");
@@ -254,26 +237,22 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
     const filename = entry.filename === undefined ? undefined : entry.filename.replace(/^\/+/u, "");
     written.push({ ...entry, path: writeCase(fixtures, entry.directory, name, entry.extension, entry.code, filename) });
   }
-  const origins = new Map(written.map(entry => [entry.path, [entry.rule]]));
   for (const entry of AUTHORED[tool]) {
     const name = `rerail-${entry.name}`;
     const path = writeCase(fixtures, entry.directory, name, entry.extension, entry.code, entry.filename);
     const unit = entry.manifest === undefined ? path : [writeCase(fixtures, entry.directory, name, undefined, `${JSON.stringify(entry.manifest, null, 2)}\n`, "package.json"), path];
     written.push({ ...entry, kind: "authored", origin: "written by Rerail", path, unit });
   }
-  const { variants, skipped: unrenamed } = writeRenameVariants(fixtures, [...origins.keys()], origins);
-  const linted = await lint(ESLint, fixtures, config(require), [...written.map(entry => entry.path), ...variants.map(variant => variant.unit)], ALL_RULES);
-  const unparsable = new Map(linted.skipped.map(entry => [entry.path, entry.reason]));
-  for (const path of [...unparsable.keys()].filter(path => !isVariantPath(path))) rmSync(join(fixtures, path));
+  const { findings, skipped } = await lint(ESLint, fixtures, config(require), written.map(entry => entry.path), ALL_RULES);
+  const unparsable = new Map(skipped.map(entry => [entry.path, entry.reason]));
+  for (const path of unparsable.keys()) rmSync(join(fixtures, path));
   const kept = written.filter(entry => !unparsable.has(entry.path));
-  const recorded = withOrigins(fixtures, kept.map(entry => entry.unit ?? entry.path), origins, variants, new Set(unparsable.keys()), linted.findings);
-  const findings = recorded.findings;
   const upstream = UPSTREAM[tool];
-  writeExpectedFindings(
+  writeRecording(
     join(directory, "fixtures.expected.json"),
     tool,
     PINS[tool],
-    { kind: "fixtures", origin: `${upstream.repository}@${upstream.commit}`, rules: RULES[tool], files: recorded.files, units: recorded.units },
+    { kind: "fixtures", origin: `${upstream.repository}@${upstream.commit}`, rules: RULES[tool], files: kept.map(entry => entry.unit ?? entry.path) },
     findings.filter(finding => RULES[tool].includes(finding.rule)),
   );
   writeAuthoredRecord(tool, directory, kept);
@@ -282,25 +261,22 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
     const own = findings.filter(finding => finding.path === entry.path && finding.rule === entry.rule).length;
     if (own !== entry.errors) mismatches.push({ origin: entry.origin, path: entry.path, expected: entry.errors, recorded: own, options: entry.test?.options, settings: entry.test?.settings });
   }
-  const renamed = Object.entries(recorded.units).flatMap(([path, { renamedFrom }]) => (renamedFrom === undefined ? [] : [{ kind: "renamed", path, of: renamedFrom }]));
   const report = {
     tool,
     extracted: cases.length,
     written: written.length,
     kept: kept.length,
-    renamed: renamed.length,
-    unrenamed,
     dropped,
     unparsable: written.filter(entry => unparsable.has(entry.path)).map(entry => ({ origin: entry.origin, path: entry.path, reason: unparsable.get(entry.path) })),
     mismatches,
   };
   mkdirSync(join(tools, "scratch"), { recursive: true });
   writeFileSync(join(tools, "scratch", `${tool}-fixtures-report.json`), `${JSON.stringify(report, null, 1)}\n`);
-  console.log(`${tool}: ${cases.length} cases, ${dropped.length} dropped (syntax), ${report.unparsable.length} unparsable, ${kept.length} kept, ${renamed.length} rename variants, ${mismatches.length} count mismatches`);
-  return { kept: [...kept, ...renamed], recorded, report };
+  console.log(`${tool}: ${cases.length} cases, ${dropped.length} dropped (syntax), ${report.unparsable.length} unparsable, ${kept.length} kept, ${mismatches.length} count mismatches`);
+  return { kept, report };
 }
 
-/** UPSTREAM.md beside the generator: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
+/** UPSTREAM.md beside the recorder: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
 function writeAuthoredRecord(tool, directory, kept) {
   const rows = kept.filter(entry => entry.kind === "authored").flatMap(entry => [entry.unit].flat().map(path => `| \`upstream/${tool}/fixtures/${path}\` | written by Rerail |`));
   const text = `# ${UPSTREAM[tool].title}: cases Rerail wrote
@@ -314,23 +290,48 @@ ${rows.join("\n")}
   writeFileSync(join(directory, "UPSTREAM.md"), text);
 }
 
-/**
- * `licenses/<project>/LICENSE` (verbatim at the pinned commit) and the tool's provenance.json and LICENSES.md: every
- * copied test file (`copied`: `{ file, upstream }`), every extracted case kept (`kept`, its `from` and `detail`) and
- * every rename variant of one (`recorded`, withOrigins' result).
- */
-export function writeLicenseAndProvenance(tool, upstream, copied, kept, recorded) {
+/** `licenses/<project>/LICENSE` (verbatim) and `UPSTREAM.md`: every copied file and every extracted fixture. */
+export function writeLicense(tool, upstream, copied, kept) {
   const meta = UPSTREAM[tool];
   const directory = join(UPSTREAM_DIRECTORY, "..", "licenses", meta.project);
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
-  const originals = new Map(
-    kept.filter(entry => entry.kind !== "authored" && entry.kind !== "renamed").map(entry => [`fixtures/${entry.path}`, { source: meta.project, from: entry.from, how: "extracted", detail: entry.detail }]),
-  );
-  const entries = new Map([
-    ...copied.map(entry => [entry.file, { source: meta.project, from: entry.upstream, how: "verbatim" }]),
-    ...originals,
-    ...variantEntries(originals, recorded),
-  ]);
-  writeProvenance({ pack: "react", tool, entries, commits: { [meta.project]: meta.commit } });
+  const rows = [
+    ...copied.map(entry => `| \`upstream/${tool}/${entry.file}\` | \`${entry.upstream}\` | verbatim |`),
+    ...kept.filter(entry => entry.kind !== "authored").map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${entry.origin}\` | extracted (its \`code\`, verbatim) |`),
+  ];
+  const text = `# ${meta.title}
+
+Upstream: [${meta.repository.replace("https://github.com/", "")}](${meta.repository}/tree/${meta.commit}) at ${meta.reference} (commit \`${meta.commit}\`). License: ${meta.license}; [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that commit.
+
+The files listed below are the upstream tests of the rules the React pack records (\`conformance.json\`, \`upstream/common.mjs\` \`RULES\`), and the test cases extracted from them, one case per file, and remain under ${meta.project}'s license. Every other file under \`upstream/${tool}/\` is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): \`generate.mjs\` (with its stub RuleTester), \`../common.mjs\` and the recordings they write by running the pinned plugin. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them.
+
+Paths are relative to the pack directory, \`packs/react/\`. \`<file> valid[i]\` / \`invalid[i]\` is the i-th case of the \`valid\` / \`invalid\` list the test file passes to \`RuleTester.run\`. A \`derived\` row is a case's \`code\` that the port readiness gates' recorder (\`npm run port-readiness:record\`) copied from that upstream test file (at upstream's repository path), as upstream's own test helpers build the case${meta.derived}.
+
+| File | Upstream path | Copy |
+|---|---|---|
+${rows.join("\n")}
+`;
+  writeFileSync(join(directory, "UPSTREAM.md"), text);
+}
+
+/** Records the pack configuration over each pinned corpus (`corpus-<name>.expected.json`). */
+export async function recordCorpora(require, tool, directory, corpora) {
+  const { ESLint } = require("eslint");
+  const summary = [];
+  for (const corpus of pack("react").corpora) {
+    const root = join(corpora, corpus.name);
+    assertCommit(root, corpus.commit);
+    const files = corpusFiles(root, corpus);
+    const { findings, skipped } = await lint(ESLint, root, config(require), files, RULES[tool]);
+    writeRecording(
+      join(directory, `corpus-${corpus.name}.expected.json`),
+      tool,
+      PINS[tool],
+      { kind: "corpus", name: corpus.name, repository: corpus.repository, commit: corpus.commit, rules: RULES[tool], skipped: skipped.map(entry => entry.path).sort() },
+      findings,
+    );
+    summary.push({ corpus: corpus.name, files: files.length, skipped: skipped.length, findings: findings.length, skippedFiles: skipped });
+  }
+  return summary;
 }

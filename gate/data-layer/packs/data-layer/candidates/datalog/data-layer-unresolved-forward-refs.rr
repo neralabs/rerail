@@ -1,0 +1,28 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input doc, node, field, text
+.decl in_scope(d: number)
+.decl m10(n: node)
+.decl m17(n: node)
+.decl out_scope(d: number)
+.decl t6(s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+t6(s) :- text(_, s), icontains("field_info", s).
+t6(s) :- text(_, s), isuffix("_info", s).
+m10(n) :- node(_, n, "identifier", _, _), text(n, v4), v4 = "f".
+m10(n) :- node(_, n, "identifier", _, _), text(n, v5), t6(v5).
+m10(n) :- node(_, n, "subscript", _, _), field(n, "value", v7), node(_, v7, "attribute", _, _), field(v7, "attribute", v8), node(_, v8, "identifier", _, _), text(v8, v9), v9 = "model_fields".
+m17(n) :- node(_, n, "identifier", _, _), text(n, v14), (v14 = "TypeAdapter" ; v14 = "get_args" ; v14 = "get_origin" ; v14 = "get_type_hints" ; v14 = "isinstance" ; v14 = "issubclass").
+m17(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v15), node(_, v15, "identifier", _, _), text(v15, v16), (v16 = "TypeAdapter" ; v16 = "get_args" ; v16 = "get_origin" ; v16 = "get_type_hints" ; v16 = "isinstance" ; v16 = "issubclass").
+.output violation

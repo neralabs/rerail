@@ -2,14 +2,12 @@ import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
-import { SECRET_FILE_FINDING_MESSAGE, type CodeRuleViolation, type CodeRuleViolationFix, type CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
+import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
 import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
 import { internalTesting } from "../engine/internal-testing.js";
-import { agentTranscriptPayload } from "../engine/transcript-boundary.js";
-import { sensitiveByName } from "../engine/path-boundary.js";
 import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
@@ -19,13 +17,11 @@ import {
   auditRequestSchema,
 } from "../engine/audit/audit-control-schema.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
-import { approvalKey, packSubject, readApprovals } from "../engine/catalog/rule-approval.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
-import { SESSION_EVENT_PAGE_LIMIT, type StoredSessionSummary } from "../runtime/session-store.js";
-import type { ApiCaller } from "../engine/catalog/repository-model.js";
+import { SESSION_EVENT_PAGE_LIMIT } from "../runtime/session-store.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
-import { activityRules, callerRepositoryKey, checkoutAt, checkoutRuleCatalog, historyScope, repositoryOperations, within } from "./repository-operations.js";
-import { inactiveField, inactiveOf, targetShape } from "./repository-contracts.js";
+import { activityRules, historyRepositoryIds, repositoryOperations } from "./repository-operations.js";
+import { inactiveField, inactiveOf } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
 /** Query strings arrive as text; MCP arguments arrive typed. Accept both. */
@@ -68,17 +64,6 @@ const codeRuleViolationSchema: z.ZodType<CodeRuleViolation> = z.object({
   variables: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
   fix: codeRuleViolationFixSchema.optional(),
 }).strict();
-
-/**
- * A violation as a coding agent may see it: in a file secret-like by name, the rule and the place only, as the
- * in-session steer says it. The message may carry the file's text through the rule's metavariables, `variables` are
- * that text, and the fix is its replacement; a person reads them in the dashboard.
- */
-function agentViolation(caller: ApiCaller, violation: CodeRuleViolation): CodeRuleViolation {
-  if (caller.kind === "person" || violation.path === undefined || !sensitiveByName(violation.path)) return violation;
-  const { fix: _fix, ...rest } = violation;
-  return { ...rest, message: SECRET_FILE_FINDING_MESSAGE, variables: {} };
-}
 
 const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
   ruleId: z.string().exactOptional(),
@@ -194,39 +179,27 @@ function auditControlsResponse(stores: RerailApiStores, sessionId: string): z.in
 }
 
 
-const sessionNotFound = (sessionId: string): ApiError => new ApiError(404, "session-not-found", `session ${sessionId} does not exist`);
+function requireSession(stores: RerailApiStores, sessionId: string): void {
+  if (stores.reader.session(sessionId) === undefined) {
+    throw new ApiError(404, "session-not-found", `session ${sessionId} does not exist`);
+  }
+}
 
-/**
- * The session `sessionId` names, when `caller` may read it: a person any recorded session, a coding agent only one
- * recorded in its own repository ({@link historyScope}). Another repository's session reads as one that does not
- * exist, so session ids are no oracle across repositories.
- */
-function readableSession(stores: RerailApiStores, caller: ApiCaller, sessionId: string): StoredSessionSummary | undefined {
-  const ids = historyScope(stores, caller, undefined);
+function sessionResponse(stores: RerailApiStores, sessionId: string): z.infer<typeof sessionResponseSchema> | null {
   const session = stores.reader.session(sessionId);
-  if (ids === undefined) return session;
-  return session?.repositoryId != null && ids.includes(session.repositoryId) ? session : undefined;
-}
-
-function requireSession(stores: RerailApiStores, caller: ApiCaller, sessionId: string): void {
-  if (readableSession(stores, caller, sessionId) === undefined) throw sessionNotFound(sessionId);
-}
-
-/** A coding agent's call on a session it may not read answers as {@link requireSession}; a person's goes through as ever. */
-function guardSession(stores: RerailApiStores, caller: ApiCaller, sessionId: string): void {
-  if (caller.kind === "agent") requireSession(stores, caller, sessionId);
-}
-
-function sessionResponse(stores: RerailApiStores, caller: ApiCaller, sessionId: string): z.infer<typeof sessionResponseSchema> | null {
-  const session = readableSession(stores, caller, sessionId);
   return session === undefined ? null
     : { session, hud: stores.reader.hud(sessionId), audit: stores.audits.latestSummary(sessionId) ?? null };
 }
 const sessionId = z.object({ sessionId: z.string().min(1) });
 
 const repositoryFilter = {
-  repository: z.string().min(1).optional().describe("Only this repository's history (its key or an alias); machine-wide without it. A coding agent reads only its own repository's."),
+  repository: z.string().min(1).optional().describe("Only this repository's history (its key or an alias); machine-wide without it."),
 };
+
+/** The session repository ids a `repository` filter matches; undefined (machine-wide) without one. */
+function historyIds(stores: RerailApiStores, repository: string | undefined): string[] | undefined {
+  return repository === undefined ? undefined : historyRepositoryIds(stores, repository);
+}
 
 const sinceParameter = countParameter.describe("Epoch milliseconds; only activity at or after this instant is counted. 0 means since install.");
 const PAGE_LIMIT = 50;
@@ -250,7 +223,6 @@ const ruleActivitySchema = z.object({
   loggedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those recorded in Log mode at the time, whatever the rule's mode is now."),
   rerails: z.number().int().nonnegative(),
   ...inactiveField,
-  removed: z.literal(true).optional().describe("Set on a rule no longer among the rules reported (taken out of the repository, or no longer installed or in the library) that has violations in range: listed for its history, with nothing to turn off."),
 }).strict();
 
 const violationRecordSchema = z.object({
@@ -281,10 +253,6 @@ const codingAgentSchema = z.object({
   found: z.boolean().describe("The coding agent's config folder exists on this computer."),
   connected: z.boolean().describe("Rerail's hooks and commands are in place for it."),
   problem: z.string().nullable().describe("Why the connection could not be checked, such as a config file that is not valid JSON."),
-  rerailData: z.object({
-    access: z.enum(["kept-out", "file-tools", "open"]).describe("kept-out: neither its commands nor its file tools can read Rerail's data; file-tools: its file tools cannot, its shell commands can; open: nothing keeps it out."),
-    why: z.string().describe("One sentence for a person saying why."),
-  }).strict().describe("Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Rerail never changes it."),
 }).strict();
 
 export const operations: readonly Operation[] = [
@@ -300,25 +268,19 @@ export const operations: readonly Operation[] = [
     id: "presentation_preferences_upsert",
     method: "PUT",
     path: "/api/presentation-preferences",
-    summary: "Set compact or silent presentation for a repository and harness. Empty keys select database-local defaults; enforcement is unchanged. People only: the status line is the person's.",
+    summary: "Set compact or silent presentation for a repository and harness. Empty keys select database-local defaults; enforcement is unchanged.",
     body: presentationPreferenceSchema,
     output: z.object({ preference: presentationPreferenceSchema }),
-    handler: (stores, input, caller) => {
-      if (caller.kind === "agent") throw new ApiError(403, "agent-not-permitted", "only a person can show or hide their status line, in the dashboard's Settings");
-      return { preference: stores.preferences().upsert(input) };
-    },
+    handler: (stores, input) => ({ preference: stores.preferences().upsert(input) }),
   }),
   defineOperation({
     id: "presentation_preferences_remove",
     method: "DELETE",
     path: "/api/presentation-preferences",
-    summary: "Remove a presentation override so the next matching database-local default applies. People only.",
+    summary: "Remove a presentation override so the next matching database-local default applies.",
     query: presentationPreferenceKeySchema,
     output: z.object({ removed: z.number().int().nonnegative() }),
-    handler: (stores, input, caller) => {
-      if (caller.kind === "agent") throw new ApiError(403, "agent-not-permitted", "only a person can show or hide their status line, in the dashboard's Settings");
-      return { removed: stores.preferences().remove(input.repository, input.host) };
-    },
+    handler: (stores, input) => ({ removed: stores.preferences().remove(input.repository, input.host) }),
   }),
   defineOperation({
     id: "presentation_get",
@@ -332,18 +294,9 @@ export const operations: readonly Operation[] = [
       onDemand: booleanParameter.optional().describe("Read session status even when ambient presentation is silent."),
     }).strict(),
     output: presentationResponseSchema,
-    handler: (stores, input, caller) => {
-      let session = input.sessionId === undefined ? null : sessionResponse(stores, caller, input.sessionId);
+    handler: (stores, input) => {
+      let session = input.sessionId === undefined ? null : sessionResponse(stores, input.sessionId);
       let repository = input.repository;
-      // A coding agent asks about presence where it works: its repository, or a checkout inside its own.
-      if (caller.kind === "agent") {
-        const own = callerRepositoryKey(stores, caller);
-        const checkout = stores.checkouts()(repository);
-        const inside = caller.checkout !== undefined && checkout !== undefined && within(caller.checkout, checkout.checkoutPath) !== undefined;
-        if (own === undefined || (!inside && checkout?.repositoryKey !== own)) {
-          throw new ApiError(403, "agent-not-permitted", `a coding agent reads only in the repository it works in${own === undefined ? "" : `, ${own}`}`);
-        }
-      }
       if (session !== null) {
         try {
           // A host may report a directory below its launch root; presence and identity follow the session's canonical cwd.
@@ -366,7 +319,7 @@ export const operations: readonly Operation[] = [
     id: "rules_activity",
     method: "GET",
     path: "/api/rules/activity",
-    summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. A rule taken out of the repository is listed, with `removed: true`, while it has violations in range. Use it to find rules worth disabling or rules that never fire.",
+    summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. Use it to find rules worth disabling or rules that never fire.",
     query: z.object({ since: sinceParameter, ...repositoryFilter }).strict(),
     output: z.object({
       since: z.number().int().nonnegative(),
@@ -376,13 +329,12 @@ export const operations: readonly Operation[] = [
         withViolations: z.number().int().nonnegative().describe("Distinct sessions with a violation reported at or after `since`, in any mode."),
       }),
     }),
-    handler: (stores, input, caller) => {
-      const ids = historyScope(stores, caller, input.repository);
+    handler: (stores, input) => {
+      const ids = historyIds(stores, input.repository);
       const activity = stores.audits.ruleActivity(input.since, ids);
       const rerails = stores.reader.steersByRule(input.since, ids);
       const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
-      // A coding agent's rules are its own repository's, as its counts are: never the machine's whole library.
-      for (const { id, kind, rule } of activityRules(stores, callerRepositoryKey(stores, caller) ?? input.repository)) {
+      for (const { id, kind, rule } of activityRules(stores, input.repository)) {
         // Every rule is reported, so a caller never has to infer absence from a missing key.
         const { inactive } = inactiveOf(kind, rule);
         const totals = kind === "conversation" ? undefined : activity.get(id);
@@ -397,11 +349,6 @@ export const operations: readonly Operation[] = [
           ...(inactive === undefined ? {} : { inactive }),
         };
       }
-      // A rule taken out since keeps its violations: History still lists it, marked removed.
-      for (const [id, totals] of activity) {
-        if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
-        rules[id] = { measured: true, ...totals, rerails: rerails.get(id) ?? 0, removed: true };
-      }
       return {
         since: input.since,
         rules,
@@ -413,27 +360,12 @@ export const operations: readonly Operation[] = [
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. With a checkout (an MCP call defaults to the calling agent's), that checkout's own rules in .rerail/rules are listed too, as the pack worktree (publisher worktree), and every rule document there left out with the reason. Add a pack to a repository with repository_attachments_set.",
-    query: z.object({ checkout: targetShape.checkout }).strict(),
+    summary: "List every rule pack installed on this machine: what it covers, its version and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. Add a pack to a repository with repository_attachments_set.",
     output: rulePackListSchema,
-    handler: (stores, input, caller) => {
-      // A checkout named is one Rerail has seen; the calling agent's adds its own rules only when it is one.
-      const checkout = input.checkout !== undefined ? checkoutAt(stores, input.checkout, false).checkout
-        : caller.kind === "agent" && caller.checkout !== undefined ? stores.checkouts()(caller.checkout) : undefined;
-      const catalog = checkoutRuleCatalog(stores, checkout);
-      const approvals = readApprovals(stores.database());
+    handler: stores => {
+      const catalog = stores.ruleCatalog();
       return {
-        // Where a pack installed from disk came from is named by its kind; the path stays on this computer's CLI.
-        packs: [...catalog.packs.values()].map(pack => {
-          const { match: _match, localSource, rules, ...rest } = pack;
-          const subject = packSubject(catalog, pack);
-          return {
-            ...rest,
-            ...(localSource === undefined ? {} : { installedFrom: localSource.kind }),
-            ...(subject === undefined ? {} : { approval: { subject: { ...subject }, approved: approvals.has(approvalKey(subject)) } }),
-            rules: [...rules],
-          };
-        }),
+        packs: [...catalog.packs.values()].map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })),
         skipped: [...catalog.skipped],
       };
     },
@@ -442,7 +374,7 @@ export const operations: readonly Operation[] = [
     id: "coding_agents_list",
     method: "GET",
     path: "/api/coding-agents",
-    summary: "List the coding agents Rerail works with: whether each is on this computer, whether Rerail is connected to it, and whether its tools can read Rerail's data. Changes nothing.",
+    summary: "List the coding agents Rerail works with: whether each is on this computer and whether Rerail is connected to it. Changes nothing.",
     output: z.object({ agents: z.array(codingAgentSchema) }),
     handler: async (stores) => {
       const agents = stores.codingAgents();
@@ -459,8 +391,8 @@ export const operations: readonly Operation[] = [
     summary: "Fetch ongoing audit defaults and the first repository audit for one session's canonical workspace.",
     params: sessionId,
     output: auditControlsResponseSchema,
-    handler: (stores, input, caller) => {
-      requireSession(stores, caller, input.sessionId);
+    handler: (stores, input) => {
+      requireSession(stores, input.sessionId);
       return auditControlsResponse(stores, input.sessionId);
     },
   }),
@@ -468,15 +400,12 @@ export const operations: readonly Operation[] = [
     id: "audit_settings_update",
     method: "PATCH",
     path: "/api/sessions/{sessionId}/audit-settings",
-    summary: "Update ongoing audit defaults for one session's canonical workspace. People only (rerail settings): they outlast the session, so a coding agent could otherwise stop its checkout's later sessions, the person's included, from being steered.",
+    summary: "Update ongoing audit defaults for one session's canonical workspace.",
     params: sessionId,
     body: auditSettingsPatchSchema,
     output: auditControlsResponseSchema,
-    handler: (stores, input, caller) => {
-      if (caller.kind === "agent") {
-        throw new ApiError(403, "agent-not-permitted", "only a person changes a checkout's ongoing audit settings, with rerail settings --session <id>");
-      }
-      requireSession(stores, caller, input.sessionId);
+    handler: (stores, input) => {
+      requireSession(stores, input.sessionId);
       const { sessionId, ...patch } = input;
       stores.auditControls().updateSettings(sessionId, patch);
       return auditControlsResponse(stores, sessionId);
@@ -490,8 +419,8 @@ export const operations: readonly Operation[] = [
     params: sessionId,
     body: auditRequestInputSchema,
     output: auditRequestSchema,
-    handler: (stores, input, caller) => {
-      requireSession(stores, caller, input.sessionId);
+    handler: (stores, input) => {
+      requireSession(stores, input.sessionId);
       const { sessionId, ...request } = input;
       return stores.auditControls().requestAudit(sessionId, request);
     },
@@ -503,8 +432,8 @@ export const operations: readonly Operation[] = [
     summary: internalTesting("List explicit audit requests and the ids of the audits each one produced for one session."),
     params: sessionId,
     output: z.object({ auditRequests: z.array(auditRequestSchema) }),
-    handler: (stores, input, caller) => {
-      requireSession(stores, caller, input.sessionId);
+    handler: (stores, input) => {
+      requireSession(stores, input.sessionId);
       return { auditRequests: stores.auditControls().listAuditRequests(input.sessionId) };
     },
   }),
@@ -518,7 +447,7 @@ export const operations: readonly Operation[] = [
       repositories: z.array(repositoryAuditSummarySchema),
       total: z.number().int().nonnegative(),
     }),
-    handler: (stores, input, caller) => stores.audits.listRepositoryAudits(repositoryAuditQuery(input), historyScope(stores, caller, input.repository)),
+    handler: (stores, input) => stores.audits.listRepositoryAudits(repositoryAuditQuery(input), historyIds(stores, input.repository)),
   }),
   defineOperation({
     id: "repository_audit_entries_list",
@@ -531,15 +460,12 @@ export const operations: readonly Operation[] = [
       entries: z.array(repositoryAuditEntrySchema),
       total: z.number().int().nonnegative(),
     }),
-    handler: (stores, input, caller) => {
-      const ids = historyScope(stores, caller, undefined);
-      // Another repository's audit reads as one that does not exist, as its sessions do.
-      const readable = ids === undefined || stores.audits.list({ auditId: input.auditId, limit: 1 }, ids).total > 0;
-      const page = readable ? stores.audits.listRepositoryAuditEntries(repositoryAuditEntryQuery(input)) : undefined;
+    handler: (stores, input) => {
+      const page = stores.audits.listRepositoryAuditEntries(repositoryAuditEntryQuery(input));
       if (page === undefined) throw new ApiError(404, "repository-audit-not-found", `repository audit ${input.auditId} does not exist`);
       return {
         entries: page.entries.map(entry => entry.kind === "violation"
-          ? { kind: "violation" as const, violation: agentViolation(caller, codeRuleViolationSchema.parse(entry.payload)) }
+          ? { kind: "violation" as const, violation: codeRuleViolationSchema.parse(entry.payload) }
           : { kind: "failure" as const, failure: auditFailureSchema.parse(entry.payload) }),
         total: page.total,
       };
@@ -552,10 +478,7 @@ export const operations: readonly Operation[] = [
     summary: "List durable audit history, filtered independently by session, status, scope, or mode.",
     query: auditQuerySchema.extend(repositoryFilter),
     output: z.object({ audits: z.array(auditRecordSchema), total: z.number().int().nonnegative() }),
-    handler: (stores, input, caller) => {
-      const page = stores.audits.list(auditQuery(input), historyScope(stores, caller, input.repository));
-      return caller.kind === "person" ? page : { ...page, audits: page.audits.map(audit => ({ ...audit, violations: audit.violations.map(violation => agentViolation(caller, violation)) })) };
-    },
+    handler: (stores, input) => stores.audits.list(auditQuery(input), historyIds(stores, input.repository)),
   }),
   defineOperation({
     id: "violations_list",
@@ -571,18 +494,18 @@ export const operations: readonly Operation[] = [
       ...repositoryFilter,
     }).strict(),
     output: z.object({ total: z.number().int().nonnegative(), violations: z.array(violationRecordSchema), nextCursor: nextCursorSchema }),
-    handler: (stores, input, caller) => {
+    handler: (stores, input) => {
       const page = stores.audits.listViolationHistory({
         since: input.since,
         ...(input.limit === undefined ? {} : { limit: input.limit }),
         ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
         ...(input.ruleId === undefined ? {} : { ruleId: input.ruleId }),
         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
-      }, historyScope(stores, caller, input.repository));
+      }, historyIds(stores, input.repository));
       return {
         total: page.total,
-        violations: page.violations.map(({ violation: found, sessionId, auditId, at, host }) => {
-          const { id, ruleId, clauseId, code, mode, message, path, span, fix } = agentViolation(caller, found);
+        violations: page.violations.map(({ violation, sessionId, auditId, at, host }) => {
+          const { id, ruleId, clauseId, code, mode, message, path, span, fix } = violation;
           return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host };
         }),
         nextCursor: page.nextCursor,
@@ -609,11 +532,11 @@ export const operations: readonly Operation[] = [
       total: z.number().int().nonnegative(),
       nextCursor: nextCursorSchema,
     }),
-    handler: (stores, input, caller) => stores.reader.sessionPage({
+    handler: (stores, input) => stores.reader.sessionPage({
       limit: input.limit ?? PAGE_LIMIT,
       ...(input.since === undefined ? {} : { since: input.since }),
       ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-    }, historyScope(stores, caller, input.repository)),
+    }, historyIds(stores, input.repository)),
   }),
   defineOperation({
     id: "sessions_get",
@@ -628,9 +551,9 @@ export const operations: readonly Operation[] = [
         codeRulesPendingBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's code rules were running."),
       }).describe("Over the whole transcript, however much of it a reader has loaded."),
     }),
-    handler: (stores, input, caller) => {
-      const response = sessionResponse(stores, caller, input.sessionId);
-      if (response === null) throw sessionNotFound(input.sessionId);
+    handler: (stores, input) => {
+      const response = sessionResponse(stores, input.sessionId);
+      if (response === null) throw new ApiError(404, "session-not-found", `session ${input.sessionId} does not exist`);
       return { ...response, gaps: stores.reader.gaps(input.sessionId) };
     },
   }),
@@ -638,7 +561,7 @@ export const operations: readonly Operation[] = [
     id: "session_events",
     method: "GET",
     path: "/api/sessions/{sessionId}/events",
-    summary: `Page through one session's transcript events in sequence order, at most ${SESSION_EVENT_PAGE_LIMIT} per page: forward from \`after\`, or backward from \`before\` (the latest page is before a sequence past the end). A coding agent gets every tool output withheld, the input of a call that names a hidden or secret-like path, and the payload of an event kind Rerail does not know.`,
+    summary: `Page through one session's transcript events in sequence order, at most ${SESSION_EVENT_PAGE_LIMIT} per page: forward from \`after\`, or backward from \`before\` (the latest page is before a sequence past the end).`,
     params: sessionId,
     query: z.object({
       after: countParameter.optional().describe("Return events with a sequence strictly greater than this value."),
@@ -650,18 +573,15 @@ export const operations: readonly Operation[] = [
       nextAfter: z.number().int().nonnegative(),
       pageLimit: z.literal(SESSION_EVENT_PAGE_LIMIT),
     }),
-    handler: (stores, input, caller) => {
-      guardSession(stores, caller, input.sessionId);
+    handler: (stores, input) => {
       const page = stores.reader.events(input.sessionId, {
         ...(input.after === undefined ? {} : { after: input.after }),
         ...(input.before === undefined ? {} : { before: input.before }),
         ...(input.limit === undefined ? {} : { limit: input.limit }),
       });
       const last = page.at(-1);
-      // A call's paths are judged in the session's folder too, where a file that links to a secret counts as one.
-      const cwd = caller.kind === "person" ? undefined : stores.reader.session(input.sessionId)?.cwd;
       return {
-        events: caller.kind === "person" ? [...page] : page.map(event => ({ ...event, payload: agentTranscriptPayload(event.kind, event.payload, cwd) })),
+        events: [...page],
         nextAfter: last === undefined ? input.after ?? 0 : last.sequence,
         pageLimit: SESSION_EVENT_PAGE_LIMIT as typeof SESSION_EVENT_PAGE_LIMIT,
       };
@@ -674,10 +594,7 @@ export const operations: readonly Operation[] = [
     summary: "List the external references (branch, pull request, ticket) linked to a session.",
     params: sessionId,
     output: z.object({ workLinks: z.array(workLinkRecordSchema) }),
-    handler: (stores, input, caller) => {
-      guardSession(stores, caller, input.sessionId);
-      return { workLinks: [...stores.reader.workLinks(input.sessionId)] };
-    },
+    handler: (stores, input) => ({ workLinks: [...stores.reader.workLinks(input.sessionId)] }),
   }),
   defineOperation({
     id: "work_links_add",
@@ -687,8 +604,7 @@ export const operations: readonly Operation[] = [
     params: sessionId,
     body: workLinkInputSchema,
     output: z.object({ workLinks: z.array(workLinkRecordSchema) }),
-    handler: (stores, input, caller) => {
-      guardSession(stores, caller, input.sessionId);
+    handler: (stores, input) => {
       const store = stores.sessionStore();
       store.linkWork({
         sessionId: input.sessionId,

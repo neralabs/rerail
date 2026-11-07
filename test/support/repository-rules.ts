@@ -14,16 +14,12 @@ import {
   type RuleDocument,
   ruleDocumentDigest,
   stableJsonText,
-  approve,
-  ruleSubject,
 } from "../../src/engine/index.js";
 import { setRepositoryStarted } from "../../src/runtime/index.js";
 
 export interface TestRepositoryRules {
-  /** Stored in the library, approved as a person would (see `approve`), and added to the repository. */
+  /** Stored in the library and added to the repository. */
   readonly library?: readonly RuleDocument[];
-  /** Leave the library rules waiting for approval, running in Log, as an agent's rule is until a person approves it. */
-  readonly approve?: boolean;
   /** By Rerail rule ids added to the repository on their own. */
   readonly rerailRules?: readonly string[];
   readonly packs?: readonly string[];
@@ -47,10 +43,7 @@ export function setUpTestRepository(
     const ruleCatalog = loadRuleCatalog();
     const { repositoryKey } = recordCheckout(database, workspace);
     const folder = rules.folder ?? "";
-    for (const document of rules.library ?? []) {
-      const stored = upsertLibraryRule(database, ruleCatalog, document.rule, document.kind);
-      if (rules.approve !== false) approve(database, ruleSubject(document.rule.id, stored.payloadHash));
-    }
+    for (const document of rules.library ?? []) upsertLibraryRule(database, ruleCatalog, document.rule, document.kind);
     setUpRepository(database, repositoryKey, {
       packs: (rules.packs ?? []).map(packId => ({ packId, folder })),
       rules: [

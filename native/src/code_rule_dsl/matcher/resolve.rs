@@ -186,7 +186,7 @@ fn is_strict<D: Doc>(options: &LanguageOptions, node: &Node<'_, D>) -> bool {
     if !options.strict_mode() {
         return false;
     }
-    if options.all_strict(file_source_type_for(options)) {
+    if options.all_strict(file_source_type()) {
         return true;
     }
     std::iter::once(node.clone())
@@ -256,7 +256,7 @@ impl Resolves {
             let text = node.text();
             return (self.global_any || self.globals.contains(text.as_ref()))
                 && self.options.as_ref().is_none_or(|options| {
-                    options.declares_in(&text, VALUE, None, file_source_type_for(options))
+                    options.declares_in(&text, VALUE, None, file_source_type())
                 });
         }
         if self.seen_before {
@@ -294,11 +294,12 @@ impl Resolves {
         let chain = (!self.imports.is_empty() || self.import_any)
             && (S::IMPORT_PATHS || self.import_chain(node).is_some());
         let text = name_in(self.language, node.text());
-        // A `/* global */` comment makes a name a global variable of that name, never one of the
-        // listed names: the list decides, and an unlisted name needs no table.
-        let global = (!self.globals.is_empty() || self.global_any)
+        // Without language options only a comment can make another name global; without the
+        // opt-in no table is needed.
+        let unlisted = self.directives && self.options.is_none();
+        let global = (!self.globals.is_empty() || unlisted || self.global_any)
             && !self.attribute_kinds.contains(&kind)
-            && (self.global_any || self.globals.contains(text.as_ref()))
+            && (unlisted || self.global_any || self.globals.contains(text.as_ref()))
             && (!self.declared
                 || self
                     .python
@@ -460,9 +461,11 @@ impl Resolves {
     /// strict; never in a module, where it is `undefined`. With `sloppyFunctions`, also in an
     /// ordinary function that is not strict.
     fn is_global_this<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        let Some(options) = self.options.as_ref().filter(|options| {
-            options.source_type(file_source_type_for(options)) != SourceType::Module
-        }) else {
+        let Some(options) = self
+            .options
+            .as_ref()
+            .filter(|options| options.source_type(file_source_type()) != SourceType::Module)
+        else {
             return false;
         };
         let mut child = node.clone();
@@ -496,7 +499,7 @@ impl Resolves {
         let Some(options) = self
             .options
             .as_ref()
-            .filter(|options| options.global_top_level(file_source_type_for(options)))
+            .filter(|options| options.global_top_level(file_source_type()))
         else {
             return false;
         };
@@ -532,10 +535,9 @@ impl Resolves {
                 }
                 "for_in_statement" => {
                     blocks
-                        && ancestor.field("kind").is_some_and(|kind| {
-                            // `await using`'s kind starts with `await`.
-                            matches!(kind.kind().as_ref(), "let" | "const" | "using" | "await")
-                        })
+                        && ancestor
+                            .field("kind")
+                            .is_some_and(|kind| matches!(kind.kind().as_ref(), "let" | "const"))
                 }
                 _ => false,
             })
@@ -546,7 +548,7 @@ impl Resolves {
             && self
                 .options
                 .as_ref()
-                .is_some_and(|options| options.global_top_level(file_source_type_for(options)))
+                .is_some_and(|options| options.global_top_level(file_source_type()))
             && let Some(reference) = table.reference(&node.range())
             && let Some((0, _)) = table.resolve_lexical_scope(reference, name)
         {
@@ -570,20 +572,18 @@ impl Resolves {
         if let Some(options) = &self.options {
             let directives = self.directives.then_some(&table.directives);
             return table.reference(&node.range()).is_some_and(|reference| {
-                options.declares_in(
-                    name,
-                    reference.spaces,
-                    directives,
-                    file_source_type_for(options),
-                ) && table
-                    .resolve(reference, name)
-                    .is_none_or(|binding| !binding.shadows())
+                options.declares_in(name, reference.spaces, directives, file_source_type())
+                    && table
+                        .resolve(reference, name)
+                        .is_none_or(|binding| !binding.shadows())
             });
         }
-        // Without options the list alone names the globals (checked above); a comment declaring
-        // a name only makes it global under that name, and `off` removes it.
-        let listed = self.globals.contains(name)
-            && !(self.directives && table.directives.off.contains(name));
+        let listed = if self.directives {
+            (self.globals.contains(name) || table.directives.declared.contains(name))
+                && !table.directives.off.contains(name)
+        } else {
+            true
+        };
         listed
             && table.reference(&node.range()).is_some_and(|reference| {
                 table
@@ -894,7 +894,7 @@ struct FileScopes {
     failed_within: usize,
     charged: Vec<usize>,
     /// The clauses that paid for a table's usage index, with the table (by address).
-    usage_charged: Vec<(usize, usize)>,
+    usage_charged: Vec<(usize, usize, bool)>,
     /// Whether the file has syntax errors: its bindings are then not all known, so no name is
     /// read as an unshadowed builtin for a value.
     has_errors: bool,
@@ -903,9 +903,6 @@ struct FileScopes {
     /// The ECMA file's module system for queries that leave `sourceType` to it
     /// (`SourceType::of_file`); `None` until its syntax decides it (`decide_file_source_type`).
     source_type: Option<SourceType>,
-    /// The ECMA file's module system by its extension and package type alone, for queries that
-    /// read it (`moduleSystem: "package-type"`, `SourceType::by_package_type`).
-    package_type_source_type: SourceType,
     /// The ECMA file's nearest `package.json`, which decides its JSX runtime where its text does
     /// not (`decide_file_jsx_runtime`).
     package: Option<Arc<Manifest>>,
@@ -917,7 +914,7 @@ struct FileScopes {
     structures: HashMap<(usize, Equality), Rc<Option<Vec<Tok>>>>,
     /// Literals parsed so far, by node and grammar (`parse`); `None` is a literal whose value is
     /// not known.
-    parses: HashMap<(usize, Grammar), Option<Arc<SubTree>>>,
+    parses: HashMap<(usize, Grammar, String), Option<Arc<SubTree>>>,
     /// Strings parsed so far, by node, reading and grammar (`formatArgs` over a PHP format that
     /// is no literal); `None` is a parse whose value is not known.
     value_parses: HashMap<(ValueKey, Grammar), Option<Arc<SubTree>>>,
@@ -984,7 +981,6 @@ impl FileScopeSlot {
             has_errors,
             stub: false,
             source_type: Some(SourceType::Module),
-            package_type_source_type: SourceType::Module,
             package: None,
             jsx_runtime: None,
             values: HashMap::new(),
@@ -1016,13 +1012,11 @@ impl FileScopeSlot {
     pub(crate) fn file(self, file: &FileInput) -> Self {
         let stub = is_stub_file(&file.path);
         let source_type = SourceType::of_file(&file.language, &file.path, file.package_type());
-        let package_type_source_type = SourceType::by_package_type(&file.path, file.package_type());
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
                 slot.stub = stub;
                 slot.path = Some(Arc::from(file.path.as_str()));
                 slot.source_type = source_type;
-                slot.package_type_source_type = package_type_source_type;
                 slot.package.clone_from(&file.package);
             }
         });
@@ -1051,14 +1045,8 @@ pub(crate) fn file_module() -> Option<Arc<ModulePath>> {
 }
 
 /// The host's path of the file being matched, if it gave one.
-fn file_path() -> Option<Arc<str>> {
+pub(in crate::code_rule_dsl) fn file_path() -> Option<Arc<str>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.path.clone()))
-}
-
-/// The host's path of the file being matched (workspace-relative), if it gave one: where
-/// `importTarget` resolves from.
-pub(crate) fn matched_file_path() -> Option<Arc<str>> {
-    file_path()
 }
 
 /// The module system of the file being matched, for queries that leave `sourceType` to it: its
@@ -1126,9 +1114,6 @@ impl<'a, 'r, D: Doc> FileGates<'a, 'r, D> {
     pub(crate) fn admit(&self, matcher: &GrammarMatcher) -> bool {
         let file = self.file;
         let source_type = matcher.source_types.as_ref().map(|_| {
-            if matcher.package_type_gate {
-                return SourceType::by_package_type(&file.path, file.package_type());
-            }
             *self.source_type.get_or_init(|| {
                 SourceType::of_file(&file.language, &file.path, file.package_type())
                     .unwrap_or_else(|| syntax_source_type(&self.root))
@@ -1148,29 +1133,11 @@ impl<'a, 'r, D: Doc> FileGates<'a, 'r, D> {
     }
 }
 
-/// The module system the file being matched has by its extension and package type
-/// (`SourceType::by_package_type`); ESLint's `module` outside a file evaluation.
-pub(super) fn file_package_type_source_type() -> SourceType {
+/// The module system `decide_file_source_type` gave the file being matched.
+pub(crate) fn file_source_type() -> SourceType {
     FILE_SCOPES.with_borrow(|slot| {
         slot.as_ref()
-            .map_or(SourceType::Module, |slot| slot.package_type_source_type)
-    })
-}
-
-/// The module system the file being matched has for a query with `options` that leaves
-/// `sourceType` to it: the one its extension and package type give it where the query reads that
-/// (`moduleSystem: "package-type"`), else the one `decide_file_source_type` gave it. ESLint's
-/// `module` outside a file evaluation.
-pub(crate) fn file_source_type_for(options: &LanguageOptions) -> SourceType {
-    FILE_SCOPES.with_borrow(|slot| {
-        slot.as_ref()
-            .and_then(|slot| {
-                if options.package_type_module_system {
-                    Some(slot.package_type_source_type)
-                } else {
-                    slot.source_type
-                }
-            })
+            .and_then(|slot| slot.source_type)
             .unwrap_or(SourceType::Module)
     })
 }
@@ -1465,11 +1432,11 @@ pub(crate) fn file_sqlfluff(read: impl FnOnce() -> SqlfluffIndex) -> Rc<Sqlfluff
 }
 
 /// A literal parsed earlier in this file: `Some(None)` when its value is not known.
-pub(super) fn memoized_parse(key: &(usize, Grammar)) -> Option<Option<Arc<SubTree>>> {
+pub(super) fn memoized_parse(key: &(usize, Grammar, String)) -> Option<Option<Arc<SubTree>>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.parses.get(key).cloned()))
 }
 
-pub(super) fn memoize_parse(key: (usize, Grammar), tree: Option<Arc<SubTree>>) {
+pub(super) fn memoize_parse(key: (usize, Grammar, String), tree: Option<Arc<SubTree>>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
             slot.parses.insert(key, tree);
@@ -1512,7 +1479,7 @@ pub(super) fn unshadowed_global<D: Doc>(
     }
     if python.is_some_and(|python| !python.declares(name))
         || options.is_some_and(|options| {
-            !options.declares_in(name, VALUE | TYPE, None, file_source_type_for(options))
+            !options.declares_in(name, VALUE | TYPE, None, file_source_type())
         })
     {
         return Some(false);
@@ -1604,28 +1571,56 @@ pub(super) fn file_usage<D: Doc>(
     node: &Node<'_, D>,
     table: &Arc<ScopeTable>,
 ) -> Option<Arc<Usage>> {
+    file_binding_index(node, table, false)
+}
+
+pub(super) fn file_declaration_sites<D: Doc>(
+    node: &Node<'_, D>,
+    table: &Arc<ScopeTable>,
+) -> Option<Arc<Usage>> {
+    file_binding_index(node, table, true)
+}
+
+fn file_binding_index<D: Doc>(
+    node: &Node<'_, D>,
+    table: &Arc<ScopeTable>,
+    declarations: bool,
+) -> Option<Arc<Usage>> {
     if UTIL_EXCEEDED.get().is_some() {
         return None;
     }
     let steps = UTIL_STEPS_LEFT.get();
-    let (usage, built) = match table.usage.get() {
+    let cache = if declarations {
+        &table.declaration_sites
+    } else {
+        &table.usage
+    };
+    let build = || {
+        if declarations {
+            Usage::declarations(table, steps, &budget::matcher_budget_exhausted)
+        } else {
+            Usage::build(
+                table,
+                &node.root().root(),
+                steps,
+                &budget::matcher_budget_exhausted,
+            )
+        }
+    };
+    let (usage, built) = match cache.get() {
         Some(usage) => (Arc::clone(usage), false),
-        None => match Usage::build(
-            table,
-            &node.root().root(),
-            steps,
-            &budget::matcher_budget_exhausted,
-        ) {
-            Ok(usage) => (
-                Arc::clone(table.usage.get_or_init(|| Arc::new(usage))),
-                true,
-            ),
+        None => match build() {
+            Ok(usage) => (Arc::clone(cache.get_or_init(|| Arc::new(usage))), true),
             Err(_) => {
                 return exceed();
             }
         },
     };
-    let key = (CURRENT_CLAUSE.get(), Arc::as_ptr(table) as usize);
+    let key = (
+        CURRENT_CLAUSE.get(),
+        Arc::as_ptr(table) as usize,
+        declarations,
+    );
     let charged = FILE_SCOPES.with_borrow_mut(|slot| {
         let Some(slot) = slot else {
             return false;

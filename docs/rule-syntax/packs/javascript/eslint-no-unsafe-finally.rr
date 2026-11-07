@@ -1,0 +1,55 @@
+.policy "eslint-no-unsafe-finally" revision 4
+.description "Don't return, throw, break or continue out of a finally block; it silently overrides the result or exception of the try and catch blocks."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   jump, label_of, loop_kind
+
+// ESLint's no-unsafe-finally: a return, throw, break or continue that leaves a `finally` block. ESLint climbs
+// from the statement and stops at a function or class (the jump cannot leave it), and for a plain `break` also
+// at a loop or switch, for a plain `continue` at a loop (they are what it leaves). A labelled jump climbs to the
+// function, as ESLint 10 does (9.39 stopped a labelled `continue` at a loop). A finally block on the way is
+// reported, unless the jump's label belongs to a statement inside that block. No options.
+//   try {} finally { return 1; }                       → reported
+//   try {} finally { for (;;) break; }                 fine: the break leaves the loop
+//   a: try {} finally { break a; }                     → reported
+//   try {} finally { a: { break a; } }                 fine: a is inside the finally
+//   a: while (x) try {} finally { while (y) continue a; }   → reported
+//   try {} finally { function f() { return 1; } }      fine
+.violation no_unsafe_finally(at: node, w: symbol, how: symbol) code "no-unsafe-finally"
+    "Move this {w} out of the finally block; it {how} the result or exception of the try and catch blocks."
+    suppress eslint "no-unsafe-finally"
+    suppress oxlint "no-unsafe-finally"
+    suppress biome "lint/correctness/noUnsafeFinally"
+no_unsafe_finally(j, w, h) :- exit(j, w), says(w, h), stop_at(j, s), nearest(j, f, "finally_clause"), within(f, s),
+    !label_kept(j, f).
+
+// exit(j, w): the four statements. stop_at(j, s): the nearest node j's climb stops at.
+.decl exit(j: node, w: symbol)
+exit(j, "return") :- kind(j, "return_statement").
+exit(j, "throw") :- kind(j, "throw_statement").
+exit(j, w) :- jump(j, w).
+.decl stop_at(j: node, s: node)
+stop_at(j, s) :- exit(j, w), (w = "return" ; w = "throw" ; field(j, "label", _)), nearest(j, s, fn_stop).
+stop_at(j, s) :- jump(j, "break"), !field(j, "label", _), nearest(j, s, break_stop).
+stop_at(j, s) :- jump(j, "continue"), !field(j, "label", _), nearest(j, s, continue_stop).
+// label_kept(j, f): `break a` / `continue a` where `a:` labels a statement inside finally block f.
+.decl label_kept(j: node, f: node)
+label_kept(j, f) :- field(j, "label", n), text(n, x), inside(j, l, "labeled_statement"), label_of(l, x), within(l, f),
+    kind(f, "finally_clause").
+
+// The sentinels, ESLint's three regexes over ESTree types, as tree-sitter kinds.
+.decl fn_stop(k: symbol)  // Program, functions, classes
+fn_stop("program"). fn_stop("class_declaration"). fn_stop("class"). fn_stop("abstract_class_declaration").
+fn_stop(k) :- function_kind(k).
+.decl continue_stop(k: symbol)  // and loops
+continue_stop(k) :- fn_stop(k).
+continue_stop(k) :- loop_kind(k).
+.decl break_stop(k: symbol)  // and switch
+break_stop(k) :- continue_stop(k).
+break_stop("switch_statement").
+
+.decl says(w: symbol, how: symbol)
+says("return", "overrides"). says("throw", "replaces"). says("break", "discards"). says("continue", "discards").

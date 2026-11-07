@@ -119,6 +119,10 @@ pub(super) fn profile_result(
     }
     let mut value: Value = serde_json::from_str(&result.text).map_err(json_error)?;
     value.as_object_mut().expect("workspace result").insert(
+        "phaseClock".to_owned(),
+        crate::code_rule_dsl::phase_clock::snapshot(),
+    );
+    value.as_object_mut().expect("workspace result").insert(
         "workspaceProfile".to_owned(),
         json!({
             "lineIndexNanoseconds": metrics.line_index_nanoseconds,
@@ -243,14 +247,16 @@ pub(super) fn evicted_file_states(
         .flat_map(|(_, key, stamped)| std::iter::once(*key).chain(*stamped))
         .collect::<Vec<_>>();
 
+    let catalog = candidate_catalog(&state.code_rules)?;
     #[cfg(test)]
-    if super::TEST_EVICTED_READ_FAILURE.get() {
-        return Err(invalid("injected evicted-result storage failure"));
-    }
-    let results = storage
-        .store
-        .local_check_results_by_key(&keys, candidate_catalog(&state.code_rules)?)
-        .map_err(|error| invalid(error.to_string()))?;
+    let injected = super::TEST_EVICTED_READ_FAILURE.get();
+    #[cfg(not(test))]
+    let injected = false;
+    // A store read that fails reports each file's clauses as unavailable, as `api.rs` does for a
+    // resident file: the stored results remain, so a later read answers them (O22).
+    let results = (!injected)
+        .then(|| storage.store.local_check_results_by_key(&keys, catalog).ok())
+        .flatten();
     let mut candidate_sets = CandidateSets::new();
     evicted
         .into_iter()
@@ -282,6 +288,17 @@ pub(super) fn evicted_file_states(
                     file.witnesses.insert(id, Vec::new());
                 }
             }
+            let Some(results) = &results else {
+                for &id in file.candidates.regex.iter().chain(&file.candidates.ast) {
+                    if !file.witnesses.contains_key(&id) {
+                        file.failures
+                            .insert(id, ("adapter-error", super::STORED_RESULT_UNAVAILABLE));
+                        file.unstored.insert(id);
+                    }
+                }
+                file.transient_failure = true;
+                return Ok(file);
+            };
             let mut persisted = results
                 .get(&key)
                 .map_or_else(Vec::new, |results| results.to_vec());
@@ -312,8 +329,10 @@ fn reporting_ast_candidates<'a>(
 ) -> impl Iterator<Item = ClauseId> + 'a {
     file.witnesses.keys().copied().filter(|id| {
         matches!(
-            code_rules[id.0].clauses[id.1].kind,
-            ClauseKind::Forbid(Query::Ast { .. })
+            &code_rules[id.0].clauses[id.1].kind,
+            ClauseKind::Forbid(Query::Ast { matchers, .. })
+                if crate::code_rule_dsl::eval::grammar_matcher(matchers, &file.input)
+                    .is_some_and(|grammar| grammar.invalid_syntax.is_none())
         )
     })
 }
@@ -439,11 +458,25 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
             }
         }
     }
+    let mut counts = std::collections::HashMap::<&str, usize>::new();
+    for (rule, _, _) in &witnesses {
+        *counts.entry(rule.id.as_str()).or_default() += 1;
+    }
+    for (&index, global) in &state.global_results {
+        *counts
+            .entry(state.code_rules[index].id.as_str())
+            .or_default() += global.violations.len();
+    }
+    let allowed = |rule: &crate::code_rule_dsl::model::CompiledCodeRule| {
+        rule.report_count_gt
+            .is_none_or(|maximum| counts.get(rule.id.as_str()).copied().unwrap_or(0) > maximum)
+    };
     // Each witness's violation is rendered and serialized on the worker pool, one at a time, so the
     // index never holds the violations as JSON values.
     let mut entries = WORK_POOL.install(|| {
         witnesses
             .par_iter()
+            .filter(|&&(rule, _, _)| allowed(rule))
             .map(|&(code_rule, clause, witness)| {
                 page_entry(&violation_from_witness(code_rule, clause, witness.clone()))
             })
@@ -451,7 +484,9 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
     })?;
     for (&index, global) in &state.global_results {
         for violation in &global.violations {
-            entries.push(page_entry(violation)?);
+            if allowed(&state.code_rules[index]) {
+                entries.push(page_entry(violation)?);
+            }
         }
         for item in &global.failures {
             let mut item = item.clone();
@@ -549,6 +584,7 @@ impl Rendered {
                     + violation.path.capacity()
                     + violation.code.capacity()
                     + violation.id.capacity()
+                    + violation.rule_id.capacity()
                     + violation.json.capacity()
             })
             .sum()
@@ -557,6 +593,7 @@ impl Rendered {
 
 /// One violation serialized, with the fields results are ordered by (`result_order`).
 pub(super) struct RenderedViolation {
+    rule_id: String,
     path: String,
     start: u64,
     code: String,
@@ -570,6 +607,7 @@ impl RenderedViolation {
         let (path, start, code, id) = result_order(violation);
         let json = serde_json::to_string(violation).map_err(json_error)?;
         Ok(Self {
+            rule_id: violation["ruleId"].as_str().unwrap_or_default().to_owned(),
             path: path.to_owned(),
             start,
             code: code.to_owned(),
@@ -705,7 +743,15 @@ pub(super) fn serialize_result(
         clauses: reported_clauses(state),
         ..Evaluation::default()
     };
-    let delta = state.storage.is_some() && !replaced_paths.is_empty() && !complete;
+    // Crossing a rule-wide ceiling changes reports in unchanged and evicted files too.
+    // A complete result replaces the host's entire previous result at either transition.
+    let delta = state.storage.is_some()
+        && !replaced_paths.is_empty()
+        && !complete
+        && state
+            .code_rules
+            .iter()
+            .all(|rule| rule.report_count_gt.is_none());
     let code_rules = {
         let mut hasher = DefaultHasher::new();
         for code_rule in &state.code_rules {
@@ -805,6 +851,27 @@ pub(super) fn serialize_result(
         .flat_map(Rendering::violations)
         .chain(&global_violations)
         .collect::<Vec<_>>();
+    if state
+        .code_rules
+        .iter()
+        .any(|rule| rule.report_count_gt.is_some())
+    {
+        let mut counts = std::collections::HashMap::<&str, usize>::new();
+        for violation in &violations {
+            *counts.entry(violation.rule_id.as_str()).or_default() += 1;
+        }
+        let blocked = state
+            .code_rules
+            .iter()
+            .filter(|rule| {
+                rule.report_count_gt.is_some_and(|maximum| {
+                    counts.get(rule.id.as_str()).copied().unwrap_or(0) <= maximum
+                })
+            })
+            .map(|rule| rule.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        violations.retain(|violation| !blocked.contains(violation.rule_id.as_str()));
+    }
     if !ordered || !global_violations.is_empty() {
         #[cfg(test)]
         count(&RESULT_SORTS, 1);
@@ -898,7 +965,6 @@ mod tests {
             workspace_id,
             snapshot_id: snapshot,
             owner,
-            secret_names: Default::default(),
             _maintenance: None,
         });
         let compiled =
