@@ -1525,23 +1525,29 @@ debug build, load about 7.
    index on those columns, built lazily like `Stored::index` and keyed by the column set. `estimated_matches`
    comes from distinct counts (runs of the sorted index). This matters where SQL still runs: strata the native
    engine declines (`@pkg_up`), and `INSERT … SELECT` strata.
+   **Since 1:** in `calls.rr`'s cross-file part only `type_first` (a `min` aggregate, which has no native step)
+   runs as SQL, at about 0.1 s on 172 files. Whether to build the composite lookup, or instead give `min`/`max`
+   and `@pkg_up` native steps so SQL is never on a hot path, is still to decide.
 3. **A kind test in a recursive step. Gone with 1.** `kind(n, "assignment")` with `n` bound cost about 18k VM
    steps per delta row. That is the SQL path of 2: `kind` is a view over `node` (a `Stored` source), and
    `best_index` took the lookup by kind. The exact constraint SQLite offered first was not traced. With 1, the
    program from before `pass(n, c)` no longer pays it: those rules run as native joins.
-4. **Probes start from seed estimates in every round. Open.** Recursive relations are priced at their seed rules'
+4. **Probes start from seed estimates in every round. Fixed** (`a1d580128`, `a450fc0f2`; about 3%, near noise,
+   since the native engine's replans already correct the first waves). Recursive relations are priced at their seed rules'
    estimated rows, and derived columns have no distinct counts. The probes are replanned from live fanout after
    the first waves, which are the waves with the largest delta. Plans and statistics are not kept between rounds:
    the native component replans in every round (`replans=6` over 6 loops). On the SQL path, the bad `pv`-before-`retval`
    order ran in the first 2 waves of each of the 6 rounds (12 runs, 169M VM steps).
    **Solution:** price round r's recursive relations by round r − 1's measured rows and distinct counts (the
    `__prev` totals are already measured), and keep each probe's replanned order for the next round.
-5. **Every round reruns the whole cross-file part. Open.** `run_rounds` runs the bounded program in full each
+5. **Every round reruns the whole cross-file part. Fixed** (`a450fc0f2`): `cross_rounds::cone_split`. Same 13
+   outputs; utils + template 2.67 → 2.24 s, utils + db 17.4 → 15.4 s. The gain is below the estimate, because
+   `call_target` and the relations next to it are read by hop relations and stay in the cone. `run_rounds` runs the bounded program in full each
    round. On 172 files, the strata no hop relation reads (the type relations, `call_target`, the outputs) take
    about 6.3 of 18.1 s over 6 rounds.
    **Solution:** split the bounded program at the hops' upstream cone. Rounds run only the cone. After the last
    round, the rest runs once over the cone's held relations, bound as inputs as the cross part binds the exports.
    This saves about 5 s (29%) here.
 
-**Closure:** 2, 4 and 5 fixed, and `calls.rr`'s rewrites (`alook`, `pass`, `fv`, `fret`) checked against the
+**Closure:** 2 decided and done, and `calls.rr`'s rewrites (`alook`, `pass`, `fv`, `fret`) checked against the
 plain rules on the same slices.
