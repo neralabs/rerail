@@ -565,7 +565,7 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
 
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
 /// directory; `RERAIL_TAPE_CACHE=off` keeps none.
-fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
+pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
     let path = match std::env::var("RERAIL_TAPE_CACHE") {
         Ok(v) if v == "off" => return Ok(None),
         Ok(v) => std::path::PathBuf::from(v),
@@ -667,15 +667,17 @@ pub(crate) fn run_with_options(
     // And the values derived from them (`logic::derived`): each chunk's join specs.
     let _derived = crate::code_rule_dsl::logic::derived::Keep::start();
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
-    let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
+    // The program's `.language`, which picks the corpus's files: `.rr` files only when it names `rr` (decision 0061).
+    let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
+    let (docs, first, label): (Vec<(i64, String)>, HashMap<i64, i64>, &'static str) = match &t {
         Some(t) => {
             let docs: Vec<(i64, String)> = t.prepare("SELECT d, path FROM doc ORDER BY d")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
             let first = t.prepare("SELECT d, min(n) FROM node GROUP BY d")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-            let rust = docs.first().is_some_and(|(_, p)| p.ends_with(".rs"));
-            (docs, first, rust)
+            let label = if docs.first().is_some_and(|(_, p)| p.ends_with(".rs")) { "rust" } else { "python" };
+            (docs, first, label)
         }
         None => {
-            let (files, rust) = if let Some(supplied) = options.get("inputFiles") {
+            let (files, label) = if let Some(supplied) = options.get("inputFiles") {
                 let supplied = supplied.as_array().ok_or_else(|| Error::Plan("inputFiles must be a list of relative document paths".to_owned()))?;
                 let files = supplied.iter().map(|value| {
                     let path = value.as_str().ok_or_else(|| Error::Plan("inputFiles must contain strings".to_owned()))?;
@@ -684,18 +686,19 @@ pub(crate) fn run_with_options(
                     }
                     Ok(path.to_owned())
                 }).collect::<Result<Vec<_>>>()?;
-                let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"'));
-                let rust = match language {
-                    Some("python") => false,
-                    Some("rust") => true,
+                let label = match language.as_deref() {
+                    Some("python") => "python",
+                    Some("rust") => "rust",
+                    Some("rr") => "rr",
                     Some(other) => return Err(Error::Plan(format!("explicit input batch: unsupported corpus language {other:?}"))),
-                    None => files.iter().filter(|p| p.ends_with(".rs")).count() > files.len() / 2,
+                    None if files.iter().filter(|p| p.ends_with(".rs")).count() > files.len() / 2 => "rust",
+                    None => "python",
                 };
-                (files, rust)
+                (files, label)
             } else {
-                let (python, rs) = corpus_files(root)?;
-                let rust = typing.rust.unwrap_or(rs.len() > python.len());
-                (if rust { rs } else { python }, rust)
+                let found = corpus_files(root)?;
+                let label = corpus_language(language.as_deref(), typing, &found);
+                (found.of(label), label)
             };
             // Documents a rule loaded (`world`), after the corpus's own; a library stage's are only those.
             let mut files = if library_stage { Vec::new() } else { files };
@@ -706,7 +709,7 @@ pub(crate) fn run_with_options(
             }
             // A document's key is a function of its path (decision 0052), so a memoised row's node ids stay valid.
             let keys = memo::doc_keys(&files);
-            (keys.into_iter().zip(files).collect(), HashMap::new(), rust)
+            (keys.into_iter().zip(files).collect(), HashMap::new(), label)
         }
     };
     let paths: HashMap<i64, String> = docs.iter().cloned().collect();
@@ -740,8 +743,7 @@ pub(crate) fn run_with_options(
             prog.outputs.push(rel.to_owned());
         }
     }
-    let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
-    let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
+    let dialect = crate::code_rule_dsl::language::dialect_by_label(label).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
     if !dialect.built() {
         return Err(Error::Plan(format!("{label} is not in this build (its `lang-{label}` feature is off)")));
     }
@@ -1006,7 +1008,7 @@ pub(crate) fn run_with_options(
     for rel in &split.exports {
         let width = lowered.program.decls[rel].len();
         let cols: Vec<String> = (0..width).map(|i| format!("c{i}")).collect();
-        tables.push_str(&format!("CREATE TABLE x.{rel}({}, PRIMARY KEY ({})) WITHOUT ROWID;", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")));
+        tables.push_str(&format!("CREATE TABLE x.{}({}, PRIMARY KEY ({})) WITHOUT ROWID;", crate::code_rule_dsl::logic::sql::ident(rel), cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")));
     }
     tables.push_str("COMMIT;");
     db.execute_batch(&tables)?;
@@ -1240,7 +1242,7 @@ pub(crate) fn run_with_options(
                     }
                     let types: Vec<&str> = lowered.program.decls[&rel].iter().map(|(_, t)| t.as_str()).collect();
                     let marks = vec!["?"; width].join(", ");
-                    let mut insert = db.prepare_cached(&format!("INSERT OR IGNORE INTO x.{rel} VALUES ({marks})"))?;
+                    let mut insert = db.prepare_cached(&format!("INSERT OR IGNORE INTO x.{} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(&rel)))?;
                     let mut inserted = 0;
                     for row in values.chunks(width) {
                         inserted += insert.execute(rusqlite::params_from_iter(row.iter()))?;
@@ -1422,13 +1424,13 @@ pub(crate) fn run_with_options(
             let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
             if kept.contains(rel) {
                 let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM set_derived WHERE rel = ?1"), [rel])?;
+                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {cols} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::ident(rel)), [rel])?;
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
                 attribute(rel, rows.as_ref());
             } else {
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT * FROM temp.{rel}"), [])?;
-                let rows = Rows::read(&db, &format!("temp.{rel}"))?;
+                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{q} SELECT * FROM temp.{q}", q = crate::code_rule_dsl::logic::sql::ident(rel)), [])?;
+                let rows = Rows::read(&db, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
                 totals.add_rows(rel, inserted, &rows, &types);
                 attribute(rel, &rows);
             }
@@ -1758,9 +1760,10 @@ pub(crate) fn run_with_options(
 /// corpus and what it has loaded, until a round asks for nothing new, then the run proper over both.
 #[allow(clippy::too_many_arguments)]
 fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<Report> {
-    let (python, rs) = corpus_files(root)?;
-    let rust = typing.rust.unwrap_or(rs.len() > python.len());
-    let (label, corpus) = if rust { ("rust", rs) } else { ("python", python) };
+    let found = corpus_files(root)?;
+    let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"'));
+    let label = corpus_language(language, typing, &found);
+    let corpus = found.of(label);
     let corpus: BTreeSet<String> = corpus.into_iter().collect();
     let mut world = world::World::new(root, prog);
     let scratch = out.join("world");
@@ -1819,7 +1822,7 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
     let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
         component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
     } else {
-        Arc::new(Rows::read(db, rel)?)
+        Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
     };
     Ok((0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect())
 }
@@ -1875,7 +1878,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
             let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
                 component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
             } else {
-                Arc::new(Rows::read(db, rel)?)
+                Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
             };
             // Sorted and distinct once: the digest and the next round's `__prev` read them so.
             let mut held: Vec<Vec<i64>> = (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect();
@@ -2185,10 +2188,39 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
 }
 
 
-/// The corpus's files under `root`, relative and in path order: Python's (`.py`) and Rust's (`.rs`), skipping
-/// hidden directories and `target`.
-fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
-    let (mut python, mut rust) = (Vec::new(), Vec::new());
+/// A corpus's files by language: Python's, Rust's and `.rr` rule files.
+struct CorpusFiles {
+    python: Vec<String>,
+    rust: Vec<String>,
+    rr: Vec<String>,
+}
+
+impl CorpusFiles {
+    fn of(self, label: &str) -> Vec<String> {
+        match label {
+            "rust" => self.rust,
+            "rr" => self.rr,
+            _ => self.python,
+        }
+    }
+}
+
+/// The language a corpus run reads: the one its program names (`.language python`, `rust` or `rr`), else Rust or
+/// Python by `Typing::rust`, or by whichever has more files.
+fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles) -> &'static str {
+    match language {
+        Some("python") => "python",
+        Some("rust") => "rust",
+        Some("rr") => "rr",
+        _ if typing.rust.unwrap_or(found.rust.len() > found.python.len()) => "rust",
+        _ => "python",
+    }
+}
+
+/// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
+/// (`.rr`), skipping hidden directories and `target`.
+fn corpus_files(root: &Path) -> Result<CorpusFiles> {
+    let (mut python, mut rust, mut rr) = (Vec::new(), Vec::new(), Vec::new());
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))? {
@@ -2205,19 +2237,21 @@ fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
             match crate::code_rule_dsl::language::label_of_path(&relative) {
                 Some("python") => python.push(relative),
                 Some("rust") => rust.push(relative),
+                Some("rr") => rr.push(relative),
                 _ => {}
             }
         }
     }
     python.sort();
     rust.sort();
+    rr.sort();
     // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
     if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
-        for files in [&mut python, &mut rust] {
+        for files in [&mut python, &mut rust, &mut rr] {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
-    Ok((python, rust))
+    Ok(CorpusFiles { python, rust, rr })
 }
 
 /// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to

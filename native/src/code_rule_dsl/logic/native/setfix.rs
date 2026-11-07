@@ -318,7 +318,7 @@ use crate::code_rule_dsl::logic::profile::{Unit, work as charge};
 
 fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> Result<Vec<Vec<i64>>> {
     let cols: Vec<String> = (0..types.len()).map(|i| format!("c{i}")).collect();
-    let mut st = conn.prepare(&format!("SELECT {} FROM {table}", cols.join(", ")))?;
+    let mut st = conn.prepare(&format!("SELECT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::table(table)))?;
     let mut rows = st.query([])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
@@ -602,7 +602,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             while id < rel.n {
                 let end = (id + per).min(rel.n);
                 let holes = vec![format!("({})", vec!["?"; rel.k].join(", ")); end - id].join(", ");
-                conn.execute(&format!("INSERT INTO {} VALUES {holes}", rel.table), rusqlite::params_from_iter(rel.data[id * rel.k..end * rel.k].iter()))?;
+                conn.execute(&format!("INSERT INTO {} VALUES {holes}", crate::code_rule_dsl::logic::sql::table(&rel.table)), rusqlite::params_from_iter(rel.data[id * rel.k..end * rel.k].iter()))?;
                 new_rows += end - id;
                 id = end;
             }
@@ -988,7 +988,7 @@ pub fn materialize(conn: &Connection, table: &str) -> Result<i64> {
     }
     // One statement: the rows come from `set_derived` (a scan of the native relation), not one INSERT each.
     let cols: Vec<String> = (0..rel.k).map(|i| format!("c{i}")).collect();
-    conn.execute(&format!("INSERT INTO {table} SELECT {} FROM set_derived WHERE rel = ?1", cols.join(", ")), [table])?;
+    conn.execute(&format!("INSERT INTO {} SELECT {} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::table(table), cols.join(", ")), [table])?;
     Ok((rel.len() - rel.stored) as i64)
 }
 
@@ -1175,7 +1175,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
             return Ok(rel);
         }
     }
-    let mut st = conn.prepare(&format!("SELECT {cols} FROM {table}"))?;
+    let mut st = conn.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::table(&table)))?;
     let mut q = st.query([])?;
     let (mut rows, mut n) = (Vec::new(), 0);
     while let Some(r) = q.next()? {
@@ -1298,7 +1298,7 @@ impl Stored {
         if missing.is_empty() { return true; }
         let names: Vec<&str> = missing.iter().map(|&c| self.columns[c].as_str()).collect();
         let read = || -> rusqlite::Result<Option<Vec<Vec<i64>>>> {
-            let mut st = conn.prepare(&format!("SELECT {} FROM {table} NOT INDEXED", names.join(", ")))?;
+            let mut st = conn.prepare(&format!("SELECT {} FROM {} NOT INDEXED", names.join(", "), crate::code_rule_dsl::logic::sql::table(table)))?;
             let mut values = vec![Vec::new(); missing.len()];
             let mut q = st.query([])?;
             while let Some(r) = q.next()? {
@@ -1359,7 +1359,7 @@ pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Ar
 }
 /// The table `schema.name` read once into memory, every column (`None`: not a table of integers).
 pub fn table_source(conn: &Connection, schema: &str, name: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
-    let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{name}")).ok()?.column_names().into_iter().map(str::to_owned).collect();
+    let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().into_iter().map(str::to_owned).collect();
     let need: Vec<&str> = columns.iter().map(String::as_str).collect();
     stored_table(conn, schema, name, &need)
 }
@@ -1374,7 +1374,7 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
         Some(t) => t?,
         None => {
             // The columns' names, from the statement (prepared, not run).
-            let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{name}")).ok()?.column_names().into_iter().map(str::to_owned).collect();
+            let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().into_iter().map(str::to_owned).collect();
             let k = columns.len();
             let t = Arc::new(Stored::new(columns, (0..k).map(|_| std::sync::OnceLock::new()).collect()));
             STORED.lock().unwrap().insert(key.clone(), Some(t.clone()));

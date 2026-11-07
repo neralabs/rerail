@@ -1,6 +1,6 @@
 # 0061: `.rr` files are a dialect with a tape
 
-Status: proposed (2026-11-07)
+Status: built (2026-11-07)
 
 ## Intro
 
@@ -265,6 +265,36 @@ This record makes the tape. It does not yet move lowering onto the tape. The nex
 statements a program is lowered from to be read from its tape, so that a rule file's compiled IR is
 a set of facts derived from a stored tape and memoised per source. That would replace the
 in-process caches of decision 0060 with the store's. That step gets its own decision.
+
+## As built
+
+- **Registry.** `languages/rr.json`: dialect `Rr`, tape tag 13, parser `rr`, grammar `native:rr`, feature `lang-rr`
+  (in `all-languages`). Every capability (scope, values, arguments, calls, format arguments) is `refused`. The
+  family's adapter (`language/adapter/rr.rs`) answers "nothing known" behind those refusals.
+- **Tree.** `logic/rr/tape.rs` holds the kinds, the fields and the tree. `syntax::Parser::taped` builds the tree in
+  the same parse as the statements. The lexer keeps comment spans and makes a `Bad` token where it cannot read.
+  A parse without a tree gives the same statements and errors as before.
+- **Tape.** `TapeImage::encode_rr` goes through `finish`, as Blade's does. The grammar build id hashes
+  `syntax.rs` and `tape.rs`.
+- **Facts.** `core_rr` reads a `.rr` tape: `name` of a `variable` too, `str` and `value` by the engine's own
+  unescaping (`rr::string_value`), and a backtick literal's `str` without its fences (`rr::code_body`).
+  `syntax_error` carries the message running the file gives (`rr::syntax_error`). A file that does not parse is
+  withheld, as any other language's is: it gives its `syntax_error` row only.
+- **Corpus.** A program with `.language rr` reads the repository's `.rr` files (`corpus_language`). Other runs
+  read none: a run still reads one language (O105).
+- **Rules about rules.** `packs/rr/rr-input-outside-repository.rr` (RR101) flags an `.input` read from an absolute
+  path or from `../`. `lib/rr/embeds.rr` has the guest rows, with `program_language` from the file's `.language`
+  setting. They make no guest until `json`, `regex` and the pattern grammars are registered.
+- **Tests** (`logic/rr/tape_tests.rs`):
+  - the example above, tree for tree;
+  - the shapes of terms, bodies and directives;
+  - recovery, with an ERROR per bad statement and an unterminated string running to the end of the file;
+  - every `.rr` file under `docs/rule-syntax` (1,130 files): an ERROR exactly where running it fails, spans
+    that nest, and leaves and comments that cover every byte except whitespace exactly once;
+  - an encode round trip through the catalog;
+  - RR101 over real files, and the text facts.
+- **Cost.** The replay is unchanged (3988 303 298 0, 8.2 s user + 1.9 s sys at a load of 84): a parse without a
+  tree builds none.
 
 ## Prior work consulted
 

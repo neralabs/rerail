@@ -1185,6 +1185,10 @@ impl TapeImage {
                 Err(TemplateError::Encode(error)) => Some(Err(error)),
             };
         }
+        // A `.rr` file: the rule engine's own parser builds its tree (decision 0061).
+        if grammar.lang == GrammarDialect::Rr {
+            return Some(Self::encode_rr(grammar, source, budget).map(FileImage::single));
+        }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
             return Some(Err(error.to_string()));
@@ -1320,6 +1324,39 @@ impl TapeImage {
             )?);
         }
         Ok(image)
+    }
+
+    /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
+    /// extras and each statement that does not parse an ERROR leaf (decision 0061).
+    pub(super) fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        checked(budget)?;
+        if grammar.lang != GrammarDialect::Rr {
+            return Err("only a .rr file is encoded from its rule tree".into());
+        }
+        if source.len() > u32::MAX as usize {
+            return Err("source exceeds tape range".into());
+        }
+        let nodes = crate::code_rule_dsl::logic::rr::tape(source)
+            .into_iter()
+            .map(|node| {
+                let error = node.is_error();
+                if !error && (usize::from(node.kind) >= KIND_LIMIT || usize::from(node.field) >= FIELD_LIMIT) {
+                    return Err(format!("rr kind {} or field {} exceeds the tape's codes", node.kind, node.field));
+                }
+                Ok(Pending {
+                    kf: if error { ERROR_CODE } else { node.kind | (node.field << 10) },
+                    parent: node.parent,
+                    start: node.start,
+                    length: node.end.checked_sub(node.start).ok_or("inverted node span")?,
+                    size: 1,
+                    extra: node.extra,
+                    error,
+                    missing: false,
+                    kind_alias: None,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Self::finish(nodes, Vec::new(), grammar, source, budget)
     }
 
     /// The image of `nodes`, in preorder with their parents set.

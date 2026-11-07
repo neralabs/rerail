@@ -13,11 +13,11 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 const FORMAT: &str = "rerail.language/v1";
-/// The parser implementations a dialect may name: tree-sitter, or Forte (Rerail's port,
-/// `code_rule_dsl::blade::forte`).
-const PARSERS: &[&str] = &["tree-sitter", "forte"];
+/// The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port,
+/// `code_rule_dsl::blade::forte`), or the rule engine's own `.rr` parser (`logic::rr::syntax`).
+const PARSERS: &[&str] = &["tree-sitter", "forte", "rr"];
 /// The grammars Rerail implements itself (`native:<name>`): no tree-sitter grammar backs them.
-const NATIVE_GRAMMARS: &[&str] = &["forte"];
+const NATIVE_GRAMMARS: &[&str] = &["forte", "rr"];
 /// ast-grep-language 0.45's `SupportLang` variants. A vendored grammar whose dialect variant is
 /// one of them (Python, TypeScript and TSX, which Rerail vendors with patches) still lends that
 /// language's pattern syntax (`GrammarDialect::support`); any other vendored grammar, and a
@@ -701,7 +701,8 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     out.push_str("        #[cfg(test)]\n        _ => None,\n    }\n}\n\n");
     out.push_str("impl GrammarDialect {\n    /// Whether this build parses the dialect: its language's `lang-<id>` feature is on. Files of a dialect\n    /// not built are routed to none, as a planned language's are.\n    pub(crate) const fn built(self) -> bool {\n        match self {\n");
     out.push_str(&built);
-    out.push_str("            #[cfg(test)]\n            _ => false,\n        }\n    }\n}\n\n");
+    // A test-only dialect is ast-grep's grammar (`support`), always linked: built in every test build.
+    out.push_str("            #[cfg(test)]\n            _ => true,\n        }\n    }\n}\n\n");
 
     out.push_str(
         "/// A code-rule language the registry marks supported: the `language` of a query, a define\n/// or a transform.\n",

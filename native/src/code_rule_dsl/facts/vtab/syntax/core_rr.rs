@@ -29,6 +29,8 @@ pub(super) enum Family {
     Ecma,
     Php,
     Rust,
+    /// `.rr` rule files (decision 0061).
+    Rr,
     Other,
 }
 
@@ -39,6 +41,7 @@ impl Family {
             Some("javascript" | "typescript" | "tsx" | "vue") => Self::Ecma,
             Some("php" | "blade") => Self::Php,
             Some("rust") => Self::Rust,
+            Some("rr") => Self::Rr,
             _ => Self::Other,
         }
     }
@@ -195,6 +198,17 @@ pub(super) struct Literal {
 pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
     let mut out = Literal::default();
     match (family, kind) {
+        // A `.rr` string reads as the rule engine reads it; a backtick literal's `str` is its body.
+        (Family::Rr, "string") => {
+            if let Some(v) = crate::code_rule_dsl::logic::rr::string_value(text) {
+                out.value = Some((v.clone(), "string"));
+                out.str = Some(v);
+            }
+        }
+        (Family::Rr, "code_literal") => out.str = Some(crate::code_rule_dsl::logic::rr::code_body(text).to_owned()),
+        (Family::Rr, "number") => out.value = text.parse::<i64>().ok().map(|v| (v.to_string(), "number")),
+        (Family::Rr, "float") => out.value = text.parse::<f64>().ok().map(|v| (v.to_string(), "float")),
+        (Family::Rr, _) => {}
         (_, "string" | "string_literal" | "raw_string_literal" | "encapsed_string" | "interpreted_string_literal") => {
             let Some((prefix, body)) = string_contents(family, text) else { return out };
             let ty = if family == Family::Python { "str" } else { "string" };
@@ -447,6 +461,10 @@ pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
     if dialect.family == Family::Python {
         return f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone();
     }
+    // A `.rr` file's error is the one running it gives (`logic::rr::syntax_error`).
+    if dialect.family == Family::Rr {
+        return f.syntax_errors.then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message));
+    }
     first_error(f, &Lines::new(&f.source, dialect.family == Family::Python), &|id| dialect.name(f, id))
 }
 
@@ -547,6 +565,8 @@ impl CoreRows {
             }
             if let Some(s) = name(kind, text) {
                 self.name.push([n, string(&s) as i64]);
+            } else if dialect.family == Family::Rr && kind == "variable" {
+                self.name.push([n, string(text) as i64]);
             }
             let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
             let interpolated = match (dialect.family, kind) {

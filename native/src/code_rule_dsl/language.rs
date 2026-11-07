@@ -30,6 +30,7 @@
 pub(crate) mod adapter;
 
 use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
+use crate::code_rule_dsl::logic::rr::tape as rr_tree;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::package_manifest::{DEFAULT_NODE_RANGE, Manifest};
 use crate::code_rule_dsl::semver::Range;
@@ -111,6 +112,19 @@ impl GrammarDialect {
 enum OwnKinds {
     Grammar(&'static TSLanguage),
     Blade,
+    /// `.rr` rule files' tree (`logic::rr::tape`, decision 0061).
+    Rr,
+}
+
+impl OwnKinds {
+    /// A dialect Rerail parses itself: its kind names by id, its first anonymous id, and its field names by id.
+    fn table(self) -> Option<(&'static [&'static str], u16, &'static [&'static str])> {
+        match self {
+            OwnKinds::Grammar(_) => None,
+            OwnKinds::Blade => Some((blade_tree::KIND_NAMES, blade_tree::FIRST_ANONYMOUS, blade_tree::FIELD_NAMES)),
+            OwnKinds::Rr => Some((rr_tree::KIND_NAMES, rr_tree::FIRST_ANONYMOUS, rr_tree::FIELD_NAMES)),
+        }
+    }
 }
 
 /// The kind id every grammar gives ERROR (tree-sitter's `ts_builtin_sym_error`); Blade's tree
@@ -131,14 +145,14 @@ impl KindCatalog {
     pub(crate) fn grammar(self) -> Option<&'static TSLanguage> {
         match self.own {
             OwnKinds::Grammar(grammar) => Some(grammar),
-            OwnKinds::Blade => None,
+            OwnKinds::Blade | OwnKinds::Rr => None,
         }
     }
 
     pub(crate) fn kind_count(self) -> usize {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_count(),
-            OwnKinds::Blade => blade_tree::KIND_NAMES.len(),
+            own => own.table().expect("own kinds").0.len(),
         }
     }
 
@@ -146,12 +160,15 @@ impl KindCatalog {
     pub(crate) fn kind_id(self, kind: &str) -> u16 {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.id_for_node_kind(kind, true),
-            OwnKinds::Blade if kind == "ERROR" => ERROR_ID,
-            OwnKinds::Blade => blade_tree::KIND_NAMES[..usize::from(blade_tree::FIRST_ANONYMOUS)]
-                .iter()
-                .skip(1)
-                .position(|name| *name == kind)
-                .map_or(0, |index| index as u16 + 1),
+            _ if kind == "ERROR" => ERROR_ID,
+            own => {
+                let (names, first_anonymous, _) = own.table().expect("own kinds");
+                names[..usize::from(first_anonymous)]
+                    .iter()
+                    .skip(1)
+                    .position(|name| *name == kind)
+                    .map_or(0, |index| index as u16 + 1)
+            }
         }
     }
 
@@ -175,8 +192,8 @@ impl KindCatalog {
     pub(crate) fn kind_name(self, id: u16) -> Option<&'static str> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_for_id(id),
-            OwnKinds::Blade if id == ERROR_ID => Some("ERROR"),
-            OwnKinds::Blade => blade_tree::KIND_NAMES
+            _ if id == ERROR_ID => Some("ERROR"),
+            own => own.table().expect("own kinds").0
                 .get(usize::from(id))
                 .copied()
                 .filter(|name| !name.is_empty()),
@@ -186,21 +203,21 @@ impl KindCatalog {
     pub(crate) fn kind_is_named(self, id: u16) -> bool {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_is_named(id),
-            OwnKinds::Blade => id == ERROR_ID || (id != 0 && id < blade_tree::FIRST_ANONYMOUS),
+            own => id == ERROR_ID || (id != 0 && id < own.table().expect("own kinds").1),
         }
     }
 
     pub(crate) fn kind_is_visible(self, id: u16) -> bool {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_is_visible(id),
-            OwnKinds::Blade => id != 0 && usize::from(id) < blade_tree::KIND_NAMES.len(),
+            own => id != 0 && usize::from(id) < own.table().expect("own kinds").0.len(),
         }
     }
 
     pub(crate) fn kind_is_supertype(self, id: u16) -> bool {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_is_supertype(id),
-            OwnKinds::Blade => false,
+            OwnKinds::Blade | OwnKinds::Rr => false,
         }
     }
 
@@ -227,7 +244,7 @@ impl KindCatalog {
     pub(crate) fn field_count(self) -> usize {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_count(),
-            OwnKinds::Blade => blade_tree::FIELD_NAMES.len() - 1,
+            own => own.table().expect("own kinds").2.len() - 1,
         }
     }
 
@@ -235,7 +252,7 @@ impl KindCatalog {
     pub(crate) fn field_id(self, name: &str) -> Option<u16> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_id_for_name(name).map(|id| id.get()),
-            OwnKinds::Blade => blade_tree::FIELD_NAMES
+            own => own.table().expect("own kinds").2
                 .iter()
                 .skip(1)
                 .position(|field| *field == name)
@@ -246,8 +263,8 @@ impl KindCatalog {
     pub(crate) fn field_name(self, id: u16) -> Option<&'static str> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_name_for_id(id),
-            OwnKinds::Blade => (id != 0)
-                .then(|| blade_tree::FIELD_NAMES.get(usize::from(id)).copied())
+            own => (id != 0)
+                .then(|| own.table().expect("own kinds").2.get(usize::from(id)).copied())
                 .flatten(),
         }
     }
@@ -273,6 +290,7 @@ impl GrammarDialect {
         KindCatalog {
             own: match self.grammar() {
                 Some(grammar) => OwnKinds::Grammar(grammar),
+                None if self == GrammarDialect::Rr => OwnKinds::Rr,
                 None => OwnKinds::Blade,
             },
         }

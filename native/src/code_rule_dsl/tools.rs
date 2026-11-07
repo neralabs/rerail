@@ -240,6 +240,25 @@ pub fn run_rr(
     )
 }
 
+/// Several `.rr` policies over one repository (O105): each runs over the documents of the language it names
+/// (`.language python`, `rust`, `rr`), into its own `out/<k>`, through the one content store, so a file's tape is
+/// made once whichever policy reads it. The findings of all of them, in the order of `paths`, and each run's
+/// report.
+pub fn run_policies(
+    paths: &[std::path::PathBuf],
+    root: &std::path::Path,
+    out: &std::path::Path,
+    options: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let (mut diagnostics, mut runs) = (Vec::new(), Vec::new());
+    for (k, path) in paths.iter().enumerate() {
+        let report = run_rr(path, root, &out.join(k.to_string()), options).map_err(|e| format!("{}: {e}", path.display()))?;
+        diagnostics.extend(report["diagnostics"].as_array().cloned().unwrap_or_default());
+        runs.push(serde_json::json!({"path": path.display().to_string(), "files": report["files"], "metadata": report["metadata"]}));
+    }
+    Ok(serde_json::json!({"diagnostics": diagnostics, "runs": runs}))
+}
+
 /// `policies` ((name, source, format `json`/`yaml`)) lowered with no store and dumped as `rir`:
 /// every clause, or the one named `clause`; `fused` adds packs and groups, `setplan` the set plan.
 pub fn dump(
