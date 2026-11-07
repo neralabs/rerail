@@ -19,6 +19,16 @@ class GuardTests(unittest.TestCase):
         # Source-defined methods stay distinguishable from dataclass-generated storage methods.
         exec(compile('''from dataclasses import dataclass
 from typing import NamedTuple
+from functools import wraps
+def closure_detector():
+    def inspect_node(): return True
+    return inspect_node
+def decorate(function):
+    @wraps(function)
+    def wrapped(): return function()
+    return wrapped
+@decorate
+def decorated_detector(): return True
 class AstEventCollector: pass
 @dataclass
 class Collector(AstEventCollector):
@@ -32,6 +42,21 @@ class TupleFinding(NamedTuple):
     value: int
 ''', 'pinned-source-linter.py', 'exec'), module.__dict__)
         return module
+
+    def test_nested_detector_callback_is_guarded(self):
+        module = self.module()
+        callback = module.closure_detector()
+        mapped = guard.codes({'check': module})
+        self.assertIn(callback.__code__, mapped)
+        self.assertFalse(mapped[callback.__code__][2])
+
+    def test_decorated_detector_body_is_guarded(self):
+        import inspect
+        module = self.module()
+        original = inspect.unwrap(module.decorated_detector)
+        mapped = guard.codes({'check': module})
+        self.assertIn(original.__code__, mapped)
+        self.assertFalse(mapped[original.__code__][2])
 
     def test_dataclass_collectors_are_not_passive_dtos(self):
         module = self.module()
