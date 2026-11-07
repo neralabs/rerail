@@ -283,7 +283,7 @@ def main() -> None:
         path = getattr(module, "__file__", None)
         if path and Path(path).suffix == ".py" and Path(path).resolve().is_relative_to(root):
             loaded.add(Path(path).resolve())
-    loaded.update(root / path for path in args.tests)
+    loaded.update(root / path.split('::', 1)[0] for path in args.tests)
     mismatches = [path.relative_to(root).as_posix() for path in sorted(loaded) if blob_id(path.read_bytes()) != expected.get(path.relative_to(root).as_posix())]
     for event in recorder.events:
         reports = recorder.reports.get(event["test"], [])

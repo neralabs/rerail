@@ -3117,6 +3117,293 @@
           "relative": true
         }
       }
+    },
+    {
+      "id": "given-positive",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "source": "def supplied(field_info):\n    return get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "def supplied(field_info):\n    return get_origin(field_info.annotation)\n",
+          "mode": "exec"
+        },
+        "source_lines": [
+          "caller line list remains unchanged"
+        ],
+        "initial_findings": [
+          {
+            "existing": "preserve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "given-empty",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "source": "def supplied(field_info):\n    return get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "",
+          "mode": "exec"
+        },
+        "source_lines": [
+          "caller line list remains unchanged"
+        ],
+        "initial_findings": [
+          {
+            "existing": "preserve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "given-clean",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "source": "def supplied(field_info):\n    return get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "x = 1\n",
+          "mode": "exec"
+        },
+        "source_lines": [
+          "caller line list remains unchanged"
+        ],
+        "initial_findings": [
+          {
+            "existing": "preserve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "given-trigger-absent",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "source": "x = 1\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "def supplied(field_info):\n    return get_origin(field_info.annotation)\n",
+          "mode": "exec"
+        },
+        "source_lines": [
+          "caller line list remains unchanged"
+        ],
+        "initial_findings": [
+          {
+            "existing": "preserve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "given-invalid-file",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "source": "# .annotation\nnot valid Python !!!\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "def supplied(field_info):\n    return get_origin(field_info.annotation)\n",
+          "mode": "exec"
+        },
+        "source_lines": [
+          "caller line list remains unchanged"
+        ],
+        "initial_findings": [
+          {
+            "existing": "preserve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "given-other-function",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "source": "def actual():\n    get_args(f.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "def supplied(field_info):\n    return get_origin(field_info.annotation)\n",
+          "mode": "exec"
+        },
+        "source_lines": [
+          "caller line list remains unchanged"
+        ],
+        "initial_findings": [
+          {
+            "existing": "preserve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "given-blank-offsets",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "source": "# .annotation\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "\n\n\ndef supplied(field_info):\n    return get_origin(field_info.annotation)\n",
+          "mode": "exec"
+        },
+        "source_lines": [
+          "caller line list remains unchanged"
+        ],
+        "initial_findings": [
+          {
+            "existing": "preserve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "given-fallback",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "source": "# .annotation\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "def check():\n    hints = get_type_hints(Model)\n    return hints.get(name, get_origin(field_info.annotation))\n",
+          "mode": "exec"
+        },
+        "source_lines": [
+          "caller line list remains unchanged"
+        ],
+        "initial_findings": [
+          {
+            "existing": "preserve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "given-comparison",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "source": "# .annotation\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "f.annotation is SomeType\n",
+          "mode": "exec"
+        },
+        "source_lines": [
+          "caller line list remains unchanged"
+        ],
+        "initial_findings": [
+          {
+            "existing": "preserve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "given-invalid-utf8",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [
+        {
+          "path": "provided.py",
+          "bytesHex": "ff"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "provided.py"
+        },
+        "tree": {
+          "pythonAst": "def supplied(field_info):\n    return get_origin(field_info.annotation)\n",
+          "mode": "exec"
+        }
+      }
+    },
+    {
+      "id": "given-missing-file",
+      "check": "unresolved_forward_refs",
+      "entry": "AnnotationUsageFinder.analyze",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "missing.py"
+        },
+        "tree": {
+          "pythonAst": "def supplied(field_info):\n    return get_origin(field_info.annotation)\n",
+          "mode": "exec"
+        }
+      }
     }
   ]
 }

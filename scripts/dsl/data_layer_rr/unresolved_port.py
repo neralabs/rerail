@@ -7,6 +7,25 @@ from pathlib import Path
 CHECK = 'unresolved_forward_refs'
 
 
+def analyzed_state(owner, returned):
+    """Expose the complete observable instance state without invoking source methods."""
+    return dict(returned=returned, file_path=owner.file_path, findings=owner.findings, source_lines=owner.source_lines,
+                current_function=owner.current_function, current_function_lineno=owner.current_function_lineno,
+                resolved_hint_vars=sorted(owner.resolved_hint_vars))
+
+
+def supplied_snapshot(owner, tree):
+    from ast_transport import columns
+    root = Path(owner.file_path).parent
+    try:
+        source = owner.file_path.read_text()
+    except (OSError, UnicodeError):
+        files = []
+    else:
+        files = [dict(path=Path(owner.file_path).name, source=source)]
+    return files, dict(include=['**/*.py'], exclude=[]), root, columns(tree)
+
+
 def identity_graph(container, target):
     """Serialize object identities and child edges; native reachability answers containment."""
     objects, pending, seen, parents, children = {}, [container, target], set(), [], []
@@ -26,6 +45,30 @@ def identity_graph(container, target):
 
 
 def scan(suite, entry, module, arguments):
+    if entry == 'AnnotationUsageFinder.analyze':
+        from ast_transport import columns
+        owner = arguments['self']
+        options = columns(arguments['tree'])
+        read_error = None
+        try:
+            source = owner.file_path.read_text()
+        except UnicodeDecodeError:
+            source = ''
+        except OSError as error:
+            read_error, source = error, ''
+        options.update(providedSource=source, sourceLines=source.splitlines(),
+                       readError=str(read_error is not None).lower())
+        rows = suite.native(CHECK, entry, [], options)
+        if any(row['code'] == 'UF_READ_ERROR' for row in rows):
+            if len(rows) != 1 or read_error is None:
+                raise AssertionError('Invalid supplied-AST read failure')
+            raise read_error
+        if any(row['code'] != 'unresolved_forward_ref' for row in rows):
+            raise AssertionError('Invalid native supplied-AST finding')
+        owner.findings.extend(dict(file=str(owner.file_path), line=row['line'], function=row['parameters']['function'],
+            problem=row['parameters']['problem'], source=row['parameters']['source'])
+            for row in sorted(rows, key=lambda row: row['parameters']['ordinal']))
+        return None
     if entry.startswith('AnnotationUsageFinder.'):
         options, files = {}, []
         if entry.endswith('._node_contains'):

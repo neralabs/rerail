@@ -28,7 +28,7 @@ def disable_policy(check, source):
         if count != 6:
             raise ValueError('Expected all six backend finding outputs')
         return disabled
-    clause = {'backend_coupling': 'Coupling', 'connection_caches': 'Cache', 'unresolved_forward_refs': 'Unresolved'}.get(check)
+    clause = {'backend_coupling': 'Coupling', 'connection_caches': 'Cache', 'unresolved_forward_refs': 'uf_bad'}.get(check)
     if clause is None:
         return DISABLED
     disabled, count = re.subn(r'(?m)^(' + clause + r'\([^\n]*?\)\s*:-)', r'\1 1 = 0,', source)

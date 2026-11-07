@@ -89,6 +89,28 @@ def cases():
     rows.append(dict(id='relative-api-path', check='unresolved_forward_refs', entry='analyze_file', cwd='fixture',
         files=[dict(path='input.py', source='get_origin(field_info.annotation)\n')],
         arguments=dict(file_path=dict(path='input.py', relative=True))))
+    positive_tree = 'def supplied(field_info):\n    return get_origin(field_info.annotation)\n'
+    supplied = [
+        ('given-positive', positive_tree, positive_tree),
+        ('given-empty', positive_tree, ''),
+        ('given-clean', positive_tree, 'x = 1\n'),
+        ('given-trigger-absent', 'x = 1\n', positive_tree),
+        ('given-invalid-file', '# .annotation\nnot valid Python !!!\n', positive_tree),
+        ('given-other-function', 'def actual():\n    get_args(f.annotation)\n', positive_tree),
+        ('given-blank-offsets', '# .annotation\n', '\n\n\n' + positive_tree),
+        ('given-fallback', '# .annotation\n', 'def check():\n    hints = get_type_hints(Model)\n    return hints.get(name, get_origin(field_info.annotation))\n'),
+        ('given-comparison', '# .annotation\n', 'f.annotation is SomeType\n'),
+    ]
+    for identity, source, tree in supplied:
+        rows.append(dict(id=identity, check='unresolved_forward_refs', entry='AnnotationUsageFinder.analyze',
+            files=[dict(path='provided.py', source=source)], arguments=dict(file_path=dict(path='provided.py'),
+                tree=dict(pythonAst=tree, mode='exec'), source_lines=['caller line list remains unchanged'],
+                initial_findings=[dict(existing='preserve')])))
+    rows.append(dict(id='given-invalid-utf8', check='unresolved_forward_refs', entry='AnnotationUsageFinder.analyze',
+        files=[dict(path='provided.py', bytesHex='ff')], arguments=dict(file_path=dict(path='provided.py'),
+            tree=dict(pythonAst=positive_tree, mode='exec'))))
+    rows.append(dict(id='given-missing-file', check='unresolved_forward_refs', entry='AnnotationUsageFinder.analyze',
+        files=[], arguments=dict(file_path=dict(path='missing.py'), tree=dict(pythonAst=positive_tree, mode='exec'))))
     return rows
 
 
@@ -100,7 +122,7 @@ def main():
     rows = cases()
     args.destination.write_text(json.dumps(dict(format='rerail.rr-fresh-contract-cases/v1', cases=rows), indent=2) + '\n')
     reporters = [dict(id=row['id'], check=row['check'], files=[dict(file, path='api/' + file['path']) for file in row['files']])
-        for row in rows if not any('bytesHex' in file for file in row['files']) and row['id'] != 'directory-read']
+        for row in rows if row['entry'] == 'analyze_file' and not any('bytesHex' in file for file in row['files']) and row['id'] != 'directory-read']
     for path in ['api/a.py', 'impl/a.py', 'api/tests/a.py', 'api/test/a.py', 'api/test_file.py',
                  'api/__pycache__/a.py', 'api/.git/a.py', 'api/venv/a.py', 'api/.venv/a.py', 'api/tmp/a.py', 'public/a.py', 'root.py']:
         reporters.append(dict(id='scope-' + path, check='unresolved_forward_refs', files=[dict(path=path, source='get_origin(field_info.annotation)\n')]))

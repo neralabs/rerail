@@ -26,6 +26,10 @@ def selected_cases(cases, part, parts):
 
 def arguments(values, root):
     def convert(value):
+        if isinstance(value, dict) and set(value) == {'pythonAst', 'mode'}:
+            import ast
+            tree = ast.parse(value['pythonAst'], mode=value['mode'])
+            return tree.body if value['mode'] == 'eval' else tree
         if isinstance(value, dict) and set(value) == {'path', 'relative'} and value['relative'] is True:
             return Path(value['path'])
         if isinstance(value, dict) and set(value) == {'path'} and isinstance(value['path'], str):
@@ -123,7 +127,18 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if native:
+                if case['check'] == 'unresolved_forward_refs' and case['entry'] == 'AnnotationUsageFinder.analyze':
+                    from unresolved_port import analyzed_state
+                    owner = module.AnnotationUsageFinder(file_path=values['file_path'],
+                        source_lines=values.get('source_lines', []), findings=values.get('initial_findings', []))
+                    if native:
+                        backend.item = SimpleNamespace(nodeid=case['id'])
+                        action = lambda: backend.scan(case['check'], case['entry'], module, dict(self=owner, tree=values['tree']))
+                    else:
+                        action = lambda: owner.analyze(values['tree'])
+                    def call():
+                        return analyzed_state(owner, action())
+                elif native:
                     backend.item = SimpleNamespace(nodeid=case['id'])
                     call = lambda: backend.scan(case['check'], case['entry'], module, values)
                 else:

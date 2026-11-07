@@ -106,6 +106,26 @@ def main():
 
                 setattr(module, entry, capture(module, entry, check, kind, wrapped))
 
+            module = next((owner for owner, _, _ in self.originals
+                           if getattr(owner, '__name__', '') == 'scripts.lint_unresolved_forward_refs'), None)
+            if module is not None:
+                owner, original = module.AnnotationUsageFinder, module.AnnotationUsageFinder.analyze
+                @wraps(original)
+                def analyze(instance, tree):
+                    if self.item is None or self.depth:
+                        return original(instance, tree)
+                    from unresolved_port import supplied_snapshot, analyzed_state
+                    files, scope, root, syntax = supplied_snapshot(instance, tree)
+                    result = original(instance, tree)
+                    findings = recording.batch_two.normalize('unresolved_forward_refs', instance.findings, root, files)
+                    self.events.append(dict(test=self.item.nodeid, check='unresolved_forward_refs',
+                        entry='AnnotationUsageFinder.analyze', call=1, files=files, scope=scope,
+                        input_mode='supplied_ast', suppliedAst=syntax, findings=findings,
+                        sourceResult=canonical(analyzed_state(instance, result), root), observationKind='instance-state'))
+                    return result
+                self.originals.append((owner, 'analyze', original))
+                owner.analyze = analyze
+
     recording.Recorder = Recorder
     recording.main()
 

@@ -47,7 +47,7 @@ ENTRIES = {
     'error_handling': ['scan_file_content'],
     'backend_type_strings': ['check_file', 'check_file_content', 'should_skip_file', 'find_python_files'],
     'serverplan_grammar_surface': ['scan_file', 'iter_python_files'],
-    'unresolved_forward_refs': ['analyze_file', 'AnnotationUsageFinder._is_field_annotation_access',
+    'unresolved_forward_refs': ['analyze_file', 'AnnotationUsageFinder.analyze', 'AnnotationUsageFinder._is_field_annotation_access',
         'AnnotationUsageFinder._is_safe_str_conversion', 'AnnotationUsageFinder._is_none_check',
         'AnnotationUsageFinder._is_isinstance_none_check', 'AnnotationUsageFinder._node_contains',
         'AnnotationUsageFinder._is_using_resolved_hints', 'AnnotationUsageFinder._is_assignment_from_resolved'],
@@ -135,7 +135,14 @@ class Suite:
                            originalRetainedReason=original.get('retained_reason'))
         self.observations.append(observation)
         from data_layer_record import ADAPTERS, snapshot, normalize
-        if check == 'backend_type_strings' and entry in {'should_skip_file', 'find_python_files'}:
+        if check == 'unresolved_forward_refs' and entry == 'AnnotationUsageFinder.analyze':
+            from unresolved_port import supplied_snapshot, analyzed_state
+            owner = args[0]
+            tree = args[1] if len(args) > 1 else kwargs['tree']
+            files, scope, root, syntax = supplied_snapshot(owner, tree)
+            compare(original['suppliedAst'], syntax)
+            result = analyzed_state(owner, result)
+        elif check == 'backend_type_strings' and entry in {'should_skip_file', 'find_python_files'}:
             files, scope, root = [], dict(include=[], exclude=[]), self.item.funcargs.get('tmp_path')
         elif check == 'hnsw_architecture':
             files, scope, root = snapshot(module, 'files', args, kwargs)
@@ -178,7 +185,9 @@ class Suite:
             scope = dict(include=[], exclude=[])
         compare_inputs(original, files, scope)
         from data_layer_batch_two import normalize as normalize_two
-        if check == 'backend_type_strings' and entry in {'should_skip_file', 'find_python_files'}:
+        if check == 'unresolved_forward_refs' and entry == 'AnnotationUsageFinder.analyze':
+            actual = normalize_two(check, result['findings'], root, files)
+        elif check == 'backend_type_strings' and entry in {'should_skip_file', 'find_python_files'}:
             actual = []
         elif check == 'connection_caches':
             from connection_caches_port import normalize
@@ -735,6 +744,7 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--checks', required=True)
+    parser.add_argument('--tests', nargs='+', help='Explicit unchanged modules or pytest node IDs; defaults to each check\'s direct module')
     parser.add_argument('--rule-root', type=Path, default=ROOT / 'gate/data-layer/packs/data-layer/candidates/rr',
                         help='Rule directory to execute; mutation tests supply a directory of disabled policies')
     parser.add_argument('--part', type=int, default=0)
@@ -753,8 +763,10 @@ def main():
     checks = args.checks.split(',')
     if any(check not in ENTRIES for check in checks):
         parser.error('A full assertion adapter is required for each selected check')
-    tests = [source / 'scripts/tests' / f'test_lint_{check}.py' for check in checks]
-    source_hashes = {str(p.relative_to(source)): sha(p.read_bytes()) for p in [*tests, *[source / f'scripts/lint_{c}.py' for c in checks]]}
+    targets = args.tests or [f'scripts/tests/test_lint_{check}.py' for check in checks]
+    tests = [str(source / target) for target in targets]
+    test_files = [source / target.split('::', 1)[0] for target in targets]
+    source_hashes = {str(p.relative_to(source)): sha(p.read_bytes()) for p in [*test_files, *[source / f'scripts/lint_{c}.py' for c in checks]]}
     digest = sha(engine.read_bytes())
     sys.path[:0] = [str(source), str(source / 'scripts')]
     if 'hasattr_async' in checks:
@@ -788,6 +800,7 @@ def main():
     write_json(out, dict(format='rerail.rr-original-assertions/v1', sourcePin=PIN, oracle=False,
         engineSha256=digest, exitCode=int(code), sourceFiles=source_hashes,
         ruleRoot=str(args.rule_root.resolve()),
+        testTargets=targets,
         api='snapshot-cli', harnessFiles=harness_hashes,
         sourceFilesChecked=source_checked, missingResults=[dict(test=k[0], check=k[1], entry=k[2], count=n-backend.observed[k])
             for k, n in wanted.items() if n != backend.observed[k]],
