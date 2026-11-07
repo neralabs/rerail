@@ -133,10 +133,12 @@ fn native_rule(head: &Atom, native: &Native, kindsets: &BTreeSet<&String>) -> Re
             };
             format!("{} :- {call}.", atom(head, kindsets)?)
         }
-        Native::MatchAll { input, pattern, groups } => {
+        Native::MatchAll { input, pattern, groups, positions } => {
             let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
-            let args = std::iter::once(var(&s)).chain(groups.iter().map(|g| var(g))).collect::<Vec<_>>().join(", ");
-            format!("{}({args}) :- {}({}), match_all({}, {}).", relation(&head.rel), relation(input), var(&s), quote(pattern), var(&s))
+            let coordinates: Vec<_> = (0..).map(|i| format!("rr_position{i}")).filter(|v| !groups.contains(v) && v != &s).take(if *positions { 3 } else { 0 }).map(|v| var(&v)).collect();
+            let args = std::iter::once(var(&s)).chain(groups.iter().map(|g| var(g))).chain(coordinates.iter().cloned()).collect::<Vec<_>>().join(", ");
+            let matched = std::iter::once(quote(pattern)).chain(std::iter::once(var(&s))).chain(coordinates).collect::<Vec<_>>().join(", ");
+            format!("{}({args}) :- {}({}), match_all({matched}).", relation(&head.rel), relation(input), var(&s))
         }
     })
 }
