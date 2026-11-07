@@ -235,12 +235,16 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             set_of.insert(name, shared);
         }
         let shared_outputs = ["violation", "rr_diagnostic"];
+        // Named repository readers belong to their policy. Equal bytes may share a reader later;
+        // equal relation names alone do not mean equal input files or selectors.
+        let file_inputs: BTreeSet<_> = prog.settings.iter().filter(|(key, _)| key == "input")
+            .filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect();
         let own: BTreeSet<String> = prog
             .decls
             .keys()
             .chain(prog.facts.keys())
             .chain(prog.rules.iter().map(|r| &r.head.rel))
-            .filter(|r| !prog.inputs.contains(r) && !shared_outputs.contains(&r.as_str()))
+            .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()))
             .cloned()
             .collect();
         let rename = |rel: &str| -> String {
@@ -287,7 +291,10 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             }
         }
         all.policies.extend(prog.policies);
-        for setting in prog.settings {
+        for mut setting in prog.settings {
+            if matches!(setting.0.as_str(), "input" | "output") && let Some((rel, params)) = setting.1.split_once('(') {
+                setting.1 = format!("{}({params}", rename(rel));
+            }
             if !all.settings.contains(&setting) {
                 all.settings.push(setting);
             }
