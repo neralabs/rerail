@@ -99,7 +99,7 @@ export const CODE_RULE_EMBEDDING_LANGUAGES: readonly (readonly [CodeRuleLanguage
   language => [language, codeRuleLanguageEmbedVias(language)] as const,
 ).filter(([, vias]) => vias.length > 0);
 
-/** Files audits read as text only (regex rules over their content): formats that are no registry language. */
+/** Listed files read as text only (regex rules over their content): formats that are no registry language. */
 const TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([
   [".json", "json"],
   [".yaml", "yaml"],
@@ -121,11 +121,38 @@ const TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Ma
 const PLANNED_SUFFIXES: readonly string[] = LANGUAGE_REGISTRY.flatMap(entry => (STATUSES[entry.id] === "planned" ? entry.dialects.flatMap(dialect => dialect.suffixes) : []));
 
 /**
- * The suffixes audits and the bridge read and the file label each selects: every supported dialect's, each planned
- * language's (as text), and the other text files'. A supported dialect's suffix wins over a text one. The native
- * repository index receives the same map.
+ * The listed suffixes and the file label each selects: every supported dialect's, each planned language's (as text),
+ * and the other text files'. A supported dialect's suffix wins over a text one. A listed file in some code rule's
+ * scope is read; an unlisted one only for a rule that reads text (`UNLISTED_TEXT_LANGUAGE`). The native repository
+ * index receives the same map.
  */
 export const SOURCE_LANGUAGES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([
   ...CODE_RULE_DIALECT_SUFFIXES,
   ...[...PLANNED_SUFFIXES.map(suffix => [suffix, "text"] as const), ...TEXT_SOURCE_SUFFIXES].filter(([suffix]) => !CODE_RULE_DIALECT_SUFFIXES.has(suffix)),
 ]);
+
+/**
+ * Files listed by their whole name, as no suffix names them (a name longer than its suffix is needed): the package
+ * ignore files that decide which files of a package npm publishes (`file.package.published`), which AST rules read
+ * too. Keyed lowercase; a listed name wins over the suffixes. The native repository index receives the same map.
+ */
+export const SOURCE_NAMES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([
+  [".npmignore", "text"],
+  [".gitignore", "text"],
+]);
+
+/**
+ * The label of a listed file `path` (its whole name in `SOURCE_NAMES`, else its suffix in `SOURCE_LANGUAGES`), or
+ * undefined for an unlisted file.
+ */
+export function sourceLanguageOfPath(path: string): CodeRuleSourceLanguage | undefined {
+  const name = path.slice(path.lastIndexOf("/") + 1).replace(/[A-Z]+/g, upper => upper.toLowerCase());
+  return SOURCE_NAMES.get(name) ?? languageOfPath(SOURCE_LANGUAGES, path);
+}
+
+/**
+ * The label an unlisted file (one `sourceLanguageOfPath` has no label for: `Justfile`, `LICENSE`, `*.lock`) is read
+ * with. Such a file is read only where a code rule that reads text (a `regex` or `file` clause) has it in scope, and
+ * one holding a NUL byte is binary and skipped silently; the native repository index applies the same label.
+ */
+export const UNLISTED_TEXT_LANGUAGE: CodeRuleSourceLanguage = "text";

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";

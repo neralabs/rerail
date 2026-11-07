@@ -199,6 +199,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
             )?);
         }
+        for (i, snapshot) in request["snapshots"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            updates.push(phase(
+                &trace_state,
+                &format!("snapshot-{i}"),
+                &mut phases,
+                || {
+                    session
+                        .apply_snapshot(
+                            snapshot.to_string(),
+                            request["max_waves"].as_u64().map(|n| n as u32),
+                        )
+                        .and_then(|s| {
+                            serde_json::from_str(&s)
+                                .map_err(|e| napi::Error::from_reason(e.to_string()))
+                        })
+                },
+            )?);
+        }
         let mut results = Vec::new();
         for (i, query) in request["queries"]
             .as_array()

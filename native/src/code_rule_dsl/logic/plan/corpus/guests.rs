@@ -28,7 +28,7 @@ use crate::code_rule_dsl::facts::vtab::syntax::{self, Document, Guest, Made, Pla
 use crate::code_rule_dsl::model::FileInput;
 use crate::content_store::ContentStore;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 /// Rounds of the embed slice per chunk: embeds of embeds, to this depth. A guard, not a limit anyone should reach.
@@ -44,16 +44,17 @@ pub(super) const SPLICE: &str = "rr_splice_req";
 pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
 pub(in crate::code_rule_dsl) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
-/// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's).
-pub(super) const SHARED: [&str; 4] = [DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
+/// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's): the
+/// requests, which the runner reads by name, and the guest policy.
+pub(super) const SHARED: [&str; 6] = ["embed", "embed_value", DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
 
 /// One document asked for.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) enum Request {
     /// The code at host node `at`, in `grammar`, with its text when it is a value (`embed_value`).
     Guest { at: i64, grammar: String, role: String, text: Option<String> },
-    /// `@parse(grammar, text)`.
-    Parse { grammar: String, text: String },
+    /// `@parse(grammar, text)`, asked at location `at` (the asking document's).
+    Parse { at: i64, grammar: String, text: String },
     /// `@splice(_, node, with)`: node's tape, with node's text replaced by tape `with`'s.
     Splice { node: i64, with: String },
 }
@@ -86,10 +87,12 @@ pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> 
         }
     }
     // The text is last: it may hold a tab.
-    // `at`, the location that asked, is not part of what is made: equal texts are one value.
+    // `at`, the location that asked, says whose the value is; equal texts are one value (`Guests::value`).
     for c in rows(PARSE, 3) {
-        if let [_, g, x] = c.as_slice() {
-            out.push(Request::Parse { grammar: (*g).to_owned(), text: (*x).to_owned() });
+        if let [at, g, x] = c.as_slice()
+            && let Some(at) = int(at)
+        {
+            out.push(Request::Parse { at, grammar: (*g).to_owned(), text: (*x).to_owned() });
         }
     }
     for c in rows(SPLICE, 2) {
@@ -201,6 +204,10 @@ pub(super) struct Guests {
     taken: HashSet<u32>,
     /// Each guest's host file (`memo` attributes a guest's rows to it).
     pub(super) host_of: HashMap<i64, i64>,
+    /// Each value made, by grammar and what made it: its key. A value is one per text in a chunk.
+    values: HashMap<(String, String), i64>,
+    /// Each value's files: those whose rules asked for it (O96). `memo` attributes its rows to each.
+    files: HashMap<i64, BTreeSet<i64>>,
     /// Made, and given no guest (no text to parse, or no grammar), this chunk.
     pub(super) refused: usize,
 }
@@ -209,6 +216,31 @@ impl Guests {
     /// For a run over `run`'s files (a dialect label).
     pub(super) fn new(run: &'static str) -> Self {
         Self { run, ..Self::default() }
+    }
+
+    /// Each value document's files.
+    pub(super) fn askers(&self) -> HashMap<i64, Vec<i64>> {
+        self.files.iter().map(|(k, f)| (*k, f.iter().copied().collect())).collect()
+    }
+
+    /// The files of document `doc`: a file's own key, a guest's host file, or the files that asked for a value.
+    fn files_of(&self, doc: i64) -> BTreeSet<i64> {
+        match self.files.get(&doc) {
+            Some(files) => files.clone(),
+            None => BTreeSet::from([self.host_of.get(&doc).copied().unwrap_or(doc)]),
+        }
+    }
+
+    /// Value `(grammar, identity)` asked for by document `asker`: true when it is made already (its files grow).
+    fn known(&mut self, grammar: &str, identity: &str, asker: i64) -> bool {
+        let files = self.files_of(asker);
+        match self.values.get(&(grammar.to_owned(), identity.to_owned())) {
+            Some(key) => {
+                self.files.entry(*key).or_default().extend(files);
+                true
+            }
+            None => false,
+        }
     }
 
     /// The documents `requests` ask for that are not made yet; `docs` holds their hosts.
@@ -226,11 +258,20 @@ impl Guests {
             }
             let made = match r {
                 Request::Guest { at, grammar, role, text } => self.guest(&by_key, at, &grammar, &role, text, cache)?,
-                Request::Parse { grammar, text } => self.value(&grammar, text.clone(), Made::Parse { text }, "", cache)?,
+                Request::Parse { at, grammar, text } => {
+                    let asker = super::memo::document_of(at);
+                    if self.known(&grammar, &format!("parse:{text}"), asker) {
+                        continue;
+                    }
+                    self.value(&by_key, asker, &grammar, text.clone(), Made::Parse { text }, cache)?
+                }
                 Request::Splice { node, with } => {
-                    let spliced = self.splice(&by_key, docs, node, &with)?;
-                    match spliced {
-                        Some((grammar, text, tape, path)) => self.value(&grammar, text, Made::Splice { tape, node, with }, &path, cache)?,
+                    let asker = super::memo::document_of(node);
+                    if self.known("", &format!("splice:{node}:{with}"), asker) {
+                        continue;
+                    }
+                    match self.splice(&by_key, docs, node, &with)? {
+                        Some((grammar, text, tape, _)) => self.value(&by_key, asker, &grammar, text, Made::Splice { tape, node, with }, cache)?,
                         None => None,
                     }
                 }
@@ -273,17 +314,23 @@ impl Guests {
         }))
     }
 
-    /// A value document (decision 0058 §4): `text` parsed as `grammar_name`, with no host, in the hidden documents.
-    /// Its places are its own text's; its rows belong to no file, so a chunk that reads one is not memoised.
-    fn value(&mut self, grammar_name: &str, text: String, made: Made, path: &str, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
+    /// A value document (decision 0058 §4): `text` parsed as `grammar_name`, with no host, in the hidden documents,
+    /// asked for by document `asker`. Its places are its own text's. It is its askers' files' (O96): `memo` keeps its
+    /// rows with each, and its path is the first's.
+    fn value(&mut self, by_key: &HashMap<u32, &Document>, asker: i64, grammar_name: &str, text: String, made: Made, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
         let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
-        let identity = match &made {
-            Made::Splice { node, with, .. } => format!("splice:{node}:{with}"),
-            _ => format!("parse:{text}"),
+        let (identity, known_as) = match &made {
+            Made::Splice { node, with, .. } => (format!("splice:{node}:{with}"), String::new()),
+            _ => (format!("parse:{text}"), grammar_name.to_owned()),
         };
+        let files = self.files_of(asker);
+        let path = files.first().and_then(|f| u32::try_from(*f).ok()).and_then(|f| by_key.get(&f)).map_or_else(String::new, |d| d.path.clone());
+        let path = path.as_str();
         let (text, _) = if wrap { wrapped(text, Placement::At([0, 0])) } else { (text, Placement::At([0, 0])) };
         let Some((facts, root)) = parse(path, label, wrap, text, cache)? else { return Ok(None) };
         let key = key(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], false, &mut self.taken);
+        self.values.insert((known_as, identity), i64::from(key));
+        self.files.insert(i64::from(key), files);
         Ok(Some(Document {
             key,
             path: path.to_owned(),

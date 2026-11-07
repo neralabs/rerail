@@ -10,7 +10,7 @@ const paths = ["batch-06-recording.json", "batch-06-probes.json"]
   .map(name => fixturesPath("host", "data-layer-port", name));
 
 // The recording is not in git (30 MB of captured source): `data_layer_record.py --batch 6` writes it.
-it.skipIf(!existsSync(paths[0]))("matches positive and clean source observations for all ten sixth-batch candidates", async () => {
+it.skipIf(!existsSync(paths[0]!))("matches positive and clean source observations for all ten sixth-batch candidates", async () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-batch-six-"));
   const output = join(directory, "result.json"), log = join(directory, "replay.log");
   // Profiling builds emit large matcher descriptions. A file keeps their writes

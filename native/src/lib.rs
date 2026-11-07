@@ -1,3 +1,6 @@
+// A build of some languages, or without the addon (`headless`), leaves the others' code and the addon's API unused by
+// design: dead-code warnings there say nothing (the default build still warns).
+#![cfg_attr(any(not(feature = "all-languages"), feature = "headless"), allow(dead_code))]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
@@ -117,6 +120,31 @@ pub fn health() -> Health {
     Health {
         ok: true,
         engine_version: "1".to_owned(),
+    }
+}
+
+/// What `verify_model` found: `problem` and `file` are absent where the model matches its manifest.
+#[napi(object)]
+pub struct ModelCheck {
+    /// `missing`, `unreadable`, `invalid-manifest` or `checksum-mismatch`.
+    pub problem: Option<String>,
+    /// The file in the model directory at fault, `manifest.json` included.
+    pub file: Option<String>,
+}
+
+/// Checks the model directory at `model_path` against its `manifest.json` (every file's SHA-256),
+/// as a session's attach does, without loading the model.
+#[napi(catch_unwind)]
+pub fn verify_model_files(model_path: String) -> ModelCheck {
+    match model::verify_model(Path::new(&model_path)) {
+        Ok(()) => ModelCheck {
+            problem: None,
+            file: None,
+        },
+        Err(fault) => ModelCheck {
+            problem: Some(fault.problem.to_owned()),
+            file: Some(fault.file.to_owned()),
+        },
     }
 }
 

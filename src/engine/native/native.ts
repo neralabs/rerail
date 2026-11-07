@@ -289,6 +289,8 @@ export interface NativeExclusiveFileLock {
 /** A connection-local SQL extension context over the native content store. */
 export interface NativeCodeRuleSqlExecutor {
   bindSnapshot(snapshotJson: string): void;
+  /** Retain SQL results across source edits; unchanged files reuse native fact shards. */
+  applySnapshot(snapshotJson: string, maxWaves?: number | null): string;
   bindStored(scope: string, paths?: string[] | null): void;
   bindRelation(relationJson: string): void;
   /** Drop generated outputs while keeping fact bindings and registered extensions. */
@@ -310,7 +312,20 @@ export interface NativeCodeRuleSqlExecutorConstructor {
   new(storePath: string): NativeCodeRuleSqlExecutor;
 }
 
+export interface NativeCodeRuleDslExecution {
+  evaluate(compiled: NativeCompiledCodeRuleDsl, snapshot: string, mode: string): string;
+  createWorkspace(): NativeCodeRuleDslWorkspace;
+  close(): void;
+}
+
+export interface NativeModelCheck {
+  problem?: "missing" | "unreadable" | "invalid-manifest" | "checksum-mismatch" | null;
+  file?: string | null;
+}
+
 export interface NativeBinding {
+  verifyModelFiles(modelPath: string): NativeModelCheck;
+  CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
   CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
   executeSqlRequest(storePath: string, requestJson: string): string;
   health(): NativeHealth;

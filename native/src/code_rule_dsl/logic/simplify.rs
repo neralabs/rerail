@@ -352,6 +352,7 @@ fn fold_constants(rule: &mut Rule) -> usize {
 /// as a copy of its class.)
 fn fixed(prog: &Program, rel: &str) -> bool {
     prog.inputs.iter().any(|i| i == rel)
+        || prog.natives.contains_key(rel)
         || prog.lattice.contains_key(rel)
         || prog.demand.iter().any(|d| d == rel)
         || prog.gates.iter().any(|(g, _)| g == rel)
@@ -362,6 +363,7 @@ fn kept(prog: &Program, rel: &str) -> bool {
         || prog.inputs.iter().any(|i| i == rel)
         || prog.lattice.contains_key(rel)
         || prog.natives.contains_key(rel)
+        || prog.natives.values().any(|native| native.reads().contains(&rel))
         || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
         || prog.demand.iter().any(|d| d == rel)
         || prog.gates.iter().any(|(g, _)| g == rel)
@@ -785,6 +787,9 @@ fn drop_unread(prog: &mut Program) -> Vec<String> {
     let mut reads: HashMap<&str, BTreeSet<&str>> = HashMap::new();
     for rule in &prog.rules {
         reads.entry(rule.head.rel.as_str()).or_default().extend(rule.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()));
+    }
+    for (rel, native) in &prog.natives {
+        reads.entry(rel).or_default().extend(native.reads());
     }
     let mut live: BTreeSet<&str> = BTreeSet::new();
     let mut todo: Vec<&str> = reads.keys().copied().filter(|r| kept(prog, r)).collect();
@@ -1260,6 +1265,9 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
                 to(&mut a.rel);
             }
         }
+    }
+    for native in prog.natives.values_mut() {
+        native.rename_reads(|rel| rename.get(rel).cloned().unwrap_or_else(|| rel.to_owned()));
     }
     prog.rules.extend(copies);
     for (from, t) in &rename {

@@ -617,6 +617,11 @@ fn error_name(e: &Error) -> String {
 fn rdl_programs_translate_to_the_same_program() {
     let mut failures = Vec::new();
     for (name, text, path) in authored() {
+        // O101: a program that reads `parsed` lowers it to a demand in `.rr` (decision 0055) and not in `.rdl`, and
+        // printing it lowers the demand again. calls.rdl reads `parsed` since its quoted annotations (C1).
+        if name.ends_with("typing/programs/calls.rdl") {
+            continue;
+        }
         let rr = match translate(&text) {
             Ok(rr) => rr,
             Err(e) => {
@@ -1543,8 +1548,166 @@ Bare(@place("a.py", 1), i, a, b) :- sample(s), match_all("x", s, i, a, b).
     assert_eq!(wanted(&rows, "MATCH"), [(0, 2, 4), (1, 5, 7)]);
     assert_eq!(wanted(&rows, "BARE"), [(0, 2, 3), (1, 3, 4), (2, 5, 6), (3, 6, 7)]);
     assert!(rows.iter().filter(|r| r["code"] == "MATCH").all(|r| r["parameters"]["capture"] == "xx"));
-    let printed = print(&parse(rule).unwrap()).unwrap();
-    let roundtrip = finding_contract("", &printed);
+    let printed = complete_rule(rule);
+    let roundtrip = lowered_findings(&printed);
     assert_eq!(wanted(&roundtrip, "MATCH"), wanted(&rows, "MATCH"));
     assert_eq!(wanted(&roundtrip, "BARE"), wanted(&rows, "BARE"));
+}
+
+/// Coalescing may rename a shared context, but a native producer must still read that context's rows.
+#[test]
+fn native_regex_inputs_follow_program_namespaces_and_shared_contexts() {
+    let rule = |code: &str, sample: &str, pattern: &str| format!(r#"
+.language python
+.decl sample(s: symbol)
+sample("{sample}").
+.violation Found(at: span, ordinal: number) code "{code}" "found"
+Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
+"#);
+    let a = complete_rule(&rule("A", "xx xx", "xx"));
+    let b = complete_rule(&rule("B", "yy yy", "yy"));
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b], "").unwrap();
+    assert_eq!(combined.natives.len(), 2);
+    for native in combined.natives.values() {
+        for input in native.reads() { assert!(combined.decls.contains_key(input), "{input}"); }
+    }
+    let rows = lowered_findings(&print(&combined).unwrap());
+    assert_eq!(rows.iter().filter(|r| r["code"] == "A").count(), 2, "{rows:?}");
+    assert_eq!(rows.iter().filter(|r| r["code"] == "B").count(), 2, "{rows:?}");
+}
+
+/// Printed engine programs use reserved helper names; run through the internal text boundary used by run_rr.
+fn complete_rule(program: &str) -> String {
+    let path = crate::code_rule_dsl::prefilter::tests::temp().with_extension("public.rr");
+    std::fs::write(&path, program).unwrap();
+    let (program, _) = read_file(&path).unwrap();
+    std::fs::remove_file(path).unwrap();
+    print(&program).unwrap()
+}
+
+fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("lowered-findings");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "").unwrap();
+    let out = root.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &root, None, &out, "program",
+        crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = std::fs::read_to_string(out.join("rr_diagnostic.csv")).unwrap().lines()
+        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    std::fs::remove_dir_all(root).unwrap();
+    rows
+}
+
+/// A value document is its askers' files' (O96): two files asking for one text share a value, and each keeps its
+/// rows in the memo. A second run over the same files reads every file from the memo and gives the first run's rows.
+#[test]
+fn value_documents_are_memoised_with_the_files_that_asked() {
+    let shared = "def f(db):\n    db.execute(\"SELECT name FROM users\")\n";
+    let own = "def g(db):\n    db.execute(\"SELECT id FROM orders\")\n";
+    // A text no other test parses, so the first run cannot read these files from an earlier run's memo.
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let files = [("a.py", format!("{marker}{shared}")), ("b.py", format!("{marker}{shared}")), ("c.py", format!("{marker}{own}"))];
+    let rule = r#"
+.decl q(s: node, x: symbol)
+q(s, x) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), str(s, x).
+.decl tables(s: node, x: symbol)
+tables(s, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), text(n, x).
+.decl objects(n: node, x: symbol)
+objects(n, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), text(n, x).
+.output tables, objects
+"#;
+    let run = |name: &str| {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (path, text) in &files {
+            std::fs::write(dir.join(path), text).unwrap();
+        }
+        let path = dir.join("g.rr");
+        std::fs::write(&path, rule).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+        let out = dir.join("out");
+        let report = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows: Vec<Vec<String>> = ["tables", "objects"]
+            .iter()
+            .map(|rel| {
+                let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+                rows.sort();
+                rows
+            })
+            .collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        (report.memo, rows)
+    };
+    let (memo, first) = run("valmemo1");
+    assert_eq!(memo, (0, 0), "every chunk's rows are attributed to files");
+    assert_eq!(first[0].len(), 3, "{first:?}");
+    assert_eq!(first[1].iter().map(|r| r.split('\t').nth(1).unwrap().to_owned()).collect::<BTreeSet<_>>(), BTreeSet::from(["orders".to_owned(), "users".to_owned()]), "{first:?}");
+    let (memo, second) = run("valmemo2");
+    assert_eq!(memo, (3, 0), "every file is read from the memo");
+    assert_eq!(second, first);
+}
+
+/// A combined run's programs each see the guests their own `.guests` shows (decision 0058 §1, O97): one batch, one
+/// set of embeds, and each program's rules bounded by its own setting.
+#[test]
+fn combined_programs_see_guests_by_their_own_policy() {
+    let py = "a = \"import os\"\nb = \"import sys\"\n";
+    let program = |guests: &str| {
+        format!(
+            r#"
+{guests}
+embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
+.decl top(x: symbol, l: number)
+top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
+.decl through(x: symbol)
+through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i, x).
+.output top, through
+"#
+        )
+    };
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("combined_guests");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), py).unwrap();
+    let printed: Vec<String> = [program(".guests off"), program("")]
+        .iter()
+        .enumerate()
+        .map(|(i, text)| {
+            let path = dir.join(format!("p{i}.rr"));
+            std::fs::write(&path, text).unwrap();
+            crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap()
+        })
+        .collect();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run_all(&printed.iter().map(String::as_str).collect::<Vec<_>>(), &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows
+    };
+    let (off, on, off_through, on_through) = (read("p0_top"), read("p1_top"), read("p0_through"), read("p1_through"));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(off.is_empty(), "`.guests off` hides the guests from its own rules: {off:?}");
+    assert_eq!(on, ["import os\t1", "import sys\t2"], "the other program shows them");
+    assert_eq!(off_through, ["import os", "import sys"], "a guest relation reaches them under `.guests off`");
+    assert_eq!(on_through, off_through);
+}
+
+/// A kind set read by `nearest` over a scoped SQL node is resolved in SQL's grammar (decision 0058 §2, O98): the
+/// set is copied as `clauses@sql`, its kinds qualified. The same set over an unscoped node stays the run's.
+#[test]
+fn kind_sets_over_a_guest_are_its_grammars() {
+    let py = "def f(db):\n    db.execute(\"SELECT name FROM users\")\n";
+    let rule = r#"
+embed(d, s, "sql", "query") :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), docof(s, d).
+.decl clauses(kind: symbol)
+clauses("relation"). clauses("function_definition").
+.decl enclosing(x: symbol, k: symbol)
+enclosing(x, k) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), text(n, x), nearest(n, a, clauses), node(_, a, k, _, _).
+.decl outer(k: symbol)
+outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
+.output enclosing, outer
+"#;
+    let [within, outer] = <[Vec<String>; 2]>::try_from(guests_run("sqlkindset", &[("a.py", py)], rule, &["enclosing", "outer"])).unwrap();
+    assert_eq!(within, ["users\trelation"], "the set names SQL's `relation` over the guest");
+    assert_eq!(outer, ["function_definition"], "and Python's kinds over the file");
 }

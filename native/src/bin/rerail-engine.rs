@@ -5,10 +5,11 @@
 //!   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]
 //!   rerail-engine gc <store.sqlite> [--history-mb <n>]
 //!   rerail-engine sql <store.sqlite> <request.json>
+//!   rerail-engine flatten <program.rr>
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -26,6 +27,7 @@ fn main() -> ExitCode {
 
 fn run(args: &[String]) -> Result<String, String> {
     match args.first().map(String::as_str) {
+        #[cfg(feature = "dump-cli")]
         Some("dump") => dump(&args[1..]),
         Some("asm") => match &args[1..] {
             [file] => rerail_engine::tools::assemble(&read(file)?),
@@ -54,7 +56,15 @@ fn run(args: &[String]) -> Result<String, String> {
             let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
             serde_json::to_string_pretty(&rerail_engine::tools::convert_rr(&paths)).map_err(|e| e.to_string())
         }
+        // The program `logic` runs for a file: `core.rr` and its includes resolved, lowered and printed as `.rr`.
+        Some("flatten") => match &args[1..] {
+            [file] => rerail_engine::tools::flatten(Path::new(file.as_str())),
+            _ => Err(USAGE.into()),
+        },
+        #[cfg(feature = "tape-cache")]
         Some("gc") => gc(&args[1..]),
+        #[cfg(not(all(feature = "dump-cli", feature = "tape-cache")))]
+        Some(command @ ("dump" | "gc")) => Err(format!("{command} is not in this build (its feature, `dump-cli` or `tape-cache`, is off)")),
         _ => Err(USAGE.into()),
     }
 }
@@ -107,6 +117,7 @@ fn logic(args: &[String]) -> Result<String, String> {
 /// `gc`: collects a store until nothing is left to collect (decision 0053): converts a store made before 0053 to
 /// incremental vacuum, decides which corpus runs to keep (`--history-mb`: the high-water mark, default 512; the low
 /// water is three quarters of it), and runs passes until two in a row find nothing.
+#[cfg(feature = "tape-cache")]
 fn gc(args: &[String]) -> Result<String, String> {
     use rerail_engine::content_store::{ContentStore, CorpusPolicy};
     let (mut path, mut policy) = (None, CorpusPolicy::default());
@@ -158,6 +169,7 @@ fn gc(args: &[String]) -> Result<String, String> {
     Ok(out)
 }
 
+#[cfg(feature = "dump-cli")]
 fn dump(args: &[String]) -> Result<String, String> {
     let (mut rules, mut clause, mut capabilities) = (Vec::new(), None, None);
     let (mut fused, mut setplan) = (false, false);
@@ -186,6 +198,7 @@ fn dump(args: &[String]) -> Result<String, String> {
 }
 
 /// A rule file as (name, source, format): named by its stem, its format from the extension.
+#[cfg(feature = "dump-cli")]
 fn policy(file: &str) -> Result<(String, String, String), String> {
     let path = Path::new(file);
     let format = match path.extension().and_then(|extension| extension.to_str()).map(str::to_ascii_lowercase).as_deref() {

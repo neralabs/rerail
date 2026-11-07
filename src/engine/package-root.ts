@@ -18,6 +18,9 @@ function nearestPackageRoot(from: string): string {
  */
 export const PACKAGE_ROOT = nearestPackageRoot(dirname(fileURLToPath(import.meta.url)));
 
+/** The oldest Node major the package runs on; matches `engines.node` in package.json. */
+export const REQUIRED_NODE_MAJOR = 24;
+
 /**
  * The built entry points the package starts, relative to its root: they mirror `src/<layer>/…`, and `package.json`
  * (`bin`, `exports`, the `omp`/`pi` extensions), `hooks/*.json` and every harness registration name the same files.

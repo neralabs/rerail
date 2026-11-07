@@ -405,29 +405,29 @@ pub(super) fn maintain(
             }
             continue;
         }
-        // Reconstruct a superset of old inputs from new rows plus actual deletions. Keeping
-        // simultaneous insertions is safe: overdeletion may be conservative, then support is rederived.
+        // Current native inputs plus deleted rows retain their native lookup paths. SQL results
+        // use separate query variants, so SQLite never materializes an old-input UNION view.
+        let mut overlays = overlay::Overlays::new(w.db);
         let mut old_inputs = BTreeMap::new();
+        let mut sql_deleted = BTreeMap::new();
         for (_, q) in &steps {
             if let Some(q) = q {
                 for (_, r) in atoms(q) {
                     if !group.contains(&r)
                         && changes.get(&r).is_some_and(|d| d.deleted > 0)
                         && !old_inputs.contains_key(&r)
+                        && !sql_deleted.contains_key(&r)
                     {
                         let d = &changes[&r];
-                        let columns =
-                            w.db.prepare(&format!("SELECT * FROM {} LIMIT 0", quote(&r)))
-                                .map_err(error)?
-                                .column_names()
-                                .iter()
-                                .enumerate()
-                                .map(|(i, c)| format!("{} AS c{i}", quote(c)))
-                                .collect::<Vec<_>>();
-                        let name = format!("__rr_update_old_{}", w.sequence);
-                        w.sequence += 1;
-                        w.db.execute_batch(&format!("CREATE TEMP VIEW {name} AS SELECT {} FROM {} UNION ALL SELECT * FROM {}",columns.join(","),quote(&r),d.minus)).map_err(error)?;
-                        old_inputs.insert(r.clone(), (name, columns.len()));
+                        if let Some(binding) = overlays.bind(&r, &d.minus)? {
+                            old_inputs.insert(r, binding);
+                        } else {
+                            let width =
+                                w.db.prepare(&format!("SELECT * FROM {} LIMIT 0", quote(&r)))
+                                    .map_err(error)?
+                                    .column_count();
+                            sql_deleted.insert(r, (d.minus.clone(), width));
+                        }
                     }
                 }
             }
@@ -479,8 +479,29 @@ pub(super) fn maintain(
                             .map_err(error)?
                             .column_count();
                     variant.body.from[i].relation = source(delta, width);
-                    anchor(&mut variant, i);
-                    w.db.execute(&format!("INSERT OR IGNORE INTO {} SELECT n.* FROM ({}) n WHERE EXISTS(SELECT 1 FROM {} r WHERE {})",candidates[&s.output],variant.render(),quote(&s.output),same("r","n",arities[&s.output])),[]).map_err(error)?;
+                    // Distribute old SQL-table reads over current/deleted alternatives. The
+                    // delta anchor stays first, and every branch uses the original table indexes.
+                    let mut variants = vec![variant];
+                    for (j, rel) in atoms(q) {
+                        if j == i {
+                            continue;
+                        }
+                        if let Some((table, width)) = sql_deleted.get(&rel) {
+                            let deleted = variants
+                                .iter()
+                                .map(|v| {
+                                    let mut v = v.clone();
+                                    v.body.from[j].relation = source(table, *width);
+                                    v
+                                })
+                                .collect::<Vec<_>>();
+                            variants.extend(deleted);
+                        }
+                    }
+                    for mut variant in variants {
+                        anchor(&mut variant, i);
+                        w.db.execute(&format!("INSERT OR IGNORE INTO {} SELECT n.* FROM ({}) n WHERE EXISTS(SELECT 1 FROM {} r WHERE {})",candidates[&s.output],variant.render(),quote(&s.output),same("r","n",arities[&s.output])),[]).map_err(error)?;
+                    }
                 }
             }
             for r in &group {
@@ -501,10 +522,7 @@ pub(super) fn maintain(
             }
             deletions += 1;
         }
-        for (_, (table, _)) in old_inputs {
-            w.db.execute_batch(&format!("DROP VIEW {table}"))
-                .map_err(error)?;
-        }
+        drop(overlays);
         let mut removed = BTreeMap::new();
         let mut added = BTreeMap::new();
         for r in &group {

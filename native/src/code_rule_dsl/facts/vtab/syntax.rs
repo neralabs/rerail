@@ -905,11 +905,10 @@ impl Batch {
             }
             docs.push(p);
         }
-        // The guests' rows, once every document is projected: a guest's host may be a guest after it.
-        if core {
-            for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
-                g.document(p, d, d.guest.as_deref(), withheld, &docs, [projection.wants("host_node"), projection.wants("unparse_of")], &mut string);
-            }
+        // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
+        // a program that declares its base relations itself (T's) reads guests as core.rr's do.
+        for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
+            g.document(p, d, d.guest.as_deref(), withheld, &docs, [projection.wants("host_node"), projection.wants("unparse_of")], &mut string);
         }
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
@@ -942,9 +941,9 @@ impl Batch {
             ("intval", pairs(&["n", "v"], &intval, [false, false])),
             ("op_t", pairs(&["n", "s"], &op_t, [false, true])),
         ];
+        relations.extend(g.relations(&atom));
         if core {
             relations.extend(c.relations(&atom));
-            relations.extend(g.relations(&atom));
         } else {
             relations.extend([
                 ("value", pairs(&["n", "s"], &value, [false, true])),
@@ -1451,33 +1450,38 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
         return known;
     }
     let rows = source.len();
-    // Postings by sorting (no map per value): a run of equal values is one value's postings.
-    let moments = |mut values: Vec<(i64, i64)>| -> (i64, i64) {
-        values.sort_unstable();
-        let (mut ndv, mut sq, mut at) = (0, 0, 0);
-        while at < values.len() {
-            let run = values[at..].iter().take_while(|v| **v == values[at]).count();
-            ndv += 1;
-            sq += (run * run) as i64;
-            at += run;
-        }
-        (ndv, sq)
-    };
     // Each row's document (the first column's high half), read once for every column.
     let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();
+    // One sort per column by (value, document): a run of one value is its postings (ndv, and the sum of squares of
+    // their lengths), and within it a run of one document is that document's (the sum of squares per document).
     source
         .columns()
         .into_iter()
         .enumerate()
         .map(|(c, name)| {
-            let values: Vec<i64> = (0..rows).map(|row| source.value(row, c)).collect();
             // A key column (strictly increasing, as a node column of a relation in node order): every value once,
             // and so every (document, value) once. No sort.
-            if values.windows(2).all(|pair| pair[0] < pair[1]) {
+            if (1..rows).all(|row| source.value(row - 1, c) < source.value(row, c)) {
                 return (name, rows as i64, rows as i64, rows as i64, rows as i64);
             }
-            let (ndv, sq) = moments(values.iter().map(|&v| (0, v)).collect());
-            let (_, sqd) = moments(docs.iter().zip(&values).map(|(&d, &v)| (d, v)).collect());
+            let mut values: Vec<(i64, i64)> = (0..rows).map(|row| (source.value(row, c), docs[row])).collect();
+            values.sort_unstable();
+            let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
+            let mut at = 0;
+            while at < values.len() {
+                let v = values[at].0;
+                let end = at + values[at..].partition_point(|x| x.0 == v);
+                ndv += 1;
+                sq += ((end - at) * (end - at)) as i64;
+                let mut d = at;
+                while d < end {
+                    let doc = values[d].1;
+                    let de = d + values[d..end].partition_point(|x| x.1 == doc);
+                    sqd += ((de - d) * (de - d)) as i64;
+                    d = de;
+                }
+                at = end;
+            }
             (name, rows as i64, ndv, sq, sqd)
         })
         .collect()

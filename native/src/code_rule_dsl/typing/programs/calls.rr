@@ -22,6 +22,11 @@
 .decl op(n: node, s: symbol)
 .decl pkg(d: number, p: symbol)
 .input doc, node, child, field, text, op, pkg, kind, docof
+// Guests (decision 0055): parsed(s, "annotation", r) asks for string s's code, rooted at r; host_node(n, h): h is
+// the innermost host node over guest node n.
+.decl parsed(s: node, grammar: symbol, root: node)
+.decl host_node(n: node, h: node)
+.input parsed, host_node
 
 .decl scope(kind: symbol)
 scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
@@ -130,7 +135,9 @@ bound_in(s, x) :- ibind(s, x, _).
 
 // LEGB: from the nearest scope outwards, skipping class scopes, to the first that binds the name.
 .decl walk(n: node, x: symbol, s: node)
-walk(n, x, s) :- nameref(n, x), nearest(n, s, scope).
+walk(n, x, s) :- nameref(n, x), nearest(n, s, scope), !host_node(n, _).
+// A name in a guest (a quoted annotation's code) is looked up from the string that holds it.
+walk(n, x, s) :- nameref(n, x), host_node(n, h), nearest(h, s, scope).
 walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), nearest(s, p, fscope).
 .decl look(n: node, x: symbol, s: node)
 look(n, x, s) :- walk(n, x, s), bound_in(s, x).
@@ -217,10 +224,15 @@ sub(c, s) :- sub(c, m), base(s, m).
 need_attr(c, a) :- alook(_, c, a).
 need_attr(c, "__init__") :- callee(k, e), pv(e, "cls", c).
 need_attr(c, "__call__") :- callee(k, e), pv(e, "inst", c).
-// Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance). Computed only
-// where it is read: the demand is the magic-set relation (`.demand found`), not written by hand.
+// need_name(a): an attribute name some lookup reads. Every reader of `found` asks with a name of need_attr's or
+// alook's, or with __init__, __call__ or __new__.
+.decl need_name(a: symbol)
+need_name(a) :- need_attr(_, a).
+need_name("__init__"). need_name("__call__"). need_name("__new__").
+// Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance), for the names
+// lookups read only: a stub's class binds many names no code reads.
 .decl found(c: node, a: symbol, at: node)
-found(c, a, c) :- bound_in(c, a).
+found(c, a, c) :- bound_in(c, a), need_name(a).
 found(c, a, x) :- base(c, b), !bound_in(c, a), found(b, a, x).
 .pragma "magic-transform" "found"
 .decl anc(c: node, b: node)
@@ -233,10 +245,15 @@ anc(c, b) :- anc(c, m), base(m, b).
 // subclass (the closed world `self` already assumes), a builtin class's name a value of it, `None` None. Unions
 // (`A | B`, `Optional[A]`, `Union[A, B]`) are their members; a generic (`LazyResult[T]`, `list[int]`) is its class,
 // without arguments; `type[C]` is C's class objects; `Self` is the method's class. Any other member (a type
-// variable, `Any`, a `Protocol`, an external class, a quoted annotation) leaves the declaration open: its known
-// members are a lower bound.
+// variable, `Any`, a `Protocol`, an external class) leaves the declaration open: its known members are a lower
+// bound. A quoted annotation (`x: "Node"`, `list["Node"]`) is its code, parsed as an annotation (decision 0055).
 .decl ann(t: node, e: node)
 ann(t, e) :- kind(t, "type"), child(t, e, 0).
+// qann(s, e): string s is an annotation's whole expression, and e is its code's expression: the guest is a module
+// holding one statement, `(…)`, whose parentheses amem steps through.
+.decl qann(s: node, e: node)
+qann(s, e) :- kind(t, "type"), child(t, s, 0), kind(s, "string"), parsed(s, "annotation", m), child(m, x, 0),
+    kind(x, "expression_statement"), child(x, e, 0).
 .decl union_q(q: symbol)
 union_q("typing.Optional"). union_q("typing.Union"). union_q("typing_extensions.Optional"). union_q("typing_extensions.Union").
 .decl uhead(e: node)
@@ -248,12 +265,14 @@ amem(t, e) :- ann(t, e).
 amem(t, m) :- amem(t, e), kind(e, "binary_operator"), op(e, "|"), field(e, "left", m).
 amem(t, m) :- amem(t, e), kind(e, "binary_operator"), op(e, "|"), field(e, "right", m).
 amem(t, m) :- amem(t, e), kind(e, "parenthesized_expression"), child(e, m, 0).
+amem(t, r) :- amem(t, s), qann(s, r).
 amem(t, m) :- amem(t, e), kind(e, "union_type"), child(e, u, _), child(u, m, 0).
 amem(t, m) :- amem(t, e), uhead(e), kind(e, "generic_type"), child(e, p, 1), child(p, u, _), child(u, m, 0).
 amem(t, m) :- amem(t, e), uhead(e), kind(e, "subscript"), field(e, "subscript", m).
 .decl asplit(e: node)
 asplit(e) :- kind(e, "binary_operator"), op(e, "|").
 asplit(e) :- kind(e, "parenthesized_expression").
+asplit(s) :- qann(s, _).
 asplit(e) :- kind(e, "union_type").
 asplit(e) :- uhead(e).
 // A member that is not split further, and the name it is headed by (`LazyResult` in `LazyResult[T]`).
@@ -306,9 +325,13 @@ pdefault(f, x, v) :- field(f, "parameters", ps), child(ps, p, _), kind(p, "typed
     field(p, "value", v).
 .decl pclosed(f: node, x: symbol)
 pclosed(f, x) :- pann(f, x, t), !aopen(t).
-bv(f, x, "inst", s) :- pann(f, x, t), ainst(t, c), sub(c, s).
-bv(f, x, "cls", s) :- pann(f, x, t), acls(t, c), sub(c, s).
-bv(f, x, "inst", s) :- pann(f, x, t), aleaf(t, m), aself(m), method(f, c), sub(c, s).
+// A parameter's declared classes, with their subclasses, only where the parameter is read: a function scope's
+// values are read through `look` alone, and a stub's parameters are never read.
+.decl pread(f: node, x: symbol)
+pread(f, x) :- pann(f, x, _), look(_, x, f).
+bv(f, x, "inst", s) :- pann(f, x, t), pread(f, x), ainst(t, c), sub(c, s).
+bv(f, x, "cls", s) :- pann(f, x, t), pread(f, x), acls(t, c), sub(c, s).
+bv(f, x, "inst", s) :- pann(f, x, t), pread(f, x), aleaf(t, m), aself(m), method(f, c), sub(c, s).
 bv(f, x, k, v) :- pdefault(f, x, d), pv(d, k, v).
 tbv(f, x, "decl", m) :- pann(f, x, t), aleaf(t, m), dtype(m, _).
 tbv(f, x, k, v) :- pdefault(f, x, d), tv(d, k, v).
@@ -318,17 +341,29 @@ tbv(f, x, k, v) :- pdefault(f, x, d), tv(d, k, v).
 rann(f, t) :- kind(f, "function_definition"), field(f, "return_type", t).
 .decl rclosed(f: node)
 rclosed(f) :- rann(f, t), !aopen(t), !isasync(f).
-pv(c, "inst", s) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), ainst(t, k), sub(k, s).
-pv(c, "cls", s) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), acls(t, k), sub(k, s).
-pv(c, "inst", s) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf(t, m), aself(m), method(f, k), sub(k, s).
+// rret(f, "inst", k): f is declared to return an instance of class k (or of a subclass); "cls" for `type[k]`.
+.decl rret(f: node, w: symbol, k: node)
+rret(f, "inst", k) :- rann(f, t), !isasync(f), ainst(t, k).
+rret(f, "cls", k) :- rann(f, t), !isasync(f), acls(t, k).
+rret(f, "inst", k) :- rann(f, t), !isasync(f), aleaf(t, m), aself(m), method(f, k).
+// cret(c, w, k): call c's declared return class. Joined with the subclasses last, so a new subclass row reaches
+// only the calls declared to return its base.
+.decl cret(c: node, w: symbol, k: node)
+cret(c, w, k) :- callee(c, e), pv(e, "fn", f), rret(f, w, k).
+pv(c, w, s) :- cret(c, w, k), sub(k, s).
 tv(c, "decl", m) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf(t, m), dtype(m, _).
 // Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
 .decl cann(c: node, x: symbol, t: node)
 cann(c, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", t), nearest(a, c, scope),
     kind(c, "class_definition").
 bound_in(c, x) :- cann(c, x, _).
-bv(c, x, "inst", s) :- cann(c, x, t), ainst(t, k), sub(k, s).
-bv(c, x, "cls", s) :- cann(c, x, t), acls(t, k), sub(k, s).
+// A class attribute's, only where it is read: through `found` (a name a lookup reads), or by name in the class
+// body (`look`).
+.decl cread(c: node, x: symbol)
+cread(c, x) :- cann(c, x, _), need_name(x).
+cread(c, x) :- cann(c, x, _), look(_, x, c).
+bv(c, x, "inst", s) :- cann(c, x, t), cread(c, x), ainst(t, k), sub(k, s).
+bv(c, x, "cls", s) :- cann(c, x, t), cread(c, x), acls(t, k), sub(k, s).
 tbv(c, x, "decl", m) :- cann(c, x, t), aleaf(t, m), dtype(m, _).
 // An attribute declared closed: assignments elsewhere (`self.x = ...`) conform to it.
 .decl adeclared(c: node, a: symbol)
@@ -339,16 +374,21 @@ adeclared(c, a) :- need_attr(c, a), found(c, a, at), cann(at, a, t), !aopen(t).
 tvar(g, x) :- field(g, "type_parameters", tp), child(tp, p, _), child(p, e, 0), ann(p, e), kind(e, "identifier"), text(e, x).
 tvar(g, x) :- field(g, "type_parameters", tp), child(tp, p, _), child(p, e, 0), ann(p, e), kind(e, "constrained_type"), child(e, u, 0),
     child(u, i, 0), kind(i, "identifier"), text(i, x).
-tvar(g, x) :- kind(g, "function_definition"), docof(g, d), modnode(d, m), rasg(m, x, r, _), callee(r, h), qn(h, "typing.TypeVar").
+// mtvar(d, x): x is a module-level `TypeVar` of document d, in scope in each of its functions.
+.decl mtvar(d: number, x: symbol)
+mtvar(d, x) :- modnode(d, m), rasg(m, x, r, _), callee(r, h), qn(h, "typing.TypeVar").
 .decl ident_dec(g: node)
 ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), kind(e, "identifier"), text(e, v), rann(g, r), ann(r, e2), kind(e2, "identifier"),
     text(e2, v), tvar(g, v).
+ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), kind(e, "identifier"), text(e, v), rann(g, r), ann(r, e2), kind(e2, "identifier"),
+    text(e2, v), docof(g, d), mtvar(d, v).
 
 // ---- values ---------------------------------------------------------------------------------------------------
 .decl attr_of(n: node, o: node, a: symbol)
 attr_of(n, o, a) :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a).
 .decl callee(c: node, e: node)
-callee(c, e) :- kind(c, "call"), field(c, "function", e).
+// A call in a guest (a quoted annotation's code) is not evaluated: only its names are read.
+callee(c, e) :- kind(c, "call"), field(c, "function", e), !host_node(c, _).
 // Qualified names: an imported name and attributes of one (`os.path.join`), whether or not the workspace defines it.
 .decl qn(n: node, q: symbol)
 qn(n, q) :- look(n, x, s), ibind(s, x, q).
@@ -410,14 +450,17 @@ pv(c, "super", k) :- callee(c, e), builtin_ref(e, "super"), nearest(c, f, fdef),
 // ---- unknown values -------------------------------------------------------------------------------------------
 // Positions whose value is read: what `vopen` is asked about.
 .decl vpos(n: node)
-vpos(e) :- callee(_, e).
-vpos(o) :- attr_of(_, o, _).
-vpos(r) :- asg(_, _, r, _).
-vpos(r) :- retval(_, r).
-vpos(e) :- dexpr(_, e).
-vpos(e) :- basex(_, e).
-vpos(a) :- posarg(_, _, a).
-vpos(v) :- pdefault(_, _, v).
+// vroot(e): where a value is read. A guest's (a quoted annotation's code) are not: only its names are read.
+.decl vroot(e: node)
+vroot(e) :- callee(_, e).
+vroot(o) :- attr_of(_, o, _).
+vroot(r) :- asg(_, _, r, _).
+vroot(r) :- retval(_, r).
+vroot(e) :- dexpr(_, e).
+vroot(e) :- basex(_, e).
+vroot(a) :- posarg(_, _, a).
+vroot(v) :- pdefault(_, _, v).
+vpos(e) :- vroot(e), !host_node(e, _).
 vpos(c) :- vpos(n), kind(n, "parenthesized_expression"), child(n, c, 0).
 vpos(c) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 0).
 vpos(c) :- vpos(n), kind(n, "conditional_expression"), child(n, c, 2).

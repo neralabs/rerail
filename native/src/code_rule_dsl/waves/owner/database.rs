@@ -38,7 +38,8 @@ impl Database {
         // SAFETY: this connection and its statements belong to the current worker.
         // SQLite retains the statement list until statements are finalized here.
         unsafe {
-            let mut statement = rusqlite::ffi::sqlite3_next_stmt(self.handle(), std::ptr::null_mut());
+            let mut statement =
+                rusqlite::ffi::sqlite3_next_stmt(self.handle(), std::ptr::null_mut());
             while !statement.is_null() {
                 if rusqlite::ffi::sqlite3_stmt_busy(statement) != 0 {
                     return Err(rusqlite::Error::SqliteFailure(
@@ -51,16 +52,39 @@ impl Database {
         }
         Ok(())
     }
-    pub(in crate::code_rule_dsl) fn prepare_execution(&self, query: &str) -> rusqlite::Result<rusqlite::CachedStatement<'_>> {
+    pub(in crate::code_rule_dsl) fn prepare_execution(
+        &self,
+        query: &str,
+    ) -> rusqlite::Result<rusqlite::CachedStatement<'_>> {
         // Cached plans depend on native access paths and estimates, as well as SQL
         // schema. Zero-row bindings must not freeze scan plans for populated data.
-        self.prepare_cached(&format!("{query}\n/* native estimates {:x} */", self.plan_signature.get()))
+        self.prepare_cached(&format!(
+            "{query}\n/* native estimates {:x} */",
+            self.plan_signature.get()
+        ))
     }
     /// Binds `source` to the vtab `name` and refreshes the plan signature.
-    pub(in crate::code_rule_dsl) fn bind(&self, name: &str, source: Arc<dyn Source>) -> rusqlite::Result<()> {
+    pub(in crate::code_rule_dsl) fn bind(
+        &self,
+        name: &str,
+        source: Arc<dyn Source>,
+    ) -> rusqlite::Result<()> {
         self.modules.bind(self, name, Arc::clone(&source))?;
         let mut bound = self.bound.borrow_mut();
         bound.insert(name.to_owned(), source);
+        self.plan_signature.set(plan_signature(&bound));
+        Ok(())
+    }
+    /// Rebind one fact batch and calculate its planner signature once.
+    pub(in crate::code_rule_dsl) fn bind_many<'a>(
+        &self,
+        sources: impl IntoIterator<Item = (&'a str, Arc<dyn Source>)>,
+    ) -> rusqlite::Result<()> {
+        let mut bound = self.bound.borrow_mut();
+        for (name, source) in sources {
+            self.modules.bind(self, name, Arc::clone(&source))?;
+            bound.insert(name.to_owned(), source);
+        }
         self.plan_signature.set(plan_signature(&bound));
         Ok(())
     }
@@ -95,9 +119,20 @@ impl Database {
         ] {
             let (mut current, mut high) = (0i64, 0i64);
             // SAFETY: this owned connection stays live and is used only on its evaluating thread.
-            let code = unsafe { rusqlite::ffi::sqlite3_db_status64(self.connection.handle(), kind, &mut current, &mut high, 0) };
+            let code = unsafe {
+                rusqlite::ffi::sqlite3_db_status64(
+                    self.connection.handle(),
+                    kind,
+                    &mut current,
+                    &mut high,
+                    0,
+                )
+            };
             if code != rusqlite::ffi::SQLITE_OK {
-                return Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None));
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(code),
+                    None,
+                ));
             }
             total = total.saturating_add(usize::try_from(current.max(0)).unwrap_or(usize::MAX));
         }

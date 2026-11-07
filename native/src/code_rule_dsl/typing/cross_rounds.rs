@@ -275,13 +275,21 @@ pub(crate) fn cone_split(prog: &Program, hops: &BTreeSet<String>) -> Option<Spli
 
 /// The digest of one round's rows of the hop relations: the early cutoff compares consecutive rounds'.
 pub(crate) fn digest(rows: &BTreeMap<String, Vec<Vec<i64>>>) -> u64 {
-    use std::hash::{DefaultHasher, Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    for (rel, rows) in rows {
+    let sorted = rows.iter().map(|(rel, rows)| {
         let mut sorted = rows.clone();
         sorted.sort_unstable();
         sorted.dedup();
-        (rel, sorted).hash(&mut h);
+        (rel.clone(), sorted)
+    });
+    digest_sorted(&sorted.collect())
+}
+
+/// `digest` of rows already sorted and distinct per relation: no copy.
+pub(crate) fn digest_sorted(rows: &BTreeMap<String, Vec<Vec<i64>>>) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    for (rel, rows) in rows {
+        (rel, rows).hash(&mut h);
     }
     h.finish()
 }
