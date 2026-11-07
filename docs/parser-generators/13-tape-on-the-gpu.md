@@ -4,8 +4,9 @@ Status: proposal (2026-11-06). Step 1 of §7 is built: the reference evaluator r
 section (§4). Step 2 is under way: the compiler (`transducer/packed/bitlex_compile`) compiles all
 of `json.bitlex` (classes, masks, counts as bit-planes, frames, tokens, keywords, errors,
 escapes, and the tree section's `node` and `code` rows). Its rows equal the evaluator's on the
-CPU interpreter and Cranelift. On Metal the program is too large yet: generated MSL inlines
-each round's cone per carry-in, and the interpreter needs more launches than the budget.
+CPU interpreter, Cranelift and generated MSL. Generated MSL is one launch now (§5.3): each
+instruction once, a look-back per carry. The Metal interpreter still takes three launches per
+carry, more than the budget for this program.
 
 ## Intro
 
@@ -374,7 +375,11 @@ are separated by order instead:
   - the backward sweep's come next, from the last chunk to the first.
 - **Every wait is on a smaller number.** An item waits only on items with smaller numbers. Those
   were handed out earlier, to threadgroups that are running, so a bounded poll cannot deadlock.
-  If a poll runs out, the fallback computes the value from the tables already published.
+- **A poll that runs out** leaves its item unfinished. The host launches again. Finished items
+  return at once, and the others find their predecessors' states already published. Each
+  launch finishes at least the first unfinished item, so the launches are bounded.
+- **States are self-checking words.** A carry state is one 32-bit atomic: 2 status bits and 30
+  value bits. A `prev`'s 64-bit halo is three such words. A reader never needs a fence.
 - **Inside a chunk,** threadgroup barriers and SIMD-group prefix operations resolve the carries.
   A chunk can be large (1,024 lanes, 64 KB), so the look-back between chunks is rare.
 - **Masks between sweeps.** The compiler chooses, mask by mask, whether to recompute a mask or

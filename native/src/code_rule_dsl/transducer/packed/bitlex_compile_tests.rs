@@ -2,7 +2,7 @@
 //! (`tools/bitlex`): each named mask of the compiled block program equals the evaluator's mask on
 //! every input and every executor (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 
-use super::block_tests::{cpu_executors, executors, executors_in_budget, inputs};
+use super::block_tests::{Executors, executors, inputs};
 use super::*;
 
 /// The masks the compiler handles so far: classes, logic, `prev`, `starts`, `after`, `span`,
@@ -228,6 +228,7 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
     let carried = compiled.rows.lines().filter(|l| [" = fill ", " = toggle ", " = after_odd_run ", " = prev "].iter().any(|op| l.contains(op))).count();
     eprintln!("{ops} operations, {carried} carried or prev, {} outputs", compiled.rows.lines().filter(|l| l.contains(" output ")).count());
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let prepared = Executors::new(&p);
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
@@ -256,8 +257,7 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
                 _ => None,
             }
         };
-        // BITLEX_CPU_ONLY: the generated MSL for this program is too large to compile quickly yet.
-        let (runs, over) = if std::env::var_os("BITLEX_CPU_ONLY").is_some() { (cpu_executors(&p, &bytes), Vec::new()) } else { executors_in_budget(&p, &bytes) };
+        let (runs, over) = prepared.run(&bytes, true);
         skipped.extend(over);
         for (executor, got) in runs {
             let falls = cut(got[0].clone(), n).iter().any(|&w| w != 0);
@@ -284,9 +284,11 @@ fn json_rows_equal_the_evaluator_on_every_executor() {
     assert!(compared > 0 && rejected > 0);
 }
 
+/// All of `json.bitlex` as generated MSL: one kernel, a few lines per instruction (it was 0.7 to
+/// 1.1 MB of round kernels, each recomputing what came before it, and took Metal minutes).
 #[test]
-#[ignore = "a probe: the generated MSL's size for json.bitlex"]
-fn json_msl_size_probe() {
+#[cfg(target_os = "macos")]
+fn json_msl_is_one_kernel() {
     use ast_grep_language::LanguageExt;
     use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
@@ -303,9 +305,10 @@ fn json_msl_size_probe() {
     let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
     for width in LaneWidth::ALL {
         for strategy in ClassStrategy::ALL {
-            let src = generate_with(&native, width, strategy);
-            let kernels = src.matches("kernel void").count();
-            eprintln!("{}-byte {strategy:?}: {} bytes, {} lines, {kernels} kernels", width.bytes(), src.len(), src.lines().count());
+            let msl = generate_with(&native, width, strategy);
+            assert_eq!(msl.matches("kernel void tempo_").count(), 1);
+            let lines = msl.lines().count();
+            assert!(lines < 12 * native.insts.len(), "{}-byte {strategy:?}: {lines} lines for {} instructions", width.bytes(), native.insts.len());
         }
     }
 }

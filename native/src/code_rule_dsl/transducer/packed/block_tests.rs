@@ -71,45 +71,51 @@ fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
 
 /// Every executor's outputs for the program's first block program, with the executor's name.
 pub(super) fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
-    let (out, skipped) = executors_in_budget(p, bytes);
+    let (out, skipped) = Executors::new(p).run(bytes, true);
     assert!(skipped.is_empty(), "over the launch budget: {skipped:?}");
     out
 }
 
-/// The CPU executors alone: the interpreter and Cranelift.
-pub(super) fn cpu_executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
-    let block = &p.block_programs()[0];
-    let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
-    vec![("cpu interpreter".to_owned(), block.interpret(bytes)), ("cranelift".to_owned(), native_cpu_block::compile(&native).expect("compiles").run(bytes))]
+/// A program's first block program, lowered and compiled once, for runs over many inputs.
+pub(super) struct Executors<'a> {
+    block: &'a block::BlockProgram,
+    native: native_ir::BlockNative,
+    cranelift: native_cpu_block::CompiledBlock,
 }
 
-/// As `executors`, without a Metal executor whose run would take more launches than the
-/// budget (`metal_launch_budget`): those are named in the second list.
-pub(super) fn executors_in_budget(p: &Program, bytes: &[u8]) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
-    let block = &p.block_programs()[0];
-    let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
-    let mut out = vec![
-        ("cpu interpreter".to_owned(), block.interpret(bytes)),
-        ("cranelift".to_owned(), native_cpu_block::compile(&native).expect("compiles").run(bytes)),
-    ];
-    let mut skipped = Vec::new();
-    #[cfg(target_os = "macos")]
-    {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
-        let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
-            Ok(got) => out.push((name, got)),
-            Err(Error::BackendLaunchLimit) => skipped.push(name),
-            Err(e) => panic!("{name} runs: {e:?}"),
-        };
-        for width in LaneWidth::ALL {
-            let w = width.bytes();
-            keep(format!("metal interpreter, {w}-byte lanes"), interpret(block, bytes, width));
-            for strategy in ClassStrategy::ALL {
-                keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&native, bytes, width, strategy).map(|(got, _)| got));
+impl<'a> Executors<'a> {
+    pub(super) fn new(p: &'a Program) -> Self {
+        let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
+        let cranelift = native_cpu_block::compile(&native).expect("compiles");
+        Executors { block: &p.block_programs()[0], native, cranelift }
+    }
+
+    /// Every executor's outputs over `bytes` (the Metal ones when `metal`), without a Metal
+    /// executor whose run would take more launches than the budget (`metal_launch_budget`):
+    /// those are named in the second list.
+    pub(super) fn run(&self, bytes: &[u8], metal: bool) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
+        let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
+        let mut skipped = Vec::new();
+        #[cfg(target_os = "macos")]
+        if metal {
+            use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
+            let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
+                Ok(got) => out.push((name, got)),
+                Err(Error::BackendLaunchLimit) => skipped.push(name),
+                Err(e) => panic!("{name} runs: {e:?}"),
+            };
+            for width in LaneWidth::ALL {
+                let w = width.bytes();
+                keep(format!("metal interpreter, {w}-byte lanes"), interpret(self.block, bytes, width));
+                for strategy in ClassStrategy::ALL {
+                    keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&self.native, bytes, width, strategy).map(|(got, _)| got));
+                }
             }
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = metal;
+        (out, skipped)
     }
-    (out, skipped)
 }
 
 /// Check a program's outputs against references on every input and every executor.
@@ -238,9 +244,12 @@ fn check_lowering(name: &str, p: &Program) {
         let carried = native.insts.iter().any(native_ir::BlockInst::carried);
         for (strategy, msl) in metal_program_backend_generate(&native, width) {
             println!("== {name}: generated MSL, {width}-byte lanes, {strategy} ==\n{msl}");
-            // The lane code (the carry helpers, each round's summary and `tempo_block`) is
-            // straight-line; only a round kernel's look-back loops, over predecessor groups.
+            // The lane code (the carry helpers and `tempo_block`) is straight-line; only the
+            // look-backs loop, over predecessor groups. `tempo_block`'s only branches are uniform
+            // across the SIMD group: the ticket, a group already done, a look-back that has to
+            // wait for another launch, and the done flag.
             for (section, code) in lane_code(&msl) {
+                let code: String = code.lines().filter(|l| !CONTROL.iter().any(|c| l.trim_start().starts_with(c))).map(|l| format!("{l}\n")).collect();
                 for word in ["for (", "while", "switch", "goto", "?", "if (", "break"] {
                     assert!(!code.contains(word), "{name}: generated MSL ({strategy}), {section}, has `{word}`");
                 }
@@ -257,9 +266,18 @@ fn check_lowering(name: &str, p: &Program) {
     }
 }
 
-/// The generated MSL's lane code: every function (the carry helpers, the rounds' carry-outs,
-/// tables, carry-ins and halo operands, `halo_window`) and `tempo_block`. Only round kernels,
-/// which hold the look-back, are left out.
+/// `tempo_block`'s control lines, each uniform across the SIMD group.
+const CONTROL: [&str; 6] = [
+    "if (l == 0u) ticket = ",
+    "const uint g = simd_broadcast(ticket, ushort(0));",
+    "if (g >= groups || done[g] != 0u) return;",
+    "if (!look_back(",
+    "if (!halo_exchange(",
+    "if (l == 0u) done[g] = 1u;",
+];
+
+/// The generated MSL's lane code: every function (the carry helpers, `halo_window`) and
+/// `tempo_block`. Only the look-backs, which loop over predecessor groups, are left out.
 fn lane_code(msl: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for marker in ["static inline ", "kernel void tempo_block("] {
@@ -268,6 +286,9 @@ fn lane_code(msl: &str) -> Vec<(String, String)> {
             let end = code.find("\n}\n").map_or(code.find('\n').unwrap_or(code.len()), |e| e + 2);
             let code = &code[..end.min(code.len())];
             let name = code[..code.find('(').unwrap_or(0)].rsplit(' ').next().unwrap_or("").to_owned();
+            if ["look_back", "halo_exchange"].contains(&name.as_str()) {
+                continue;
+            }
             out.push((name, code.to_owned()));
         }
     }
@@ -774,25 +795,24 @@ fn carried_chain_equals_reference_on_every_executor() {
     });
 }
 
-/// The look-back's fallback: polling no times, every group computes its predecessors' aggregates
-/// itself, and the outputs are the same. The second program needs two rounds (a `toggle` of a
-/// halo the first round publishes), so the fallback also recomputes an earlier round's carries.
+/// The look-back's fallback: polling once, a group whose predecessor has not published leaves
+/// unfinished and the launch is repeated, and the outputs are the same. The second program has a
+/// carried `prev` (a halo) between two scanned carries.
 #[test]
 #[cfg(target_os = "macos")]
 fn lookback_fallback_equals_reference() {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_polling, rounds, run_source};
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_polling, run_source};
     let one = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
     let two = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = after_odd_run %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n";
-    for (rows, want_rounds) in [(one, 1), (two, 2)] {
+    for (rows, halo) in [(one, false), (two, true)] {
         let p = program(rows);
         let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
-        assert_eq!(rounds(&native), want_rounds, "rounds of\n{rows}");
         for bytes in runs() {
             let escaped = after_odd_run_reference(&bits(&bytes, |b| b == b'\\'));
             let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
             let inside = toggle_reference(&quote);
             let mut want = vec![words_of(&inside)];
-            if want_rounds == 2 {
+            if halo {
                 want.push(words_of(&toggle_reference(&prev_reference(&inside, 5))));
             }
             for width in LaneWidth::ALL {
@@ -806,14 +826,21 @@ fn lookback_fallback_equals_reference() {
     }
 }
 
-/// Stage 1 on generated MSL is one round (its two scanned carries and the halo of
-/// `nonquote_scalar` fused) and the final pass: two dispatches.
+/// Generated MSL is one kernel, each instruction once: a few lines per instruction.
 #[test]
 #[cfg(target_os = "macos")]
-fn stage1_is_one_round() {
+fn generated_msl_is_one_kernel() {
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
     let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
-    assert_eq!(metal_program_backend::block_program::rounds(&native), 1);
+    for width in LaneWidth::ALL {
+        for strategy in ClassStrategy::ALL {
+            let msl = generate_with(&native, width, strategy);
+            assert_eq!(msl.matches("kernel void tempo_").count(), 1, "{msl}");
+            let lines = msl.lines().filter(|l| l.starts_with("  const ") || l.starts_with("  if (!")).count();
+            assert!(lines < 12 * native.insts.len(), "{lines} lines for {} instructions", native.insts.len());
+        }
+    }
 }
 
 #[test]
