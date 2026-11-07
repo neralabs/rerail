@@ -387,6 +387,8 @@ pub(super) struct BlockNative {
     pub outputs: Vec<u16>,
     /// The outputs (indexes into `outputs`) whose positions the extract pass writes.
     pub extracts: Vec<usize>,
+    /// How many bytes late the outputs are (`block::BlockProgram::delay`).
+    pub delay: u8,
 }
 
 /// An instruction of a block body.
@@ -422,6 +424,8 @@ pub(super) enum BlockInst {
     AfterOddRun(u16),
     /// `fill(s, e)` (`block::BlockOp::Fill`): one add per word, its carry a borrow.
     Fill(u16, u16),
+    /// The bytes inside the stream (`block::BlockOp::Within`), from its length.
+    Within,
 }
 
 impl BlockInst {
@@ -451,9 +455,16 @@ impl BlockNative {
                 BlockOp::Toggle(a) => BlockInst::Toggle(a),
                 BlockOp::AfterOddRun(a) => BlockInst::AfterOddRun(a),
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
+                BlockOp::Within => BlockInst::Within,
             })
             .collect();
-        Self { tables: program.tables.clone(), insts, outputs: program.outputs.clone(), extracts: program.extract_outputs() }
+        Self {
+            tables: program.tables.clone(),
+            insts,
+            outputs: program.outputs.clone(),
+            extracts: program.extract_outputs(),
+            delay: program.delay,
+        }
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes
@@ -515,6 +526,7 @@ impl BlockNative {
             insts: f.insts,
             outputs: self.outputs.iter().map(|&v| at[usize::from(v)]).collect(),
             extracts: self.extracts.clone(),
+            delay: self.delay,
         }
     }
 }

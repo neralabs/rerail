@@ -182,6 +182,14 @@ template <typename M> static inline M apply_fill(M s, M e, uint cin) {
   return fill_word(s, e, M(cin), unused);
 }
 
+// `within`: the bits of the word whose bytes, from stream byte `first`, are below the stream's
+// end `len`. Two shifts, so a full 64-bit word needs no shift by 64.
+template <typename M> static inline M within_lane(uint len, uint first) {
+  const uint bits = uint(sizeof(M)) * 8u;
+  const uint t = uint(clamp(int(len) - int(first), 0, int(bits)));
+  return M(((1ul << (t >> 1u)) << (t - (t >> 1u))) - 1ul);
+}
+
 // The group's exclusive prefix of a finished round, from its state array: the inclusive prefix
 // of the group before (the identity for the first group).
 static inline uint carry_before(device atomic_uint* state, uint kind, uint g) {

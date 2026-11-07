@@ -20,7 +20,7 @@
 //! - **The interpreter** keeps its values in slots, so a group cannot recompute another's; it
 //!   scans the groups' aggregates in a dispatch of its own instead (`block_carry_scan`).
 use super::*;
-use crate::code_rule_dsl::transducer::packed::block::{BlockProgram, BlockRun, mask_tail};
+use crate::code_rule_dsl::transducer::packed::block::{BlockProgram, BlockRun, undelay};
 use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
 use metal::MTLSize;
 
@@ -101,6 +101,8 @@ fn encoded(inst: &BlockInst, round: u32) -> [u32; 4] {
         BlockInst::AfterOddRun(a) => [10, u32::from(a), round, 0],
         // Its second operand in `imm`: `b` is the round.
         BlockInst::Fill(a, e) => [12, u32::from(a), round, u32::from(e)],
+        // The length is the dispatch's (`BlockArgs::pad`).
+        BlockInst::Within => [13, 0, 0, 0],
         BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
     }
 }
@@ -139,12 +141,13 @@ pub(in crate::code_rule_dsl) fn interpret_extract(
     let summary = pipeline_named(SOURCE, &format!("block_summary_{w}"))?;
     let scan = pipeline_named(SOURCE, "block_carry_scan")?;
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let stream = Stream::new(bytes, width, steps.len())?;
+    let stream = Stream::new(bytes, width, steps.len(), native.delay)?;
     let steps_buffer = MappedBuffer::from_slice(device, &steps)?;
     let states = MappedBuffer::zeroed::<u32>(device, carried.len().max(1) * stream.groups)?;
     let aggregates = MappedBuffer::zeroed::<u32>(device, stream.groups)?;
     let halos = MappedBuffer::zeroed::<u64>(device, carried.len().max(1) * stream.groups)?;
-    let args = |from: usize, to: usize| BlockArgs { from: from as u32, to: to as u32, lanes: stream.lanes as u32, pad: 0 };
+    // `pad` holds the stream's length, for `within`.
+    let args = |from: usize, to: usize| BlockArgs { from: from as u32, to: to as u32, lanes: stream.lanes as u32, pad: bytes.len() as u32 };
     let state_bytes = (stream.groups * 4) as u64;
     let mut passes: Vec<Pass<'_>> = Vec::new();
     let lanes_pass = |pipeline, a: BlockArgs| Pass {
@@ -183,7 +186,7 @@ pub(in crate::code_rule_dsl) fn interpret_extract(
     encode_passes(&passes)?;
     let positions = extract.scatter(&stream, &planes)?;
     let words = stream.slots(steps.len());
-    let outputs = native.outputs.iter().map(|&v| finish(&words[usize::from(v)], bytes.len())).collect();
+    let outputs = native.outputs.iter().map(|&v| undelay(&words[usize::from(v)], native.delay, bytes.len())).collect();
     Ok(BlockRun { outputs, positions })
 }
 
@@ -519,13 +522,13 @@ fn table_helpers(m: usize) -> String {
 fn params(r: usize, own: bool) -> String {
     let upto = if own { r + 1 } else { r };
     let cs: String = (0..upto).map(|k| format!(", uint cv{k}")).collect();
-    format!("device const uint4* bytes, device atomic_uint* states, device const ulong* halos, uint groups, uint gl, uint g, uint l{cs}")
+    format!("device const uint4* bytes, uint len, device atomic_uint* states, device const ulong* halos, uint groups, uint gl, uint g, uint l{cs}")
 }
 
 fn args(r: usize, lane: &str, group: &str, prefix: &str, own: Option<&str>) -> String {
     let cs: String = (0..r).map(|k| format!(", {prefix}{k}")).collect();
     let own = own.map(|c| format!(", {c}")).unwrap_or_default();
-    format!("bytes, states, halos, groups, {lane}, {group}, l{cs}{own}")
+    format!("bytes, len, states, halos, groups, {lane}, {group}, l{cs}{own}")
 }
 
 /// The statements computing every round's lane carry-in vector, `{prefix}0..`, for rounds `..r`.
@@ -613,6 +616,7 @@ fn round_kernel(plan: &Plan, r: usize, spins: u32) -> String {
     let mut out = format!(
         "kernel void tempo_round_{r}(device const uint4* bytes [[buffer(0)]], constant uint& lanes [[buffer(2)]],\n\
          \x20                          device atomic_uint* states [[buffer(3)]], device ulong* halos [[buffer(4)]],\n\
+         \x20                          constant uint& len [[buffer(5)]],\n\
          \x20                          uint g [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
          \x20 const uint groups = lanes / {GROUP}u;\n\
          \x20 const uint gl = g * {GROUP}u + l;\n"
@@ -681,7 +685,7 @@ fn body(native: &BlockNative, plan: &Plan, width: LaneWidth, chosen: &[usize], c
             out.push_str(&format!("  ulong w{a} = 0ul;\n"));
         }
         let wargs: String = ops.iter().map(|a| format!(", w{a}")).collect();
-        out.push_str(&format!("  halo_window(bytes, int(gl * {w}u) - 64{wargs});\n"));
+        out.push_str(&format!("  halo_window(bytes, len, int(gl * {w}u) - 64{wargs});\n"));
     }
     out.push_str(&emit(native, width, chosen, &format!("gl * {chunks}u"), &format!("gl * {w}u"), |at, inst, out| {
         match (plan.placement(at), *inst) {
@@ -814,6 +818,8 @@ fn emit(
             BlockInst::Or(a, b) => format!("v{a} | v{b}"),
             BlockInst::Xor(a, b) => format!("v{a} ^ v{b}"),
             BlockInst::AndNot(a, b) => format!("{m}(v{a} & ~v{b})"),
+            // The bits of the word's bytes below the stream's end.
+            BlockInst::Within => format!("within_lane<{m}>(len, {offset})"),
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_) | BlockInst::Fill(..) => unreachable!(),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
@@ -857,7 +863,7 @@ fn halo_window(native: &BlockNative, plan: &Plan) -> String {
     let params: String = wanted.iter().map(|a| format!(", thread ulong& w{a}")).collect();
     let mut out = format!(
         "// The 64 bytes from `base` (zero before the stream): the local prevs' operands.\n\
-         static inline void halo_window(device const uint4* bytes, int base{params}) {{\n\
+         static inline void halo_window(device const uint4* bytes, uint len, int base{params}) {{\n\
          \x20 const uint b = uint(max(base, 0));\n"
     );
     out.push_str(&emit(native, LaneWidth::W64, &cone(native, &wanted), "b / 16u", "b", |_, _, _| unreachable!("local")));
@@ -922,7 +928,7 @@ pub(in crate::code_rule_dsl) fn run_source(
         })
         .collect::<Result<_, _>>()?;
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let stream = Stream::new(bytes, width, native.outputs.len())?;
+    let stream = Stream::new(bytes, width, native.outputs.len(), native.delay)?;
     let states = MappedBuffer::zeroed::<u32>(device, rounds.max(1) * stream.groups)?;
     let halos = MappedBuffer::zeroed::<u64>(device, rounds.max(1) * stream.groups * CANDIDATES * plan.halo_stride)?;
     let lanes = stream.lanes as u32;
@@ -977,7 +983,7 @@ pub(in crate::code_rule_dsl) fn run_source(
         extract.scatter(&stream, &planes)?
     };
     let words = stream.slots(native.outputs.len());
-    let outputs = words.iter().map(|w| finish(w, bytes.len())).collect();
+    let outputs = words.iter().map(|w| undelay(w, native.delay, bytes.len())).collect();
     Ok((BlockRun { outputs, positions }, seconds))
 }
 
@@ -1103,10 +1109,12 @@ struct Stream {
 }
 
 impl Stream {
-    fn new(bytes: &[u8], width: LaneWidth, slots: usize) -> Result<Self, Error> {
+    /// The stream and `delay` bytes past it (`block::BlockProgram::delay`), in groups' spans.
+    fn new(bytes: &[u8], width: LaneWidth, slots: usize, delay: u8) -> Result<Self, Error> {
         let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
         let span = width.bytes() * GROUP;
-        let padded_len = bytes.len().div_ceil(span).max(1) * span;
+        let run = bytes.len() + usize::from(delay);
+        let padded_len = run.div_ceil(span).max(1) * span;
         let mut flat = bytes.to_vec();
         flat.resize(padded_len, 0);
         let lanes = padded_len / width.bytes();
@@ -1117,7 +1125,7 @@ impl Stream {
             lanes,
             groups: lanes / GROUP,
             slot_bytes,
-            words: bytes.len().div_ceil(64),
+            words: run.div_ceil(64),
         })
     }
 
@@ -1207,8 +1215,3 @@ fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
     Ok(super::metal_backend::launch::gpu_seconds(command))
 }
 
-fn finish(words: &[u64], len: usize) -> Vec<u64> {
-    let mut words = words.to_vec();
-    mask_tail(&mut words, len);
-    words
-}

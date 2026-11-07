@@ -192,6 +192,8 @@ const BODY_OPCODES: &[&str] = &[
     "load", "store", "icmp", "icmp_imm", "vhigh_bits", "uextend", "ishl_imm", "bor", "band", "bxor",
     "bnot", "band_not", "iadd", "iadd_imm", "iconst", "brif", "iadd_pairwise", "bitcast", "extractlane",
     "swizzle", "ushr_imm", "sshr_imm", "uadd_overflow", "bor_not",
+    // `within`: the bits below the stream's end, from its length (clamp, two shifts).
+    "isub", "smin", "smax", "ishl",
     // The extract pass's size: each extract's popcount, summed as the plane is written.
     "popcnt",
 ];
@@ -1068,4 +1070,54 @@ fn stage1_cost_per_block() {
         let fallbacks = EXTRACT_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed) - before;
         println!("extract fallbacks (second command buffer): {fallbacks} of 30 runs with the extract");
     }
+}
+
+// --- Primitive 14: within, and the program's delay ------------------------------------------
+
+/// `next(a, k)`: each byte's bit from `k` bytes after, zero past the end.
+fn next_reference(a: &[bool], k: usize) -> Vec<bool> {
+    (0..a.len()).map(|j| j + k < a.len() && a[j + k]).collect()
+}
+
+#[test]
+fn within_and_delay_round_trip_and_refusals() {
+    let p = program("  block 0 %0 = within\n  block 0 %1 = eq 0x22\n  block 0 output %1\n  block 0 delay 5\n");
+    let text = rir::disassemble(&p, None);
+    assert!(text.contains("%0 = within") && text.contains("block 0 delay 5"), "{text}");
+    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    let undelayed = program("  block 0 %0 = within\n  block 0 %1 = eq 0x22\n  block 0 output %1\n");
+    assert_ne!(undelayed.canonical_digest("-", b""), p.canonical_digest("-", b""), "the delay is in the digest");
+    for (rows, why) in [
+        ("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 delay 64\n", "a delay of 64"),
+        ("  block 0 %0 = eq 0x22\n  block 0 output %0\n  block 0 extract %0\n  block 0 delay 1\n", "an extract with a delay"),
+    ] {
+        let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
+        assert!(rir::assemble(&text).is_err(), "{why}: accepted\n{text}");
+    }
+}
+
+/// `within` is the stream's bytes; with a delay of `d`, an output is the value `d` bytes after
+/// (`next`), so a value that reads past the end must be cut by `within` first: `eq 0x00` sees
+/// the padding's zero bytes, `within & eq 0x00` does not.
+#[test]
+fn within_and_delay_equal_reference_on_every_executor() {
+    check_all("  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %0\n  block 0 output %2\n", |bytes| {
+        vec![words_of(&vec![true; bytes.len()]), words_of(&bits(bytes, |b| b == 0))]
+    });
+    for d in [1usize, 2, 3, 15, 16, 17, 33, 63] {
+        let rows = format!(
+            "  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 %3 = eq 0x22\n  block 0 %4 = toggle %3\n\
+             \x20 block 0 %5 = and %4, %0\n  block 0 output %2\n  block 0 output %3\n  block 0 output %5\n  block 0 delay {d}\n"
+        );
+        check_all(&rows, |bytes| {
+            let nul = bits(bytes, |b| b == 0);
+            let q = bits(bytes, |b| b == b'"');
+            vec![words_of(&next_reference(&nul, d)), words_of(&next_reference(&q, d)), words_of(&next_reference(&toggle_reference(&q), d))]
+        });
+    }
+}
+
+#[test]
+fn within_lowers_to_straight_bit_operations() {
+    check_lowering("within", &program("  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %2\n  block 0 delay 3\n"));
 }

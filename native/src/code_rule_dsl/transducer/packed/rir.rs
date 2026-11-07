@@ -285,6 +285,9 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         for value in &block.extracts {
             let _ = writeln!(out, "  block {at} extract %{value}");
         }
+        if block.delay != 0 {
+            let _ = writeln!(out, "  block {at} delay {}", block.delay);
+        }
     }
     for (at, predicate) in program.capture_predicates.iter().enumerate() {
         let body = match predicate {
@@ -691,6 +694,10 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     return Err(format!("block {at} output after an extract"));
                 }
                 program.outputs.push(line.number("%")?);
+            } else if first == "delay" {
+                // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).
+                let d: u64 = line.number("")?;
+                program.delay = u8::try_from(d).map_err(|_| format!("block {at} delay {d} is more than 63"))?;
             } else if first == "extract" {
                 program.extracts.push(line.number("%")?);
             } else if first == "table" {

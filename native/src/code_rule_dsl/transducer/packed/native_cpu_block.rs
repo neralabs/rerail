@@ -11,7 +11,7 @@
 //! then each extract's popcount over all the blocks, the size of its extract pass.
 
 use super::Error;
-use super::block::{BlockRun, extract::positions, mask_tail, padded};
+use super::block::{BlockRun, extract::positions, mask_tail, padded_by, undelay};
 use super::native_ir::{BlockInst, BlockNative};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, ConstantData, Endianness, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
@@ -19,7 +19,8 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 
-type Entry = unsafe extern "C" fn(*const u8, u64, *mut u64);
+/// The blocks, their count, the outputs, and the stream's length (for `within`).
+type Entry = unsafe extern "C" fn(*const u8, u64, *mut u64, u64);
 
 /// A compiled block program.
 pub(super) struct CompiledBlock {
@@ -28,6 +29,8 @@ pub(super) struct CompiledBlock {
     outputs: usize,
     /// The outputs whose positions the extract pass writes.
     extracts: Vec<usize>,
+    /// The program's delay (`block::BlockProgram::delay`).
+    delay: u8,
     /// The function as Cranelift IR, before code generation.
     pub(super) clif: String,
     /// The machine code, disassembled.
@@ -43,13 +46,14 @@ impl CompiledBlock {
     /// The outputs, then the extract pass: each extract's positions, into a vector allocated at
     /// the count the function summed as it wrote the plane.
     pub(super) fn extract(&self, bytes: &[u8]) -> BlockRun {
-        let blocks = padded(bytes);
+        // The stream and `delay` bytes past it.
+        let blocks = padded_by(bytes, usize::from(self.delay));
         let flat = framed(&blocks);
         let n = blocks.len();
         let mut out = vec![0u64; self.outputs * n + self.extracts.len()];
         // SAFETY: the function reads `blocks.len()` whole blocks of `flat` and writes
         // `outputs * blocks.len()` words of `out` and then one count per extract, all allocated.
-        unsafe { (self.entry)(flat[FRONT..].as_ptr(), n as u64, out.as_mut_ptr()) };
+        unsafe { (self.entry)(flat[FRONT..].as_ptr(), n as u64, out.as_mut_ptr(), bytes.len() as u64) };
         // The function counts whole blocks; the bits past the end (the padding's) come off.
         let past = |words: &[u64]| match (words.last(), bytes.len() % 64) {
             (Some(&w), r) if r != 0 => (w >> r).count_ones() as usize,
@@ -67,13 +71,7 @@ impl CompiledBlock {
                 positions(&words, count)
             })
             .collect();
-        let outputs = (0..self.outputs)
-            .map(|k| {
-                let mut words = out[k * n..(k + 1) * n].to_vec();
-                mask_tail(&mut words, bytes.len());
-                words
-            })
-            .collect();
+        let outputs = (0..self.outputs).map(|k| undelay(&out[k * n..(k + 1) * n], self.delay, bytes.len())).collect();
         BlockRun { outputs, positions }
     }
 }
@@ -83,7 +81,7 @@ impl CompiledBlock {
     /// input already in blocks: the cost of the compiled code alone.
     #[cfg(test)]
     pub(super) fn cpu_seconds(&self, bytes: &[u8], runs: usize) -> f64 {
-        let blocks = padded(bytes);
+        let blocks = padded_by(bytes, usize::from(self.delay));
         let flat = framed(&blocks);
         let mut out = vec![0u64; self.outputs * blocks.len() + self.extracts.len()];
         let now = || {
@@ -96,7 +94,7 @@ impl CompiledBlock {
             .map(|_| {
                 let start = now();
                 // SAFETY: as in `run`.
-                unsafe { (self.entry)(flat[FRONT..].as_ptr(), blocks.len() as u64, out.as_mut_ptr()) };
+                unsafe { (self.entry)(flat[FRONT..].as_ptr(), blocks.len() as u64, out.as_mut_ptr(), bytes.len() as u64) };
                 now() - start
             })
             .fold(f64::MAX, f64::min)
@@ -123,6 +121,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     signature.params.push(AbiParam::new(pointer));
     signature.params.push(AbiParam::new(types::I64));
     signature.params.push(AbiParam::new(pointer));
+    signature.params.push(AbiParam::new(types::I64));
     let id = module
         .declare_function("tempo_block", Linkage::Local, &signature)
         .map_err(|_| Error::BackendFailure)?;
@@ -153,7 +152,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         // The entry: constants every block uses, and each output's first word.
         f.switch_to_block(entry);
         let params = f.block_params(entry).to_vec();
-        let (bytes, blocks, out) = (params[0], params[1], params[2]);
+        let (bytes, blocks, out, len) = (params[0], params[1], params[2], params[3]);
         // Constants, made once outside the loop: each compare's splat, each `const`'s word, and
         // the bitmask's weights.
         let constants: Vec<Option<Value>> = native
@@ -274,6 +273,22 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         for (at, inst) in native.insts.iter().enumerate() {
             let v = |x: u16| values[usize::from(x)];
             let value = match *inst {
+                // The bits below the stream's end: t = clamp(len - 64 i, 0, 64) ones, by two
+                // shifts so that t = 64 needs no shift by 64 (`block::within`).
+                BlockInst::Within => {
+                    let start = f.ins().ishl_imm(i, 6);
+                    let left = f.ins().isub(len, start);
+                    let zero = f.ins().iconst(types::I64, 0);
+                    let full = f.ins().iconst(types::I64, 64);
+                    let left = f.ins().smin(left, full);
+                    let t = f.ins().smax(left, zero);
+                    let half = f.ins().ushr_imm(t, 1);
+                    let rest = f.ins().isub(t, half);
+                    let one = f.ins().iconst(types::I64, 1);
+                    let up = f.ins().ishl(one, half);
+                    let up = f.ins().ishl(up, rest);
+                    f.ins().iadd_imm(up, -1)
+                }
                 BlockInst::EqByte(_) => {
                     let splat = constants[at].expect("a splat per compare");
                     let parts: Vec<Value> = chunks.iter().map(|&bytes| f.ins().icmp(IntCC::Equal, bytes, splat)).collect();
@@ -426,7 +441,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let code = module.get_finalized_function(id);
     // SAFETY: `tempo_block` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
-    Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), extracts: native.extracts.clone(), clif, disassembly })
+    Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), extracts: native.extracts.clone(), delay: native.delay, clif, disassembly })
 }
 
 /// Four 16-byte compare results (each byte 0 or 0xff) as one 64-bit mask.

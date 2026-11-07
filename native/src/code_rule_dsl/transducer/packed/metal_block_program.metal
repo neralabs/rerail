@@ -7,12 +7,12 @@ using namespace metal;
 // 32 or 64) and its W-bit word of every value, so the SIMD group's full ALU width works on
 // words: a 32-lane group covers 32 * W bytes. Values are slots of lane words.
 // The operations a dispatch runs, [from, to), and the lanes.
-struct BlockArgs { uint from, to, lanes, pad; };
+struct BlockArgs { uint from, to, lanes, pad; };  // pad: the stream's length (`within`)
 // An operation of the planes form (native IR, `class` written as formulas of bit-planes): op (0
 // eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane, 11 the byte before's plane), operands a and b, and an immediate
 // (eq's byte; const's pattern as b = low half, imm = high half; plane's bit), and the carried
 // operations 8 prev (imm the distance), 9 toggle, 10 after_odd_run, 12 fill (imm its ends), each
-// with its round in b.
+// with its round in b; 13 within.
 struct BlockStep { uint op, a, b, imm; };
 
 // 16 bytes equal to c (repeated in c4) as 16 bits, by SWAR on four words: an exact zero-byte
@@ -87,6 +87,8 @@ static inline void run(device const uint4* bytes, device M* values, constant Blo
         out = apply_fill(a, e, lane_in_borrow(summary_fill(a, e), carry_before(state, 1u, g), l));
         break;
       }
+      // `within`: the stream's length is the dispatch's `pad`.
+      case 13u: out = within_lane<M>(p.pad, lane * uint(sizeof(M)) * 8u); break;
       default: out = M(0); break;
     }
     values[at * p.lanes + lane] = out;
