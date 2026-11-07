@@ -13,7 +13,7 @@ export async function awaitCodeRulesOpen(socketPath: string, session: AdapterSes
   try {
     await expect.poll(async () => {
       const before = pending();
-      await ingestEngineEvent(socketPath, { kind: "turn-end", eventId: `open-probe:${++probe}`, sessionId: session.sessionId, session, text: "" });
+      await ingestEngineEvent({ socketPath: socketPath }, { kind: "turn-end", eventId: `open-probe:${++probe}`, sessionId: session.sessionId, session, text: "" });
       return pending() === before;
     }, { timeout: 10_000, interval: 20 }).toBe(true);
   } finally {

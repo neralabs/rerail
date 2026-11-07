@@ -45,7 +45,7 @@ export interface LibraryRuleQuery {
 
 export interface CopiedRule {
   readonly rule: LibraryRule;
-  /** Folders of the repository where the copy was added and the original switched off. */
+  /** Folders of the repository where the copy was added; its first approval switches the original off there. */
   readonly folders: readonly string[];
 }
 
@@ -203,8 +203,9 @@ function freeCopyId(db: Queries, ruleCatalog: RuleCatalog, sourceId: string): st
 
 /**
  * Store an edited By Rerail rule as a library copy, in one transaction: wherever the original is present in the
- * repository (its pack or the rule itself is attached), the copy is added at the same folder and a repository
- * setting switches the original off there. The original stays a reference to the rule catalog.
+ * repository (its pack or the rule itself is attached), the copy is added at the same folder. The copy's first
+ * approval switches the original off there (`approve` in `rule-approval.ts`); until then the original keeps running.
+ * The original stays a reference to the rule catalog.
  */
 export function copyRerailRuleToLibrary(
   db: RerailDatabase,
@@ -237,12 +238,6 @@ export function copyRerailRuleToLibrary(
       tx.insert(ruleAttachments)
         .values({ repositoryKey, folder, sourceKind: "library_rule", sourceId: id, createdAt: now })
         .onConflictDoNothing().run();
-      tx.insert(ruleSettings)
-        .values({ ownerKind: "repository", ownerId: repositoryKey, folder, targetKind: "rule", targetId: sourceId, on: false, mode: null, updatedAt: now })
-        .onConflictDoUpdate({
-          target: [ruleSettings.ownerKind, ruleSettings.ownerId, ruleSettings.folder, ruleSettings.targetKind, ruleSettings.targetId],
-          set: { on: false, updatedAt: now },
-        }).run();
     }
     return { rule: readRequired(tx, id), folders };
   }, { behavior: "immediate" });

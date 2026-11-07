@@ -5,10 +5,11 @@
 //!   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]
 //!   rerail-engine gc <store.sqlite> [--history-mb <n>]
 //!   rerail-engine sql <store.sqlite> <request.json>
+//!   rerail-engine flatten <program.rr>
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -55,6 +56,11 @@ fn run(args: &[String]) -> Result<String, String> {
             let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
             serde_json::to_string_pretty(&rerail_engine::tools::convert_rr(&paths)).map_err(|e| e.to_string())
         }
+        // The program `logic` runs for a file: `core.rr` and its includes resolved, lowered and printed as `.rr`.
+        Some("flatten") => match &args[1..] {
+            [file] => rerail_engine::tools::flatten(Path::new(file.as_str())),
+            _ => Err(USAGE.into()),
+        },
         #[cfg(feature = "tape-cache")]
         Some("gc") => gc(&args[1..]),
         #[cfg(not(all(feature = "dump-cli", feature = "tape-cache")))]

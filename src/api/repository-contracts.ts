@@ -10,7 +10,7 @@ import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS,
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
 import { engineRegexIssues } from "../engine/catalog/rule-regexes.js";
-import { RULE_KINDS } from "../engine/storage/schema.js";
+import { RULE_APPROVAL_SUBJECTS, RULE_KINDS } from "../engine/storage/schema.js";
 
 const START_STATES = ["started", "stopped", "not-set-up"] as const;
 
@@ -68,7 +68,16 @@ export const deciderSchema = z.discriminatedUnion("by", [
   z.object({ by: z.literal("repository"), folder: z.string(), target: z.enum(RULE_SETTING_TARGET_KINDS) }).strict(),
   z.object({ by: z.literal("pack-start"), packId: z.string() }).strict(),
   z.object({ by: z.literal("rule-default") }).strict(),
+  z.object({ by: z.literal("awaiting-approval") }).strict()
+    .describe("The rule's content waits for a person's approval, so it runs in Log whatever its settings say."),
 ]);
+
+/** What a person approves, the rule by its id or its pack by package name, at the digest of its content. */
+export const approvalSubjectSchema = z.object({
+  kind: z.enum(RULE_APPROVAL_SUBJECTS).describe("rule: the rule's own content; pack: everything its pack ships, at its version."),
+  id: z.string().describe("The rule's id, or the pack's package name."),
+  digest: z.string().describe("The digest of the content: approval holds for this content only, and an edit waits again."),
+}).strict();
 
 export const inactiveField = {
   inactive: z
@@ -110,6 +119,8 @@ const effectiveRuleBase = {
   addedAt: z.number().int().nullable()
     .describe("Epoch milliseconds the attachment that brings the rule in (its pack, or the rule itself) was added at this folder."),
   updatedAt: z.number().int().nullable().describe("Epoch milliseconds a rule created by you was last edited; null for rules by Rerail."),
+  approval: z.object({ subject: approvalSubjectSchema, approved: z.boolean() }).strict().optional()
+    .describe("Present for a rule Rerail did not publish (created by you, in a worktree's .rerail/rules, or in a third party's or a folder's pack): until a person approves its content it runs in Log."),
 };
 export const effectiveRuleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
@@ -224,11 +235,17 @@ export const libraryUpsertBodySchema = z.object({
   }
 });
 
+/** The note a write that puts a rule on `block` answers with: block does not block in this release, and steers. */
+export const blockNoteShape = {
+  note: z.string().optional().describe("Set when the write puts a rule on block: block does not block in this release, and the rule steers instead."),
+};
+
 export const libraryUpsertResultSchema = z.object({
   rule: libraryRuleRecordSchema,
   copiedFromRuleId: z.string().nullable().describe("Set when the write edited a By Rerail rule and stored a copy instead."),
   attached: z.object({ repositoryKey: z.string(), folders: z.array(z.string()) }).strict().nullable()
-    .describe("Where the rule (or the copy) was added; a copy also switches the original off there."),
+    .describe("Where the rule (or the copy) was added; a copy switches the original off there once it is approved."),
+  ...blockNoteShape,
 }).strict();
 
 export const rerailRuleSchema = z.discriminatedUnion("kind", [
@@ -255,7 +272,7 @@ export const linkBodySchema = z.object({
 export const followGitignoreBodySchema = z.object({
   ...targetShape,
   followGitignore: z.boolean()
-    .describe("true: files Git ignores (.gitignore, .git/info/exclude, global excludes) are not audited; tracked files always are. false: only Rerail's own ignores apply."),
+    .describe("true: files Git ignores (.gitignore, .git/info/exclude, global excludes) are not audited; tracked files always are. false: only Rerail's own ignores apply; only a person may choose it, never a coding agent."),
 }).strict();
 
 export const resetBodySchema = z.object({ ...targetShape }).strict();

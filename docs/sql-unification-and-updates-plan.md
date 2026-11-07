@@ -169,14 +169,73 @@ String aggregates, computed correlations, aggregate-dependent correlations, and 
 - Lattice joins, tree walks, recursive aggregate rules, and unsupported correlations still refresh affected strata.
   The scalar aggregate and negation follow-up described next maintains eligible rules incrementally.
 - First-edit input indexing and projection migration require time and memory proportional to their rows.
-- Deletion reconstructs old inputs with a union of current and deleted rows. SQLite can build an automatic index over that input.
-  The disconnected deletion above indexes 1,024 input rows even though its output delta has one row.
-  An indexed overlay or disjoint old-input query variants could remove that cost.
+- Old SQL-result reads use disjoint query variants. Several changed SQL atoms in one body can multiply those variants.
+  Native inputs use indexed overlays; sparse native deletions no longer reconstruct or index the full input.
 - Overdelete/rederive can revisit many facts with alternate support. Retained derivation support could reduce this work.
-- Snapshot/core facts still refresh by rebinding. Only explicit `bindRelation` inputs accept row patches.
+- `applySnapshot` now feeds native file-fact deltas into retained maintenance. It still parses a complete snapshot request.
+  Document metadata, shared literal-type composition, and cross-shard probes remain host-work costs.
+  An editor patch API and persistent shared-fact reference counts could reduce them.
 - SQL corpus execution still creates control tables per component. The call workload remains slower than native execution.
   Shared scheduling removes semantic duplication; it does not remove every schema-management cost.
 - SQL budgets cover SQL statements. Native input migration and atom interning need separate host-work limits if callers require them.
 - Full column statistics and adaptive replanning remain separate improvements.
 
 The API and operational details are in [SQL fact and rule execution](sql-executor.md).
+
+
+## Integration, indexed deletion reads, and native source edits
+
+The next three follow-ups are implemented on the merged final-shape tree.
+
+| Finding | Root cause | Change |
+| --- | --- | --- |
+| TypeScript could not compile the merged CLI. | An earlier merge kept newer callers but dropped their runtime APIs, storage support, and modules. | Restore the matching implementations and their integration tests. Keep the newer rollback protection. |
+| Guest parse/splice/unparse returned no value documents. | The final-shape branch still had unfinished demand and guest-hiding changes. | Integrate committed decision 0058 and verify the previously failing test. |
+| A one-row deletion indexed the whole old input. | The old-input `UNION ALL` view caused SQLite to materialize the input and build an automatic index. | Probe native current/deleted overlays; distribute reads of old SQL results over indexed query branches. |
+| Editing a source file discarded SQL results. | Snapshot binding replaced every source and invalidated every execution. | Keep native document shards, rebuild changed files, and pass their fact deltas through the same atomic maintenance transaction. |
+| Native probe results differed from a cold batch. | Native input consumers retain 32-bit row handles; a sharded adapter cannot place shard ids in higher bits. Range indexes also do not imply node-id columns. | Preserve dense row handles, use stable handles for lazy probes, and route by declared document metadata only. Compare scans, probes, and CPython analysis with the original adapter. |
+| Rebinding repeated metadata work. | Every source binding recalculated the signature of every source. | Cache shard estimates and refresh the planner signature once per fact batch. |
+| A source edit created empty delta tables for unchanged families. | The row-update transaction treated every rebound native family as a changed input. | Rebind the batch, but create tuple journals only for nonempty changes. |
+
+### Validation and measurements
+
+The deletion probe retains 523,776 paths over a 1,024-node chain, plus two disconnected edges.
+A disconnected retraction deletes one path. The native overlay reduces that edit from 15,692 to 1,236 SQLite instructions.
+Automatic-index rows fall from 1,024 to zero. A measured run used 0.44 ms CPU; host contention makes wall time unsuitable for comparison.
+Retracting the chain's added terminal edge deletes 1,024 paths and uses 136,272 instructions, down from 157,889.
+That run used 3.80 ms CPU. This edit must still process its output delta.
+
+A regression enforces a 10,000-instruction budget for a warm one-edge deletion over 100,000 native input edges.
+Other regressions cover simultaneous deletions, repeated atoms, downstream SQL programs, and scratch-module cleanup.
+Native edit tests compare retained results with fresh execution after additions, replacements, removals, failed parses, and budget exhaustion.
+They also verify shared literal facts, unchanged shard reuse, lazy containment, and result-index retention.
+
+Repeated native file edits produce these optimized measurements. Each edit rebuilds one file and changes one `name` fact.
+The workload retains a projected name relation and a global count.
+
+| Snapshot | First edit: SQL instructions | Warm insertion: SQL instructions | Warm insertion: CPU |
+| --- | ---: | ---: | ---: |
+| 100 Python files | 14,262 | 4,599 | 3.09 ms |
+| 1,000 Python files | 95,262 | 4,599 | 20.15 ms |
+
+Removing empty journals reduced the warm insertion from 46,057 to 4,599 instructions.
+The first edit still initializes retained projection and reducer state, so its SQL work grows with the existing facts.
+Warm SQL work is independent of file count here. Host CPU still grows because snapshot parsing, shard metadata, and shared-fact composition visit the documents.
+These measurements include profiling overhead and are single runs on a shared host.
+
+Final checks pass: 51 SQL tests, the guest parse/splice/unparse regression, and 312 selected TypeScript integration tests.
+One platform-dependent integration test is skipped. TypeScript, the JavaScript build, and the layer-boundary check pass.
+The headless engine also compiles. Both SQL CLIs execute a snapshot edit and return its updated retained result.
+
+The benchmark driver accepts `snapshots` as well as explicit `changes`.
+`benchmark/sql-executor.py --only update-native` exercises repeated edits over 100 and 1,000 source files.
+The standalone SQL request and Node API expose the same snapshot operation.
+
+### Remaining improvements
+
+1. Add an editor patch API so one changed file does not require another complete snapshot JSON document.
+2. Retain shared literal-type reference counts and per-relation shard metadata across edits.
+3. Add document routing for more native input columns, with explicit schema metadata for their domains.
+4. Bound old SQL-result branch multiplication, using a compact indexed representation for large bodies.
+5. Extend retained support to the documented aggregate, lattice, and tree-walk fallback cases.
+6. Add host-work limits for parsing, native journals, atom interning, and first-edit migrations.

@@ -65,7 +65,9 @@ relations, and their own rules are left whole.
 fact either way, and `guest`, `doc_role` and `parsed` still reach it. This is what 0055 §5 asked for.
 
 The transform runs only when some program in the run derives a request relation (`embed`, `embed_value`, or a
-rule's own demand). It is applied to each program before a combined run renames them.
+rule's own demand). It is applied to each program before a combined run renames them. The requests are shared
+across a combined run's programs (`guests::SHARED`), so there is one batch and one set of guests. Each program's
+own rules are still bounded by its own `.guests` setting.
 
 ### 2. A guest's kinds are its grammar's
 
@@ -77,6 +79,24 @@ SQL dialect's catalog. A rule may also write the qualified name itself.
 A kind's value already carries its grammar (`tag * KIND_STRIDE + code`, and a field's `tag << 16 | code`). Output
 therefore decodes each kind and field value with the catalog of its own tag. A SQL kind prints as SQL's name, even
 in a Python run.
+
+A rule may read a derived relation with a scoped variable: `sel(n) :- kind(n, "select")`, read as
+`guest(g, _, _, "sql"), node(g, n, _, _, _), sel(n)`. That relation is then *specialized*. It is copied as
+`rr_in_<grammar>_<column>_<relation>`, and the copy's rules start with that head column scoped in the grammar. The
+copy's kinds are therefore the guest's, and its rows are not bounded away. The run's own reads keep the original. A
+kind set that `nearest`, `inside` or `has` reads over a scoped node is copied the same way, as
+`rr_in_<grammar>_<set>`, with each kind qualified. This runs to a fixpoint, because a copy can read other
+relations.
+
+```
+.decl clauses(kind: symbol)
+clauses("relation"). clauses("function_definition").
+// Over a SQL node, the set is read as rr_in_sql_clauses: {"sql:relation", "sql:function_definition"}.
+enclosing(x, k) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), text(n, x),
+                   nearest(n, a, clauses), node(_, a, k, _, _).
+// Over a file's node, it is the run's: Python's function_definition.
+outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
+```
 
 An unscoped qualified kind (`kind(n, "sql:object_reference")` with nothing reaching a guest) still gets the bound,
 so it matches nothing in a Python run. Naming a grammar is not a way to see hidden documents; reaching them through
@@ -139,7 +159,14 @@ tables(x) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), str(s, q
   their rows for itself. The file-local split therefore does not count them as reads of any file's rows.
 - **Each made tape is a value document** in the hidden key range. Its key is hashed from what made it: (grammar,
   text) for a parse, (node, tape) for a splice. Its role is `value`, and it has no host. Its lines and columns are
-  its own text's. Its rows belong to no file, so a chunk that reads one is not memoised (O96).
+  its own text's.
+- **A value belongs to the files that asked for it.** A chunk makes one value per (grammar, text) or (node, tape),
+  whichever of its files asked first. The value's rows are attributed to every file of the chunk that asked. The
+  memo stores them under each of those files, so each file reads them back alone. In the file-local split, a value's
+  tape stands with the one atom that gave its text: `q(s, x)` in `q(s, x), t = @parse("sql", x)`. `tape_of(d, t)`
+  puts d there too, and a spliced tape stands with its node. A rule that reads a value's nodes is therefore as
+  file-local as the rule that gave its text. This holds even when simplification leaves that atom as
+  `q(_, x)`. If two atoms give one text, the text joins two documents, and the rule stays cross-file.
 - **`@unparse` needs no demand.** `unparse_of` has a row for every guest and value document when a rule reads it.
   A wrapped fragment's text is the expression inside its `( … )`. A file's own tape has no row: unparsing a whole
   file is not asked for.
@@ -194,13 +221,15 @@ Tests (`logic/rr/tests.rs`, and the normalizer's own):
 - `string_annotations_are_guests_at_their_host_lines`: escaped and concatenated annotations at their exact
   columns;
 - `parse_splice_and_unparse_make_value_documents`;
+- `value_documents_are_memoised_with_the_files_that_asked`: two files sharing a text, a second run read whole from
+  the memo with equal rows (O96);
+- `combined_programs_see_guests_by_their_own_policy`: `.guests off` beside a program without it, in one run (O97);
+- `kind_sets_over_a_guest_are_its_grammars`: one kind set read over a SQL node and a Python node (O98);
 - `normalized::tests`.
 
 ## Open
 
 - O95: the shared tape cache's race.
-- O96: memo for chunks that read value documents.
-- O97: a combined run's programs each get their own bound, but share one batch. A program with `.guests off`
-  beside one without is not tested.
-- O98: kind sets across grammars. `nearest`, `inside` and `has` take kind sets resolved in the run's grammar.
+- O96, O97 and O98 are closed (see the tests above).
 - O99: guests and hiding on the 9,010-file repository, in CPU time.
+- O100: normalized strings as native operations that rules read, and later as a transducer side program.

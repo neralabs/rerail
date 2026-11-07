@@ -11,15 +11,16 @@ struct Patch {
     #[serde(default)]
     delete: Vec<Vec<Value>>,
 }
-struct Prepared {
-    name: String,
-    source: Arc<live::Live>,
-    plus: Vec<Vec<i64>>,
-    minus: Vec<Vec<i64>>,
-    migrated: bool,
+pub(super) struct Prepared {
+    pub name: String,
+    pub source: Arc<dyn Source>,
+    pub live: Option<Arc<live::Live>>,
+    pub plus: Vec<Vec<i64>>,
+    pub minus: Vec<Vec<i64>>,
+    pub migrated: bool,
 }
 
-fn contains(source: &dyn Source, row: &[i64]) -> bool {
+pub(super) fn contains(source: &dyn Source, row: &[i64]) -> bool {
     let col = (0..row.len())
         .min_by_key(|c| source.estimated_matches(*c, false))
         .unwrap();
@@ -99,19 +100,32 @@ impl CodeRuleSqlExecutor {
             let (plus, minus) = live.changes(&insert, &delete);
             prepared.push(Prepared {
                 name,
-                source: live,
+                source: live.clone(),
+                live: Some(live),
                 plus,
                 minus,
                 migrated,
             });
         }
+        self.apply_prepared(prepared, max_waves)
+    }
+
+    pub(super) fn apply_prepared(
+        &mut self,
+        prepared: Vec<Prepared>,
+        max_waves: Option<u32>,
+    ) -> Result<String> {
         if prepared.is_empty() {
             return Ok(
                 json!({"inserted_facts":0,"deleted_facts":0,"programs":[],"migrated_inputs":[],"initializations":[]})
                     .to_string(),
             );
         }
-        let changed = prepared.iter().map(|p| p.name.clone()).collect();
+        let changed = prepared
+            .iter()
+            .filter(|p| !p.plus.is_empty() || !p.minus.is_empty())
+            .map(|p| p.name.clone())
+            .collect();
         let affected = self.affected(&changed);
         let mut executions = self.executions.clone();
         let mut work = Work {
@@ -144,13 +158,16 @@ impl CodeRuleSqlExecutor {
             }
             let mut deltas = BTreeMap::new();
             for p in &prepared {
+                touched.push(p);
+                if p.plus.is_empty() && p.minus.is_empty() {
+                    continue;
+                }
                 let width = p.source.columns().len();
                 let plus = work.rows(width, &p.plus)?;
                 let minus = work.rows(width, &p.minus)?;
-                p.source.apply(&p.plus, &p.minus);
-                touched.push(p);
-                let source: Arc<dyn Source> = p.source.clone();
-                self.db.bind(&p.name, source).map_err(error)?;
+                if let Some(live) = &p.live {
+                    live.apply(&p.plus, &p.minus);
+                }
                 deltas.insert(
                     p.name.clone(),
                     Delta {
@@ -161,6 +178,9 @@ impl CodeRuleSqlExecutor {
                     },
                 );
             }
+            self.db
+                .bind_many(prepared.iter().map(|p| (p.name.as_str(), p.source.clone())))
+                .map_err(error)?;
             super::super::logic::native::forget_inputs(&self.db);
             let mut reports = Vec::new();
             for i in affected {
@@ -193,7 +213,7 @@ impl CodeRuleSqlExecutor {
                 }
                 for p in &prepared {
                     stats
-                        .execute(rusqlite::params![p.name, p.source.len() as i64])
+                        .execute(rusqlite::params![p.name, p.source.estimated_len() as i64])
                         .map_err(error)?;
                 }
             }
@@ -209,7 +229,9 @@ impl CodeRuleSqlExecutor {
             Ok(report) => {
                 for p in prepared {
                     self.inputs.insert(p.name.clone(), p.source.clone());
-                    self.live_inputs.insert(p.name, p.source);
+                    if let Some(live) = p.live {
+                        self.live_inputs.insert(p.name, live);
+                    }
                 }
                 self.generated = executions
                     .iter()
@@ -224,7 +246,9 @@ impl CodeRuleSqlExecutor {
                     .db
                     .execute_batch("ROLLBACK TO sql_fact_changes; RELEASE sql_fact_changes");
                 for p in touched.into_iter().rev() {
-                    p.source.apply(&p.minus, &p.plus);
+                    if let Some(live) = &p.live {
+                        live.apply(&p.minus, &p.plus);
+                    }
                     let _ = self.db.bind(&p.name, Arc::clone(&self.inputs[&p.name]));
                 }
                 self.db.reset_execution();
