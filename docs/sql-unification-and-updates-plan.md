@@ -305,7 +305,22 @@ The dialect parity check normalizes legacy guest requests through the same lower
 ### Final checks
 
 - 57 SQL and persistent-index tests pass.
-- 52 rule-language tests pass. Two report/write tests are ignored, and the separate syntax census is excluded.
+- After the final merge, 55 rule-language tests and 57 SQL/index tests pass together with `--test-threads 1`.
+  Two report/write tests are ignored, and the separate syntax census is excluded.
 - 312 selected TypeScript integration tests pass, with one platform-dependent skip.
 - TypeScript, the JavaScript build, and the layer-boundary check pass.
 - The headless engine compiles. Both SQL CLIs accept file additions and deletions and return the updated retained result.
+
+
+### Broader regression limits
+
+The exploratory merged run finished with 778 passing tests, 13 failures, and 25 ignored tests.
+Twelve failures require absent pack fixtures or grammars that this build does not include: HTML, Go, and Scala.
+The other failure is `value_documents_are_memoised_with_the_files_that_asked` in the newly merged guest tests.
+It reports a corpus-cache foreign-key failure during parallel runs.
+The test passes alone. All 112 focused SQL/index and rule-language tests also pass together with one test thread.
+The concurrent corpus-cache failure remains unresolved. These checks do not establish a completely green repository-wide suite.
+
+The final merged file-patch examples pass at 100, 1,000, and 10,000 files.
+Their warm insertion uses 4,254 SQL instructions and rebuilds 226, 337, and 448 metadata nodes respectively.
+The 10,000-file run measured 1.51 ms CPU for insertion and 1.33 ms for retraction.
