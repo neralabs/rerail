@@ -136,7 +136,6 @@ pub(super) fn prepare(w: &mut Work<'_>, run: &mut session::Execution) -> Result<
         };
         if q.ctes.is_empty()
             || step.stratum == 0
-            || e.program.lattices.iter().any(|(r, _, _)| r == &step.output)
             || e.program
                 .steps
                 .iter()

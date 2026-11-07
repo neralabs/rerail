@@ -5,7 +5,7 @@ fn walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs() {
     let (_d, mut e) = executor();
     let files = json!({"files":[{"path":"a.py","language":"python","source":"def first():\n    work()\ndef second():\n    other()\n"}]}).to_string();
     e.bind_snapshot(files.clone()).unwrap();
-    let p = ".decl node(d:number,n:node,k:symbol,s:number,e:number)\n.decl tape(n:node,p:node,s:number,d:number)\n.decl field(p:node,f:symbol,c:node)\n.decl name(n:node,s:symbol)\n.decl doc(d:number,p:symbol,m:symbol)\n.decl blocked(n:node)\n.decl marks(n:node,v:number)\n.input node,tape,field,name,doc,blocked,marks\n.decl scope(k:symbol)\nscope(\"function_definition\").\n.decl owns(n:node,o:symbol,c:number)\nowns(n,o,c) :- node(_,n,\"call\",_,_), !blocked(n), unused = min v : {marks(n,v)}, seed = count : {field(n,_,_)}, seed > 0, nearest(n,a,scope), field(a,\"name\",f), name(f,o), !blocked(a), c = count : {field(a,_,_)}.\n.output owns\n";
+    let p = ".decl node(d:number,n:node,k:symbol,s:number,e:number)\n.decl tape(n:node,p:node,s:number,d:number)\n.decl field(p:node,f:symbol,c:node)\n.decl name(n:node,s:symbol)\n.decl doc(d:number,p:symbol,m:symbol)\n.decl blocked(n:node)\n.decl marks(n:node,v:number)\n.input node,tape,field,name,doc,blocked,marks\n.decl scope(k:symbol)\nscope(\"function_definition\").\n.decl owns(n:node,o:symbol,c:number)\nowns(n,o,c) :- node(_,n,\"call\",_,_), !blocked(n), unused = min v : {marks(n,v)}, denominator = count : {marks(n,_)}, quotient = 1 / denominator, seed = count : {field(n,_,_)}, seed > 0, nearest(n,a,scope), field(a,\"name\",f), name(f,o), !blocked(a), c = count : {field(a,_,_)}.\n.output owns\n";
     bind(&mut e, "blocked", &["n"], json!([]));
     bind(&mut e, "marks", &["n", "v"], json!([]));
     e.run(p.into(), "python".into(), None).unwrap();
@@ -125,8 +125,7 @@ pub(super) fn profile<T>(
         if !sql.starts_with("DROP ") && !sql.starts_with("CREATE ") {
             work.data_scans.set(work.data_scans.get() + scans);
         }
-        if (scans > 100 || vm > 100000) && !sql.starts_with("DROP ") && !sql.starts_with("CREATE ")
-        {
+        if (scans > 100 || vm > 10000) && !sql.starts_with("DROP ") && !sql.starts_with("CREATE ") {
             let mut rows = work.sql.borrow_mut();
             let row = rows.entry(sql.into_owned()).or_default();
             row.0 += vm;

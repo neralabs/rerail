@@ -10,6 +10,7 @@ pub(super) struct Execution {
     pub outputs: Vec<String>,
     pub max_waves: u32,
     pub reductions: Option<BTreeMap<String, reductions::Retained>>,
+    pub recursive: BTreeMap<u32, recursive::Partitioned>,
 }
 
 impl CodeRuleSqlExecutor {

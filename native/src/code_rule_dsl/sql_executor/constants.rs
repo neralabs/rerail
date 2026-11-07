@@ -1,0 +1,76 @@
+//! Give immutable fact steps checked queries, so maintenance never parses their SQL.
+use super::super::logic::sql::{
+    select::{FromItem, Query, Relation as Rel, Select},
+    sql_ast::SqlExpression as E,
+};
+use super::*;
+
+pub(super) fn prepare(db: &rusqlite::Connection, run: &mut session::Execution) -> Result<usize> {
+    let e = Arc::make_mut(&mut run.emitted);
+    let mut count = 0;
+    for (id, (step, query)) in e.program.steps.iter_mut().zip(&mut e.queries).enumerate() {
+        if query.is_some() {
+            continue;
+        }
+        let width = e
+            .program
+            .relations
+            .iter()
+            .find(|(r, _)| r == &step.output)
+            .unwrap()
+            .1;
+        let name = format!("__sql_constants_{}_{}", step.output, id);
+        let columns = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
+        db.execute_batch(&format!(
+            "CREATE TEMP TABLE {}({},PRIMARY KEY({})) WITHOUT ROWID",
+            quote(&name),
+            columns
+                .iter()
+                .map(|c| format!("{c} INTEGER NOT NULL"))
+                .collect::<Vec<_>>()
+                .join(","),
+            columns.join(",")
+        ))
+        .map_err(error)?;
+        // The cold wave loop has emptied new_<output>. Replaying this immutable step
+        // captures exactly its rows without mixing in other rules' contributions.
+        db.execute_batch(&step.sql).map_err(error)?;
+        db.execute_batch(&format!(
+            "INSERT INTO {} SELECT * FROM new_{}; DELETE FROM new_{}",
+            quote(&name),
+            step.output,
+            step.output
+        ))
+        .map_err(error)?;
+        let q = Query {
+            ctes: vec![],
+            body: Select {
+                columns: columns
+                    .iter()
+                    .map(|c| {
+                        (
+                            E::Qualified {
+                                alias: "rr_constant".into(),
+                                column: c.clone(),
+                            },
+                            Some(c.clone()),
+                        )
+                    })
+                    .collect(),
+                from: vec![FromItem::cross(
+                    Rel::Bound {
+                        rel: name.clone(),
+                        table: quote(&name),
+                    },
+                    "rr_constant",
+                )],
+                ..Default::default()
+            },
+        };
+        step.sql = format!("INSERT OR IGNORE INTO new_{} {}", step.output, q.render());
+        *query = Some(q);
+        run.objects.push((name, true));
+        count += 1;
+    }
+    Ok(count)
+}

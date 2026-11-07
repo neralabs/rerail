@@ -15,11 +15,13 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
+mod constants;
 mod documents;
 mod indexes;
 mod live;
 mod maintenance;
 mod overlay;
+mod recursive;
 mod reductions;
 mod scratch;
 mod updates;
@@ -816,9 +818,11 @@ impl CodeRuleSqlExecutor {
                 outputs: outputs.clone(),
                 max_waves,
                 reductions: None,
+                recursive: BTreeMap::new(),
             };
             let mut work = maintenance::Work::new(&self.db, &self.scratch);
             let materialized_views = maintenance::track_views(&mut work, &mut execution)?;
+            let constant_tables = constants::prepare(&self.db, &mut execution)?;
             // These views used to inherit native estimates. Their retained SQL tables need
             // actual index statistics before support joins choose their access paths.
             for (name, _) in &emitted.views {
@@ -835,8 +839,9 @@ impl CodeRuleSqlExecutor {
             )?);
             initializations.sort();
             initializations.dedup();
+            recursive::prepare(&self.db, &mut execution)?;
             work.cleanup()?;
-            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"scratch_tables_created":work.created});
+            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created});
             self.db
                 .execute_batch("RELEASE sql_extension_run")
                 .map_err(error)?;

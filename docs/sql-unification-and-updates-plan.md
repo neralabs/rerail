@@ -511,7 +511,7 @@ Arbitrary subqueries remain outside retained reducer eligibility. Item 2 remains
 
 ### Remaining work: recursive lattices and aggregates
 
-This requirement is still unfinished. The current recursive nonmonotone path refreshes an affected stratum.
+This requirement is still unfinished. Components without a proven independent partition still refresh an affected stratum.
 Retaining only final support counts is insufficient: a cycle can preserve itself after external support disappears.
 Widening and aggregate evaluation also depend on fixed-point progress, so an ordinary count-based work queue needs more state.
 
@@ -523,3 +523,45 @@ That is a design reference, not a claim that the current engine implements its a
 Required checks include cyclic shortest paths, mutually recursive lattices, accepted recursive aggregates, alternate support, retraction from top,
 simultaneous input changes, empty components, budget rollback, and retries. Compare every update with a fresh execution.
 Large disconnected regions must show bounded sparse-edit work. A whole-stratum recomputation must remain visible as a fallback until it is removed.
+
+### Recursive partition maintenance and aggregate scheduling
+
+Recursive components can now use an invariant key proven from their checked query trees.
+For each rule, every recursive input must share the head's partition, including inputs read inside scalar queries.
+Equality proofs use each subquery's own scope and its ancestors. Sibling subqueries do not supply assumptions to each other.
+The partition column can differ between relations. The engine prepares required indexes during the initial run.
+
+An edit finds affected partitions through positive witnesses in old and new inputs, including aggregate and negation read sites.
+Old SQL inputs temporarily restore their exact membership. Native overlays conservatively include current and deleted rows.
+The engine removes only selected partitions, clears their widening counters, and rederives them from bottom.
+The cold kernel keeps its step order, dependencies, and semi-naive delta variants.
+Closed partitions cannot supply support to each other, so this removes unsupported cycles and preserves cold widening behavior.
+Output differences compare only the old and new rows of affected partitions.
+
+The first sparse test exceeded its 50,000-instruction budget because SQLite reordered a join and scanned unrelated rows.
+Partition constraints now reach equivalent outer fields explicitly. Cross joins keep the small partition table first.
+The revised test uses 1,347–3,352 instructions per edit across 20,000 independent groups and 100,000 weighted edges.
+Its triggers reject any deletion or insertion outside the selected group.
+The budget remains 50,000 instructions; it was not raised.
+
+The work also exposed a compiler scheduling error in mutually recursive aggregate components.
+The emitter removed all own-component reads from full rule steps, assuming delta variants would wake them.
+Aggregates have no positive delta atom, so a count rule could stop after its initial evaluation.
+Full aggregate queries now depend on their recursive inputs and run again when those inputs change.
+A regression builds five item values through repeated recursive counts and requires the resulting max lattice to reach five.
+
+Constant fact steps now retain immutable private tables with checked select queries.
+Maintenance replays their known initial statements once to capture their rows; it does not parse SQL text.
+Constant facts can therefore share retained support with aggregate and lattice rules.
+Nonrecursive lattice outputs can also lift walk blocks with supported aggregates and negation.
+
+Tests cover unsupported cyclic support, alternate paths, empty partitions, simultaneous native and upstream SQL changes,
+rollback during old-input restoration, wave-limit failure, retry, nonleading partition columns, widening, and retraction from top.
+Another test changes a global recursive count and checks results across partition keys, where the invariant proof must not apply.
+The targeted SQL and compiler suite passes 88 tests.
+The final combined run passes 257 tests, with four ignored tests and the separate syntax census excluded.
+It includes SQL execution, compiler emission, front-end checks, rule syntax, corpus scheduling, and the content store.
+The headless library and engine binary pass the compiler check.
+
+This is progress toward item 2. It does not remove the fallback for unpartitioned recursive dependencies or recursive walks that cannot be lifted.
+The next extension must retain causal dependencies or iteration state for those components. Renaming a stratum refresh does not satisfy this requirement.

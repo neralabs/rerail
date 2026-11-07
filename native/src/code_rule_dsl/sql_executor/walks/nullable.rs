@@ -1,5 +1,7 @@
 //! Preserve nullable SQL seed values while retained fact relations remain integer sets.
-use super::super::super::logic::sql::sql_ast::{SqlUnaryOperator as U, SqlValue as V};
+use super::super::super::logic::sql::sql_ast::{
+    SqlBinaryOperator as B, SqlUnaryOperator as U, SqlValue as V,
+};
 use super::*;
 
 #[derive(Clone, Default)]
@@ -137,6 +139,10 @@ fn nullable(e: &E, block: &Select, names: &BTreeMap<String, (String, Layout)>) -
             ..
         } => false,
         E::Unary { input, .. } => n(input),
+        E::Binary {
+            operator: B::Divide,
+            ..
+        } => true,
         E::Binary { left, right, .. } => n(left) || n(right),
         E::Case { branches, fallback } => n(fallback) || branches.iter().any(|(_, value)| n(value)),
         E::Call {

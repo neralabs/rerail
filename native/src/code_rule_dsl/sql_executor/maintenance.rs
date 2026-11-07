@@ -142,7 +142,7 @@ pub(super) fn track_views(w: &mut Work<'_>, run: &mut session::Execution) -> Res
     Ok(views.len())
 }
 
-fn barrier(q: &Query) -> bool {
+pub(super) fn barrier(q: &Query) -> bool {
     if !q.ctes.is_empty() {
         return true;
     }
@@ -153,6 +153,10 @@ fn barrier(q: &Query) -> bool {
         .iter()
         .map(|(e, _)| e)
         .chain(&q.body.predicates)
+        .chain(q.body.from.iter().flat_map(|item| match &item.join {
+            Join::On(on) => on.iter(),
+            Join::Cross => [].iter(),
+        }))
     {
         e.visit(&mut |e| {
             if matches!(e, E::Exists { .. } | E::Scalar(_)) {
@@ -334,6 +338,7 @@ pub(super) fn maintain(
     let (mut positives, mut deletions) = (0u64, 0u64);
     let mut refreshed = Vec::new();
     let mut incremental = Vec::new();
+    let mut recursive_partitions = 0u64;
     let (mut reducer_groups, mut context_rows) = (0u64, 0u64);
     let mut outputs = BTreeMap::new();
     for (_, group) in groups {
@@ -400,6 +405,36 @@ pub(super) fn maintain(
             continue;
         }
         if nonmonotone {
+            if let Some(state) = group
+                .first()
+                .and_then(|r| {
+                    run.emitted
+                        .program
+                        .steps
+                        .iter()
+                        .filter(|s| s.output == *r)
+                        .map(|s| s.stratum)
+                        .max()
+                })
+                .and_then(|s| run.recursive.get(&s))
+            {
+                let (deltas, partitions, waves) = state.apply(w, run, changes, limit)?;
+                positives += waves;
+                recursive_partitions += partitions;
+                for (r, d) in deltas {
+                    let count = run.counts.get(&r).copied().unwrap_or(0) + d.inserted - d.deleted;
+                    run.counts.insert(r.clone(), count);
+                    if run.outputs.contains(&r) {
+                        outputs.insert(
+                            r.clone(),
+                            json!({"inserted":d.inserted,"deleted":d.deleted}),
+                        );
+                    }
+                    incremental.push(r.clone());
+                    changes.insert(r, d);
+                }
+                continue;
+            }
             let mut old = BTreeMap::new();
             for r in &group {
                 let snapshot = w.snapshot(r, arities[r])?;
@@ -713,6 +748,6 @@ pub(super) fn maintain(
         }
     }
     Ok(
-        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
+        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"recursive_partitions":recursive_partitions,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
     )
 }

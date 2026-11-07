@@ -196,16 +196,22 @@ Their fact changes use overdelete/rederive through indexed SQL relations. AST ma
 Walk seeds and outputs can contain supported scalar subqueries and negation.
 The lifted relations use separate dependency components, so reducers complete before their recursive walk consumers.
 Nullable values carried through a walk use validity columns, including empty min/max results.
-Recursive lattice rules, recursive aggregate rules, and unsupported subqueries also refresh their affected strata.
-A relation with a constant fact and a nonmonotone rule also uses this fallback.
+Recursive lattice and aggregate components can retain a proven independent partition key.
+Every recursive read, including aggregate reads, must stay in its head's partition.
+Changes discover affected keys from old and new witnesses, clear those partitions and their widening counters, and rederive them from bottom.
+The wave kernel keeps its original step order and delta variants. This removes unsupported cyclic support without touching unrelated partitions.
+The key can occupy different column positions in different relations. Probe indexes are prepared during the initial run.
+Components without this proof and unsupported subqueries still refresh their affected strata.
+Constant fact steps use immutable private tables and checked queries, so they share support maintenance with other rules.
 The compiler selects eligibility from the checked query tree. It does not parse rendered SQL.
 
 Each program report includes `outputs`, `positive_waves`, `overdelete_waves`, `refreshed_strata`, and `migrated_views`.
 `incremental_strata` lists relations maintained through retained reducers or candidate lattice folds.
 Positive tree walks use `positive_waves` and `overdelete_waves`.
+`recursive_partitions` counts partitions rederived across recursive components.
 `reducer_groups` counts processed reducer groups and lattice keys. `context_rows` counts rule contexts reconsidered by this path.
 The batch report includes `inserted_facts`, `deleted_facts`, `migrated_inputs`, and `programs`.
-`run()` reports `preparation`, with initialized relation names, materialized projection count, and scratch tables created.
+`run()` reports `preparation`, with initialized relation names, materialized projection count, constant tables, and scratch tables created.
 Change reports retain `initializations` and `migrated_inputs` as empty compatibility fields; `migrated_views` is zero.
 `scratch_tables_created` reports new scratch schemas required by the operation.
 A no-op batch returns no program reports.

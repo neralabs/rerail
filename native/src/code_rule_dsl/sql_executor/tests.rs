@@ -2,6 +2,7 @@ use super::*;
 mod documents;
 mod preparation;
 mod recovery;
+mod recursive;
 mod registered_joins;
 mod scaling;
 mod updates;
