@@ -191,4 +191,9 @@ fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
     assert_eq!(verify(key,message,"not base64"), 0);
     assert_eq!(verify("wrong key",message,signature), 0);
     assert_eq!(verify(key,message,&signature[..60]), 0);
+    assert_eq!(verify(key,message,&format!("{} \n!?{}", &signature[..20], &signature[20..])), 1);
+    assert_eq!(verify(key,message,&format!("{signature}===")), 1);
+    assert_eq!(verify(key,message,&format!("=={signature}")), 1);
+    assert_eq!(verify(key,message,&format!("{}h==", &signature[..85])), 1);
+    assert_eq!(verify(key,message,&format!("{signature}☃")), 0);
 }

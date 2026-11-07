@@ -767,3 +767,21 @@ Seen(@place(p, l), t) :- doc(d, p, _), lf_line(d, l, t).
     assert_eq!(actual, vec![("a.py".into(),1,first), ("a.py".into(),2,"five".into()),
                            ("a.py".into(),3,"".into()), ("empty.py".into(),1,"".into())]);
 }
+
+/// Existing allowlist bytes must verify through the public reader and relational execution path.
+#[test]
+fn signed_allowlist_functor_runs_through_public_rules() {
+    let rows = finding_contract("", r#"
+.policy "contract:signature" revision 1
+.decl candidate(name: symbol, message: symbol)
+candidate("original", "{\"allowlist\":[],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+candidate("tampered", "{\"allowlist\":[\"added.py\"],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
+.violation Verified(at: span, name: symbol) "{name}"
+Verified(@place("allowlist.json", 1), name) :- candidate(name, message),
+    @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", message,
+    "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==") = 1.
+"#);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["parameters"]["name"], "original");
+}
+
