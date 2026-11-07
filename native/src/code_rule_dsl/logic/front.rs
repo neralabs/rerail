@@ -329,6 +329,26 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) policies: Vec<serde_json::Value>,
     /// `.rr` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
     pub(in crate::code_rule_dsl) settings: Vec<(String, String)>,
+    /// Relations the evaluator makes from their inputs' rows rather than from rules (`dfs_first`), by name. Each
+    /// has one rule over its inputs, which orders it after them; its rows are the native operator's.
+    pub(in crate::code_rule_dsl) natives: BTreeMap<String, Native>,
+}
+
+/// A relation made natively from relations of the program (`Program::natives`).
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::code_rule_dsl) enum Native {
+    /// `dfs_first(r, hit, first, edge, target)`; with `roots`, `dfs_first_memo` (roots in the order of their
+    /// second column, one memo shared).
+    DfsFirst { edge: String, target: String, roots: Option<String> },
+}
+
+impl Native {
+    /// The relations it reads.
+    pub(in crate::code_rule_dsl) fn reads(&self) -> Vec<&str> {
+        match self {
+            Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

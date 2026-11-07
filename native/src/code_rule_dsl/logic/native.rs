@@ -19,6 +19,8 @@
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
 mod setfix;
+/// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
+pub(in crate::code_rule_dsl) mod dfs_first;
 /// T's loadable extension as copied (8934168d `lib.rs`); this module is its adaptation (O19).
 #[cfg(test)]
 #[allow(dead_code)]

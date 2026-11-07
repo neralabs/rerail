@@ -31,7 +31,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::syntax::{Code, Head, Item, Lit, Statement, Suppress, Term as STerm};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Program, Rule, Term, Value};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Native, Program, Rule, Term, Value};
 use crate::code_rule_dsl::logic::strings::SET;
 
 /// The text tests: their `.rr` names and the engine's.
@@ -955,6 +955,16 @@ impl Lowerer {
                 let rel = self.precedes_stop(set);
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(a)?, self.term(b)?], neg, gated: false }));
             }
+            ("dfs_first", [r, hit, first, edge, target]) | ("dfs_first_memo", [r, hit, first, edge, target, _]) => {
+                let name = |t: &STerm| match t {
+                    STerm::Var(v) => Ok(v.clone()),
+                    _ => Err(Error::Syntax(format!("{rel}: the edge, target and roots are relations, by name"))),
+                };
+                let (edge, target) = (name(edge)?, name(target)?);
+                let roots = if rel == "dfs_first_memo" { Some(name(&args[5])?) } else { None };
+                let rel = self.dfs_first(&edge, &target, roots.as_deref());
+                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(first)?], neg, gated: false }));
+            }
             _ => {}
         }
         if let Some((_, _)) = RELATION_ARG.iter().find(|(r, _)| *r == rel) {
@@ -962,6 +972,32 @@ impl Lowerer {
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
         Ok(Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false }))
+    }
+
+    /// `dfs_first(_, _, _, edge, target)`'s relation `rr_dfs_<edge>_<target>` (`_<roots>` for `dfs_first_memo`):
+    /// `(r, hit, first)`, made natively (`front::Native`). Its one rule reads its inputs, so it is evaluated after
+    /// them; the evaluator makes its rows (`logic::native::dfs_first`), not the rule.
+    fn dfs_first(&mut self, edge: &str, target: &str, roots: Option<&str>) -> String {
+        let rel = match roots {
+            Some(roots) => format!("rr_dfsm_{edge}_{target}_{roots}"),
+            None => format!("rr_dfs_{edge}_{target}"),
+        };
+        if self.prog.natives.contains_key(&rel) {
+            return rel;
+        }
+        let v = |n: &str| Term::Var(n.to_owned());
+        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
+        let mut body = vec![atom(edge, vec![v("r"), v("hit"), v("first")]), atom(target, vec![v("hit")])];
+        if let Some(roots) = roots {
+            body.push(atom(roots, vec![v("r"), Term::Wild]));
+        }
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("r"), v("hit"), v("first")], neg: false, gated: false }, body });
+        // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
+        let ty = |c: usize, or: &str| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.clone());
+        let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
+        self.prog.decls.insert(rel.clone(), cols);
+        self.prog.natives.insert(rel.clone(), Native::DfsFirst { edge: edge.to_owned(), target: target.to_owned(), roots: roots.map(str::to_owned) });
+        rel
     }
 
     /// `ast(d, n, { … }, NAME: v, …)`, or `ast(n, { … }, …)` with its document left unnamed.

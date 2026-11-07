@@ -1367,9 +1367,9 @@ Lowered now (decision 0046, reader section): `.violation` at a node, a span or a
 terms, and compared with each other); `.input` with parameters; `within`, `within_stop`, `nearest` (a named
 ancestor negated too), `inside` and `has` over kind sets and over node-valued sets; `precedes_stop`; negated
 conjunctions (a helper relation); `must, may`; `unset`; recursion that makes values bounded by the tree, a
-count, a shrinking text or a function between rows (`front::cycles`). Still refused by name (census of
+count, a shrinking text or a function between rows (`front::cycles`); `dfs_first` and `dfs_first_memo`, computed natively over the edge relation (`logic::native::dfs_first`), so `data-layer/lazy-architecture.rr` lowers (944 rules). Still refused by name (census of
 2026-11-06, clauses alone): `ordered by` (37 clauses: eslint-one-var, the owner-code sketch), `@place` as a
-value outside a `.violation`'s head (3 clauses, 12 files), `dfs_first`/`dfs_first_memo` (2), `~` patterns
+value outside a `.violation`'s head (3 clauses, 12 files), `~` patterns
 (1), `mean`, `=> edits`. `UnboundedValueCycle` still stops 15 library clauses (73 files) whose bound is not
 one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`).
 **Closure:** list step 30.
