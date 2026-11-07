@@ -17,9 +17,11 @@ def main():
     asyncs.exercise()
     from pkg import hierarchy
     from pkg.sub import deep
+    from pkg import typed
 
     hierarchy.exercise()
     deep.exercise()
+    typed.exercise()
 
 
 main()

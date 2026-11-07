@@ -1468,3 +1468,36 @@ cannot unwind, it ends every test that shares the process, so a filtered run ove
 device tests. It was not checked whether this predates O81's change; nothing in that change touches device
 buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
 zero-length contents pointer), and both tests pass in a debug build.
+
+## O83. The Jedi corpus check of `calls.rr` cannot run here
+
+Decision 0047 moves `calls:` to the programs once the oracles show no regression, with the Jedi corpus comparison
+(`calls::python_tests::benchmark_python_calls_corpus`) run once as the phase check. Two things block it on this
+machine (2026-11-06):
+- No recording exists. `fixtures/python/calls/generate_corpus.py` writes it, under Jedi 0.19.2, from corpus
+  checkouts. Jedi is not installed, and the spike's 574-file corpus is not checked out.
+- The benchmark scores the native resolver. Nothing scores `calls.rr` against a Jedi recording yet. The
+  spike did (99.18% of 33,309 calls, t9 §7.4), but its scorer was not copied.
+
+**Closure:** a recording is made (Jedi installed in a scratch environment, the corpus checked out), a scorer runs
+`calls.rr` over the same corpus through `corpus::run` (as `typing::oracle_tests` does over the runtime fixture),
+and the run is recorded in t20.
+
+## O84. The type relations' first draft: what they leave out
+
+`calls.rr`'s type relations (decision 0047, point 3; t20) answer at the positions whose value the program models
+(`vpos`), from its points-to values. Left out, each giving `type_open`, never a wrong class:
+- **Positions:** any expression no rule of the program reads the value of (an operand, a subscript, a
+  comprehension's element).
+- **Declared types:** parameter, return and variable annotations are unread. A parameter's type is open.
+- **Values:** functions, bound methods and `super()` objects get no class. A class with a metaclass the workspace
+  defines gets none either.
+- **Generics:** names only, no arguments: `list`, not `list[int]`. Terms are interned per node by the corpus
+  runner (`x.node_type`) as unions of names.
+- **Exceptions and other builtin hierarchies:** only `bool <: int` and `<: object`.
+- **String prefixes:** T's facts give no text of a string's delimiter, so a prefixed string is `str` or `bytes`
+  (wider, not exact).
+- **Possible:** past what is listed, `possible_open`.
+
+**Closure:** annotations read (gap 2), positions widened to every expression a rule asks about (by demand), and
+generic arguments carried as terms.

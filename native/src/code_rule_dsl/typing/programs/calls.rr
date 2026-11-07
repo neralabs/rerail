@@ -274,6 +274,17 @@ pv(c, "inst", k) :- callee(c, e), pv(e, "cls", k).
 pv(c, k, v) :- callee(c, e), pv(e, "fn", f), !isasync(f), !isgen(f), retval(f, r), pv(r, k, v).
 pv(c, k, v) :- callee(c, e), pv(e, "fn", f), !method(f, _), retparam(f, i, _), posarg(c, i, a), pv(a, k, v).
 pv(c, "super", k) :- callee(c, e), builtin_ref(e, "super"), nearest(c, f, fdef), method(f, k).
+// A value of a builtin type (`btype`), where the program reads one: a literal, or a call of a builtin class. Its
+// methods are no workspace definition. It flows as any value does, so `x = str(y)` gives `x` the type `str`.
+pv(n, "builtin", n) :- vpos(n), kind(n, k), lit_type(k, _).
+pv(c, "builtin", c) :- vpos(c), bcall(c, _).
+// A value from outside the workspace (`ext`): a name an import of an external module binds, a builtin name, an
+// attribute of such a value, a comparison. The program names no class for it; it flows so that a name bound both to
+// one and to a modelled value (`f = None` in an `except`, else an import) is known to hold more than the latter.
+bv(s, x, "ext", s) :- ext_import(s, x).
+pv(n, "ext", n) :- builtin_ref(n, _).
+pv(n, "ext", n) :- attr_of(n, o, _), pv(o, "ext", _).
+pv(n, "ext", n) :- vpos(n), kind(n, "comparison_operator").
 
 // ---- unknown values -------------------------------------------------------------------------------------------
 // Positions whose value is read: what `vopen` is asked about.
@@ -367,7 +378,10 @@ vopen(n) :- vpos(n), kind(n, "named_expression"), field(n, "value", c), vopen(c)
 // A call's value: unknown when the callee is, when no workspace definition is called (an external or builtin
 // callable), when a workspace function's return is, and for coroutines and generators.
 vopen(c) :- vpos(c), callee(c, e), vopen(e).
-vopen(c) :- vpos(c), callee(c, e), !pv(e, _, _), !pv(c, "super", _).
+vopen(c) :- vpos(c), callee(c, e), !wpv(e), !pv(c, "super", _), !bcall(c, _).
+// A value a call of which may run a workspace definition: neither a builtin value nor one from outside.
+.decl wpv(e: node)
+wpv(e) :- pv(e, k, _), k != "builtin", k != "ext".
 vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), isasync(f).
 vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), isgen(f).
 vopen(c) :- vpos(c), callee(c, e), pv(e, "fn", f), retval(f, r), !retparam(f, _, r), vopen(r).
@@ -490,3 +504,110 @@ builtin("RecursionError"). builtin("UnicodeError"). builtin("UnicodeDecodeError"
 builtin("ZeroDivisionError"). builtin("KeyboardInterrupt"). builtin("SystemExit"). builtin("Warning").
 builtin("DeprecationWarning"). builtin("UserWarning"). builtin("RuntimeWarning"). builtin("EnvironmentError").
 builtin("IOError"). builtin("BufferError"). builtin("ConnectionError"). builtin("TimeoutError"). builtin("GeneratorExit").
+
+// ---- types (decision 0047, point 3) ---------------------------------------------------------------------------
+// What a rule reads of a value's type, at the positions whose value the program models (`vpos`: callees and
+// receivers, assigned, returned and decorating values, arguments and bases). Three-valued, as calls are:
+//   type_of(n, t)        n may hold a value whose class is t: a workspace class's qualified name, or a builtin's
+//                        name (`int`, `str`, `None`, ...)
+//   type_open(n)         n may also hold a value of a class not listed
+//   proven_type(n, t)    `isinstance(n, t)` is true: every class n may hold is t or a subclass of it, and none is
+//                        unlisted
+//   possible_type(n, t)  `isinstance(n, t)` may be true: some listed class is t or a subclass of it
+//   possible_open(n)     possible_type is incomplete: n may hold an unlisted class, or a listed class whose bases
+//                        are not all known
+// A rule's `possible: t` is `possible_type(n, t)` or `possible_open(n)`; `not proven: t` is `!proven_type(n, t)`.
+// A workspace subclass is a closed world: an instance of a class code outside the workspace derives from a
+// workspace class reaches the program only through an unknown value (a parameter, an external call).
+.decl lit_type(k: symbol, t: symbol)
+lit_type("integer", "int"). lit_type("float", "float"). lit_type("string", "str"). lit_type("concatenated_string", "str").
+lit_type("true", "bool"). lit_type("false", "bool"). lit_type("none", "None").
+lit_type("list", "list"). lit_type("list_comprehension", "list"). lit_type("dictionary", "dict").
+lit_type("dictionary_comprehension", "dict"). lit_type("set", "set"). lit_type("set_comprehension", "set").
+lit_type("tuple", "tuple"). lit_type("not_operator", "bool").
+// A string with a prefix (`b"..."`, `r"..."`, `rb"..."`) may be bytes: its opening delimiter is longer than its
+// closing one. T's facts give no text of the delimiter, so the prefix's letters are not read: a prefixed string
+// without interpolations is str or bytes. A string without a prefix, or with an interpolation (an f-string), is str.
+.decl prefixed(n: node)
+prefixed(n) :- vpos(n), kind(n, "string"), delims(n, k, l), k > l, !interp(n).
+prefixed(n) :- vpos(n), kind(n, "concatenated_string"), child(n, c, 0), delims(c, k, l), k > l, !interp(c).
+// A string's opening and closing delimiters' lengths.
+.decl delims(n: node, k: number, l: number)
+delims(n, k, l) :- kind(n, "string"), child(n, a, _), node(_, a, "string_start", s, e), child(n, z, _), node(_, z, "string_end", t, u),
+    k = @sub(e, s), l = @sub(u, t).
+.decl interp(n: node)
+interp(n) :- kind(n, "string"), child(n, i, _), kind(i, "interpolation").
+// A builtin class whose call makes a value of that class.
+.decl bclass(x: symbol)
+bclass("int"). bclass("float"). bclass("complex"). bclass("str"). bclass("bytes"). bclass("bytearray"). bclass("bool").
+bclass("list"). bclass("dict"). bclass("set"). bclass("frozenset"). bclass("tuple"). bclass("object").
+.decl bcall(c: node, x: symbol)
+bcall(c, x) :- callee(c, e), builtin_ref(e, x), bclass(x).
+.decl btype(v: node, t: symbol)
+btype(v, t) :- pv(_, "builtin", v), kind(v, k), lit_type(k, t).
+btype(v, "bytes") :- pv(_, "builtin", v), prefixed(v).
+btype(v, x) :- pv(_, "builtin", v), bcall(v, x).
+// Declared returns (`typing::declare`, `typing::deps`: the corpus runner adds a `declared_ret(q, t)` per member
+// of a closed declared return) type a call of a name the workspace does not define.
+.decl declared_ret(q: symbol, t: symbol)
+.decl declared_call(c: node)
+declared_call(c) :- vpos(c), callee(c, e), qn(e, q), !qknown(q), declared_ret(q, _).
+// A workspace class's qualified name: a module's class, or a class's class. Classes in a function have none.
+.decl cls_q(c: node, q: symbol)
+cls_q(c, @dot(m, x)) :- modname(s, m), rdefn(s, x, c), kind(c, "class_definition").
+cls_q(c, @dot(q, x)) :- cls_q(o, q), rdefn(o, x, c), kind(c, "class_definition").
+
+.decl type_of(n: node, t: symbol)
+type_of(n, q) :- vpos(n), pv(n, "inst", c), cls_q(c, q).
+type_of(n, t) :- vpos(n), pv(n, "builtin", v), btype(v, t).
+type_of(c, t) :- declared_call(c), callee(c, e), qn(e, q), declared_ret(q, t).
+// A class object's class is `type`, unless a metaclass may make it another: a `metaclass=` keyword, an external base
+// (`enum.Enum`, `abc.ABC`) or a base that is no known class, on the class or an ancestor. A builtin base keeps `type`.
+type_of(n, "type") :- vpos(n), pv(n, "cls", c), !meta_open(c).
+type_of(n, "module") :- vpos(n), pv(n, "mod", _).
+type_of(n, "module") :- ext_mod(n).
+// A name an `import` statement binds to a module outside the workspace (`import asyncio`), where nothing else binds it.
+.decl ext_mod(n: node)
+ext_mod(n) :- vpos(n), look(n, x, s), ext_import(s, x), !rifrom(s, x, _, _), !rasg(s, x, _, _), !rdefn(s, x, _).
+.decl meta_open(c: node)
+meta_open(c) :- anc(c, b), kind(b, "class_definition"), field(b, "superclasses", al), child(al, kw, _), kind(kw, "keyword_argument"),
+    field(kw, "name", nm), text(nm, "metaclass").
+meta_open(c) :- anc(c, b), basex(b, e), extb(e), !builtin_ref(e, _).
+meta_open(c) :- anc(c, b), base_open(b).
+.decl type_open(n: node)
+type_open(n) :- vpos(n), vopen(n), !declared_call(n), !ext_mod(n).
+type_open(n) :- vpos(n), !vopen(n), !pv(n, _, _), !declared_call(n), !ext_mod(n).
+// Functions and `super()` objects are values the relations do not name a class for.
+type_open(n) :- vpos(n), pv(n, k, _), k != "inst", k != "builtin", k != "cls", k != "mod", k != "ext".
+type_open(n) :- vpos(n), pv(n, "ext", _), !ext_mod(n).
+type_open(n) :- vpos(n), pv(n, "cls", c), meta_open(c).
+type_open(n) :- vpos(n), pv(n, "inst", c), !cls_q(c, _).
+// A class whose `__new__` or metaclass `__call__` the workspace defines may make something else than its instance.
+type_open(c) :- vpos(c), callee(c, e), pv(e, "cls", k), found(k, "__new__", _).
+type_open(c) :- vpos(c), callee(c, e), pv(e, "cls", k), anc(k, b), metacls(b, _).
+// Subclassing between the names `type_of` gives: a workspace class's workspace bases, its external bases by
+// qualified name, and its builtin bases.
+.decl tname(t: symbol)
+tname(t) :- type_of(_, t).
+.decl tsub(t: symbol, u: symbol)
+tsub(t, t) :- tname(t).
+tsub(t, "object") :- tname(t).
+tsub("bool", "int") :- tname("bool").
+tsub(t, u) :- tname(t), cls_q(c, t), anc(c, b), cls_q(b, u).
+tsub(t, u) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), qn(e, u), !qknown(u).
+tsub(t, x) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), builtin_ref(e, x).
+// A listed class some of whose superclasses are unknown: a base that is no known class, or an external base
+// (whose own bases the program does not read).
+.decl tsup_open(t: symbol)
+tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), base_open(b).
+tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), extb(e), !builtin_ref(e, "object").
+.decl type_miss(n: node, u: symbol)
+type_miss(n, u) :- type_of(n, t0), tsub(t0, u), type_of(n, t), !tsub(t, u).
+.decl proven_type(n: node, u: symbol)
+proven_type(n, u) :- type_of(n, t), tsub(t, u), !type_open(n), !type_miss(n, u).
+.decl possible_type(n: node, u: symbol)
+possible_type(n, u) :- type_of(n, t), tsub(t, u).
+.decl possible_open(n: node)
+possible_open(n) :- type_open(n).
+possible_open(n) :- type_of(n, t), tsup_open(t).
+.output type_of, type_open, proven_type, possible_type, possible_open

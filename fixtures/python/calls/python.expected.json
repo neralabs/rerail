@@ -12,7 +12,20 @@
       "pkg/util.py",
       56
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 228,
+     "end": 232,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 247,
@@ -36,7 +49,20 @@
       "pkg/util.py",
       4
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 256,
+     "end": 259,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 283,
@@ -48,7 +74,20 @@
       "pkg/__init__.py",
       5
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 283,
+     "end": 286,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 307,
@@ -60,7 +99,20 @@
       "pkg/nested.py",
       1
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 307,
+     "end": 313,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 327,
@@ -72,7 +124,20 @@
       "pkg/models.py",
       50
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 327,
+     "end": 333,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 349,
@@ -84,7 +149,20 @@
       "pkg/decorators.py",
       32
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 349,
+     "end": 359,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 375,
@@ -96,7 +174,20 @@
       "pkg/dynamic.py",
       38
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 375,
+     "end": 382,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 398,
@@ -108,7 +199,20 @@
       "pkg/aliases.py",
       13
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 398,
+     "end": 405,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 421,
@@ -120,36 +224,100 @@
       "pkg/asyncs.py",
       17
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 421,
+     "end": 427,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
-    "start": 503,
-    "end": 523,
-    "line": 21,
+    "start": 529,
+    "end": 549,
+    "line": 22,
     "callees": [
      [
       "def",
       "pkg/hierarchy.py",
       41
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 529,
+     "end": 538,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
-    "start": 528,
-    "end": 543,
-    "line": 22,
+    "start": 554,
+    "end": 569,
+    "line": 23,
     "callees": [
      [
       "def",
       "pkg/sub/deep.py",
       6
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 554,
+     "end": 558,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
-    "start": 546,
-    "end": 552,
-    "line": 25,
+    "start": 574,
+    "end": 590,
+    "line": 24,
+    "callees": [
+     [
+      "def",
+      "pkg/typed.py",
+      24
+     ]
+    ],
+    "receiver": {
+     "start": 574,
+     "end": 579,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 593,
+    "end": 599,
+    "line": 27,
     "callees": [
      [
       "def",
@@ -170,7 +338,20 @@
       "pkg/util.py",
       4
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 106,
+     "end": 111,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    }
   ],
   "pkg/aliases.py": [
@@ -196,7 +377,20 @@
       "pkg/util.py",
       4
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 276,
+     "end": 277,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 292,
@@ -208,7 +402,20 @@
       "pkg/util.py",
       8
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 292,
+     "end": 303,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 316,
@@ -232,7 +439,20 @@
       "pkg/models.py",
       13
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 336,
+     "end": 337,
+     "classes": [
+      [
+       "type",
+       [
+        "type",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 350,
@@ -280,7 +500,20 @@
       "pkg/nested.py",
       1
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 415,
+     "end": 421,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    }
   ],
   "pkg/asyncs.py": [
@@ -317,7 +550,20 @@
       "external",
       "asyncio.tasks.gather"
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 160,
+     "end": 167,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 175,
@@ -352,7 +598,20 @@
       "external",
       "asyncio.runners.run"
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 224,
+     "end": 231,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 236,
@@ -381,7 +640,20 @@
       "external",
       "functools.wraps"
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 102,
+     "end": 111,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 173,
@@ -408,7 +680,20 @@
       "external",
       "functools.lru_cache.<locals>.decorating_function"
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 294,
+     "end": 303,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 378,
@@ -544,7 +829,20 @@
       "external",
       "functools.partial"
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 437,
+     "end": 446,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 437,
@@ -697,7 +995,20 @@
       "pkg/hierarchy.py",
       33
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 695,
+     "end": 696,
+     "classes": [
+      [
+       "type",
+       [
+        "type",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 701,
@@ -723,7 +1034,28 @@
       "pkg/models.py",
       6
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 78,
+     "end": 82,
+     "classes": [
+      [
+       "pkg.models.Base",
+       [
+        "pkg.models.Base",
+        "object"
+       ]
+      ],
+      [
+       "pkg.models.Child",
+       [
+        "pkg.models.Child",
+        "pkg.models.Base",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 128,
@@ -740,7 +1072,28 @@
       "pkg/models.py",
       9
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 128,
+     "end": 132,
+     "classes": [
+      [
+       "pkg.models.Base",
+       [
+        "pkg.models.Base",
+        "object"
+       ]
+      ],
+      [
+       "pkg.models.Child",
+       [
+        "pkg.models.Child",
+        "pkg.models.Base",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 246,
@@ -805,7 +1158,28 @@
       "pkg/models.py",
       37
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 600,
+     "end": 604,
+     "classes": [
+      [
+       "pkg.models.Inherits",
+       [
+        "pkg.models.Inherits",
+        "pkg.models.NoInit",
+        "object"
+       ]
+      ],
+      [
+       "pkg.models.NoInit",
+       [
+        "pkg.models.NoInit",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 777,
@@ -841,7 +1215,20 @@
       "pkg/models.py",
       13
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 806,
+     "end": 810,
+     "classes": [
+      [
+       "type",
+       [
+        "type",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 823,
@@ -853,7 +1240,20 @@
       "pkg/models.py",
       17
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 823,
+     "end": 827,
+     "classes": [
+      [
+       "type",
+       [
+        "type",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 841,
@@ -865,7 +1265,20 @@
       "pkg/models.py",
       17
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 841,
+     "end": 846,
+     "classes": [
+      [
+       "type",
+       [
+        "type",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 860,
@@ -877,7 +1290,20 @@
       "pkg/models.py",
       9
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 860,
+     "end": 861,
+     "classes": [
+      [
+       "pkg.models.Base",
+       [
+        "pkg.models.Base",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 877,
@@ -889,7 +1315,20 @@
       "pkg/models.py",
       9
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 877,
+     "end": 881,
+     "classes": [
+      [
+       "type",
+       [
+        "type",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 898,
@@ -913,7 +1352,20 @@
       "pkg/models.py",
       34
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 898,
+     "end": 906,
+     "classes": [
+      [
+       "pkg.models.NoInit",
+       [
+        "pkg.models.NoInit",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 916,
@@ -937,7 +1389,21 @@
       "pkg/models.py",
       34
      ]
-    ]
+    ],
+    "receiver": {
+     "start": 916,
+     "end": 926,
+     "classes": [
+      [
+       "pkg.models.Inherits",
+       [
+        "pkg.models.Inherits",
+        "pkg.models.NoInit",
+        "object"
+       ]
+      ]
+     ]
+    }
    },
    {
     "start": 936,
@@ -1037,7 +1503,390 @@
       "pkg/nested.py",
       1
      ]
+    ],
+    "receiver": {
+     "start": 157,
+     "end": 163,
+     "classes": [
+      [
+       "module",
+       [
+        "module",
+        "object"
+       ]
+      ]
+     ]
+    }
+   }
+  ],
+  "pkg/typed.py": [
+   {
+    "start": 229,
+    "end": 237,
+    "line": 10,
+    "callees": [
+     [
+      "class",
+      "pkg/typed.py",
+      13
+     ]
     ]
+   },
+   {
+    "start": 354,
+    "end": 362,
+    "line": 20,
+    "callees": [
+     [
+      "class",
+      "pkg/typed.py",
+      13
+     ]
+    ]
+   },
+   {
+    "start": 374,
+    "end": 381,
+    "line": 21,
+    "callees": [
+     [
+      "class",
+      "pkg/typed.py",
+      5
+     ]
+    ]
+   },
+   {
+    "start": 411,
+    "end": 418,
+    "line": 25,
+    "callees": [
+     [
+      "external",
+      "builtins.str"
+     ]
+    ]
+   },
+   {
+    "start": 423,
+    "end": 435,
+    "line": 26,
+    "callees": [
+     [
+      "external",
+      "builtins.str.upper"
+     ]
+    ],
+    "receiver": {
+     "start": 423,
+     "end": 427,
+     "classes": [
+      [
+       "str",
+       [
+        "str",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 457,
+    "end": 470,
+    "line": 28,
+    "callees": [
+     [
+      "external",
+      "builtins.bytes.decode"
+     ]
+    ],
+    "receiver": {
+     "start": 457,
+     "end": 461,
+     "classes": [
+      [
+       "bytes",
+       [
+        "bytes",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 498,
+    "end": 515,
+    "line": 30,
+    "callees": [
+     [
+      "external",
+      "builtins.list.append"
+     ]
+    ],
+    "receiver": {
+     "start": 498,
+     "end": 503,
+     "classes": [
+      [
+       "list",
+       [
+        "list",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 541,
+    "end": 555,
+    "line": 32,
+    "callees": [
+     [
+      "external",
+      "builtins.dict.get"
+     ]
+    ],
+    "receiver": {
+     "start": 541,
+     "end": 546,
+     "classes": [
+      [
+       "dict",
+       [
+        "dict",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 560,
+    "end": 575,
+    "line": 33,
+    "callees": [
+     [
+      "external",
+      "builtins.str.join"
+     ]
+    ],
+    "receiver": {
+     "start": 560,
+     "end": 563,
+     "classes": [
+      [
+       "str",
+       [
+        "str",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 588,
+    "end": 596,
+    "line": 34,
+    "callees": [
+     [
+      "def",
+      "pkg/models.py",
+      26
+     ]
+    ]
+   },
+   {
+    "start": 601,
+    "end": 617,
+    "line": 35,
+    "callees": [
+     [
+      "def",
+      "pkg/models.py",
+      29
+     ]
+    ],
+    "receiver": {
+     "start": 601,
+     "end": 606,
+     "classes": [
+      [
+       "pkg.models.Child",
+       [
+        "pkg.models.Child",
+        "pkg.models.Base",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 751,
+    "end": 769,
+    "line": 38,
+    "callees": [
+     [
+      "def",
+      "pkg/typed.py",
+      18
+     ]
+    ]
+   },
+   {
+    "start": 778,
+    "end": 790,
+    "line": 39,
+    "callees": [
+     [
+      "def",
+      "pkg/typed.py",
+      14
+     ],
+     [
+      "def",
+      "pkg/typed.py",
+      6
+     ]
+    ],
+    "receiver": {
+     "start": 778,
+     "end": 783,
+     "classes": [
+      [
+       "pkg.typed.Shape",
+       [
+        "pkg.typed.Shape",
+        "object"
+       ]
+      ],
+      [
+       "pkg.typed.Square",
+       [
+        "pkg.typed.Square",
+        "pkg.typed.Shape",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 795,
+    "end": 802,
+    "line": 40,
+    "callees": [
+     [
+      "class",
+      "pkg/typed.py",
+      5
+     ]
+    ]
+   },
+   {
+    "start": 795,
+    "end": 811,
+    "line": 40,
+    "callees": [
+     [
+      "def",
+      "pkg/typed.py",
+      9
+     ]
+    ],
+    "receiver": {
+     "start": 795,
+     "end": 802,
+     "classes": [
+      [
+       "pkg.typed.Shape",
+       [
+        "pkg.typed.Shape",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 795,
+    "end": 818,
+    "line": 40,
+    "callees": [
+     [
+      "def",
+      "pkg/typed.py",
+      14
+     ]
+    ],
+    "receiver": {
+     "start": 795,
+     "end": 811,
+     "classes": [
+      [
+       "pkg.typed.Square",
+       [
+        "pkg.typed.Square",
+        "pkg.typed.Shape",
+        "object"
+       ]
+      ]
+     ]
+    }
+   },
+   {
+    "start": 866,
+    "end": 873,
+    "line": 42,
+    "callees": [
+     [
+      "def",
+      "pkg/models.py",
+      2
+     ]
+    ]
+   },
+   {
+    "start": 902,
+    "end": 917,
+    "line": 43,
+    "callees": [
+     [
+      "def",
+      "pkg/models.py",
+      29
+     ],
+     [
+      "def",
+      "pkg/models.py",
+      9
+     ]
+    ],
+    "receiver": {
+     "start": 902,
+     "end": 906,
+     "classes": [
+      [
+       "pkg.models.Base",
+       [
+        "pkg.models.Base",
+        "object"
+       ]
+      ],
+      [
+       "pkg.models.Child",
+       [
+        "pkg.models.Child",
+        "pkg.models.Base",
+        "object"
+       ]
+      ]
+     ]
+    }
    }
   ],
   "pkg/util.py": [

@@ -260,6 +260,36 @@ const DEPARTURES: &[(&str, Departure, &str)] = &[
         Departure::Unknown,
         "a closure another function returned",
     ),
+    (
+        "pkg/typed.py:26 `text.upper()`",
+        Departure::Unknown,
+        "a method of a local holding a builtin's call (`str(12)`)",
+    ),
+    (
+        "pkg/typed.py:35 `child.describe()`",
+        Departure::Unknown,
+        "a method of a local holding an instance",
+    ),
+    (
+        "pkg/typed.py:39 `shape.area()`",
+        Departure::Unknown,
+        "a method of a local holding a call's result",
+    ),
+    (
+        "pkg/typed.py:40 `Shape().scaled()`",
+        Departure::Unknown,
+        "a method of a class call's result",
+    ),
+    (
+        "pkg/typed.py:40 `Shape().scaled().area()`",
+        Departure::Unknown,
+        "a method of a method call's result",
+    ),
+    (
+        "pkg/typed.py:43 `base.describe()`",
+        Departure::Unknown,
+        "a method of a local holding a conditional's instances",
+    ),
 ];
 
 /// Every call of the oracle workspace that CPython ran: the workspace functions it dispatched to

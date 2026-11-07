@@ -314,3 +314,130 @@ fn rust_calls_program_agrees_with_rust_analyzer() {
     assert_eq!(departures, listed, "calls where calls_rust.rr answers otherwise than rust-analyzer recorded");
     assert!(agree >= 37, "{agree} agree");
 }
+
+/// How the type relations answer at a receiver CPython ran a method call on (`receiver` in the oracle).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum TypeAnswer {
+    /// `type_of` names exactly the classes the receiver was.
+    Exact,
+    /// `type_open`: the receiver may be of a class not listed.
+    Unknown,
+    /// Closed, and every class it was is listed, with more besides.
+    Wider,
+    /// A class it was is not listed while closed, a class proven is not in a class's MRO, or a class in an MRO
+    /// is not possible: a wrong answer.
+    Wrong,
+}
+
+/// The spans the types scorer reads: each typed or open node's.
+const TYPE_SPANS: &str = "
+.decl rr_type_at(n: node, s: number, e: number)
+rr_type_at(n, s, e) :- type_of(n, _), node(_, n, _, s, e).
+rr_type_at(n, s, e) :- type_open(n), node(_, n, _, s, e).
+.output rr_type_at
+";
+
+/// What the type relations say at a node: listed classes, open, proven classes, possible classes, possible open.
+#[derive(Debug, Default)]
+struct Typed {
+    of: BTreeSet<String>,
+    open: bool,
+    proven: BTreeSet<String>,
+    possible: BTreeSet<String>,
+    possible_open: bool,
+}
+
+/// `program`'s type relations at each receiver the CPython oracle records, keyed `file:line `text``.
+pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> {
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls");
+    let expected: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("python.expected.json")).unwrap()).unwrap();
+    let project = oracle.join("project");
+    let sources = python_files(&project);
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("score-types");
+    corpus::run(&format!("{program}\n{TYPE_SPANS}"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rows = |rel: &str| -> Vec<Vec<String>> {
+        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
+    };
+    let at: BTreeMap<String, (String, usize, usize)> = rows("rr_type_at")
+        .into_iter()
+        .map(|r| (r[0].clone(), (r[0].rsplit_once(':').unwrap().0.to_owned(), r[1].parse().unwrap(), r[2].parse().unwrap())))
+        .collect();
+    let mut typed: BTreeMap<(String, usize, usize), Typed> = BTreeMap::new();
+    for r in rows("type_of") {
+        typed.entry(at[&r[0]].clone()).or_default().of.insert(r[1].clone());
+    }
+    for r in rows("type_open") {
+        typed.entry(at[&r[0]].clone()).or_default().open = true;
+    }
+    for r in rows("proven_type") {
+        typed.entry(at[&r[0]].clone()).or_default().proven.insert(r[1].clone());
+    }
+    for r in rows("possible_type") {
+        typed.entry(at[&r[0]].clone()).or_default().possible.insert(r[1].clone());
+    }
+    for r in rows("possible_open") {
+        typed.entry(at[&r[0]].clone()).or_default().possible_open = true;
+    }
+    let _ = std::fs::remove_dir_all(&out);
+    let detail = std::env::var_os("RERAIL_SCORE_DETAIL").is_some();
+    let mut answers = BTreeMap::new();
+    for (file, calls) in expected["runtime"].as_object().unwrap() {
+        for call in calls.as_array().unwrap() {
+            let Some(receiver) = call.get("receiver") else { continue };
+            let (start, end) = (receiver["start"].as_u64().unwrap() as usize, receiver["end"].as_u64().unwrap() as usize);
+            let at = format!("{file}:{} `{}`", call["line"], &sources[file][start..end]);
+            let classes: Vec<(String, BTreeSet<String>)> = receiver["classes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| (c[0].as_str().unwrap().to_owned(), c[1].as_array().unwrap().iter().map(|m| m.as_str().unwrap().to_owned()).collect()))
+                .collect();
+            let ran: BTreeSet<String> = classes.iter().map(|(c, _)| c.clone()).collect();
+            let none = Typed::default();
+            let t = typed.get(&(file.clone(), start, end)).unwrap_or(&none);
+            let mut wrong = Vec::new();
+            if !t.open && !ran.is_subset(&t.of) {
+                wrong.push(format!("closed {:?}, ran {ran:?}", t.of));
+            }
+            for (c, mro) in &classes {
+                wrong.extend(t.proven.iter().filter(|u| !mro.contains(*u)).map(|u| format!("proven {u}, ran {c}")));
+                if !t.possible_open {
+                    wrong.extend(mro.iter().filter(|u| !t.possible.contains(*u)).map(|u| format!("{u} not possible, ran {c}")));
+                }
+            }
+            let answer = if !wrong.is_empty() {
+                if detail {
+                    println!("  wrong at {at}: {wrong:?}");
+                }
+                TypeAnswer::Wrong
+            } else if t.open {
+                TypeAnswer::Unknown
+            } else if t.of == ran {
+                TypeAnswer::Exact
+            } else {
+                TypeAnswer::Wider
+            };
+            answers.insert(at, answer);
+        }
+    }
+    answers
+}
+
+/// `calls.rr`'s type relations against the classes CPython's receivers were (decision 0047, point 3): never wrong,
+/// and the receivers not exact as listed.
+const PYTHON_TYPE_DEPARTURES: &[(&str, TypeAnswer, &str)] =
+    &[("pkg/typed.py:28 `data`", TypeAnswer::Wider, "`b\"ab\"`: a prefixed string is str or bytes (T gives no text of its delimiter)")];
+
+#[test]
+fn python_type_relations_agree_with_the_runtime() {
+    let answers = score_python_types(&program("calls"));
+    let exact = answers.values().filter(|a| **a == TypeAnswer::Exact).count();
+    println!("calls.rr types: {exact} exact of {} receivers", answers.len());
+    for (at, a) in &answers {
+        println!("  {a:?}\t{at}");
+    }
+    let departures: BTreeMap<String, TypeAnswer> = answers.into_iter().filter(|(_, a)| *a != TypeAnswer::Exact).collect();
+    let listed: BTreeMap<String, TypeAnswer> = PYTHON_TYPE_DEPARTURES.iter().map(|(at, a, _)| ((*at).to_owned(), *a)).collect();
+    assert!(!departures.values().any(|a| *a == TypeAnswer::Wrong), "{departures:#?}");
+    assert_eq!(departures, listed, "receivers whose classes calls.rr does not give exactly");
+}

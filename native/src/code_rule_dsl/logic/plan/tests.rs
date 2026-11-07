@@ -412,11 +412,15 @@ fn product_programs_derive_t_outputs() {
         }
         let golden = root().join(format!("plan/golden/{name}"));
         let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
-        for (rel, rows) in &got.outputs {
+        // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
+        for (rel, rows) in got.outputs.iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
             let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
             let expected: Vec<&str> = expected.lines().collect();
             if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
-                failures.push(format!("{name} {rel}: {} rows, expected {}", rows.len(), expected.len()));
+                let got: BTreeSet<&str> = rows.iter().map(String::as_str).collect();
+                let want: BTreeSet<&str> = expected.iter().copied().collect();
+                let (missing, extra): (Vec<_>, Vec<_>) = (want.difference(&got).take(3).collect(), got.difference(&want).take(3).collect());
+                failures.push(format!("{name} {rel}: {} rows, expected {}; missing {missing:?}, extra {extra:?}", rows.len(), expected.len()));
             }
         }
     }

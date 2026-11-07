@@ -150,5 +150,59 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 
   Every departure of the program is one the native resolver also has. The program departs nowhere the native
   resolver agrees. What is left before `calls:` can switch is the Jedi corpus comparison
-  (`benchmark_python_calls_corpus`), run once as the phase check.
+  (`benchmark_python_calls_corpus`), run once as the phase check. It cannot run here: there is no
+  recording, and no scorer of `calls.rr` against one (O83).
+
+- **Rule-facing type relations, Python** (decision 0047, point 3; step 1). `calls.rr` exports them beside
+  `call_target`/`call_open`. They are three-valued, as calls are, and read the program's points-to values:
+
+  ```text
+  type_of(n, t)        n may hold a value whose class is t ("pkg.models.Base", or a builtin's "str")
+  type_open(n)         n may also hold a value of a class not listed
+  proven_type(n, t)    isinstance(n, t) is true: every class n may hold is t or a subclass, none unlisted
+  possible_type(n, t)  isinstance(n, t) may be true: some listed class is t or a subclass of t
+  possible_open(n)     possible_type is incomplete
+  ```
+
+  A rule's `proven: t` is `proven_type(n, t)`. Its `possible: t` is `possible_type(n, t)` or `possible_open(n)`.
+  `not` is the negation of either.
+  - **New values in the program:**
+    - **Builtin values** (`pv(n, "builtin", n)`): literals, and calls of builtin classes (`str(x)`, `dict()`).
+      Their methods are no workspace definition, so `str(x).upper()` is now no edge rather than unknown.
+    - **External values** (`pv(n, "ext", n)`): external imports, builtin names, their attributes, and
+      comparisons. They mark a name that may hold something the program does not model. T's outputs on T's
+      facts are unchanged (`product_programs_derive_t_outputs`). Without this marker, `json/encoder.py`'s
+      `_iterencode` lost its unknown.
+  - **Classes:**
+    - an instance's class is the workspace class's qualified name;
+    - a class object's class is `type`, unless a metaclass, an external base or an unknown base may change it;
+    - a module's class is `module`, including an external module bound by `import`.
+  - **Declared returns** (`declared_ret`, from `rerail.types/v1` and dependency summaries) type a call of a
+    name the workspace does not define, as in `workload.rr`. The corpus runner interns `type_of` as one union
+    term per node (`x.node_type`).
+  - **Oracle:** the CPython tracer now records each method call's receiver: the span of `o` in `o.m(...)`, and
+    each class it was, with its MRO. `typing::oracle_tests::python_type_relations_agree_with_the_runtime`
+    checks three things at every receiver:
+    - a closed `type_of` lists every class CPython saw;
+    - every proven class is in each runtime class's MRO;
+    - every class in an MRO is possible.
+
+    A new fixture module (`pkg/typed.py`) adds builtin and local receivers.
+
+  | | Receivers | Exact | Wider | Unknown | Wrong |
+  |---|---|---|---|---|---|
+  | `calls.rr` types | 44 | 43 | 1 (`b"ab"`: str or bytes) | 0 | 0 |
+
+  | Calls on the grown oracle | Agree | Depart | Wrong |
+  |---|---|---|---|
+  | `calls.rr` | 113 | 9 | 0 |
+  | native resolver | 97 | 25 | 0 |
+
+  The receiver fixture is small and written for this, so 43 of 44 says the relations are sound where they
+  answer, not how often they answer on a real corpus. What they leave out is O84.
+
+  **For More-ergonomic-rule-syntax (information).** The relations above, with their columns, are what
+  `core.rr` would declare for Python's `proven:`/`possible:`. They are in
+  `native/src/code_rule_dsl/typing/programs/calls.rr`, section "types". Type names are dotted qualified names
+  for workspace classes and bare names for builtins, as `declared_ret` and `workload.rr`'s `type_of` write them.
 
