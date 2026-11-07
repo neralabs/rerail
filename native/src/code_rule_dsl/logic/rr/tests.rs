@@ -18,6 +18,20 @@ fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
 }
 
 #[test]
+fn python_annotation_text_is_canonical_and_keeps_wrapper_keys() {
+    let rows = finding_contract("def load(x: ((Connection|Transaction)), y: Union[Connection, \"Transaction\"]):\n    pass\n", r#"
+.language python
+#include "python/ast.rr"
+#include "python/print.rr"
+.violation Annotation(at: node, spelling: symbol) code "ANN" "{spelling}"
+Annotation(t, s) :- sig_param(_, _, _, _, _, t, _), !unset(t), annotation_text(t, s).
+"#);
+    let messages: BTreeSet<_> = rows.iter().map(|r| r["message"].as_str().unwrap()).collect();
+    assert_eq!(messages, BTreeSet::from(["Connection | Transaction", "Union[Connection, 'Transaction']"]));
+    assert_eq!(rows.len(), 2);
+}
+
+#[test]
 fn invalid_or_unsupported_boolean_regex_fails_at_compilation() {
     for pattern in ["[", "(?<![A-Za-z_é])str"] {
         let rule = format!(".decl sample(s: symbol)\nsample(\"str\").\n.decl found(s: symbol)\nfound(s) :- sample(s), match({}, s).", serde_json::to_string(pattern).unwrap());
