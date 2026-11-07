@@ -68,7 +68,7 @@ nari_piece(n, piece, value, base, column, rank) :- str_part(n, piece, value, _, 
         # A match may consume the preceding newline. The indent starts after that newline.
         text += f'''nari_text(n, piece, base + strlen(@replace_all(@slice(t, 0, a), "[^\\\\n]", "")) + adjust,
     rank, {i + 1}, occurrence) :- nari_piece(n, piece, t, base, _, rank), nari_regex_{i}(t, occurrence, a, b),
-    (a = 0, adjust = 0 ; a > 0, adjust = 1).
+    (@slice(t, a, a + 1) = "\\n", adjust = 1 ; @slice(t, a, a + 1) != "\\n", adjust = 0).
 '''
     text += r'''
 .violation RootExample(at: span, ordinal: number, piece: number, pattern: number, occurrence: number) code "NARI001"

@@ -54,10 +54,10 @@ nari_piece(n, piece, value, base, column, rank) :- str_part(n, piece, value, _, 
 .decl nari_text(n: node, piece: number, l: number, rank: number, pattern: number, occurrence: number)
 nari_text(n, piece, base + strlen(@replace_all(@slice(t, 0, a), "[^\\n]", "")) + adjust,
     rank, 1, occurrence) :- nari_piece(n, piece, t, base, _, rank), nari_regex_0(t, occurrence, a, b),
-    (a = 0, adjust = 0 ; a > 0, adjust = 1).
+    (@slice(t, a, a + 1) = "\n", adjust = 1 ; @slice(t, a, a + 1) != "\n", adjust = 0).
 nari_text(n, piece, base + strlen(@replace_all(@slice(t, 0, a), "[^\\n]", "")) + adjust,
     rank, 2, occurrence) :- nari_piece(n, piece, t, base, _, rank), nari_regex_1(t, occurrence, a, b),
-    (a = 0, adjust = 0 ; a > 0, adjust = 1).
+    (@slice(t, a, a + 1) = "\n", adjust = 1 ; @slice(t, a, a + 1) != "\n", adjust = 0).
 
 .violation RootExample(at: span, ordinal: number, piece: number, pattern: number, occurrence: number) code "NARI001"
     "String literal or doc example uses deprecated root api import; use data_layer.* or explicit api.lXXXX_* imports"
