@@ -1821,6 +1821,30 @@ Failures, by kind:
 - **Revision and stamped-artifact readers**, not written (plan-composition-architecture, test-budget).
 - **The `$O[:-$K]` slice pattern**, not lowered (versioned-table-names).
 
+**State on 2026-11-07** (t10 §2k). The costs above are fixed: `gis_before` is inlined, `cc_line`'s computed view is
+inlined, text tests are native, and relations are released after their last reader. The 49 rules on s200 take 39.5 s
+and 1.56 GB. Thirteen more rules now run, 62 in all:
+
+- the 7 that took over 40 s take 0.6–1.6 s each, and eager-resolve 1.0 s;
+- bounded-composed-graph-paths, cached-pure-lazy-allowlist, connection-structural-boundaries,
+  post-op-side-effects and pure-lazy-runtime-purity no longer fail (the merges fixed their failures);
+- eager-resolve was slow only in the pack: demand split a rule whose kept atoms only the demanded read joined, a
+  cross product (`pre_1199`). Demand now refuses that split.
+
+The 62 rules together on s50: 19.2 s CPU, 303.8e9 instructions, 637 violations (each rule's count equals its count
+alone), and a peak of 1.43 GB, **over the 1 GB budget**.
+
+Left out, by cause:
+
+- **schema-architecture**: over 60 s alone, not yet profiled.
+- **bootstrap-engine-invariants**: `no symbol 25416499766238680` (a node or span id read as a symbol). The flattened
+  program types correctly, so the column is likely one the engine makes at run time.
+- **lazy-architecture**: refused as an aggregate in recursion. `la_cls`'s `@cat` recursion goes through
+  `ast_parent(e, f) :- decorator(f, e)`, which is not a tree move, so the bound is not proved.
+- **plan-composition-architecture, test-budget**: revision and stamped-artifact readers are not written.
+- **versioned-table-names**: `n ~ `pattern`` (an AST pattern literal) has no lowering or executor. It needs the
+  matcher as an input relation (O103).
+
 **Closure:** the pack's rules run on the full corpus, within the budgets, with every rule left out named.
 
 ## O95. The shared tape cache races
@@ -1954,3 +1978,23 @@ with, so reading it back makes none of them again. A constant world request (`fi
 as a fact, the form a bodiless clause reads back as. The `.rdl` comparison drops the demands the `.rdl` reader does
 not make (`without_requests`, which now covers the value demands too), and the skip of `calls.rdl` is removed.
 Test: `a_program_with_demands_prints_back_as_itself`.
+
+## O102. `product_programs_derive_t_outputs` reads a table its fixture lacks
+
+Since 50a57d0e7, `calls.rr` reads `host_node`, and the test stops with `no such table: f.host_node`. The fixture's
+facts database is built without the guest relations. Not caused by the quality branch; seen on 2026-11-07.
+
+**Closure:** the fixture holds every relation the product programs read, and the test passes.
+
+**Closed (2026-11-07).** The test adds the guests and, since Typing's B6 and B10, `name`, `str`, `value` and
+`op_at` (which `calls.rr` reads through `python/conditions.rr`), empty, as it adds `strprefix`. T's facts predate
+them; with them empty no `sys.version_info` or `sys.platform` test is decided and every branch is taken, as T
+assumed. The test passes (merge of Typing-support-final-shape, 56a615905).
+
+## O103. AST pattern literals (`n ~ `pattern``) have no executor
+
+`Lit::Pattern` parses, and `Literal::Ast` exists in the logic, but nothing lowers it and the plan has no step for it
+("no executor … yet"). versioned-table-names is the pack's one rule that needs it. The matcher should run once per
+pattern, over the chunk, and give an input relation of its matches and captures, which the rule then joins.
+
+**Closure:** a pattern literal plans and runs, and versioned-table-names runs in the pack.

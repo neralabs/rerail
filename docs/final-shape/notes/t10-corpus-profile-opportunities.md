@@ -640,6 +640,60 @@ so its engine was merged (ca930d974). It had already merged this branch at d334d
   6.3 s of excess, the memo lookup is 1.5 s at 11 ns a byte against SHA-256's 0.43 ns, the tape store 1.6 s and
   the restore 0.6 s.
 
+### 2k. The pack's next costs: filters inlined, text tests native, relations released (2026-11-07)
+
+These are the three costs 2j left, plus one the merge brought in. Each was measured on the 49 pack rules together,
+with violations compared rule by rule and the replay (3988 303 298 0) checked after each.
+
+| step | s50 instructions | s50 peak (the run's) | s200 CPU | s200 peak |
+|---|---|---|---|---|
+| 2j | 205e9 | 1.57 GB | 100.5 s | 5.19 GB |
+| filters inlined, ERROR kinds fixed | 189e9 | 1.24 GB | | |
+| text tests and `rx_group` native, computed views inlined | 183e9 | 1.24 GB | | |
+| relations released after their last reader, semi-joins | 175e9 | 0.92 GB | 39.5 s | 1.56 GB |
+
+The violations held at 606 on s50 and 2,886 on s200 (the count of the same 49 rules before). The full corpus cold
+run of the converted rules is unchanged: 627.4e9 instructions, 252 violations.
+
+- **The merge: a guest's ERROR root.** After final-rerail-shape's 0058, the pack stopped with `no dialect has tape
+  tag 64`. An annotation guest that does not parse has an ERROR node for its root. Tree-sitter's ERROR symbol is
+  0xffff, so its kind atom, `tag * 1024 + 0xffff`, read as another dialect's kind. ERROR's atom now takes code 0
+  (the grammar's end symbol, which labels no node; the tape's own `ERROR_CODE`). `kind_tag`, `kind_code` and
+  `facts_tag` replace the scattered `/` and `%` of `KIND_STRIDE`.
+- **Filters inlined (`gis_before`).** The inliner from 2j is back. The cross-file part now measures any held base
+  relation its statistics do not know, so a program the inliner rewrote still plans. `core.rr`'s relations and
+  guest requests are never inlined, because the engine reads them by name. `RERAIL_INLINE_FILTERS=off` compares.
+  `generated-index-sources` on s200 went from 684e9 to 207e9 instructions and from 3.76 GB to 1.26 GB.
+- **Text tests of computed strings.** A test of a string that no text relation gives (`!prefix("#", snippet)`, where
+  `snippet` is `@replace_all(…)`) lowers to `@prefix($s, p) = 0`, and the join spec had no step for it. That left
+  110 strata in SQL. It is now a native `test` step. A constant pattern's matcher is compiled once, with the spec.
+  `rx_group` moved into `strings::functions`, so the `func` step runs it. 12 declines are left: patterns that are
+  nested calls (`@concat`) or sets of symbols.
+- **`cc_line`'s cross product.** `split_line`'s statistics were right (67,206 rows on s200, about 1,024 per
+  document lookup). The cause was `cc_trim(raw, @replace_all(raw, …)) :- split_line(_, _, raw)`, a view SQLite
+  can only scan. Its reader joined all of it: 548,850 rows for 16,068. A computed view is now inlined wherever every
+  reader already reads its domain. It becomes a `func` step over the reader's own lines: 16,874 rows, against an
+  estimate of 7,680.
+- **Where combined rules' memory went.** The heap grew 4–18 MB per stratum, to 1,157 MB on s50. At 800 MB the native
+  registry held 796 derived relations: 144 MB of rows and 351 MB of the waves' per-column indexes. Nothing was ever
+  removed from it before the run ended. Each relation is now released after the last stratum that reads it. A
+  view's inputs live as long as the view's readers, and outputs, kept relations and gates' relations stay.
+  Separately, `s_rr_ctx18(s) :- s_ann_root(_), s_ann_str(s)` scanned `s_ann_str` once per `s_ann_root` row (25.5M
+  derivations of about 12k rows). A positive atom that binds nothing now runs the rest of its body once if it
+  matches.
+- **The O93 failures (2026-11-07, after merging final-rerail-shape again).** Thirteen more pack rules run, 62 in
+  all (O93 lists the five left out and why). The seven that took over 40 s alone now take 0.6–1.6 s. eager-resolve
+  was slow only with the rest: demand split `pre_1199(e, f, n, x) :- p13_er_body(f, n), p13_unparen(e, m),
+  kind(m, "identifier"), text(m, x)`, whose two groups only the demanded read joined, so its kept part was every
+  body row times every identifier. Demand now refuses a split whose kept atoms are disconnected without the cut.
+  The 62 rules on s50: 19.2 s CPU, 303.8e9 instructions, 637 violations (each rule as alone), peak 1.43 GB, over
+  budget. The cold full corpus of the converted rules: 618.8e9 instructions (627.4e9 before), 252 violations, peak
+  427 MB, at a load of about 88.
+- **Left:** the derived relations still alive keep one index per column, which is 2.4 times their rows. Five
+  programs each build their own copy of `unparen` (8.7 MB each). Compiling the 42,707-line combined program takes
+  about 4 s, 1.8 s of it in lowering. The test harness alone peaks at 778 MB after a run, with no rules, so `time
+  -l` overstates; the run's own peak is the figure above.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:
