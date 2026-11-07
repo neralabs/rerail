@@ -947,6 +947,20 @@ fn run_programs_with_options(programs: &[&str], root: &Path, t_facts: Option<&Pa
     }
     totals.apply(&mut cross_stats);
     repository_stats(&mut cross_stats);
+    // With no documents there was no batch to bind or measure base relations.
+    // They are known empty, but global rules (including absence checks) still execute.
+    if docs.is_empty() {
+        for rel in &split.base {
+            if repository.iter().any(|(name, _, _)| name == rel) {
+                continue;
+            }
+            let columns = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
+            let empty = crate::code_rule_dsl::logic::native::component::columns_source(
+                columns.iter().map(|name| (*name).to_owned()).collect(), vec![Some(Vec::new()); columns.len()]);
+            cross_stats.measured(rel, columns.iter().map(|name| ((*name).to_owned(), [0, 0, 0, 0])), []);
+            modules.bind(&db, rel, empty)?;
+        }
+    }
 
     // The cross-file part reads every input in place from `main`: the base relations held in memory, and the
     // exports, read from `x` once each.

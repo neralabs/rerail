@@ -863,11 +863,20 @@ impl Model {
             return Err(Error::Plan(format!("rule for {head}: no executor for {l} yet")));
         }
         let joins: Vec<usize> = (0..body.len()).filter(|&i| is_join(&body[i])).collect();
-        if !joins.iter().any(|&i| matches!(body[i], Literal::Atom(_))) {
+        if !joins.is_empty() && !joins.iter().any(|&i| matches!(body[i], Literal::Atom(_))) {
             return Err(Error::Plan(format!("rule for {head} has no positive atom")));
         }
         let mut candidates = 0u64;
-        let (work, rows, order, subsets) = if let Some(fixed) = fixed {
+        let (work, rows, order, subsets) = if joins.is_empty() {
+            // The relational unit is one empty binding. Ground negations and constant
+            // expressions filter it; unbound variables still fail the readiness check.
+            let (mut order, mut bound, mut rest) = (Vec::new(), BTreeSet::new(), (0..body.len()).collect());
+            let rows = close(&mut order, 1.0, &mut bound, &mut rest);
+            if !rest.is_empty() {
+                return Err(Error::Plan(format!("unbound literals in {head}")));
+            }
+            (1.0, rows, order, 1)
+        } else if let Some(fixed) = fixed {
             // The kept order, priced now: each join step as the search prices it, each filter once ready.
             let (mut work, mut rows, mut bound, mut order) = (0.0, 1.0, BTreeSet::new(), Vec::new());
             for s in fixed {
