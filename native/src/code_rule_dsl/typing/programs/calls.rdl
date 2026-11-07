@@ -534,6 +534,9 @@ pv($c, "super", $k) :- callee($c, $e), builtin_ref($e, "super"), nearest($c, $f,
 .decl bq(n: node, q: sym)
 bq($n, $q) :- builtin_ref($n, $x), $x != "super", $x != "object", $q = @cat("builtins", $x).
 pv($n, $k, $v) :- bq($n, $q), qv($q, $k, $v).
+// `object` as an attribute's receiver (`object.__getattribute__(v, "x")`, `object.__setattr__`) is the class itself, one
+// definite value: its methods are the attribute.
+pv($o, "cls", $c) :- attr_of(_, $o, _), builtin_ref($o, "object"), qv("builtins.object", "cls", $c).
 .decl lit_cls(kind: sym, q: sym)
 lit_cls("integer", "builtins.int"). lit_cls("float", "builtins.float"). lit_cls("string", "builtins.str").
 lit_cls("concatenated_string", "builtins.str"). lit_cls("true", "builtins.bool"). lit_cls("false", "builtins.bool").
