@@ -1735,7 +1735,14 @@ impl Model {
                         }
                     };
                     let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);
-                    env.insert(var.clone(), Expr::Scalar(Box::new(query)));
+                    let value = Expr::Scalar(Box::new(query));
+                    // Planning may bind the result first (for example `n = 0` before a count).
+                    // The aggregate then tests that binding; replacing it drops the equality.
+                    if let Some(bound) = env.get(var) {
+                        wh.push(eq(bound.clone(), value));
+                    } else {
+                        env.insert(var.clone(), value);
+                    }
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) && self.inputs.native.contains("nearest") => {
                     // The climb is a native function over the tape: no CTE, and its result is just a column expression.
