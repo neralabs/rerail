@@ -109,7 +109,7 @@ async function routingTree(git: boolean): Promise<string> {
   }
   if (git) {
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "--force", "."], { cwd: root });
+    execFileSync("git", ["add", "--force", "--", ...ROUTES.map(([path]) => path), ...IGNORED_FILES], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
   }
   return root;

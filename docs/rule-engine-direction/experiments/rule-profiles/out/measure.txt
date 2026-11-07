@@ -1,0 +1,32 @@
+corpus files=9010 bytes=137896473 nodes=28230057 named=18505091 parse_cpu_ms=34772 tape_build_cpu_ms=8508 wall_ms=6972 threads=8 parse_ns_per_node=1231.7 tape_ns_per_node=301.4
+mean_depth 7.98
+extract ms=1548 ns_per_node=54.82 defs=194281 calls=993650 imports=226642 bases=22061 refs=6016211 assigns=411275 all_names=16740
+largest_file impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py nodes=206043 parse_ms=198.4 extract_ms=2.47
+sqlite_insert_all	5864.2 ms
+ref_dedup_materialize	3793.1 ms
+ref_set_rows	0.7 ms	result=1175502
+indexes	6722.5 ms
+B1_call_resolve_unique_name	1076.9 ms
+edge_rows	0.1 ms	result=368187
+B2_import_resolve	429.1 ms
+imp_res_rows	0.1 ms	result=120229
+B2b_import_resolve_suffix	679.4 ms
+imp_res2_rows	0.1 ms	result=123309
+B3_edges_index	530.4 ms
+B3_reach	17844.7 ms
+reach_rows	0.3 ms	result=174914
+B4_dead_internal_antijoin	245.0 ms	result=9371
+B5_label_prop_K16	0.3 ms
+B5_rows_K16	0.0 ms	result=29
+B5_label_prop_K128	7.7 ms
+B5_rows_K128	0.0 ms	result=378
+B5_label_prop_K1024	124.3 ms
+B5_rows_K1024	0.0 ms	result=6456
+B6_hierarchy_closure	275.1 ms
+hier_rows	0.0 ms	result=10112
+hier_tc_rows	0.0 ms	result=16561
+B7_groupby_file_callee_count	890.8 ms	result=139063
+edit_delete_reinsert_largest	134.6 ms
+edit_reresolve_edges_largest	436.0 ms	result=2689
+edit_reach_full_recompute	342.0 ms	result=81398
+sqlite_file_bytes 459980800

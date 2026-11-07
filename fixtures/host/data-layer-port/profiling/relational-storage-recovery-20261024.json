@@ -1,0 +1,462 @@
+{
+  "format": "rerail.relational-storage-recovery/v1",
+  "date": "2026-10-24",
+  "baselineCommit": "75a39700",
+  "redCommits": [
+    "92879cd5",
+    "283b0fbf"
+  ],
+  "scope": "Complete fixed state-tripwire guard, snapshot and workspace paths; not the full data-layer repository or full recorded test corpus.",
+  "requiredRemoval": 1296,
+  "before": {
+    "engine": 3685,
+    "sqliteInternal": 994,
+    "unknown": 0
+  },
+  "after": {
+    "engine": 2250,
+    "sqliteInternal": 181,
+    "unknown": 0
+  },
+  "netEngineRemoval": 1435,
+  "fullTargetMet": true,
+  "finalLimit": 100,
+  "finalLimitAccepted": false,
+  "excess": 2150,
+  "workloadBytesIdentical": true,
+  "componentAccounting": {
+    "runtimeClauseSql": {
+      "before": 2409,
+      "after": 1252,
+      "netRemoval": 1157,
+      "byVerb": {
+        "BEGIN": [
+          68,
+          68
+        ],
+        "CREATE": [
+          1192,
+          489
+        ],
+        "COMMIT": [
+          68,
+          68
+        ],
+        "SELECT": [
+          101,
+          74
+        ],
+        "DROP": [
+          628,
+          161
+        ],
+        "ANALYZE": [
+          310,
+          39
+        ],
+        "INSERT": [
+          42,
+          310
+        ],
+        "DELETE": [
+          0,
+          43
+        ]
+      }
+    },
+    "readerPragmas": {
+      "before": 136,
+      "after": 8,
+      "netRemoval": 128,
+      "runtimeConnections": [
+        68,
+        4
+      ]
+    },
+    "candidateRetirementDeletes": {
+      "before": 324,
+      "after": 174,
+      "netRemoval": 150
+    },
+    "otherEngineWork": {
+      "before": 816,
+      "after": 816
+    },
+    "compilerEmptySchemaCtas": {
+      "before": 68,
+      "after": 68,
+      "note": "Unchanged. This planned sub-opportunity is not claimed as implemented; measured savings elsewhere exceed the full net target."
+    }
+  },
+  "engineByPhase": {
+    "before": {
+      "connectionSetup": 372,
+      "filePublication": 36,
+      "catalogPublication": 12,
+      "candidatePreparation": 852,
+      "cleanup": 632,
+      "relationalEvaluation": 1781
+    },
+    "after": {
+      "connectionSetup": 244,
+      "filePublication": 36,
+      "catalogPublication": 12,
+      "candidatePreparation": 702,
+      "cleanup": 165,
+      "relationalEvaluation": 1091
+    }
+  },
+  "cpuControl": {
+    "scope": "Fresh-process replay: compilation, snapshot/workspace evaluation and cleanup; module imports precede the CPU interval.",
+    "order": "Five alternating before/after process pairs. No overlapping build or own benchmark work.",
+    "trace": "off",
+    "allocatorAccounting": "off",
+    "workers": 4,
+    "build": "Matched engine opt-level 1, dependencies opt-level 3, no LTO, 256 codegen units, profiling feature; same allocator shim.",
+    "beforeAddon": ".rerail/profiles/chunk-a-20261024/delivery-addon/engine.node",
+    "afterAddon": ".rerail/profiles/chunk-b-20261024/final-addon/engine.node",
+    "trials": {
+      "before": [
+        {
+          "passed": true,
+          "userMs": 1591.978,
+          "systemMs": 74.969,
+          "cpuMs": 1666.947,
+          "wallMs": 1593.525334,
+          "maxRSSRaw": 335792,
+          "memory": {
+            "rss": 289384344,
+            "heapTotal": 108560384,
+            "heapUsed": 40219136,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1608.353,
+          "systemMs": 82.308,
+          "cpuMs": 1690.661,
+          "wallMs": 1622.981834,
+          "maxRSSRaw": 335536,
+          "memory": {
+            "rss": 288302448,
+            "heapTotal": 105021440,
+            "heapUsed": 34229912,
+            "external": 4930892,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1476.008,
+          "systemMs": 70.046,
+          "cpuMs": 1546.054,
+          "wallMs": 1509.7512080000001,
+          "maxRSSRaw": 327408,
+          "memory": {
+            "rss": 280503544,
+            "heapTotal": 108822528,
+            "heapUsed": 40298744,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1451.124,
+          "systemMs": 74.713,
+          "cpuMs": 1525.837,
+          "wallMs": 1558.804125,
+          "maxRSSRaw": 337136,
+          "memory": {
+            "rss": 289170848,
+            "heapTotal": 104759296,
+            "heapUsed": 34244864,
+            "external": 4930892,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1470.043,
+          "systemMs": 68.143,
+          "cpuMs": 1538.186,
+          "wallMs": 1437.0412079999999,
+          "maxRSSRaw": 334384,
+          "memory": {
+            "rss": 287237584,
+            "heapTotal": 105283584,
+            "heapUsed": 34253080,
+            "external": 4930892,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "after": [
+        {
+          "passed": true,
+          "userMs": 1515.739,
+          "systemMs": 83.908,
+          "cpuMs": 1599.647,
+          "wallMs": 1781.0941659999999,
+          "maxRSSRaw": 338576,
+          "memory": {
+            "rss": 293104088,
+            "heapTotal": 109084672,
+            "heapUsed": 42704288,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1516.981,
+          "systemMs": 69.717,
+          "cpuMs": 1586.698,
+          "wallMs": 1641.565834,
+          "maxRSSRaw": 338368,
+          "memory": {
+            "rss": 291268600,
+            "heapTotal": 111968256,
+            "heapUsed": 40118112,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1422.301,
+          "systemMs": 79.272,
+          "cpuMs": 1501.573,
+          "wallMs": 1540.007208,
+          "maxRSSRaw": 329520,
+          "memory": {
+            "rss": 282846624,
+            "heapTotal": 107773952,
+            "heapUsed": 40650240,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1404.06,
+          "systemMs": 79.101,
+          "cpuMs": 1483.161,
+          "wallMs": 1455.672542,
+          "maxRSSRaw": 332960,
+          "memory": {
+            "rss": 286074632,
+            "heapTotal": 106463232,
+            "heapUsed": 40326336,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1470.796,
+          "systemMs": 70.526,
+          "cpuMs": 1541.322,
+          "wallMs": 1472.610667,
+          "maxRSSRaw": 327664,
+          "memory": {
+            "rss": 280864040,
+            "heapTotal": 108036096,
+            "heapUsed": 41527296,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        }
+      ]
+    },
+    "medians": {
+      "before": {
+        "cpuMs": 1546.054,
+        "maxRSSRaw": 335536
+      },
+      "after": {
+        "cpuMs": 1541.322,
+        "maxRSSRaw": 332960
+      }
+    },
+    "cpuMedianChangePercent": -0.3060695163299765,
+    "peakRssUnit": "KiB (Node process.resourceUsage().maxRSS)",
+    "interpretation": "CPU is roughly flat. Peak RSS medians are slightly lower, with overlapping ranges. Shared-host small-guard evidence does not establish a repository performance improvement."
+  },
+  "candidateReplay": {
+    "rows": 161,
+    "exactBagParity": true,
+    "sqliteHeapPeakBytes": 19269664,
+    "note": "Same frozen candidate replay as A. This isolates candidate retirement; it is not whole relational memory evidence."
+  },
+  "validation": {
+    "nativeFacing": 314,
+    "nativeTestFiles": 16,
+    "relationalRust": 32,
+    "candidateSqlRustPassed": 79,
+    "candidateSqlRustIgnored": 1,
+    "standaloneHost": 57,
+    "budgetRegressionTests": 13,
+    "corpus": {
+      "replayedCalls": 120,
+      "positiveCalls": 60,
+      "cleanCalls": 60,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0
+    },
+    "clippy": "Native all-target with and without profiling, standalone all-target: passed.",
+    "static": "TypeScript, boundaries, structure, Windows paths, Rust formatting: passed."
+  },
+  "design": {
+    "reused": "Empty physical schemas, indexes, views and readers. Separate bindings do not share retained rows.",
+    "lifetimes": "Retire rows at existing logical last use. No delayed candidate retirement or hard active-reader cap.",
+    "pool": "At most four idle readers; at most 128 reusable objects, 4 MiB metadata and 16 MiB SQLite plus metadata per idle reader. Existing resident admission also counts idle storage.",
+    "failures": "Discard unfinished or failed leases. Clear row storage and source/regex callbacks before successful reuse.",
+    "affinity": "SQLite infers public deferred projection affinity once per typed schema/query. Cold probe statements remain counted.",
+    "emptyGraph": "Only skip generic graph construction after both roots and edges have been normalized and the key insertion reports zero vertices."
+  },
+  "experiments": [
+    {
+      "name": "first implementation",
+      "engine": 2645,
+      "removal": 1040,
+      "decision": "Rejected: misses full 1296 target."
+    },
+    {
+      "name": "second implementation",
+      "engine": 2250,
+      "removal": 1435,
+      "decision": "Rejected until deferred CAST affinity regression corrected; data-layer observations alone did not detect it."
+    },
+    {
+      "name": "selected implementation",
+      "engine": 2250,
+      "removal": 1435,
+      "decision": "Keep: full count target, generic affinity, parity and matched CPU/memory controls pass."
+    }
+  ],
+  "externalProfile": {
+    "traced": "Instrumentation writes dominate sampled wall stacks. Do not attribute observer overhead to the normal workload.",
+    "untraced": "One external stack capture. Bottom-up self frames include allocation/free, memmove, regex search and determinization.",
+    "limitation": "Wall stack observations are not CPU shares. The short guard does not support precise CPU attribution.",
+    "nextInvestigation": "Measure compiler/lowering, allocation and regex work with a broader bounded sample before claiming a new CPU frontier."
+  },
+  "artifacts": [
+    {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-addon/engine.node",
+      "sha256": "c1a047254941805a9f46349ae3dafa326c20682be3ae76cebb634fdffd742db3"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-addon/engine.node",
+      "sha256": "67183d22e1d3baf644a24c1bce2e03142a88335b5a5ebe031307bbcc6576464a"
+    },
+    {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-acceptance/capture/sql/execution-budget.json",
+      "sha256": "bb0bf74e4e17310f2d0513d7942ed38364b38f76ffa602998d5f0f7ebc07195b"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-acceptance/capture/sql/execution-budget.json",
+      "sha256": "17eeea6a17b73679133f42d57db05c1abbc660c7fb8c1a7d9d0c9e9f675cd78d"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-acceptance/capture/sql/profile.json",
+      "sha256": "0caa0e7d8d954fd6753e23e41bd9c0ae5b706475f90af42a371e885589056bb7"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-acceptance/capture/sql/execution-inventory.json",
+      "sha256": "b816b332d02dbc5d552b3576de5851c43df0094dec4ee7a5078beb81a75f0a2b"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-acceptance/chunk-b-budget.json",
+      "sha256": "8a201623a5025121e5dad1c8ad25e2aca55c7b493c70c7f072ebf34a1ceb6336"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-acceptance/recording.json",
+      "sha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-source/parity.json",
+      "sha256": "32fbb756131b8efcde65c5c8b6112074df7400a45a3cd92fdb6f4f0499ad34aa"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-native/stdout.log",
+      "sha256": "e9938c7880ec199fc2161a60361e1dd1246f5b21eb873a1ec8dde12711de316a"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/relational-unit-release/stdout.log",
+      "sha256": "b0cc4407d59fe815de651a2e592ce94e02e81b1ce3ff2d4e7df73093a44389aa"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/sql-unit/stdout.log",
+      "sha256": "fd4b24c7689f52a2d9267c5fc2ae6aee6f919534a7e1869e61b950382417f85f"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/frozen-candidate-memory.json",
+      "sha256": "2d712d28a68547a440527eb3b1c5591c4244d3cbdf2aa117f13211f7e56c8e78"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/frozen-candidate-memory.rows.json",
+      "sha256": "32fc909e4a92bebf364060560131427534e4990e3bcf3e53d61e799edf336e95"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/run.mjs",
+      "sha256": "1d0f5d132a7d631a5efd48c006cadf8abe154ca8aeba73df9fe3fbee99d2d11e"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-sampled/summary.txt",
+      "sha256": "39a5836f06201b22da1443c0b7295c9b2188e8d759ee3629fc8452a885ffb6c2"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-sampled-untraced/summary.txt",
+      "sha256": "6bf505d91a2fda75401971bed09f88306891bafb677e12ccd9313214eb769e4b"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-sampled-untraced/sample-1.txt",
+      "sha256": "6bf18cf8bd5451882ce9bebd68297f23ba84525278155ded0b437b33e51844e0"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/before-0.json",
+      "sha256": "027d7f1b05239877a26f2e1227d400ac03c252629eb27fb3ad14594118fa3ec3"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/before-1.json",
+      "sha256": "cb7260780a98ff38948b7086a9aebaac509c6f0db54efc0c0f8aef9a6f9db2b1"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/before-2.json",
+      "sha256": "6c32f081fbf4dfe7ac91cd4fb164b55769e48c5470aa8cf8c5ba31118c088276"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/before-3.json",
+      "sha256": "98712577cafcfeb48d518aa3429f8686bdcbac5c84a511d09d27a6eb79c2a6c8"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/before-4.json",
+      "sha256": "04e7eda379f4f178c6364ac2d10eaa06568253ad29460360ae5ec51a5a28b714"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/after-0.json",
+      "sha256": "19b686366a376174b5b5c19ce7e9932199fb42e3acdb7283323c4c427c4c88c0"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/after-1.json",
+      "sha256": "3bc6f937f25e2b8408b74a37e1b4a8740869f6577e9a1411a24e1d126d2aade3"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/after-2.json",
+      "sha256": "537403407e9dc76ec2c61ca299ad01e977f29df35f4432d2592d0285be98efe9"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/after-3.json",
+      "sha256": "4d867bb6de954901887b9d213a2ec03625f304cdc27a089f815f78d334c8fd64"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-controls/after-4.json",
+      "sha256": "ba90d96b2df289f3b91224bfa7885c2447c3486e5baf74b717c328619c4b68fe"
+    }
+  ]
+}

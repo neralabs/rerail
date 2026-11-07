@@ -1,5 +1,6 @@
 [workspace]
 members = ["native"]
+exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation"]
 resolver = "2"
 
 [patch.crates-io]
@@ -45,4 +46,16 @@ strip = "none"
 # faster optimised (TypeScript's parser in 1 s rather than 7 s), and regenerating SQL's committed parser takes 7 to 10
 # minutes rather than half an hour.
 [profile.release.build-override]
+opt-level = 3
+
+# A debug build generates the same parsers; unoptimised generation can exceed the bounded profiling deadline.
+[profile.dev.package.tree-sitter-generate]
+opt-level = 3
+
+# Anchor-selection lab (`matcher/anchors/sql/lab.rs`): the crate stays incremental, dependencies
+# (SQLite above all) run optimised, so an iteration takes seconds instead of a release build.
+[profile.lab]
+inherits = "dev"
+
+[profile.lab.package."*"]
 opt-level = 3

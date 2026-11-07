@@ -1,0 +1,61 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, it } from "vitest";
+
+const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
+const engine = new URL("../../../../src/engine/index.ts", import.meta.url).href;
+const capabilities = new URL("../../../../native/src/code_rule_dsl/capabilities.json", import.meta.url).href;
+
+it.skipIf(!required)("shares one indexed SQL owner across independent selector producers", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-selector-family-"));
+  try {
+    const program = `
+      import {readFileSync} from 'node:fs';
+      import {loadNativeBinding} from ${JSON.stringify(engine)};
+      const native=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
+      const ws=new native.CodeRuleDslWorkspace();
+      for(const [id,kind] of [['names','identifier'],['calls','call']]) {
+        // Each selector crosses result packets, so both require physical owners.
+        // Repeated uses inside a single packet already share its materialized CTE.
+        const clauses=Array.from({length:130},(_,i)=>({id:'selected'+i,
+          forbid:{ast:{language:'python',rule:{kind}}},
+          violation:{code:'MATCH',message:'Match',anchor:'witness.span'}}));
+        ws.addCodeRule(native.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id,revision:1,mode:'log',clauses}),'json',caps));
+      }
+      try {console.log(await ws.applyAsync(JSON.stringify({revision:1,removed:[],files:[{path:'a.py',language:'python',source:'target()\\n'}]})));}
+      finally {ws.close();}
+    `;
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+      encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, RERAIL_SQL_PROFILE_DIR: directory },
+    });
+    expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
+    const result = JSON.parse(child.stdout.trim()).evaluation;
+    expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(260);
+    const candidates = readdirSync(directory).filter(f => /^candidate-.*\.json$/.test(f))
+      .map(f => JSON.parse(readFileSync(join(directory, f), "utf8"))).filter(c => c.variant === "normal");
+    expect(candidates).toHaveLength(1); expect(candidates[0].queries).toHaveLength(3);
+    let creates = 0, indexes = 0, releases = 0;
+    for (const file of readdirSync(directory).filter(f => /^profile-.*\.json$/.test(f))) {
+      const catalogue = JSON.parse(readFileSync(join(directory, file), "utf8"));
+      const queries = new Map<number, string>(catalogue.queries.map((q: { id: number; sql: string }) => [q.id, q.sql]));
+      const events = readFileSync(join(directory, file.replace(/\.json$/, ".jsonl")), "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l));
+      expect(events.filter(e => e.kind === "sql")).toHaveLength(catalogue.executionCoverage.completed);
+      for (const event of events.filter(e => e.kind === "sql")) {
+        const sql = queries.get(event.query) ?? "";
+        creates += Number(sql.startsWith('CREATE TEMP TABLE "'));
+        indexes += Number(sql.startsWith("CREATE INDEX temp."));
+        releases += Number(sql.startsWith("DROP TABLE temp."));
+      }
+    }
+    expect([creates, indexes, releases], "one index belongs to the execution domain, not to each selector").toEqual([1, 1, 1]);
+    const owners = candidates[0].stages.filter((s: {slot?: number}) => typeof s.slot === "number");
+    expect(owners).toHaveLength(2);
+    expect(new Set(owners.map((s: {slot: number}) => s.slot)).size).toBe(2);
+    expect(candidates[0].setup).toHaveLength(2);
+    expect(candidates[0].setup[1]).toContain('producer,fid,pre');
+
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}, 45_000);

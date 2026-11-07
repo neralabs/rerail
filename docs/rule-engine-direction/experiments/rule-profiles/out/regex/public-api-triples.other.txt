@@ -1,0 +1,3 @@
+(?s)^(?:from\s+(?P<BASE>[^\s]+)\s+)?import\s+(?P<ITEMS>.*)$
+^@\s*(?:\w+\.)*direct_legacy[^.\s(]*
+_lazy$|^lazy_
