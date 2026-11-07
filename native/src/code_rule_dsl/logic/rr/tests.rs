@@ -79,6 +79,18 @@ Word(at, i, w) :- str_part_word(_, i, w, at, _).
     assert_eq!(words, [(1, 0, "json_ok"), (1, 0, "route_partition"), (2, 0, "json"), (2, 1, "json"), (3, 0, "json"), (3, 0, "notjson")]);
 }
 
+#[test]
+fn python_constant_words_use_parsed_interpolation_boundaries() {
+    let rows = finding_contract("x = f\"{a:{b:json}}\"\ny = f\"\"\"{a # } : ignored\n}json\"\"\"\nz = \"js\\\r\non\"\r\n", r#"
+.language python
+.violation Word(at: span, ordinal: number, word: symbol) "{word}"
+Word(@place(p, l), i, w) :- str_part_word(n, i, w, _, _), str_part_start(n, i, l, _), docof(n, d), doc(d, p, _).
+"#);
+    let mut words: Vec<_> = rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["word"].as_str().unwrap())).collect();
+    words.sort();
+    assert_eq!(words, [(1, "json"), (3, "json"), (4, "json")]);
+}
+
 /// Python-only grammar failures must gate AST rules while raw-text rules retain their input.
 #[test]
 fn native_python_syntax_verdict_keeps_raw_source_available() {
