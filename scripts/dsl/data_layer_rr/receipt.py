@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from migration import ROOT, PIN, sha, read_json, fixtures_path
+from mutation import auxiliary_output
 
 
 def validate(baseline, reports, inventory, engine_sha):
@@ -89,7 +90,8 @@ def main():
         if (set(report['cases']) != {item['test']} or report['exitCode'] != 1 or
                 {row['phase']: row['outcome'] for row in phases} != dict(setup='passed', call='failed', teardown='passed')):
             raise ValueError('Mutation did not fail in its selected original test body')
-        if not report['calls'] or any(call['status'] != 'passed' or call['diagnostics'] for call in report['calls']):
+        if not report['calls'] or any(call['status'] != 'passed' or
+                any(not auxiliary_output(item['check'], row) for row in call['diagnostics']) for call in report['calls']):
             raise ValueError('Mutation failed through an engine error instead of an empty detector')
         originals = [row['sourceResult'] for row in baseline['events']
                      if row['check'] == item['check'] and row['test'] == item['test'] and row.get('findings')]

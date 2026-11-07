@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,20 @@ import tempfile
 from migration import ROOT, PIN, read_json, sha, write_json
 
 DISABLED = '.policy "disabled-control" revision 1\n.language python\n.violation Disabled(at: span) "disabled"\nDisabled(@place("input.py", 1)) :- 1 = 0.\n'
+
+
+def auxiliary_output(check, row):
+    """Only these transport outputs can remain in a disabled backend detector."""
+    return check == 'backend_coupling' and row['code'] in {'BC_CONFIG', 'BC_CHECK', 'BC_FILE'}
+
+
+def disable_policy(check, source):
+    if check != 'backend_coupling':
+        return DISABLED
+    disabled, count = re.subn(r'(?m)^(Coupling\([^\n]*?\)\s*:-)', r'\1 1 = 0,', source)
+    if count != 1:
+        raise ValueError('The backend mutation requires exactly one detector output clause')
+    return disabled
 
 
 def run(args):
@@ -31,7 +46,10 @@ def run(args):
         root = Path(temporary)
         # Collection still imports every original module. Only the chosen positive case executes.
         for check in args.checks.split(','):
-            (root / (check.replace('_', '-') + '.rr')).write_text(DISABLED)
+            filename = check.replace('_', '-') + '.rr'
+            source = (ROOT / 'packs/data-layer/candidates/rr' / filename).read_text()
+            (root / filename).write_text(disable_policy(check, source))
+        disabled = (root / (args.check.replace('_', '-') + '.rr')).read_text()
         report_path = root / 'report.json'
         command = [sys.executable, str(Path(__file__).with_name('suite.py')), '--source', str(args.source.resolve()),
             '--engine', str(args.engine.resolve()), '--checks', args.checks, '--rule-root', str(root),
@@ -54,7 +72,8 @@ def run(args):
         phases = {phase['phase']: phase['outcome'] for phase in report['cases'][identity]}
         if phases != dict(setup='passed', call='failed', teardown='passed'):
             raise AssertionError('Mutation failed outside the original test body')
-        if not report['calls'] or any(call['status'] != 'passed' or call['diagnostics'] for call in report['calls']):
+        if not report['calls'] or any(call['status'] != 'passed' or
+                any(not auxiliary_output(args.check, row) for row in call['diagnostics']) for call in report['calls']):
             raise AssertionError('Mutation must execute a successful, empty native detector')
         observations = [row for row in report['detectorObservations'] if row['test'] == identity and row['check'] == args.check]
         if not observations or all(row.get('actualSourceResult') == row.get('expectedSourceResult') for row in observations):
@@ -62,7 +81,7 @@ def run(args):
         return dict(format='rerail.rr-original-positive-mutation/v1', sourcePin=PIN, check=args.check,
             test=identity, rejected=True, reason='Original positive test rejects empty native results through the complete source API comparison',
             expectedUnreachedCalls=report['missingResults'],
-            disabledPolicy=DISABLED, disabledPolicySha256=sha(DISABLED.encode()),
+            disabledPolicy=disabled, disabledPolicySha256=sha(disabled.encode()),
             baselineSha256=sha(args.baseline.read_bytes()), collectionSha256=sha(args.collection.read_bytes()),
             report=report, pytestOutput=result.stdout + result.stderr)
 

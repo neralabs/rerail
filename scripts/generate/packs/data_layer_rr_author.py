@@ -142,6 +142,7 @@ def main():
     from data_layer_rr_types import type_safety_patterns
     from data_layer_rr_facade_purity import data_layer_facade_purity
     from data_layer_rr_signatures import sync_async_signatures
+    from data_layer_rr_coupling import backend_coupling
     from data_layer_rr_aliases import data_layer_compat_aliases
     generators = [('removed_compat_surfaces', removed), ('versioned_lifecycle_legacy_surfaces', lifecycle),
                   ('permission_error', permission_error),
@@ -158,6 +159,7 @@ def main():
                   ('data_layer_compat_aliases', lambda s, t: data_layer_compat_aliases(s, t, header)),
                   ('data_layer_facade_purity', lambda s, t: data_layer_facade_purity(s, t, header)),
                   ('sync_async_signatures', lambda s, t: sync_async_signatures(s, t, header)),
+                  ('backend_coupling', lambda s, t: backend_coupling(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     for check, generate in generators:
         entry = by_check[check]
@@ -165,7 +167,8 @@ def main():
         text = generate(source, entry)
         (ROOT / path).write_text(text)
         digest = sha(text.encode())
-        item = dict(destination=path.as_posix(), sha256=digest, origin='authored',
+        previous = next((file for file in manifest['files'] if file['destination'] == path.as_posix()), {})
+        item = dict(previous, destination=path.as_posix(), sha256=digest, origin='authored',
                     upstreamPath=f'scripts/lint_{check}.py', sourceCommit=PIN)
         manifest['files'] = [file for file in manifest['files'] if file['destination'] != path.as_posix()] + [item]
         if entry.get('ruleSha256') != digest:

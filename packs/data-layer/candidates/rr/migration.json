@@ -1109,10 +1109,10 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
-      "destination": "packs/data-layer/candidates/rr/serverplan-name-inference.rr",
-      "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
+      "destination": "packs/data-layer/candidates/rr/data-layer-facade-purity.rr",
+      "sha256": "c6c5af4c479456d15861a1e1edd8744d7c04f57d332edf84a1f788accfe0a7cf",
       "origin": "authored",
-      "upstreamPath": "scripts/lint_serverplan_name_inference.py",
+      "upstreamPath": "scripts/lint_data_layer_facade_purity.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
@@ -1123,10 +1123,17 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
-      "destination": "packs/data-layer/candidates/rr/data-layer-facade-purity.rr",
-      "sha256": "c6c5af4c479456d15861a1e1edd8744d7c04f57d332edf84a1f788accfe0a7cf",
+      "destination": "packs/data-layer/candidates/rr/backend-coupling.rr",
+      "sha256": "1359a0157fce427aac01ed8904c0af4fca8004398b75513dbfbe8a54ddb60e31",
       "origin": "authored",
-      "upstreamPath": "scripts/lint_data_layer_facade_purity.py",
+      "upstreamPath": "scripts/lint_backend_coupling.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "packs/data-layer/candidates/rr/serverplan-name-inference.rr",
+      "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
@@ -1534,8 +1541,9 @@
       "batch": 5,
       "legacyPath": "packs/data-layer/candidates/rules/data-layer-backend-coupling.json",
       "legacySha256": "54a16169fbba1e0d4372fa9e85a3d2b0b6e05a342620e30cb34c2fa8d3d20d0d",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "packs/data-layer/candidates/rr/backend-coupling.rr",
+      "ruleSha256": "1359a0157fce427aac01ed8904c0af4fca8004398b75513dbfbe8a54ddb60e31"
     },
     {
       "check": "internal_dead_code",

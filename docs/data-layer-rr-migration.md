@@ -487,5 +487,45 @@ The original default-target test is no longer merely a Python constant assertion
 - [Missing native statistics regression](../fixtures/host/data-layer-port/rr-facade-purity-stats-red.json.gz).
 - [Final-shape merge and regressions](../fixtures/host/data-layer-port/rr-final-shape-merge-tdd.json.gz).
 
-The inventory is 62 drafts and 38 absent translations. No rule has full migration acceptance yet.
+The inventory is 63 drafts and 37 absent translations. No rule has full migration acceptance yet.
 Associated suites, native printing and canonical serialization, and production workspace acceptance remain outstanding.
+
+
+## Backend coupling and Boolean relations, 7 November
+
+The new backend-coupling draft preserves both source import contracts.
+The legacy checker uses breadth-first AST order and inclusive TYPE_CHECKING line ranges.
+The framework collector uses semantic ancestry, including the alternatives owned by an elif.
+Both normalize identifiers and inspect only the first alias of an ordinary import.
+The native policy preserves exact backend prefixes, registration suffixes, root classification, and SQL-directory matching.
+
+All 115 original tests pass in four bounded shards, with 153 native calls and 62 complete checker-return comparisons.
+The original framework and CLI tests run through native batched extraction and native file selection.
+Twenty-four original configuration assertions use frozensets populated from the policy's native tables during setup.
+These assertions have no additional native call in their test bodies. Their data comes from the executable policy.
+Eight other assertions check Python module identity or the host repository environment. They make no rule-decision claim.
+The receipt identifies all 32 cases individually. None of the 115 original tests is skipped or deselected.
+
+All 45 supplemental API cases and 33 reporter cases pass, including positive findings.
+The cases exposed missing elif ownership, identifier normalization, and incorrect framework directory exclusions before repair.
+The original API positive and reporter positive both reject disabled detection while configuration helpers remain enabled.
+The controls permit only three named auxiliary codes. They cannot hide either backend violation code.
+All 42 tooling tests and both format tests pass.
+The structure check retains the same three pre-existing directory-size findings: 24 checks pass and one fails.
+
+The port exposed invalid SQL for derived zero-column relations.
+Native lowering now encodes their single empty tuple with an integer unit, including facts, joins, negation, and aggregate reads.
+Constant-only projection views retain DISTINCT, so a Boolean relation counts once regardless of witness count.
+The native regression first failed with SELECT FROM. It now passes, as do 41 focused reader tests and two SQL-block tests.
+One reader test remains ignored, and the external syntax-checker and fixture-writing tests remain excluded from this focused run.
+The integration engine checkpoint is fed982e1393ecc815735f766941c0b3785512589.
+The replacement compiler required a dependency rebuild; its final unit and CLI passes took 240 and 79 seconds.
+Build time is separate from rule execution. No repository-wide cold run was performed.
+
+- [All original backend assertions](../fixtures/host/data-layer-port/rr-coupling-native-direct-contracts.json.gz).
+- [Supplemental contracts and configuration provenance](../fixtures/host/data-layer-port/rr-coupling-native-supplemental-contracts.json.gz).
+- [TYPE_CHECKING counterexamples](../fixtures/host/data-layer-port/rr-coupling-typechecking-red.json.gz).
+- [Framework discovery counterexample](../fixtures/host/data-layer-port/rr-coupling-scope-red.json.gz).
+- [Native Boolean-relation regression and build records](../fixtures/host/data-layer-port/rr-nullary-native-tdd.json.gz).
+
+The inventory is 63 drafts and 37 absent translations. Full migration acceptance remains false.

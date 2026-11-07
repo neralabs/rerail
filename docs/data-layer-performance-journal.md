@@ -7880,3 +7880,24 @@ Two alias regressions failed first and now pass. The source tests remain unchang
 The generator manifest now lists both new rule files. The format tests pass.
 The inventory is 62 drafts and 38 absent translations; full acceptance remains false.
 The generator changes require no engine build. No repository-wide cold run was performed, and no Linear tickets were created.
+
+
+## 2026-11-07: the 63rd draft, backend coupling
+
+Backend coupling now has a native rule for both the checker and framework collector contracts.
+All 115 original tests pass across four bounded shards, with 153 native calls and 62 complete returned-value comparisons.
+The framework and CLI consume one native demand batch, including native file selection.
+Twenty-four constant assertions consume native configuration snapshots; eight assertions concern host identity or the repository environment.
+The receipt identifies each case without an additional native call. No original cases are skipped or deselected.
+The 45 supplemental API cases and 33 reporter cases pass. Both positive controls reject disabled detection.
+Added cases first exposed elif ownership, Unicode TYPE_CHECKING normalization, and the distinct FactEngine directory exclusions.
+
+The rule also exposed invalid SQL for nullary relations. The native fix represents their empty tuple with an integer unit.
+Constant-only views keep DISTINCT, so multiple witnesses still produce one Boolean row and an aggregate count of one.
+The original failing SQL and passing regression are retained. All 41 focused reader tests and two SQL-block tests pass.
+The replacement compiler required a dependency rebuild. The completed unit and CLI passes took 240 and 79 seconds, respectively.
+These are compile times, not execution measurements. Earlier bounded dependency attempts are not performance evidence.
+All 42 tooling tests and both format tests pass. Structure retains the same three pre-existing flat-directory violations.
+The engine checkpoint is fed982e1393ecc815735f766941c0b3785512589.
+The inventory is 63 drafts and 37 absent translations. No rule has full migration acceptance yet.
+No repository cold run was performed, and no Linear tickets were created.
