@@ -1457,11 +1457,15 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
             prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), source.len(), source.as_ref(), &t);
             // The next round prices the relation itself by these rows too, not by its seeds (`plan::prior_stats`).
             prev_totals.alias(&format!("{rel}{}", cross_rounds::PREV), rel);
-            rows.insert(rel.clone(), (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect());
+            // Sorted and distinct once: the digest and the next round's `__prev` read them so.
+            let mut held: Vec<Vec<i64>> = (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect();
+            held.sort_unstable();
+            held.dedup();
+            rows.insert(rel.clone(), held);
         }
         drop(measure);
         let digest = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
-        let digest = { let _d = digest; cross_rounds::digest(&rows) };
+        let digest = { let _d = digest; cross_rounds::digest_sorted(&rows) };
         report.run = r + 1;
         report.rows.push(rows.values().map(Vec::len).sum());
         crate::code_rule_dsl::logic::profile::decision(&format!("round {r} hop rows"), || {
@@ -1472,17 +1476,14 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
                 if types(rel).first().map(String::as_str) != Some("node") {
                     continue;
                 }
-                let mut now = v.clone();
-                now.sort_unstable();
-                now.dedup();
-                let before = &prev_rows[rel];
-                if &now == before { continue; }
+                let (now, before) = (v, &prev_rows[rel]);
+                if now == before { continue; }
                 let docs = |rs: &[Vec<i64>]| -> BTreeMap<i64, Vec<Vec<i64>>> {
                     let mut m: BTreeMap<i64, Vec<Vec<i64>>> = BTreeMap::new();
                     for r in rs { m.entry(r[0] >> 32).or_default().push(r.clone()); }
                     m
                 };
-                let (a, b) = (docs(&now), docs(before));
+                let (a, b) = (docs(now), docs(before));
                 for d in a.keys().chain(b.keys()) {
                     if a.get(d) != b.get(d) { changed.insert(*d); }
                 }
@@ -1499,12 +1500,7 @@ fn run_rounds(db: &Connection, modules: &Modules, mut round: lower::Lowered, hop
             round.program.facts.get_mut(cross_rounds::UNCONVERGED).expect("declared").push(vec![front::Value::Int(1)]);
         }
         last = Some(digest);
-        let _keep = crate::code_rule_dsl::logic::profile::span(|| "previous rows: sort".into());
-        for (rel, mut rows) in rows {
-            rows.sort_unstable();
-            rows.dedup();
-            prev_rows.insert(rel, rows);
-        }
+        prev_rows = rows;
         crate::code_rule_dsl::logic::native::forget_inputs(db);
     }
     unreachable!("round K returns")
@@ -1646,18 +1642,14 @@ impl Totals {
                 }
                 continue;
             }
-            // Per (document, value) counts of this chunk, then per value: n, documents, and the sum of squares.
-            let mut per: HashMap<(i64, i64), i64> = HashMap::new();
-            for r in 0..n {
-                *per.entry((doc(r), rows.value(r, c))).or_default() += 1;
-            }
+            // Per value of this chunk: n, documents, and the sum of squares of its count per document.
             let vals = self.vals.entry((rel.to_owned(), name.clone())).or_default();
-            for ((_, v), k) in per {
+            value_runs(rows, c, &doc, |v, count, docs| {
                 let e = vals.entry(v).or_default();
-                e[0] += k;
-                e[1] += 1;
-                e[2] += k * k;
-            }
+                e[0] += count;
+                e[1] += docs.len() as i64;
+                e[2] += docs.iter().map(|k| k * k).sum::<i64>();
+            });
         }
     }
     /// The totals as the planner's statistics (T's `stats.py` definitions), over `stats`.
@@ -1675,13 +1667,35 @@ impl Totals {
 
 /// A node column's (ndv, sq, sqd) in one chunk: its values never cross documents.
 fn column_moments(rows: &dyn crate::code_rule_dsl::facts::vtab::Source, c: usize, doc: &dyn Fn(usize) -> i64) -> (i64, i64, i64) {
-    let mut per: HashMap<i64, i64> = HashMap::new();
-    let mut per_doc: HashMap<(i64, i64), i64> = HashMap::new();
-    for r in 0..rows.len() {
-        *per.entry(rows.value(r, c)).or_default() += 1;
-        *per_doc.entry((doc(r), rows.value(r, c))).or_default() += 1;
+    let (mut ndv, mut sq, mut sqd) = (0, 0, 0);
+    value_runs(rows, c, doc, |_, n, docs| {
+        ndv += 1;
+        sq += n * n;
+        sqd += docs.iter().map(|k| k * k).sum::<i64>();
+    });
+    (ndv, sq, sqd)
+}
+
+/// Column `c`'s values in runs, by one sort of (value, document): `f(v, n, per_doc)` for each distinct value v, with
+/// its row count and its row count in each document it occurs in. No hash map per cell.
+fn value_runs(rows: &dyn crate::code_rule_dsl::facts::vtab::Source, c: usize, doc: &dyn Fn(usize) -> i64, mut f: impl FnMut(i64, i64, &[i64])) {
+    let mut pairs: Vec<(i64, i64)> = (0..rows.len()).map(|r| (rows.value(r, c), doc(r))).collect();
+    pairs.sort_unstable();
+    let mut per_doc = Vec::new();
+    let mut at = 0;
+    while at < pairs.len() {
+        let v = pairs[at].0;
+        let end = at + pairs[at..].partition_point(|p| p.0 == v);
+        per_doc.clear();
+        let mut d = at;
+        while d < end {
+            let de = d + pairs[d..end].partition_point(|p| p.1 == pairs[d].1);
+            per_doc.push((de - d) as i64);
+            d = de;
+        }
+        f(v, (end - at) as i64, &per_doc);
+        at = end;
     }
-    (per.len() as i64, per.values().map(|k| k * k).sum(), per_doc.values().map(|k| k * k).sum())
 }
 
 /// A chunk's rows of a relation (columns `c0`, `c1`, …), read once to measure them.

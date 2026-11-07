@@ -318,9 +318,16 @@ tbv(f, x, k, v) :- pdefault(f, x, d), tv(d, k, v).
 rann(f, t) :- kind(f, "function_definition"), field(f, "return_type", t).
 .decl rclosed(f: node)
 rclosed(f) :- rann(f, t), !aopen(t), !isasync(f).
-pv(c, "inst", s) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), ainst(t, k), sub(k, s).
-pv(c, "cls", s) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), acls(t, k), sub(k, s).
-pv(c, "inst", s) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf(t, m), aself(m), method(f, k), sub(k, s).
+// rret(f, "inst", k): f is declared to return an instance of class k (or of a subclass); "cls" for `type[k]`.
+.decl rret(f: node, w: symbol, k: node)
+rret(f, "inst", k) :- rann(f, t), !isasync(f), ainst(t, k).
+rret(f, "cls", k) :- rann(f, t), !isasync(f), acls(t, k).
+rret(f, "inst", k) :- rann(f, t), !isasync(f), aleaf(t, m), aself(m), method(f, k).
+// cret(c, w, k): call c's declared return class. Joined with the subclasses last, so a new subclass row reaches
+// only the calls declared to return its base.
+.decl cret(c: node, w: symbol, k: node)
+cret(c, w, k) :- callee(c, e), pv(e, "fn", f), rret(f, w, k).
+pv(c, w, s) :- cret(c, w, k), sub(k, s).
 tv(c, "decl", m) :- callee(c, e), pv(e, "fn", f), !isasync(f), rann(f, t), aleaf(t, m), dtype(m, _).
 // Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
 .decl cann(c: node, x: symbol, t: node)
@@ -339,10 +346,14 @@ adeclared(c, a) :- need_attr(c, a), found(c, a, at), cann(at, a, t), !aopen(t).
 tvar(g, x) :- field(g, "type_parameters", tp), child(tp, p, _), child(p, e, 0), ann(p, e), kind(e, "identifier"), text(e, x).
 tvar(g, x) :- field(g, "type_parameters", tp), child(tp, p, _), child(p, e, 0), ann(p, e), kind(e, "constrained_type"), child(e, u, 0),
     child(u, i, 0), kind(i, "identifier"), text(i, x).
-tvar(g, x) :- kind(g, "function_definition"), docof(g, d), modnode(d, m), rasg(m, x, r, _), callee(r, h), qn(h, "typing.TypeVar").
+// mtvar(d, x): x is a module-level `TypeVar` of document d, in scope in each of its functions.
+.decl mtvar(d: number, x: symbol)
+mtvar(d, x) :- modnode(d, m), rasg(m, x, r, _), callee(r, h), qn(h, "typing.TypeVar").
 .decl ident_dec(g: node)
 ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), kind(e, "identifier"), text(e, v), rann(g, r), ann(r, e2), kind(e2, "identifier"),
     text(e2, v), tvar(g, v).
+ident_dec(g) :- param(g, x, 0), pann(g, x, t), ann(t, e), kind(e, "identifier"), text(e, v), rann(g, r), ann(r, e2), kind(e2, "identifier"),
+    text(e2, v), docof(g, d), mtvar(d, v).
 
 // ---- values ---------------------------------------------------------------------------------------------------
 .decl attr_of(n: node, o: node, a: symbol)
