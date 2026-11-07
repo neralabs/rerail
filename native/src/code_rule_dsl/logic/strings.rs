@@ -193,6 +193,7 @@ fn as_test(l: &Literal) -> Option<(&str, &str, Vec<String>, bool)> {
 /// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Vocabulary {
+    /// Each test's input relation and matcher (`again` keeps them for another run).
     pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
@@ -295,6 +296,13 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
         for (relation, column) in found {
             columns.entry(relation).or_default().insert(column);
         }
+    }
+}
+
+impl Vocabulary {
+    /// The same tests for another run, with nothing tested yet.
+    pub(in crate::code_rule_dsl) fn again(&self) -> Vocabulary {
+        Vocabulary { tests: self.tests.clone(), ..Vocabulary::default() }
     }
 }
 

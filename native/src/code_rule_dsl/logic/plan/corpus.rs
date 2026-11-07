@@ -284,18 +284,12 @@ pub(crate) fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, b
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
 pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
-    use sha2::Digest as _;
     use std::sync::{Mutex, OnceLock};
     // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
     // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
     static COMBINED: OnceLock<Mutex<HashMap<[u8; 32], front::Program>>> = OnceLock::new();
     const KEPT: usize = 32;
-    let mut hash = sha2::Sha256::new();
-    for text in programs.iter().copied().chain([extra]) {
-        hash.update((text.len() as u64).to_le_bytes());
-        hash.update(text.as_bytes());
-    }
-    let key: [u8; 32] = hash.finalize().into();
+    let key = texts_digest(programs, extra);
     let cache = COMBINED.get_or_init(Default::default);
     if let Some(program) = cache.lock().expect("the combined programs").get(&key) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
@@ -309,6 +303,43 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
     kept.insert(key, program.clone());
     Ok(program)
 }
+
+/// The digest of `combine`'s texts: what a combined program is a function of.
+fn texts_digest(programs: &[&str], extra: &str) -> [u8; 32] {
+    use sha2::Digest as _;
+    let mut hash = sha2::Sha256::new();
+    for text in programs.iter().copied().chain([extra]) {
+        hash.update((text.len() as u64).to_le_bytes());
+        hash.update(text.as_bytes());
+    }
+    hash.finalize().into()
+}
+
+/// A program prepared for a run (`run_with_options`): pruned, simplified, demanded, lowered, its joins pushed into the
+/// chunks, located and split. A function of the combined program's texts, what the run added to it (facts, inputs,
+/// outputs), the stage and the dialect; and of the store's atoms, so `interned` is every intern call lowering made,
+/// asked again of the store on reuse.
+#[derive(Clone)]
+struct Prepared {
+    prog: front::Program,
+    vocabulary: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
+    lowered: lower::Lowered,
+    sets: Vec<(String, Vec<i64>)>,
+    demanded: Vec<String>,
+    pushed: Vec<String>,
+    located: std::result::Result<Vec<String>, Vec<String>>,
+    merged: (usize, usize),
+    split: crate::code_rule_dsl::typing::file_local::Programs,
+    interned: Vec<(Vec<String>, Vec<u32>)>,
+}
+
+fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Prepared>> {
+    static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Prepared>>> = std::sync::OnceLock::new();
+    PREPARED.get_or_init(Default::default)
+}
+
+/// A few prepared programs at a time are kept.
+const PREPARED_KEPT: usize = 16;
 
 fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
@@ -607,6 +638,7 @@ pub(crate) fn run_with_options(
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
     let mut prog = combine(programs, "")?;
+    let mut texts = texts_digest(programs, "");
     drop(combining);
     world::add_facts(&mut prog, options.get("worldFacts"));
     // The library stage (decision 0059): the loaded documents alone, the program told so if it asks.
@@ -687,6 +719,7 @@ pub(crate) fn run_with_options(
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             prog = combine(programs, &facts)?;
+            texts = texts_digest(programs, &facts);
             world::add_facts(&mut prog, options.get("worldFacts"));
             if library_stage && prog.decls.contains_key(library::STAGE) {
                 prog.facts.entry(library::STAGE.to_owned()).or_default().push(vec![front::Value::Str("library".to_owned())]);
@@ -741,41 +774,85 @@ pub(crate) fn run_with_options(
         }
     };
     let db = Connection::open(&path)?;
+    // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk.
+    db.execute_batch("PRAGMA synchronous=OFF")?;
     let statements = Statements::on(&db);
     statements.enter("stats");
-    // Only the rules an output reads, directly or through other rules: a rule that includes a library runs the part
-    // of it the rule uses, not all of it (T's front prunes the same way).
-    let preparing = crate::code_rule_dsl::logic::profile::span(|| "prune, simplify, demand".into());
-    prog = front::prune(prog);
-    // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
-    crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
-    // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
-    // Not in a library stage: its rows are replayed for whatever a workspace's rules ask (decision 0059).
-    let (mut prog, demanded) = if library_stage { (prog, Vec::new()) } else { crate::code_rule_dsl::logic::magic::demand_negated_tests(prog) };
+    // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
+    // over many roots prepares it once. The key is what preparing reads besides the store's atoms, which are asked
+    // again below.
+    let prepared_key: [u8; 32] = {
+        use sha2::Digest as _;
+        let mut hash = sha2::Sha256::new();
+        hash.update(texts);
+        hash.update(format!("{label}\0{library_stage}\0{:?}\0{:?}\0{:?}", prog.facts, prog.inputs, prog.outputs).as_bytes());
+        hash.finalize().into()
+    };
+    let kept = prepared_cache().lock().expect("the prepared programs").get(&prepared_key).cloned();
+    let kept = kept.filter(|p| {
+        // The lowered program's atoms are the store's: the same strings must still be the same atoms.
+        p.interned.iter().all(|(strings, atoms)| {
+            let strings: Vec<&str> = strings.iter().map(String::as_str).collect();
+            store.intern_atoms(&strings).is_ok_and(|got| got.iter().map(|a| u32::from(*a)).eq(atoms.iter().copied()))
+        })
+    });
+    let reused = kept.is_some();
+    let prepared = match kept {
+        Some(p) => {
+            crate::code_rule_dsl::prof::count("corpus.prepared_reused", 1);
+            p
+        }
+        None => {
+            let mut interned: Vec<(Vec<String>, Vec<u32>)> = Vec::new();
+            // Only the rules an output reads, directly or through other rules: a rule that includes a library runs the part
+            // of it the rule uses, not all of it (T's front prunes the same way).
+            let preparing = crate::code_rule_dsl::logic::profile::span(|| "prune, simplify, demand".into());
+            prog = front::prune(prog);
+            // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
+            crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
+            // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
+            // Not in a library stage: its rows are replayed for whatever a workspace's rules ask (decision 0059).
+            let (mut prog, demanded) = if library_stage { (prog, Vec::new()) } else { crate::code_rule_dsl::logic::magic::demand_negated_tests(prog) };
+            drop(preparing);
+            // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
+            let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
+            let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
+            let mut lowered = lower::lower(&prog, dialect, &mut |s| {
+                let atoms: Vec<u32> = store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(u32::from).collect();
+                interned.push((s.iter().map(|x| (*x).to_owned()).collect(), atoms.clone()));
+                Ok(atoms)
+            })?;
+            drop(lowering);
+            let sets = lowered.transduce_nearest();
+            // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
+            let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut lowered.program);
+            // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
+            let located = crate::code_rule_dsl::typing::file_local::locate(&mut lowered.program);
+            // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again, and so
+            // are the relations over them, before the program splits.
+            let merged = crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program);
+            let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
+            let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, demanded, pushed, located, merged, split, interned };
+            let mut kept = prepared_cache().lock().expect("the prepared programs");
+            if kept.len() >= PREPARED_KEPT {
+                kept.clear();
+            }
+            kept.insert(prepared_key, prepared.clone());
+            prepared
+        }
+    };
+    crate::code_rule_dsl::logic::profile::decision("program prepared", || if reused { "reused: this process prepared the same program and additions before".to_owned() } else { "prepared".to_owned() });
+    let Prepared { prog, vocabulary, lowered, sets, demanded, pushed, located, merged: (remerged, reshared), mut split, interned: _ } = prepared;
+    let vocabulary = vocabulary.again();
     if !demanded.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
     }
-    drop(preparing);
-    // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
-    let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
-    let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
-    let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
-    drop(lowering);
-    let sets = lowered.transduce_nearest();
-    // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
-    let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut lowered.program);
     if !pushed.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("file-local joins pushed into the chunks", || format!("{} cross-file rules read a join made per chunk instead of its base relations (first: {})", pushed.len(), pushed.iter().take(6).cloned().collect::<Vec<_>>().join(", ")));
     }
-    // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
-    let located = crate::code_rule_dsl::typing::file_local::locate(&mut lowered.program);
-    // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again, and so
-    // are the relations over them, before the program splits.
-    let (remerged, reshared) = crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program);
     if remerged > 0 {
         crate::code_rule_dsl::logic::profile::decision("merged after the joins were pushed", || format!("{remerged} relations merged into an identical one ({reshared} classes shared across programs)"));
     }
-    let mut split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     // The library's rows (decision 0059): bound for the cross-file part, which then derives no row of theirs about
     // a library node. Only under the document keys they were made with.
     let mut library_inputs: Vec<(String, usize, Vec<i64>)> = Vec::new();
@@ -867,6 +944,8 @@ pub(crate) fn run_with_options(
     let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
     let mut measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
+    // Only this connection opens `cross.sqlite`: its journal can stay in memory.
+    db.execute_batch("PRAGMA x.journal_mode=MEMORY; PRAGMA x.synchronous=OFF")?;
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
     // read back, 0.75 s on Python.)
@@ -920,11 +999,15 @@ pub(crate) fn run_with_options(
     if !stored.is_empty() && tapes.is_some() && t.is_none() {
         crate::code_rule_dsl::logic::profile::decision("per-file memo held back", || format!("the cross-file part reads base relations {:?}: files are evaluated", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
     }
+    // One transaction for every export's table, not a commit each.
+    let mut tables = String::from("BEGIN;");
     for rel in &split.exports {
         let width = lowered.program.decls[rel].len();
         let cols: Vec<String> = (0..width).map(|i| format!("c{i}")).collect();
-        db.execute_batch(&format!("CREATE TABLE x.{rel}({}, PRIMARY KEY ({})) WITHOUT ROWID", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")))?;
+        tables.push_str(&format!("CREATE TABLE x.{rel}({}, PRIMARY KEY ({})) WITHOUT ROWID;", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")));
     }
+    tables.push_str("COMMIT;");
+    db.execute_batch(&tables)?;
     phase("stats", statements.count());
     statements.enter("parse");
     let modules = Modules::default();

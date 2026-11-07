@@ -198,6 +198,7 @@ pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
 }
 
 /// A program lowered for one dialect.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Lowered {
     pub(in crate::code_rule_dsl) program: Program,
     pub(in crate::code_rule_dsl) domains: Domains,
