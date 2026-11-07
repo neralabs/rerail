@@ -1,201 +1,284 @@
-# Parser generators: writing the tape on the GPU, node by node
+# Parser generators: the tape from a Bitlex file
 
 Status: proposal (2026-11-06). Nothing here is built yet.
 
 ## Intro
 
-The mask passes end with planes: one bit per byte for each fact. A parser's output is the
-tape: one record per node, in preorder. The tape has these columns:
+A Bitlex file (`03-bitlex.md`) defines a lexer as masks: one bit per byte for each fact. Its
+output today is a token stream. A parser's output is the tape: one record per node, in
+preorder, with these columns:
 
 | column | what it holds |
 |---|---|
-| `code` | the node's folded code, numbered by first use |
+| `code` | the node's folded code (kind, field, flags, alias, supertypes), numbered by first use |
 | `size` | how many nodes its subtree holds, the node included |
 | `base` | for each 16 nodes, the least start among them |
 | `off` | the node's start, minus its 16-node block's `base` |
 | `tail` | the node's end, minus its last descendant's start |
 
-Each column is 2 or 4 bytes wide, chosen from its largest value.
+This page extends Bitlex with a `tree` section. That section says, in masks, which nodes a file
+has and where each starts and ends. Everything that differs between languages is in the Bitlex
+file. The parts that do not differ are generic:
 
-This page shows how each GPU lane can write the records of the nodes that start in its bytes,
-straight into the tape. No list of positions is built first, and simdjson's index is not used.
-Every value a record needs comes from a prefix operation: a sum, a count below a bit, or the
-nearest smaller value. In the common case, the masks and the tape are one dispatch.
+- **the compiler** reads any Bitlex file and writes two things: a block program (the masks,
+  `10-bit-programs.md`) and a node table (one row per node kind);
+- **the tape writer** reads the masks and the node table and writes the tape. It is one piece of
+  code per executor, the same for every language.
 
-JSON is the worked case. Its nodes and their start and end rules are in
-`01-branch-free-design.md` §5.
+So adding a language means writing its Bitlex file, and nothing else.
 
-## 1. Which nodes start where
+## 1. What the tree section declares
 
-Each node kind has a start plane, built by the mask pass from stage 1's facts:
+### 1.1 Nodes
+
+A node kind is a start mask, an end rule and a rank:
 
 ```text
-; JSON, per byte (01 §5's table):
-;   S_object  = '{' outside strings      S_array = '[' outside strings
-;   S_string  = opening quote            S_pair  = opening quote of a key
-;   S_token   = each of { } [ ] , : "    S_scalar = simdjson's scalar starts
-;   S_content = string content starts    S_escape = unescaped backslashes
+tree json {
+  # Lines like these, in order: KIND start MASK end RULE.
+  # A node starts at each bit of its start mask.
+  node object  start code & lbrace   end at code & rbrace level depth
+  node string  start opening         end at closing
+}
 ```
 
-Several nodes can start at one byte. Their order there is fixed by kind (the `rank`). A key's
-opening quote starts `pair` (rank 0), `string` (1) and `"` (2).
+- **Start.** Any mask. The node starts at each of its bits.
+- **Rank.** Where several nodes start at one byte, the one listed first is outermost. A key's
+  opening quote starts `pair`, `string` and `"`, listed in that order.
+- **Tokens are nodes already.** Every `token` statement is a leaf node of its kind. Its start
+  and end are the token's own, and it is ranked after the tree section's nodes at the same byte.
+- **Zero-width nodes** are not allowed. A file that would need one goes to tree-sitter, as
+  `01-branch-free-design.md` §2 decides.
 
-The count of nodes at byte `p`, `n[p]`, is the sum of the start planes' bits at `p`.
+### 1.2 End rules
 
-## 2. `ord`: a prefix count
+A node's end comes from one of three rules. Each rule names masks only. The tape writer
+implements each rule once, for every language.
+
+| rule | the node ends | used for |
+|---|---|---|
+| `through B` | after its start's run of `B` bytes (a token's rule, §2.4 of `03`) | tokens |
+| `at E` | after the next bit of `E` at or after its start | strings, comments |
+| `at E level L` | after the next bit of `E` at the start's level of `L` | brackets, pairs, blocks |
+
+**Levels.** A level is a `count` scan (`03` §2.7): `+1` at each byte of one mask, `-1` at each
+byte of another, bounded by `max D`. `at E level L` is the nearest-smaller-value rule of
+`01-branch-free-design.md` §3. The end is the first bit of `E` after the start where the level
+comes back to the start's own level. A closing bracket matches its opening bracket this way.
+So does a Python block's dedent, with indentation as the level.
+
+### 1.3 Codes
+
+A node's code is its kind, plus facts read at its start byte:
+
+```text
+  field key   = string & key_quote          # a mask: the node's field, where it is set
+  field value = value_start & after_colon
+  supertype _value = value_start            # the node is in the supertype where it is set
+  alias ...                                 # a contextual alias, the same way
+  extra comment                             # nodes of this kind carry the extra flag
+```
+
+- **Each fact is a mask at the node's start byte.** The compiler lists every (kind, field,
+  alias, supertypes) combination the declarations allow. That list is the grammar's small code
+  universe (`01` §2).
+- **Names resolve against the grammar.** Kind, field and supertype names map to their ids in the
+  grammar's own tables (tree-sitter's `parser.c` symbols and fields), as `ucode` tables do
+  (`03` §2.6).
+- **Codes are numbered by first use** in the tape. That numbering is the tape writer's job (§3.4).
+
+### 1.4 Errors
+
+The existing `error … when` statements still route a file to tree-sitter. The tree section
+adds errors of its own, implicitly:
+
+- a level that goes below zero or does not end at zero;
+- a node whose end rule finds no end;
+- a node that ends after its parent ends.
+
+## 2. JSON's tree section
+
+This is a sketch. A differential test against tree-sitter settles the unknowns that `01` §5
+lists: where `document` starts and ends, and the exact memberships.
+
+```text
+tree json {
+  # Bracket nesting outside strings and comments.
+  scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 1024
+
+  # The structural byte before and after each byte, skipping whitespace and comments.
+  mask after_colon = prev_structural(colon)
+  mask key_end     = closing & next_structural(colon)
+  mask key_quote   = opening & back_fill(key_end, closing)  # the key's closing quote, carried back
+
+  # A value is an object, an array, a string or a scalar token.
+  mask value_start = (code & (lbrace | lbracket)) | (opening & ~key_quote) | wstart
+  mask value_end   = (code & (rbrace | rbracket)) | (closing & ~key_end) | lasts(word)
+
+  # A pair ends with its value. The level rule skips the ends of values nested deeper, and the
+  # key's end is not a value end, so the first value end at the pair's level is its own.
+  node document start first_value     end at last_value_end
+  node pair     start key_quote       end at value_end level depth
+  node object   start code & lbrace   end at code & rbrace level depth
+  node array    start code & lbracket end at code & rbracket level depth
+  node string   start opening         end at closing
+
+  field key        = string & key_quote
+  field value      = value_start & after_colon
+  supertype _value = value_start
+  extra comment
+}
+```
+
+`prev_structural` and `next_structural` are not Bitlex functions yet. They test the structural
+byte before and after, skipping whitespace and comments: a `fill` forward and a `back_fill`
+backward. Each one is a line of masks in this file, not a new primitive. `first_value` and
+`last_value_end` are left to the differential test (step 1 of §5).
+
+## 3. The generic tape writer
+
+The tape writer has no language in it. Its input is the node table and the masks the table
+names. One row of the table is:
+
+```text
+kind, rank, start output, end rule (through | at | at with level), end output,
+level outputs (up, down), code facts (field, alias, supertype outputs)
+```
+
+It writes each record into the tape at its slot `ord`, with no list of positions built first.
+The rest of this section is the same for every language.
+
+### 3.1 `ord`: a prefix count
 
 A node's preorder number is the count of nodes that start before it, plus its rank:
 
 ```text
-ord = C[start] + rank        C[p] = n[0] + ... + n[p-1]
+ord = C[start] + rank        C[p] = the number of nodes that start before byte p
 ```
 
-A lane gets `C` at its first byte as the extract pass gets its offset
-(`10-bit-programs.md` §4.1):
+A lane, which owns 64 bytes on the GPU, finds `C` at its first byte:
 
-1. the lane's count: one popcount per start plane;
+1. its count: one popcount per start mask in the table;
 2. `simd_prefix_exclusive_sum` across the SIMD group;
-3. the group's offset, by the bounded look-back over earlier groups.
+3. its group's offset, by the bounded look-back between groups. This is what the extract pass
+   already does (`10-bit-programs.md` §4.1).
 
-Inside the lane, the count below bit `j` is a masked popcount per plane:
+Inside the lane, the count below bit `j` is a masked popcount per start mask. The list of start
+masks is fixed by the table, so this is straight-line code.
 
-```text
-// Lane code for the nodes starting at bit j of the lane's word.
-below = 0
-for each start plane S:          // a fixed list: no data-dependent loop
-    below += popcount(S & ((1 << j) - 1))
-ord = lane_offset + below + rank(kind)
-```
+### 3.2 `code` and `off`: written by the start
 
-The lane writes the node's `code` at `ord`, and its `off` (§5). Two of the record's values,
-`size` and `tail`, depend on where the node ends.
+- **`code`.** The kind and its facts, read at the start byte, give the grammar code. A table
+  lookup gives the code's number (§3.4).
+- **`base` and `off`.** Preorder never decreases a start, so a 16-node block's least start is the
+  start of its first node:
 
-## 3. `size` and `tail`: written by the node's end
+  ```text
+  base[b] = start of node 16 b
+  off     = start - base[ord / 16]
+  ```
 
-A node's `size` is the count of nodes that start inside it:
+  The node whose `ord` is a multiple of 16 writes `base`. Every node writes `off`. For that it
+  needs the start of the node `ord % 16` places before it, which is in its word or close
+  behind.
+
+### 3.3 `size` and `tail`: written by the end
 
 ```text
 size = C[end] - ord
+tail = end - (start of node C[end] - 1)        the last node to start before the end
 ```
 
-The lane that holds a node's end byte knows `C[end]`: it is its own prefix count. So the end
-writes the record's `size` and `tail`, and the start writes the rest. Both write into the same
-tape slot, `ord`, and nothing waits for anything.
+The lane that holds a node's end knows `C[end]`, because it is its own prefix count. So the
+end writes `size` and `tail` into the same slot, `ord`. For that it must know the node's `ord`.
+Each end rule finds it its own way:
 
-For the end to write, it must know the node's `ord`. How it finds it depends on the kind of
-node.
+- **`through B`.** The end is in the start's word or a few words on. The start lane finds it by
+  a count of trailing zeros, and writes all five values itself.
+- **`at E`.** The next bit of `E` after the start. It is found in the start's word, else in
+  the next words' masks, or by a carried "next bit of `E`" scan: a `back_fill` of `E`. The
+  start lane writes all five values.
+- **`at E level L`.** The end finds the start instead. The start is the nearest earlier byte
+  whose level is below the level at the end. The search goes from near to far:
+  1. in the lane's word, by the level change below each bit;
+  2. in the SIMD group, where each lane publishes its lowest level and a ballot names the nearest
+     lane under the target;
+  3. across groups, through each group's lowest level, published next to its look-back state.
 
-**Tokens, scalars, escapes and string content** end near their start:
+  The start's `ord` is then `C[start] + rank`, where `C[start]` is the start lane's prefix
+  count. The look-back writes that to a per-lane array. The start lane is earlier, so its value
+  is there or soon will be.
 
-| node | ends at |
-|---|---|
-| a token such as `{` or `,` | the next byte |
-| a scalar | the next whitespace or structural byte |
-| string content | the next quote or backslash |
-| an escape | two bytes on |
+### 3.4 Guessed sizes, checked in the same dispatch
 
-For these the start lane writes all five values. The end is the next set bit of an end mask,
-found with a count of trailing zeros in the lane's word. If the end is past the word, the
-lane reads the following words in turn (§6).
+Some of the tape's properties are known only once every node is counted:
 
-**Containers** are objects, arrays, strings and pairs. Their end can be far away: the root
-object ends at the end of the file. The end finds the start instead. A container's start is
-the nearest earlier byte whose depth is below the depth at its end: a nearest smaller value
-(`01-branch-free-design.md` §3). Depth is a prefix sum of +1 for an open bracket and -1 for
-a close, outside strings. It is a carried scan, like `toggle`. The search for that byte runs
-from near to far:
+- its widths, each 2 or 4 bytes from the column's maximum;
+- the codes' first-use numbering;
+- its length.
 
-1. **In the lane's word.** It uses the depth change at each byte. That is a prefix sum inside
-   the word: popcounts of opens and closes below each bit.
-2. **In the SIMD group.** Each lane publishes the lowest depth it reaches. A ballot of the
-   lanes below the end's lane whose lowest depth is under the target depth names the nearest
-   one: the highest set bit, by `clz`.
-3. **Across groups.** Each group publishes its lowest depth next to its look-back state. The
-   search walks back over those values, then over the found group's lanes as in step 2.
+The tape writer guesses them, writes with the guess, and checks the guess in the same
+dispatch. In the common case the masks and the tape are then one dispatch.
 
-The start's `ord` is then `C[start] + rank`. `C[start]` is the start lane's prefix count. The
-look-back writes it to a per-lane array, and that lane is earlier in the stream, so its
-value is ready or soon will be. The wait is bounded, and a fallback covers it (§7).
-
-`tail` needs the start of the node's last descendant. That descendant is the last node that
-starts before the end: node `C[end] - 1`. Its start is the nearest earlier set bit of the
-union of the start planes, which the end finds as it found the node's start.
-
-## 4. Depth at the ends of strings and pairs
-
-Strings and pairs are containers that brackets do not mark:
-
-- **A string** ends at its closing quote. That is the next set bit of the quote plane after
-  its start. A string is never nested, so a forward search for that bit finds it (§6).
-- **A pair** ends where its value ends. That is the byte before the next `,` or `}` at the
-  pair's depth. The end of the value writes the pair's record together with its own.
-
-## 5. `base` and `off`: by 16 nodes
-
-Preorder never decreases a start, so a 16-node block's least start is the start of its first
-node:
-
-```text
-base[b] = start of node 16 b
-off     = start - base[ord / 16]
-```
-
-- The node whose `ord` is a multiple of 16 writes `base`.
-- Every node writes its own `off`. It needs the start of the node `ord % 16` places before it.
-  That node is in the same word or close behind. The search is a count back over the union of
-  the start planes, with each byte's `n[p]` as its weight.
-
-## 6. Widths, codes and size: guess, then check
-
-The tape's widths, its code numbers and its length are known only at the end. A second pass
-over every node would be needed to wait for them. Instead the write uses a guess and checks it
-in the same dispatch:
-
-| what | guess | check, in the same dispatch |
+| what | guess | check |
 |---|---|---|
-| node count, for the allocation | from the file's length, with a margin, at the density measured on the corpus | the look-back's total |
+| node count, for the allocation | from the file's length, at the density the language's corpus shows, with a margin | the look-back's total |
 | `size` width | 2 bytes if the guessed count is below 65,536 | the total |
 | `off` and `tail` widths | 2 bytes | an `atomic_max` per column |
-| code numbers by first use | the grammar's usual first-use order (for JSON, the order a typical file uses them) | an `atomic_min` of `ord` per grammar code, then compare the order on the host (a few dozen values) |
+| first-use numbering | the order the language's files usually use their codes | an `atomic_min` of `ord` per code, compared on the host (a few dozen values) |
 
-- **Wrong guess.** If a check fails, the host runs the tape write once more with the true
-  values. That needs a second command buffer.
-- **Code numbers alone.** If only the code numbers are wrong, a small renumbering pass over the
-  `code` column is enough. It runs in a second command buffer that does no mask work.
+- **Wrong guess.** The host writes the tape again with the true values, in a second command
+  buffer.
+- **Numbering alone wrong.** A pass over the `code` column renumbers it.
+- **The guesses are per language, but they are data.** The compiler measures them on the
+  language's corpus and stores them in the node table. They are not code.
 
-## 7. Bounded waits and the fallback
+### 3.5 Bounded waits
 
-Every wait in this design is a bounded poll, as in the carries' look-back:
+Every wait is a bounded poll, as in the carries' look-back:
 
 - for a group's offset;
-- for an earlier lane's prefix count (§3);
-- for a group's published lowest depth (§3).
+- for an earlier lane's prefix count;
+- for a group's lowest level.
 
-A lane that runs out of polls marks its group deferred and writes nothing. The host then
-writes the deferred groups' nodes in a second command buffer. It uses the prefix counts the
-first dispatch already wrote, so the masks are not run again.
+A lane that runs out of polls marks its group deferred and writes nothing. The host then writes
+the deferred groups' nodes in a second command buffer. It uses the counts the first dispatch
+wrote, so the masks are not run again.
 
-## 8. What is lane code and what is not
+### 3.6 On the CPU
 
-- **Lane code, straight-line:** the masks, the start planes, the counts below a bit and the
-  look-back state updates. This code has no branches.
-- **Data-dependent work:** the loop over a word's node starts, and the searches of §3 and §5.
-  Each step of a loop is bounded by the word's width or a fixed number of polls. Each search
-  costs in proportion to the distance it covers.
+The same table drives a CPU form. Cranelift's loop over blocks visits the blocks in order, so
+every look-back answer is already known when it is needed. The nearest-smaller-value search
+becomes a stack of the open starts' `ord`s per level, bounded by the level's `max D`.
 
-## 9. Proposed steps
+## 4. What changes where
+
+| part | change | language-specific? |
+|---|---|---|
+| Bitlex | the `tree` section: `node`, `field`, `supertype`, `alias`, `extra` | the file is |
+| the reference evaluator (`tools/bitlex`) | evaluates the tree section, and writes a tape byte for byte like `TapeImage::finish` | no |
+| the compiler | Bitlex to a block program in `rir`, and the node table as new `rir` rows of the same program | no |
+| block programs | a `count` level: the up and down masks are outputs; the tape writer builds the level from them | no |
+| the tape writer | §3, once per executor (CPU, Metal) | no |
+| per-language data | the guesses of §3.4, measured by the compiler | data only |
+
+The node table is part of the transducer's `Program`, as the block program is (`12` §3). It is
+covered by the digest, checked by `validate`, and printed and assembled by `rir`. It is not a
+separate format.
+
+## 5. Proposed steps
 
 Each step closes with its check passing.
 
-1. **JSON's start planes and depth,** as rir in the stage 1 fixture.
-   *Check:* each plane equals a reference built from today's tape for the corpus files.
-2. **`ord` and `code` written by the starts,** with a guessed code order.
-   *Check:* the `code` column equals today's tape byte for byte.
-3. **`size` and `tail` written by the ends.** Leaves first, then containers with the
-   nearest-smaller-value search.
-   *Check:* the `size` and `tail` columns equal today's tape.
-4. **`base` and `off`.**
-   *Check:* the whole image equals `TapeImage::finish`'s output byte for byte, on every JSON
-   corpus file. One dispatch in the common case, with the fallback count reported.
-5. **The CPU form.** The same records, written by Cranelift's loop over blocks. There the scan
-   order makes every look-back immediate.
+1. **The tree section in the reference evaluator,** for JSON.
+   *Check:* the evaluator's tape equals today's `TapeImage` byte for byte, on every data-layer
+   JSON file. This settles `01` §5's unknowns. Nothing is compiled yet.
+2. **The compiler:** Bitlex to a block program and a node table, for the masks `json.bitlex`
+   uses.
+   *Check:* the block program's outputs equal the evaluator's masks.
+3. **The tape writer on the CPU,** from the node table.
+   *Check:* tapes equal to step 1's, byte for byte.
+4. **The tape writer on Metal**, one dispatch in the common case.
+   *Check:* the same; the fallback count reported; time per block next to the masks alone.
+5. **Python's tree section,** with indentation as a level. *Check:* as step 1, on the
+   data-layer Python files.
