@@ -2179,9 +2179,14 @@ impl Run<'_> {
             if self.prog.lattice.contains_key(rel) {
                 total += self.merge_lattice(rel, &union, true)?;
             } else {
+                // The new rows by an anti-join on the relation's key (every column), probing it once per
+                // candidate; `EXCEPT` would scan the whole relation every round. `IS` keeps EXCEPT's NULLs.
+                let k = self.prog.decls.get(rel).map_or(0, Vec::len);
+                let on: Vec<String> = (0..k).map(|i| format!("r.c{i} IS n.c{i}")).collect();
                 self.db.execute_batch(&format!(
                     "DROP TABLE IF EXISTS cand; CREATE TEMP TABLE cand AS {union};
-                     INSERT INTO new_{rel} SELECT * FROM cand EXCEPT SELECT * FROM {rel};"
+                     INSERT INTO new_{rel} SELECT DISTINCT * FROM cand n WHERE NOT EXISTS (SELECT 1 FROM {rel} r WHERE {});",
+                    if on.is_empty() { "1".to_owned() } else { on.join(" AND ") }
                 ))?;
                 total += self.count(&format!("SELECT count(*) FROM new_{rel}"))?;
                 self.db.execute(&format!("INSERT OR IGNORE INTO {rel} SELECT * FROM new_{rel}"), [])?;
