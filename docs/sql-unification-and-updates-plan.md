@@ -162,15 +162,15 @@ TypeScript and boundary checks pass. Structure checks retain the 14 baseline fai
 The main costs now occur during initialization and in wide positive joins with many retained combinations.
 Reducer expressions currently retain separate state instead of sharing compatible indexes.
 A changed global aggregate can still affect every outer context that reads it.
-String aggregates, computed correlations, aggregate-dependent correlations, and nonmonotone rules with constant facts use the refresh fallback.
+String aggregates, aggregate-dependent correlations, and nonmonotone rules with constant facts use the refresh fallback.
 
 ### Remaining work
 
-- Lattice joins, tree walks, recursive aggregate rules, and unsupported correlations still refresh affected strata.
-  The scalar aggregate and negation follow-up described next maintains eligible rules incrementally.
+- Recursive lattice and aggregate rules, unsupported walk blocks, and unsupported correlations still refresh affected strata.
+  Eligible scalar aggregates, negation, lattices, and generated walks use retained maintenance.
 - First-edit input indexing and projection migration require time and memory proportional to their rows.
-- Old SQL-result reads use disjoint query variants. Several changed SQL atoms in one body can multiply those variants.
-  Native inputs use indexed overlays; sparse native deletions no longer reconstruct or index the full input.
+- Native inputs use indexed overlays. Old SQL-result reads restore old membership from row deltas inside the batch savepoint.
+  Neither path reconstructs a complete old input or multiplies old-read query variants.
 - Overdelete/rederive can revisit many facts with alternate support. Retained derivation support could reduce this work.
 - `applyFileChanges` now feeds file patches into retained maintenance without a complete inventory.
   `applySnapshot` retains compatibility with complete replacement requests and must read those inventories.
@@ -235,9 +235,7 @@ The standalone SQL request and Node API expose the same snapshot operation.
 
 Editor patches, retained literal reference counts, and per-family document indexes are complete in the metadata follow-up.
 
-1. Extend document routing to remaining producer schemas, such as the `py_*` families.
-2. Bound old SQL-result branch multiplication, using a compact indexed representation for large bodies.
-3. Extend retained support to the documented aggregate, lattice, and tree-walk fallback cases.
+The follow-up below implements Python document routing, bounded old SQL reads, and more retained rule cases.
 4. Add host-work limits for parsing, native journals, atom interning, and first-edit migrations.
 
 
@@ -354,3 +352,81 @@ Each run uses a separate `RERAIL_TAPE_CACHE` database; tests within that run sha
 This isolates validation from older engines running in other worktrees, which do not use the lease protocol.
 The test filters are `content_store`, `code_rule_dsl::sql_executor`, `code_rule_dsl::logic::rr::tests`, and
 `code_rule_dsl::logic::plan::corpus::tests`, with `rule_syntax_files_pass_check_rr` excluded.
+
+## Routing, bounded old reads, and retained rule coverage
+
+### Causes and implementation
+
+Python call families expose document ids and node ids in different columns.
+The shard adapter now identifies those columns explicitly, including optional keyword, owner, and reference nodes.
+Point probes select one shard. Bounded node ranges traverse only the corresponding document interval.
+Planner estimates use the maximum shard cost for routed columns, rather than the sum across all files.
+The old estimate made a point probe look as expensive as a broad scan.
+Negative sentinel values still probe every shard because each file can contain the sentinel.
+Guest probes use host locations or host document ids because a guest id can identify a different document.
+
+Old SQL reads previously distributed each changed atom over current and deleted alternatives.
+A body with many changed atoms generated exponentially many query variants.
+The update now temporarily restores old membership in retained SQL tables inside the batch savepoint.
+It deletes inserted rows first, then restores deleted rows. Old reads use the existing indexes.
+Before rederivation, it deletes the restored rows and reinserts the current additions.
+This order also handles lattice keys whose old and new values cannot coexist under the unique key.
+An error rolls back source changes, restored rows, outputs, and ownership together.
+This path copies no complete old relation and creates no Cartesian product of query variants.
+
+Computed aggregate correlations now retain expression indexes over outer context keys.
+Both sides of an equality can contain expressions whose fields belong to that side.
+SQLite ignored the context index when the comparison applied integer affinity from the changed key column.
+Computed-key probes now remove that comparison affinity so the expression index remains usable.
+Expressions that depend on another aggregate result still use the explicit refresh fallback.
+
+Nonrecursive lattice outputs retain per-context contributions and candidate multiplicities.
+An edit refolds only keys whose candidate support changes, then publishes actual output differences.
+The same path supports flat, min, max, and registered deterministic lattice joins.
+Duplicate supports survive independent deletions. Removing the last conflicting support can retract top to a concrete value.
+Min/max and flat folds use indexed extrema. An opaque registered join can scan all candidates of an affected key.
+
+Nonrecursive rules with generated tree walks retain their seed, recursive walk, and result relations.
+The engine lowers those CTEs to positive SQL relations when the first affected edit prepares retained state.
+It maps named native columns to positional delta columns and creates reusable probe indexes.
+Later edits use overdelete/rederive. Reset and rollback include the retained walk relations.
+A changed document can bind a native node before it binds a retained walk.
+Maintenance orders the remaining joins by their connections to bound aliases, so those probes avoid unrelated walk rows.
+AST matching remains a native producer.
+
+### Coverage limits
+
+Recursive lattice and aggregate rules retain the affected-stratum refresh fallback.
+Walk blocks with scalar subqueries or negation also retain that fallback.
+String aggregates and aggregate-dependent correlations remain separate extensions.
+These changes do not remove first-edit support initialization, which remains proportional to the state it prepares.
+
+### Regression results
+
+The final combined parallel run passes 235 tests, with four ignored tests and the separate syntax census excluded.
+The filters cover SQL execution, rule syntax, corpus scheduling, and the content store.
+The run uses a separate shared corpus cache with collection enabled.
+Eligible cases report no refreshed strata. Comparisons with fresh execution cover repeated insertions, replacements, deletions, and empty results.
+Fault injection covers errors during old-row restoration and after lattice support mutation. Both cases restore state and permit a later retry.
+
+The following counters come from native regression tests. They include SQL schema management and scratch-table cleanup.
+The fact-scan column excludes `CREATE` and `DROP` statements because their counters include SQLite schema scans.
+These scan counters describe SQLite table scans. The VM budget also covers virtual-table cursor work.
+
+| Case | Retained size | Edit | SQL VM instructions | Scan steps outside schema changes |
+| --- | ---: | --- | ---: | ---: |
+| Fourteen changed SQL inputs in one join | 20,000 rows per input | Delete one source row | 38,823 | 0 |
+| Computed aggregate correlation | 100,000 outer contexts | Delete one fact | 2,460 | 5 |
+| Min, max, and flat lattice folds | 100,000 candidates at one key | Delete both extrema | 10,071 | 21 |
+| Retained tree walk | 1,000 Python files | Delete one file | 123,648 | 124 |
+| Retained tree walk | 1,000 Python files | Insert one file | 109,843 | 49 |
+
+The computed-key edit reconsiders one context. Routing tests probe one shard at both 10 and 1,000 files, including bounded node ranges.
+Sentinel lookups preserve matches across every file. The original batch adapter remains the oracle for real native fact rows and probes.
+Additional checks cover zero-key lattices, duplicate supports, retraction from top, registered deterministic joins, and reset of retained walk state.
+A separate regression changes two lattice inputs together and checks dependent results after both old values disappear.
+
+The 234-test parallel suite took 188.81 seconds before the routing-estimate correction and 11.69 seconds after it on the shared host.
+The final 235-test run, including the simultaneous lattice replacement regression, took 27.45 seconds.
+Host load affects this timing. The probe counts, scan bounds, VM budgets, and output comparisons provide the repeatable checks.
+The headless library and engine binary pass `cargo check --locked --lib --features headless --bin rerail-engine`.

@@ -141,17 +141,25 @@ impl CodeRuleSqlExecutor {
         let result = (|| -> Result<Value> {
             let _budget = limits.enter(&self.db)?;
             let mut migrated = BTreeMap::new();
+            let mut walk_initializations = BTreeMap::new();
             for i in &affected {
                 migrated.insert(
                     *i,
                     maintenance::track_views(&mut work, &mut executions[*i])?,
                 );
+                walk_initializations.insert(*i, walks::prepare(&mut work, &mut executions[*i])?);
             }
             let mut potential = changed.clone();
             let mut initializations = Vec::new();
             for i in &affected {
-                let relations =
-                    reductions::prepare(&mut work, &mut executions[*i], &mut potential)?;
+                let mut relations = walk_initializations.remove(i).unwrap_or_default();
+                relations.extend(reductions::prepare(
+                    &mut work,
+                    &mut executions[*i],
+                    &mut potential,
+                )?);
+                relations.sort();
+                relations.dedup();
                 if !relations.is_empty() {
                     initializations.push(json!({"program":i,"relations":relations}));
                 }

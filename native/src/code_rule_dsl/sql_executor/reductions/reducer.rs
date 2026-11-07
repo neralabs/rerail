@@ -100,9 +100,27 @@ impl Reducer {
             else {
                 return Ok(None);
             };
-            let pair=[(left.as_ref(),right.as_ref()),(right.as_ref(),left.as_ref())].into_iter().find(|(inner,other)|{
-                matches!(inner,E::Qualified{alias,..} if alias==&item.alias)&&matches!(other,E::Qualified{alias,column} if outer.contains_key(&(alias.clone(),column.clone())))
-            });
+            let valid = |e: &E, inner: bool| {
+                let mut valid = plain(e);
+                let mut field = false;
+                e.visit(&mut |e| {
+                    if let E::Qualified { alias, column } = e {
+                        field = true;
+                        valid &= if inner {
+                            alias == &item.alias
+                        } else {
+                            outer.contains_key(&(alias.clone(), column.clone()))
+                        };
+                    }
+                });
+                valid && field
+            };
+            let pair = [
+                (left.as_ref(), right.as_ref()),
+                (right.as_ref(), left.as_ref()),
+            ]
+            .into_iter()
+            .find(|(inner, other)| valid(inner, true) && valid(other, false));
             let Some((inner, other)) = pair else {
                 return Ok(None);
             };
@@ -122,6 +140,16 @@ impl Reducer {
         }
         if keys.is_empty() {
             keys.push(integer(1));
+        }
+        // A NULL computed key cannot satisfy an equality correlation. Do not create an
+        // unreachable group for it (group primary keys are non-null).
+        for key in &keys {
+            if !matches!(key, E::Qualified { .. } | E::Value(_)) {
+                local.push(E::Unary {
+                    operator: super::super::super::logic::sql::sql_ast::SqlUnaryOperator::IsNotNull,
+                    input: Box::new(key.clone()),
+                });
+            }
         }
         let mut columns: Vec<_> = keys
             .into_iter()
@@ -152,11 +180,38 @@ impl Reducer {
     fn keys(&self) -> usize {
         self.outer_keys.len().max(1)
     }
-    pub fn context_keys(&self, rule: &Rule) -> Vec<usize> {
+    pub fn context_keys(&self, rule: &Rule, alias: &str) -> Vec<E> {
         self.outer_keys
             .iter()
-            .map(|e| rule.context_field(e))
+            .map(|e| rule.in_context(e, alias))
             .collect()
+    }
+    pub fn index_context(&self, db: &rusqlite::Connection, rule: &Rule) -> Result<()> {
+        let expressions = self.context_keys(rule, "rr_context");
+        if expressions.is_empty() {
+            return Ok(());
+        }
+        let columns = expressions
+            .into_iter()
+            .map(|mut e| {
+                e.visit_mut(&mut |e| {
+                    if let E::Qualified { column, .. } = e {
+                        *e = E::Column(super::super::super::logic::sql::sql_ast::SqlColumn {
+                            relation: None,
+                            name: column.clone(),
+                        });
+                    }
+                });
+                e.render()
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        db.execute_batch(&format!(
+            "CREATE INDEX {} ON {}({columns})",
+            quote(&format!("{}_contexts", self.groups)),
+            quote(&rule.contexts)
+        ))
+        .map_err(error)
     }
     pub fn lookup(&self, rule: &Rule) -> E {
         let alias = "rr_reducer";
@@ -167,13 +222,13 @@ impl Reducer {
                 right: Box::new(integer(1)),
             }]
         } else {
-            self.context_keys(rule)
+            self.context_keys(rule, "rr_context")
                 .iter()
                 .enumerate()
-                .map(|(i, c)| E::Binary {
+                .map(|(i, e)| E::Binary {
                     operator: B::Equal,
                     left: Box::new(column(alias, &format!("c{i}"))),
-                    right: Box::new(column("rr_context", &format!("c{c}"))),
+                    right: Box::new(e.clone()),
                 })
                 .collect()
         };

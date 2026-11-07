@@ -72,14 +72,26 @@ pub(super) fn apply(
         for reducer in &rule.reducers {
             if let Some((keys, touched)) = reducer.apply(w, changes)? {
                 groups += touched;
-                let positions = reducer.context_keys(rule);
+                let positions = reducer.context_keys(rule, "c");
                 let same = if positions.is_empty() {
                     "k.c0=1".into()
                 } else {
                     positions
                         .iter()
                         .enumerate()
-                        .map(|(i, c)| format!("c.c{c}=k.c{i}"))
+                        // Computed expressions have no SQLite affinity. Removing the key
+                        // column's affinity lets SQLite use the matching expression index.
+                        .map(|(i, e)| {
+                            format!(
+                                "{}={}k.c{i}",
+                                e.render(),
+                                if matches!(e, E::Qualified { .. }) {
+                                    ""
+                                } else {
+                                    "+"
+                                }
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join(" AND ")
                 };
@@ -161,6 +173,25 @@ pub(super) fn apply(
     )?;
     let plus = w.table(width)?;
     let minus = w.table(width)?;
+    // Retain raw candidate multiplicities for lattice outputs. Fold only affected keys.
+    if state.lattice.is_some() {
+        execute(
+            w.db,
+            &format!(
+                "DELETE FROM {} WHERE ({cols}) IN (SELECT {cols} FROM {totals} WHERE n=0)",
+                state.heads
+            ),
+        )?;
+        execute(
+            w.db,
+            &format!(
+                "INSERT OR REPLACE INTO {} SELECT {cols},n FROM {totals} WHERE n>0",
+                state.heads
+            ),
+        )?;
+        let (delta, touched) = lattice::apply(state, w, &totals)?;
+        return Ok((delta, contexts, groups + touched));
+    }
     let inserted = execute(
         w.db,
         &format!("INSERT INTO {plus} SELECT {cols} FROM {totals} WHERE old_n=0 AND n>0"),

@@ -2,6 +2,7 @@ use super::*;
 mod documents;
 mod recovery;
 mod updates;
+mod scaling;
 
 fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();

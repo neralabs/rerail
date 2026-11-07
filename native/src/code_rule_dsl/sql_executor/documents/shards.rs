@@ -106,13 +106,21 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         "field" => (&[0, 2], &[]),
         "tape" => (&[0, 1], &[]),
         "docof" => (&[0], &[1]),
+        "py_call" => (&[1, 2], &[0]),
+        "py_call_site" | "py_attribute" => (&[1, 2, 3], &[0]),
+        "py_exec_context" => (&[1, 2], &[0]),
+        "py_call_arg" => (&[1, 2, 4, 6], &[0]),
+        // Guests belong to the host file's shard. A guest id can identify a different document.
+        "guest" => (&[2], &[1]),
+        "doc_root" => (&[1], &[0]),
+        "sub_tape" => (&[0], &[]),
+        "host_node" => (&[1], &[]),
+        "str_part" | "str_part_word" => (&[0, 3], &[]),
         "doc" | "pkg" | "path_part" | "file_name" | "source" | "src_line" | "split_line"
-        | "lf_line" | "line_count" | "syntax_error" | "doc_role" | "doc_root" | "tape_of" => {
-            (&[], &[0])
-        }
+        | "lf_line" | "line_count" | "syntax_error" | "doc_role" | "tape_of" => (&[], &[0]),
         "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "intval"
-        | "op" | "op_t" | "line" | "end_line" | "col" | "visit_index" | "ast_depth"
-        | "tree_digest" | "spread" | "str_part" | "str_part_word" | "str_part_start" => (&[0], &[]),
+        | "op" | "op_t" | "op_at" | "line" | "end_line" | "col" | "visit_index" | "ast_depth"
+        | "tree_digest" | "spread" | "str_part_start" => (&[0], &[]),
         "first_token" | "last_token" | "token_before" | "token_after" => (&[0, 1], &[]),
         _ => (&[], &[]),
     }
@@ -224,12 +232,24 @@ impl Family {
         };
         PROBE | id
     }
-    fn visit(root: &Link<u32, Arc<Part>>, base: usize, f: &mut impl FnMut(u32, &Arc<Part>, usize)) {
+    fn visit(
+        root: &Link<u32, Arc<Part>>,
+        base: usize,
+        lo: u32,
+        hi: u32,
+        f: &mut impl FnMut(u32, &Arc<Part>, usize),
+    ) {
         if let Some(n) = root {
-            Self::visit(&n.left, base, f);
+            if n.key >= lo {
+                Self::visit(&n.left, base, lo, hi, f);
+            }
             let at = base + n.left.as_ref().map_or(0, |n| n.summary.rows);
-            f(n.key, &n.value, at);
-            Self::visit(&n.right, at + n.value.stats.rows, f)
+            if n.key >= lo && n.key <= hi {
+                f(n.key, &n.value, at);
+            }
+            if n.key <= hi {
+                Self::visit(&n.right, at + n.value.stats.rows, lo, hi, f);
+            }
         }
     }
     fn get(&self, key: u32) -> Option<(&Arc<Part>, usize)> {
@@ -249,11 +269,21 @@ impl Family {
         None
     }
     fn collect(&self, probe: impl Fn(&dyn Source) -> Option<Vec<usize>>) -> Option<Vec<usize>> {
+        self.collect_in(0, u32::MAX, probe)
+    }
+    fn collect_in(
+        &self,
+        lo: u32,
+        hi: u32,
+        probe: impl Fn(&dyn Source) -> Option<Vec<usize>>,
+    ) -> Option<Vec<usize>> {
         let mut rows = vec![];
         let mut indexed = true;
         Self::visit(
             &self.root,
             0,
+            lo,
+            hi,
             &mut |key, p, base| match probe(p.source.as_ref()) {
                 Some(found) => rows.extend(found.into_iter().map(|r| self.probe(key, p, base, r))),
                 None => indexed = false,
@@ -279,7 +309,11 @@ impl Source for Family {
     fn estimated_matches(&self, c: usize, b: bool) -> usize {
         self.stats().map_or(0, |s| {
             let x = &s.columns[c];
-            match (self.doc == Some(c), b) {
+            // A bound location or document routes to a shard. Summing all shards here can
+            // make the planner choose a broad kind scan instead of that point probe.
+            let routed =
+                self.doc == Some(c) || self.locations.contains(&c) || self.documents.contains(&c);
+            match (routed, b) {
                 (true, true) => x.max_batch,
                 (true, false) => x.max_single,
                 (false, true) => x.batch,
@@ -350,6 +384,22 @@ impl Source for Family {
         lo: Option<(i64, bool)>,
         hi: Option<(i64, bool)>,
     ) -> Option<Vec<usize>> {
+        let location = self.locations.contains(&c);
+        let document = self.documents.contains(&c) || self.doc == Some(c);
+        if (location || document)
+            && lo.is_some_and(|(v, _)| v >= 0)
+            && hi.is_none_or(|(v, _)| v >= 0)
+        {
+            let key = |v: i64| if location { v >> 32 } else { v };
+            let lower = key(lo.unwrap().0);
+            if lower > i64::from(u32::MAX) {
+                return Some(vec![]);
+            }
+            let upper = hi
+                .map_or(i64::from(u32::MAX), |(v, _)| key(v))
+                .min(i64::from(u32::MAX));
+            return self.collect_in(lower as u32, upper as u32, |s| s.range_lookup(c, lo, hi));
+        }
         self.collect(|s| s.range_lookup(c, lo, hi))
     }
     fn value(&self, r: usize, c: usize) -> i64 {
@@ -374,6 +424,128 @@ impl Source for Family {
             } else {
                 r -= left + node.value.stats.rows;
                 node = node.right.as_deref().unwrap()
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Counted {
+        row: Vec<i64>,
+        probes: Arc<AtomicUsize>,
+    }
+    impl Source for Counted {
+        fn columns(&self) -> Vec<String> {
+            (0..self.row.len()).map(|i| format!("c{i}")).collect()
+        }
+        fn len(&self) -> usize {
+            1
+        }
+        fn estimated_matches(&self, _: usize, _: bool) -> usize {
+            1
+        }
+        fn indexed(&self, _: usize) -> bool {
+            true
+        }
+        fn range_indexed(&self, _: usize) -> bool {
+            true
+        }
+        fn range_lookup(
+            &self,
+            c: usize,
+            lo: Option<(i64, bool)>,
+            hi: Option<(i64, bool)>,
+        ) -> Option<Vec<usize>> {
+            self.probes.fetch_add(1, Ordering::Relaxed);
+            let v = self.row[c];
+            Some(
+                if lo.is_none_or(|(b, inclusive)| v > b || inclusive && v == b)
+                    && hi.is_none_or(|(b, inclusive)| v < b || inclusive && v == b)
+                {
+                    vec![0]
+                } else {
+                    vec![]
+                },
+            )
+        }
+        fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+            self.probes.fetch_add(1, Ordering::Relaxed);
+            Some(if values.contains(&self.row[c]) {
+                vec![0]
+            } else {
+                vec![]
+            })
+        }
+        fn value(&self, _: usize, c: usize) -> i64 {
+            self.row[c]
+        }
+    }
+
+    #[test]
+    fn python_locations_probe_one_shard_and_sentinels_keep_all_matches() {
+        for count in [10, 1000] {
+            for (name, width, locations) in [
+                ("py_call", 3, vec![1, 2]),
+                ("py_call_site", 4, vec![1, 2, 3]),
+                ("py_exec_context", 4, vec![1, 2]),
+                ("py_call_arg", 7, vec![1, 2, 4, 6]),
+                ("py_attribute", 4, vec![1, 2, 3]),
+            ] {
+                let probes = Arc::new(AtomicUsize::new(0));
+                let make = |d: u32| {
+                    let mut row = vec![7; width];
+                    row[0] = i64::from(d);
+                    for &c in &locations {
+                        row[c] = (i64::from(d) << 32) | 1;
+                    }
+                    // Missing keyword/owner/ref are valid sentinel lookups in every file.
+                    if let Some(&c) = locations.last() {
+                        row[c] = -1;
+                    }
+                    Arc::new(Counted {
+                        row,
+                        probes: probes.clone(),
+                    }) as Arc<dyn Source>
+                };
+                let family = Family::empty(name, make(0));
+                let updates = (1..=count).map(|d| (d, Some(make(d)))).collect::<Vec<_>>();
+                let family = family.changed(&updates, &mut 0).unwrap();
+                for &c in &locations {
+                    assert_eq!(
+                        family.estimated_matches(c, false),
+                        1,
+                        "{name}[{c}] estimate"
+                    );
+                    probes.store(0, Ordering::Relaxed);
+                    let rows = family.lookup(c, &[(5i64 << 32) | 1]).unwrap();
+                    assert_eq!(
+                        probes.load(Ordering::Relaxed),
+                        1,
+                        "{name}[{c}], {count} files"
+                    );
+                    assert!(rows.iter().all(|&r| family.value(r, 0) == 5));
+                    probes.store(0, Ordering::Relaxed);
+                    let rows = family
+                        .range_lookup(c, Some((5i64 << 32, true)), Some(((6i64 << 32) - 1, true)))
+                        .unwrap();
+                    assert_eq!(probes.load(Ordering::Relaxed), 1, "{name}[{c}] range");
+                    assert!(rows.iter().all(|&r| family.value(r, 0) == 5));
+                }
+                let sentinel = *locations.last().unwrap();
+                probes.store(0, Ordering::Relaxed);
+                assert_eq!(
+                    family.lookup(sentinel, &[-1]).unwrap().len(),
+                    count as usize
+                );
+                assert_eq!(probes.load(Ordering::Relaxed), count as usize);
+                // Document keys and node ids select the same shard through different encodings.
+                probes.store(0, Ordering::Relaxed);
+                assert_eq!(family.lookup(0, &[5]).unwrap().len(), 1);
+                assert_eq!(probes.load(Ordering::Relaxed), 1);
             }
         }
     }

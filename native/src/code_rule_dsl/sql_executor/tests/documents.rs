@@ -137,7 +137,7 @@ fn native_lazy_tree_lookups_work_across_repeated_edits() {
 fn native_shards_match_the_original_batch_and_both_probe_directions() {
     let (_dir, mut e) = executor();
     let input = snapshot(&[
-        ("a.py", "def a(x):\n    return x + 1\n"),
+        ("a.py", "def a(x):\n    return service.run(x, flag=x)\nother(2)\n"),
         ("b.py", "b = 1\n"),
     ]);
     e.bind_snapshot(input.clone()).unwrap();

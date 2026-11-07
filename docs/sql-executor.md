@@ -176,19 +176,28 @@ Per-context contributions and head support counts preserve outputs with alternat
 Actual output deltas continue through later strata and dependent programs.
 
 The retained path supports scalar `count`, `sum`, `min`, and `max` over one relation, including global aggregates and empty groups.
-Correlated subqueries require equality between inner and outer columns. Constant filters and repeated inner variables also work.
+Correlated subqueries require equality between inner and outer expressions. Constant filters and repeated inner variables also work.
 Positive rule bodies can join several relations. Reducers can read base inputs or completed derived relations.
 
-Lattice joins, tree walks, recursive aggregate rules, and unsupported subqueries refresh their affected strata through the shared wave kernel.
-Unsupported cases include string aggregates, computed correlation keys, and correlations that depend on another aggregate result.
+Computed equality correlations use retained group keys and expression indexes over their outer contexts.
+Nonrecursive lattice outputs retain candidate multiplicities and fold only changed keys.
+This includes flat, min, max, and registered deterministic joins. Retractions can restore a concrete value from top.
+Min/max folds use indexed extrema. A registered join can scan all candidates at an affected key.
+
+Nonrecursive rules with generated tree walks retain their seed, walk, and result relations.
+Their fact changes use overdelete/rederive through indexed SQL relations. AST matching remains native.
+Walks with scalar subqueries or negation inside their generated blocks use the refresh fallback.
+Recursive lattice rules, recursive aggregate rules, and unsupported subqueries also refresh their affected strata.
+Other unsupported cases include string aggregates and correlations that depend on another aggregate result.
 A relation with a constant fact and a nonmonotone rule also uses this fallback.
 The compiler selects eligibility from the checked query tree. It does not parse rendered SQL.
 
 Each program report includes `outputs`, `positive_waves`, `overdelete_waves`, `refreshed_strata`, and `migrated_views`.
-`incremental_strata` lists relations maintained through retained reducers.
-`reducer_groups` counts processed reducer groups. `context_rows` counts rule contexts reconsidered by this path.
+`incremental_strata` lists relations maintained through retained reducers or candidate lattice folds.
+Positive tree walks use `positive_waves` and `overdelete_waves`.
+`reducer_groups` counts processed reducer groups and lattice keys. `context_rows` counts rule contexts reconsidered by this path.
 The batch report includes `inserted_facts`, `deleted_facts`, `migrated_inputs`, and `programs`.
-`initializations` lists `{program, relations}` entries for newly initialized support state, including conservative downstream initialization.
+`initializations` lists `{program, relations}` entries for newly initialized reducer or walk state, including conservative downstream initialization.
 A no-op batch returns no program reports.
 
 The first change copies each changed binding into an indexed mutable fact source.

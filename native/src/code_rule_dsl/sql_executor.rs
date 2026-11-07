@@ -21,6 +21,7 @@ mod live;
 mod maintenance;
 mod overlay;
 mod reductions;
+mod walks;
 mod updates;
 use super::logic::sql::lattices;
 use super::logic::sql::program;
