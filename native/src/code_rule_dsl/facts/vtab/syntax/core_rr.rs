@@ -425,6 +425,7 @@ pub(super) fn js_number(t: &str) -> Option<String> {
 }
 
 /// Decoded parts and their source byte offsets, relative to the part's literal token.
+#[cfg(test)]
 pub(super) fn str_parts_with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
     super::python_parts::with_offsets(parts)
 }
@@ -433,6 +434,7 @@ pub(super) fn str_parts_with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(Strin
 /// `concatenated_string`'s parts `parts`, each with its node): plain runs join across adjacent literals; an
 /// f-string's fields split them; a format spec's literal runs are pieces of their own (`spec` 1). Bytes and
 /// t-strings give none. Returns (v, at, spec) per piece, in order.
+#[cfg(test)]
 pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
     super::python_parts::with_offsets(parts).into_iter().map(|(v, n, spec, _)| (v, n, spec)).collect()
 }
@@ -557,13 +559,8 @@ impl CoreRows {
                 && (wants_parts || wants_part_starts || wants_words)
                 && (kind == "concatenated_string" || kind == "string" && f.parent(id).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
             {
-                let parts: Vec<(i64, &str)> = if kind == "string" {
-                    vec![(n, text)]
-                } else {
-                    p.children(local).filter(|&c| dialect.name(f, p.core[c as usize]) == "string").map(|c| (p.global(c), f.text(p.core[c as usize]))).collect()
-                };
                 // A word-only reader also gets coordinates from this pass. It never interns full values.
-                let word_parts = if wants_words { super::python_parts::words(&parts) } else { Vec::new() };
+                let word_parts = if wants_words { super::python_parts::from_tape(p, dialect, local, true) } else { Vec::new() };
                 if wants_words {
                     for (i, (v, at, spec, _)) in word_parts.iter().enumerate() {
                         for word in v.split(|c: char| !crate::code_rule_dsl::value::python::words::is_word(u32::from(c))).filter(|s| !s.is_empty()) {
@@ -571,7 +568,7 @@ impl CoreRows {
                         }
                     }
                 }
-                let position_parts = if wants_parts || wants_part_starts && !wants_words { str_parts_with_offsets(&parts) }
+                let position_parts = if wants_parts || wants_part_starts && !wants_words { super::python_parts::from_tape(p, dialect, local, false) }
                     else if wants_part_starts { word_parts } else { Vec::new() };
                 for (i, (v, at, spec, offset)) in position_parts.into_iter().enumerate() {
                     if wants_parts {
