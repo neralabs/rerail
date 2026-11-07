@@ -610,12 +610,10 @@ tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), base_open(b).
 tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), extb(e), !builtin_ref(e, "object").
 .decl type_miss(n: node, u: symbol)
 type_miss(n, u) :- type_first(n, t0), tsub(t0, u), type_of(n, t), !tsub(t, u).
-// type_first(n, t): n's first type in symbol order. Every type of a proven n is a subtype of u, its first among
-// them, so u's candidates are the first type's supertypes alone.
+// type_first(n, t): one type of n, the least by symbol atom (the run's interning, not the text: any one will do).
+// Every type of a proven n is a subtype of u, this one among them, so u's candidates are its supertypes alone.
 .decl type_first(n: node, t: symbol)
-type_first(n, t) :- type_of(n, t), !type_later(n, t).
-.decl type_later(n: node, t: symbol)
-type_later(n, t) :- type_of(n, t), type_of(n, t2), t2 < t.
+type_first(n, t) :- type_of(n, _), t = min t2 : { type_of(n, t2) }.
 .decl proven_type(n: node, u: symbol)
 proven_type(n, u) :- type_first(n, t), tsub(t, u), !type_open(n), !type_miss(n, u).
 .decl possible_type(n: node, u: symbol)
