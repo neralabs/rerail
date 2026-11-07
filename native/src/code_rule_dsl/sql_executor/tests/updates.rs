@@ -155,7 +155,7 @@ fn projections_keep_alternate_support_and_aggregates_negation_and_lattices_refre
 }
 
 #[test]
-fn failed_updates_roll_back_facts_projection_migration_and_outputs_and_can_retry() {
+fn failed_updates_roll_back_facts_prepared_projection_tables_and_outputs_and_can_retry() {
     let (_dir, mut e) = executor();
     edge(&mut e, json!([[1, 2], [2, 3]]));
     e.run(CLOSURE.into(), "python".into(), None).unwrap();
@@ -163,7 +163,7 @@ fn failed_updates_roll_back_facts_projection_migration_and_outputs_and_can_retry
     let old_ends = rows(&e, "SELECT * FROM ends ORDER BY c0");
     assert_eq!(
         rows(&e, "SELECT type FROM temp.sqlite_schema WHERE name='ends'"),
-        json!([["view"]])
+        json!([["table"]])
     );
     let old = reachable(&e);
     e.set_limits(json!({"max_steps":100}).to_string()).unwrap();
@@ -176,7 +176,7 @@ fn failed_updates_roll_back_facts_projection_migration_and_outputs_and_can_retry
     assert_eq!(rows(&e, "SELECT * FROM ends ORDER BY c0"), old_ends);
     assert_eq!(
         rows(&e, "SELECT type FROM temp.sqlite_schema WHERE name='ends'"),
-        json!([["view"]])
+        json!([["table"]])
     );
     assert_eq!(
         rows(&e, "SELECT * FROM edge ORDER BY src"),
@@ -193,7 +193,7 @@ fn failed_updates_roll_back_facts_projection_migration_and_outputs_and_can_retry
     assert_eq!(rows(&e, "SELECT * FROM ends ORDER BY c0"), old_ends);
     assert_eq!(
         rows(&e, "SELECT type FROM temp.sqlite_schema WHERE name='ends'"),
-        json!([["view"]])
+        json!([["table"]])
     );
     assert_eq!(
         rows(&e, "SELECT * FROM edge ORDER BY src"),

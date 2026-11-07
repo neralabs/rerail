@@ -1,13 +1,106 @@
 use super::*;
 
-#[derive(Default, Debug)]
-struct SqlWork {
-    vm: std::cell::Cell<u64>,
-    scans: std::cell::Cell<u64>,
-    data_scans: std::cell::Cell<u64>,
-    sql: std::cell::RefCell<BTreeMap<String, (u64, u64)>>,
+#[test]
+fn walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs() {
+    let (_d, mut e) = executor();
+    let files = json!({"files":[{"path":"a.py","language":"python","source":"def first():\n    work()\ndef second():\n    other()\n"}]}).to_string();
+    e.bind_snapshot(files.clone()).unwrap();
+    let p = ".decl node(d:number,n:node,k:symbol,s:number,e:number)\n.decl tape(n:node,p:node,s:number,d:number)\n.decl field(p:node,f:symbol,c:node)\n.decl name(n:node,s:symbol)\n.decl doc(d:number,p:symbol,m:symbol)\n.decl blocked(n:node)\n.decl marks(n:node,v:number)\n.input node,tape,field,name,doc,blocked,marks\n.decl scope(k:symbol)\nscope(\"function_definition\").\n.decl owns(n:node,o:symbol,c:number)\nowns(n,o,c) :- node(_,n,\"call\",_,_), !blocked(n), unused = min v : {marks(n,v)}, denominator = count : {marks(n,_)}, quotient = 1 / denominator, seed = count : {field(n,_,_)}, seed > 0, nearest(n,a,scope), field(a,\"name\",f), name(f,o), !blocked(a), c = count : {field(a,_,_)}.\n.output owns\n";
+    bind(&mut e, "blocked", &["n"], json!([]));
+    bind(&mut e, "marks", &["n", "v"], json!([]));
+    e.run(p.into(), "python".into(), None).unwrap();
+    assert!(
+        e.executions[0]
+            .emitted
+            .queries
+            .iter()
+            .flatten()
+            .all(|q| q.ctes.is_empty())
+    );
+    let calls = rows(
+        &e,
+        "SELECT n FROM node WHERE kind_name('python',kind)='call' ORDER BY n",
+    );
+    let functions = rows(
+        &e,
+        "SELECT n FROM node WHERE kind_name('python',kind)='function_definition' ORDER BY n",
+    );
+    let call = calls[0][0].clone();
+    let function = functions[1][0].clone();
+    for values in [
+        json!([[call]]),
+        json!([[call], [function]]),
+        json!([[function]]),
+        json!([]),
+    ] {
+        let old = rows(&e, "SELECT * FROM blocked");
+        let patch = json!([{"name":"blocked","delete":old,"insert":values}]);
+        let report = change(&mut e, patch);
+        assert_eq!(
+            report["programs"][0]["refreshed_strata"],
+            json!([]),
+            "{report}"
+        );
+        let (_d, mut fresh) = executor();
+        fresh.bind_snapshot(files.clone()).unwrap();
+        bind(&mut fresh, "blocked", &["n"], values);
+        bind(&mut fresh, "marks", &["n", "v"], json!([]));
+        fresh.run(p.into(), "python".into(), None).unwrap();
+        let query = "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0";
+        assert_eq!(rows(&e, query), rows(&fresh, query));
+    }
+    let before = rows(&e, "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0");
+    assert_eq!(before.as_array().unwrap().len(), 2);
+    for patch in [
+        json!([{"name":"marks","insert":[[call,7]]}]),
+        json!([{"name":"marks","delete":[[call,7]]}]),
+    ] {
+        let report = change(&mut e, patch);
+        assert_eq!(
+            report["programs"][0]["refreshed_strata"],
+            json!([]),
+            "{report}"
+        );
+        assert_eq!(
+            rows(&e, "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0"),
+            before
+        );
+    }
+    e.connection().execute_batch("CREATE TEMP TRIGGER stop_walk BEFORE INSERT ON owns BEGIN SELECT RAISE(ABORT,'stop walk'); END").unwrap();
+    let patch=json!({"upsert":[{"path":"a.py","language":"python","source":"def changed():\n    work()\n"}]}).to_string();
+    assert!(
+        e.apply_file_changes(patch.clone(), None)
+            .unwrap_err()
+            .reason
+            .contains("stop walk")
+    );
+    assert_eq!(
+        rows(&e, "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0"),
+        before
+    );
+    e.connection()
+        .execute_batch("DROP TRIGGER stop_walk")
+        .unwrap();
+    let report: Value = serde_json::from_str(&e.apply_file_changes(patch, None).unwrap()).unwrap();
+    assert_eq!(
+        report["programs"][0]["refreshed_strata"],
+        json!([]),
+        "{report}"
+    );
+    assert_eq!(
+        rows(&e, "SELECT sym_text(c1) FROM owns"),
+        json!([["changed"]])
+    );
 }
-fn profile<T>(
+
+#[derive(Default, Debug)]
+pub(super) struct SqlWork {
+    pub(super) vm: std::cell::Cell<u64>,
+    scans: std::cell::Cell<u64>,
+    pub(super) data_scans: std::cell::Cell<u64>,
+    pub(super) sql: std::cell::RefCell<BTreeMap<String, (u64, u64)>>,
+}
+pub(super) fn profile<T>(
     e: &mut CodeRuleSqlExecutor,
     run: impl FnOnce(&mut CodeRuleSqlExecutor) -> T,
 ) -> (T, Box<SqlWork>) {
@@ -32,7 +125,7 @@ fn profile<T>(
         if !sql.starts_with("DROP ") && !sql.starts_with("CREATE ") {
             work.data_scans.set(work.data_scans.get() + scans);
         }
-        if scans > 100 && !sql.starts_with("DROP ") && !sql.starts_with("CREATE ") {
+        if (scans > 100 || vm > 10000) && !sql.starts_with("DROP ") && !sql.starts_with("CREATE ") {
             let mut rows = work.sql.borrow_mut();
             let row = rows.entry(sql.into_owned()).or_default();
             row.0 += vm;
@@ -51,6 +144,13 @@ fn profile<T>(
     let work = Box::<SqlWork>::default();
     let handle = unsafe { e.connection().handle() };
     unsafe {
+        // Cached statements can retain counters from preparation before tracing starts.
+        let mut stmt = ffi::sqlite3_next_stmt(handle, std::ptr::null_mut());
+        while !stmt.is_null() {
+            ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_VM_STEP, 1);
+            ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_FULLSCAN_STEP, 1);
+            stmt = ffi::sqlite3_next_stmt(handle, stmt);
+        }
         ffi::sqlite3_trace_v2(
             handle,
             ffi::SQLITE_TRACE_PROFILE as u32,
@@ -342,7 +442,8 @@ owns(p,o) :- node(d,n,"call",_,_), doc(d,p,_), nearest(n,a,scope), field(a,"name
             .queries
             .iter()
             .flatten()
-            .any(|q| !q.ctes.is_empty())
+            .all(|q| q.ctes.is_empty()),
+        "walks are prepared during run"
     );
     for (edit, text) in [
         Some("def changed():\n    work()\n"),

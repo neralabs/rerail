@@ -175,38 +175,54 @@ Negation updates its output only when the matching count crosses zero.
 Per-context contributions and head support counts preserve outputs with alternate derivations or multiple rules.
 Actual output deltas continue through later strata and dependent programs.
 
-The retained path supports scalar `count`, `sum`, `min`, and `max` over one relation, including global aggregates and empty groups.
+The retained path supports scalar `count`, `sum`, `min`, `max`, and ordered string `join` over one relation, including global aggregates and empty groups.
+String joins retain source tuple multiplicities. They preserve text ordering, duplicate elimination, and the empty string default.
+An edit rebuilds the changed string group; it does not rebuild unrelated groups.
 Correlated subqueries require equality between inner and outer expressions. Constant filters and repeated inner variables also work.
 Positive rule bodies can join several relations. Reducers can read base inputs or completed derived relations.
 
 Computed equality correlations use retained group keys and expression indexes over their outer contexts.
+When a correlation depends on an earlier aggregate, a separate dependency table indexes its current key.
+Changes probe the old dependency index and update it for dirty contexts before evaluating new contributions.
 Nonrecursive lattice outputs retain candidate multiplicities and fold only changed keys.
 This includes flat, min, max, and registered deterministic joins. Retractions can restore a concrete value from top.
-Min/max folds use indexed extrema. A registered join can scan all candidates at an affected key.
+Min/max folds use indexed extrema. Registered joins use a persistent AVL summary tree for each key.
+A candidate support crossing zero changes only a logarithmic number of tree nodes.
+The registered merge must obey the lattice laws: associativity, commutativity, idempotence, and an absorbing top.
+The declared aggregate and merge must compute the same join.
 
 Nonrecursive rules with generated tree walks retain their seed, walk, and result relations.
 Their fact changes use overdelete/rederive through indexed SQL relations. AST matching remains native.
-Walks with scalar subqueries or negation inside their generated blocks use the refresh fallback.
-Recursive lattice rules, recursive aggregate rules, and unsupported subqueries also refresh their affected strata.
-Other unsupported cases include string aggregates and correlations that depend on another aggregate result.
-A relation with a constant fact and a nonmonotone rule also uses this fallback.
+Walk seeds and outputs can contain supported scalar subqueries and negation.
+The lifted relations use separate dependency components, so reducers complete before their recursive walk consumers.
+Nullable values carried through a walk use validity columns, including empty min/max results.
+Recursive lattice and aggregate components can retain a proven independent partition key.
+Every recursive read, including aggregate reads, must stay in its head's partition.
+Changes discover affected keys from old and new witnesses, clear those partitions and their widening counters, and rederive them from bottom.
+The wave kernel keeps its original step order and delta variants. This removes unsupported cyclic support without touching unrelated partitions.
+The key can occupy different column positions in different relations. Probe indexes are prepared during the initial run.
+Components without this proof and unsupported subqueries still refresh their affected strata.
+Constant fact steps use immutable private tables and checked queries, so they share support maintenance with other rules.
 The compiler selects eligibility from the checked query tree. It does not parse rendered SQL.
 
 Each program report includes `outputs`, `positive_waves`, `overdelete_waves`, `refreshed_strata`, and `migrated_views`.
 `incremental_strata` lists relations maintained through retained reducers or candidate lattice folds.
 Positive tree walks use `positive_waves` and `overdelete_waves`.
+`recursive_partitions` counts partitions rederived across recursive components.
 `reducer_groups` counts processed reducer groups and lattice keys. `context_rows` counts rule contexts reconsidered by this path.
 The batch report includes `inserted_facts`, `deleted_facts`, `migrated_inputs`, and `programs`.
-`initializations` lists `{program, relations}` entries for newly initialized reducer or walk state, including conservative downstream initialization.
+`run()` reports `preparation`, with initialized relation names, materialized projection count, constant tables, and scratch tables created.
+Change reports retain `initializations` and `migrated_inputs` as empty compatibility fields; `migrated_views` is zero.
+`scratch_tables_created` reports new scratch schemas required by the operation.
 A no-op batch returns no program reports.
 
-The first change copies each changed binding into an indexed mutable fact source.
-Projection views in potentially affected programs become retained tables so the engine can compare their previous values.
-The first change that can affect a relation initializes its eligible reducer groups, rule contexts, and output support against the old facts.
-Unrelated aggregates keep their previous results without building support state.
-These one-time migrations cost time and memory proportional to inputs, distinct values, and positive body combinations.
+`bindRelation()` builds the mutable fact source and its indexes. Initial execution materializes projection views and prepares retained support.
+These costs remain proportional to input size, distinct values, and positive body combinations, and occur before the first edit.
 A large join can require many retained contexts. Min/max state and related reducer expressions currently keep separate value indexes.
-Later updates operate on changed candidates, affected contexts, and retained indexes.
+The engine collects statistics on materialized projections before preparing support joins.
+First edits and later updates operate on changed candidates, affected contexts, and retained indexes.
+Typed scratch tables remain empty between operations. An operation reuses existing tables and allocates more only when it exceeds the previous capacity.
+Rollback restores both scratch rows and pool metadata. Reset drops the pool. Peak schema capacity remains allocated until reset.
 A changed global aggregate can affect every outer context that reads it. That fan-out remains real work.
 Deleting a highly connected fact can still affect most of a result.
 Overdelete/rederive can also revisit many rows that ultimately keep alternate support.
@@ -322,7 +338,7 @@ The response includes `examined_files` and `metadata_nodes`.
 `examined_files` counts submitted file entries and delete paths. Complete snapshots count both old and submitted inventories.
 `metadata_nodes` counts rebuilt index nodes across document families and shared literal indexes.
 One-file patches rebuild a number of metadata nodes proportional to the index depth, rather than the number of documents.
-First-edit reducer initialization and projection migration can still read all participating facts.
+Initial program preparation can read all participating facts. File edits do not migrate projections or initialize retained support.
 Queries without a document constraint can probe several document shards to find their results.
 A retained program that reads containment can enumerate the changed file's containment pairs for its journal.
 JSON parsing and native fact preparation remain outside SQL instruction limits.
@@ -386,3 +402,15 @@ Compiler projection views receive private names when their public name already b
 An AST matcher atom must become native match facts before the rule enters this executor.
 The standalone session does not publish derivation records or replace the product audit path.
 The product path continues to use the same SQL scheduler with its provenance and incremental storage.
+
+## Recursive maintenance work in progress
+
+Recursive lattice and aggregate components can rederive independent partitions when checked queries prove an invariant partition key.
+Components without that proof still refresh their affected stratum.
+General incremental recursion needs retained iteration state so unsupported cycles cannot preserve their own results.
+
+An internal backend now provides versioned integer relations through writable temporary virtual tables.
+It can fork retained reducer state by sharing persistent indexes, then apply sparse SQL updates to each fork independently.
+This backend has storage and operator tests. The public session does not yet use it for recursive execution.
+Its native writes require an explicit rollback guard; SQL rollback alone is insufficient.
+See the [implementation plan](sql-unification-and-updates-plan.md#versioned-storage-for-iteration-state) for results, limitations, and remaining integration work.
