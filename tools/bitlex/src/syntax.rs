@@ -146,7 +146,9 @@ pub enum Stmt {
     /// tape writer's stack (decision 0049).
     /// `also`: the same nodes by another rule. A target uses one of `when` and `also`, and
     /// checks the other: a file where they differ goes to tree-sitter.
-    Node { kind: String, start: NodeStart, when: Option<Cond>, also: Option<Cond>, end: NodeEnd, level: Option<Nest> },
+    /// `matching`: how a target finds a close's open, `barrier` (the default) or `scan`
+    /// (docs/parser-generators/14-tier-2-design.md §4), for a `nested` node.
+    Node { kind: String, start: NodeStart, when: Option<Cond>, also: Option<Cond>, end: NodeEnd, level: Option<Nest>, matching: Option<String> },
     /// `field NAME of KIND … = E`, `supertype NAME of KIND … = E`: a fact of the code of a node
     /// of those kinds that starts at a bit of `E`; `= start of K`, where a node of kind `K` starts
     /// too; `when C`, where `C` holds at its start.
@@ -740,7 +742,8 @@ impl P {
                 } else {
                     None
                 };
-                Stmt::Node { kind, start, when, also, end, level }
+                let matching = if self.eat_kw("match") { Some(self.ident()?) } else { None };
+                Stmt::Node { kind, start, when, also, end, level, matching }
             }
             "check" => {
                 let kind = self.kind()?;
@@ -965,6 +968,7 @@ tree json {
   node y start s when before ':'
          also when after '{'
          end s
+  node z start s end s nested max 13 match scan
 }
 "#;
         let stmts = parse(src).expect("parses");
@@ -977,5 +981,6 @@ tree json {
         // Over three lines.
         let Stmt::Node { kind, also: Some(a), .. } = &body[3] else { panic!("y: {:?}", body[3]) };
         assert_eq!((kind.as_str(), a.after.clone()), ("y", vec!["{".to_owned()]));
+        assert!(matches!(&body[4], Stmt::Node { matching: Some(m), level: Some(Nest::Nested(Some(13))), .. } if m == "scan"));
     }
 }

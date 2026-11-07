@@ -408,15 +408,17 @@ fn block_tree_rows_round_trip() {
 /// digest.
 #[test]
 fn block_tree_rows_before_and_also_round_trip() {
-    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 node 0 kind 15 start first end last\n  block 0 node 1 kind 3 start k1 end k2 nested 13\n  block 0 node 2 kind 18 start %2 end with 2 before k4 also after k1 k9 parent k3\n  block 0 node 3 kind 0 start %0 end %0 leaf\n  block 0 keyword 3 7b 1\n  block 0 keyword 3 7d 2\n  0000 STOP 0\n";
+    let rows = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x7b\n  block 0 %1 = eq 0x7d\n  block 0 %2 = eq 0x22\n  block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 node 0 kind 15 start first end last\n  block 0 node 1 kind 3 start k1 end k2 nested 13 match scan\n  block 0 node 2 kind 18 start %2 end with 2 before k4 also after k1 k9 parent k3\n  block 0 node 3 kind 0 start %0 end %0 leaf\n  block 0 keyword 3 7b 1\n  block 0 keyword 3 7d 2\n  0000 STOP 0\n";
     let program = assemble(rows).unwrap_or_else(|e| panic!("{e}"));
     let block = &program.block_programs()[0];
     let pair = &block.nodes[2];
     assert_eq!((pair.before.clone(), pair.after.clone(), pair.parent), (vec![4], vec![], None));
     let also = pair.also.clone().expect("an also rule");
     assert_eq!((also.before, also.after, also.parent), (vec![], vec![1, 9], Some(3)));
+    assert!(block.nodes[1].match_scan);
     let text = round_trip(&program, None);
     assert!(text.contains("node 2 kind 18 start %2 end with 2 before k4 also after k1 k9 parent k3"), "{text}");
+    assert!(text.contains("nested 13 match scan"), "{text}");
     let plain = assemble(&rows.replace(" also after k1 k9 parent k3", "")).unwrap_or_else(|e| panic!("{e}"));
     assert_ne!(plain.plain_digest(), program.plain_digest(), "`also` is in the digest");
     assert!(!refused(&rows.replace("before k4 also", "before k4 also after k1 also")).is_empty(), "a second `also`");

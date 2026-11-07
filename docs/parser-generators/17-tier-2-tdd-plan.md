@@ -29,7 +29,8 @@ the monoids' sequential references and the carries'. None of them is an executor
 - **Entries go to device memory,** as structure of arrays: one array per 4-byte word, in
   candidate-major order. Pass A stages each tile's 32 entries in threadgroup memory, then
   writes each array's 32 words as one 128-byte segment.
-- **Threadgroup memory is a budget, well under 32 KB,** for occupancy: about 9 KB for JSON.
+- **Threadgroup memory is a budget, well under 32 KB,** for occupancy: 10,240 bytes, of which
+  JSON uses 10,112.
 - **No chunk limit.** A file of any size is one pass A, one scan, one pass B.
 
 ## 1. Bitlex and the block program (done)
@@ -90,21 +91,43 @@ rule with fewer passes, and the CPU the one that runs forward. `Dataflow::text` 
 pass), `json_cpu_dataflow_is_forward`. S1's summaries against tier 1's carries move to phase 6,
 where the generated code makes them.
 
-## 4. The plan
+## 4. The plan (done)
 
-**Builds:** `block_plan::Plan`: steps (`pass bytes`, `scan`, `pass tape`, `barrier`), the
-entry layout as arrays, the threadgroup budget; `rir` prints it; `verify` checks barriers,
-uniform loops and the budget. The CPU plan is one pass.
+**Built:** `block_plan::plan(program, target)` and `Plan`: the steps (loops over tiles or
+rounds, work, barriers), the entry's fields, the threadgroup stores and the budget.
+`Plan::text` prints it; `verify` checks the budget, uniform loops, and a barrier between every
+write and read of a shared store by different steps. The CPU plan is one pass.
 
-**Tests:**
+How the plan is made:
 
-- `json_gpu_plan_prints_as_designed`: the whole printed plan, as text.
-- `json_cpu_plan_is_one_pass`.
-- `plan_verifier_refuses_a_missing_barrier`: for each barrier of JSON's plan, removed.
-- `plan_verifier_refuses_simd_in_a_ragged_loop`.
-- `json_entry_is_13_arrays_of_words`: 52 bytes, candidate-major.
-- `json_threadgroup_memory_within_budget`: at most 9 KB.
-- `match_scan_has_no_mid_pass_barrier`.
+- **The entry's fields** are the later scans' values, in the dataflow's order, then the fixes,
+  the error and, matching by a scan, the open ords. A field wider than a word starts at one;
+  no narrower field crosses one. JSON's candidate is 3 words, its entry 13.
+- **Threadgroup stores:** staging and the exchange have two buffers, the opens one. While the
+  stores are over the budget, the largest double store loses a buffer.
+- **Staging** holds at most 16 words of each entry. A wider entry is staged and written out in
+  slices, which take the two buffers in turn.
+- **The exchange** is one step if all of an entry fits in 4 KB, both buffers. Otherwise it is
+  two: S1 first, then the candidate S1 picked.
+- **Barriers:** one where the verifier needs it. A loop gets a barrier at its body's end only if
+  the next iteration would rewrite a store still being read.
+
+**Changed from the plan above:**
+
+- **Double buffers are a parity.** Each write to a double store takes the other buffer, and a
+  read reads the one last written. The verifier tracks this, and so must the generated code.
+  It is what lets `match scan`'s eight staging slices share one 4 KB store.
+- **`match scan`'s exchange is single-buffered:** 121 words per entry is over the budget with
+  two. It needs no extra barrier: the next round's S1 barrier comes before its rewrite.
+- **The budget is 10,240 bytes,** not 9 KB. JSON uses 10,112.
+- **`rir` does not print plans yet.** The plan is derived from the program each time.
+- **The value names:** the backward key value prints as `r1 before ':'`.
+
+**Tests** (`block_plan_tests`): `json_gpu_plan_prints_as_designed` (the whole text, 7
+barriers), `json_cpu_plan_is_one_pass`, `plan_verifier_refuses_a_missing_barrier` (each of the
+7 removed), `plan_verifier_refuses_simd_in_a_ragged_loop`, `json_entry_is_13_arrays_of_words`
+(with the budget), `match_scan_has_no_mid_pass_barrier` (121 words, 2 scan barriers, none in
+pass B).
 
 ## 5. The CPU
 

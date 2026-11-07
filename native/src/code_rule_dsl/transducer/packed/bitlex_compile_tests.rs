@@ -497,6 +497,24 @@ pub(super) fn json_block_program() -> block::BlockProgram {
     json_program().block_programs()[0].clone()
 }
 
+/// A JSON-grammar Bitlex text's block program: `json.bitlex` with a change, say.
+pub(super) fn json_variant_block_program(src: &str) -> block::BlockProgram {
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
+        id => Some(id),
+    };
+    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let stmts = ::bitlex::syntax::parse(src).expect("parses");
+    let rows = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).rows;
+    rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).expect("assembles").block_programs()[0].clone()
+}
+
+/// `json.bitlex`'s text.
+pub(super) const JSON_BITLEX: &str = JSON;
+
 /// JSON's rows as doc 16 §3 has them: the pair found from the token after its string, with
 /// the rule from the left kept as its `also`. The one-byte kinds are the punctuation token's
 /// keywords, which tier 2 reads from the token's byte: they are not tier 1's outputs, so tier 1

@@ -318,6 +318,9 @@ pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram
         if let Some(d) = row.nested {
             let _ = write!(more, " nested {d}");
         }
+        if row.match_scan {
+            more.push_str(" match scan");
+        }
         if !row.after.is_empty() {
             let _ = write!(more, " after{}", kinds(&row.after));
         }
@@ -858,6 +861,7 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     parent: None,
                     before: Vec::new(),
                     also: None,
+                    match_scan: false,
                     check: None,
                 };
                 while let Ok(word) = line.word() {
@@ -882,6 +886,11 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                         "leaf" => row.leaf = true,
                         "extra" => row.extra = true,
                         "nested" => row.nested = Some(line.number("")?),
+                        "match" => match line.word()?.as_str() {
+                            "scan" => row.match_scan = true,
+                            "barrier" => {}
+                            other => return Err(format!("a close finds its open by `barrier` or `scan`, not `{other}`")),
+                        },
                         "after" => row.after = kind_list(line)?,
                         "before" => row.before = kind_list(line)?,
                         "parent" => row.parent = Some(line.number("k")?),

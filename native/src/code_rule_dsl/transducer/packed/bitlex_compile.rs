@@ -129,6 +129,7 @@ struct RowSpec {
     nested: Option<u32>,
     when: Option<Cond>,
     also: Option<Cond>,
+    scan: bool,
 }
 
 enum SpecStart {
@@ -225,6 +226,8 @@ struct TreeNode {
     end: NodeEnd,
     end_mask: Option<Val>,
     nested: Option<u32>,
+    /// `match scan`: closes find their opens by a scan, not a barrier.
+    scan: bool,
 }
 
 /// A code fact's test, its mask lowered.
@@ -314,12 +317,12 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 (NodeEnd::With(f), _) => SpecEnd::With(f.clone()),
                 _ => SpecEnd::Last,
             };
-            specs.push(RowSpec { kind: n.kind.clone(), start, end, leaf: false, nested: n.nested, when: n.when.clone(), also: n.also.clone() });
+            specs.push(RowSpec { kind: n.kind.clone(), start, end, leaf: false, nested: n.nested, when: n.when.clone(), also: n.also.clone(), scan: n.scan });
         }
         for (kind, start, last) in &token_rows {
             let s = push(&mut vals, format!("node {kind} start"), *start);
             let e = push(&mut vals, format!("node {kind} end"), *last);
-            specs.push(RowSpec { kind: kind.clone(), start: SpecStart::At(s), end: SpecEnd::At(e), leaf: true, nested: None, when: None, also: None });
+            specs.push(RowSpec { kind: kind.clone(), start: SpecStart::At(s), end: SpecEnd::At(e), leaf: true, nested: None, when: None, also: None, scan: false });
         }
 
         let tree_facts = std::mem::take(&mut low.tree.facts);
@@ -420,6 +423,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 parent,
                 before,
                 also,
+                match_scan: spec.scan,
                 check: None,
             });
         }
@@ -502,7 +506,15 @@ impl Lowering {
                     });
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
-                Stmt::Node { kind, start, when, also, end, level } => {
+                Stmt::Node { kind, start, when, also, end, level, matching } => {
+                    let scan = match matching.as_deref() {
+                        None | Some("barrier") => false,
+                        Some("scan") => true,
+                        Some(m) => return Err(format!("node {kind}: `match {m}`: a close finds its open by `barrier` or `scan`")),
+                    };
+                    if scan && !matches!(level, Some(Nest::Nested(_))) {
+                        return Err(format!("node {kind}: `match` is for a `nested` node"));
+                    }
                     let start = match start {
                         NodeStart::FirstToken => Ok(None),
                         // Another node kind's starts, resolved with the rows.
@@ -519,7 +531,7 @@ impl Lowering {
                         Some(Nest::Nested(max)) => Some(max.unwrap_or(63)),
                         Some(Nest::Level(_)) => return Err(format!("node {kind}: a count level is not compiled; nest it on the writer's stack (`nested`, decision 0049)")),
                     };
-                    self.tree.nodes.push(TreeNode { kind: kind.clone(), start, when: when.clone(), also: also.clone(), end: end.clone(), end_mask, nested });
+                    self.tree.nodes.push(TreeNode { kind: kind.clone(), start, when: when.clone(), also: also.clone(), end: end.clone(), end_mask, nested, scan });
                 }
                 Stmt::Fact { field, name, kinds, expr } => {
                     let fact = match expr {

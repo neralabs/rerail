@@ -304,6 +304,9 @@ pub(in crate::code_rule_dsl) struct NodeRow {
     /// The same nodes by another rule. A target uses one of the two and checks the other; a
     /// file where they differ goes to tree-sitter.
     pub(super) also: Option<RowCond>,
+    /// A `nested` row's closes find their opens by a scan over the entries, not by a barrier
+    /// in pass B (`match scan`; docs/parser-generators/14-tier-2-design.md §4).
+    pub(super) match_scan: bool,
     /// The built-in validator of the row's nodes of kind `.0` (`Validator`).
     pub(super) check: Option<(u16, Validator)>,
 }
