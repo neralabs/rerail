@@ -15,6 +15,30 @@ WASI filesystem in a Web Worker. No Node and no emscripten: clang, lld and wasi-
 `env.sh` joins Homebrew's libc and libc++ sysroots under `target/wasi-sysroot` and points cc-rs at clang.
 It also links that libc (newer than the copy Rust bundles) and libc++.
 
+## One build per language, without the Node addon
+
+A page needs one language's engine, not the addon's whole API:
+
+    cargo build --release -p rerail-engine --bin rerail-engine --target wasm32-wasip1 \
+      --no-default-features --features headless,lang-python
+
+- `headless` compiles `#[napi]` items as plain Rust (napi-derive `noop`): nothing registers the addon's API, so
+  the binary links only what `main` calls.
+- `lang-<id>` builds a registry language (`languages/<id>.json`); all are on by default. A language left out keeps
+  its tables but has no grammar: no file is routed to it (`GrammarDialect::built`), nothing embeds it, and a
+  family with none of its languages built dispatches to no adapter, so neither its grammar nor its adapter is
+  linked. `logic` refuses a corpus of a language that is not built.
+
+Sizes (release, `wasm32-wasip1`, unstripped):
+
+| build                                   | module  | gzip -9 |
+|-----------------------------------------|---------|---------|
+| default features (addon API registered) | 44.5 MB |         |
+| `headless`, every language              | 29.4 MB |         |
+| `headless,lang-python`                  | 14.0 MB | 4.7 MB  |
+
+The Python build is about 2.7 MB of data (the Python grammar's 0.44 MB among it) and 9.9 MB of code.
+
 ## Run
 
     cargo build -p rerail-engine --bin rerail-engine --target wasm32-wasip1
@@ -41,7 +65,6 @@ library (`#include "python/…"`) runs too: mount `docs/rule-syntax/lib` and nam
   annotation ranges use bit 30 with 16-bit offsets (`scope::ANNOTATION_RANGE`). Enough for an explorer's
   files, not for a corpus.
 - **No file locks.** The content store's lease is always free (`atoms::try_lock`): one process.
-- **No Node addon.** napi-derive is `noop` on wasm: `#[napi]` items are plain Rust and register nothing, so the
-  linker keeps only what `main` reaches (44.5 MB → 29.4 MB release; code 23.4 → 10.6 MB).
+- **No Node addon** with `headless` (above): 44.5 MB → 29.4 MB release, code 23.4 → 10.6 MB.
 - **Left out:** `facts::ygraph`, an exploration tool that forks and reads macOS counters.
 - tree-sitter's `Language` is `Send` and `Sync` here too (`native/vendor/tree-sitter-0.27.1/PATCHES.md`).

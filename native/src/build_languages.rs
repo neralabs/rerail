@@ -170,6 +170,7 @@ pub(crate) fn generate(
     directory: &Path,
     test_directory: Option<&Path>,
     vendored: &[&str],
+    omitted: &[String],
     out: &Path,
 ) -> Vec<(String, Vec<u8>)> {
     let mut read = Vec::new();
@@ -202,7 +203,7 @@ pub(crate) fn generate(
         .collect::<Vec<_>>();
     std::fs::write(
         out.join("language_registry.rs"),
-        render(&entries, &test_only),
+        render_built(&entries, &test_only, omitted),
     )
     .expect("generated language registry is writable");
     read
@@ -515,6 +516,13 @@ fn pascal(name: &str) -> String {
 }
 
 fn render(entries: &[Entry], test_planned: &[String]) -> String {
+    render_built(entries, test_planned, &[])
+}
+
+/// The registry's code with the supported languages in `omitted` left out of this build (their `lang-<id>` feature
+/// off): their dialects keep their variants and tables, but have no grammar, report `built()` false, and no
+/// language embeds them.
+fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) -> String {
     let supported = entries
         .iter()
         .filter(|entry| entry.status == Status::Supported)
@@ -608,6 +616,7 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
             let embeds = entry
                 .embeds
                 .iter()
+                .filter(|embed| !omitted.contains(&embed.language))
                 .flat_map(|embed| {
                     entries
                         .iter()
@@ -663,9 +672,13 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
     out.push_str("    unsafe extern \"C\" {\n");
     let mut declared = BTreeSet::new();
     let mut arms = String::new();
-    for dialect in supported.iter().flat_map(|entry| &entry.dialects) {
+    let mut built = String::new();
+    for (entry, dialect) in supported.iter().flat_map(|entry| entry.dialects.iter().map(move |dialect| (entry, dialect))) {
         let text = dialect.grammar.as_deref().expect("validated");
+        let in_build = !omitted.contains(&entry.id);
+        let _ = writeln!(built, "            {} => {in_build},", variant(&dialect.label));
         let language = match parse_grammar(text).expect("validated grammar") {
+            _ if !in_build => "None".to_owned(),
             Grammar::Vendored(name) => {
                 let symbol = format!("tree_sitter_{}", name.replace('-', "_"));
                 if declared.insert(symbol.clone()) {
@@ -685,6 +698,9 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
     out.push_str("    }\n    match lang {\n");
     out.push_str(&arms);
     out.push_str("        #[cfg(test)]\n        _ => None,\n    }\n}\n\n");
+    out.push_str("impl GrammarDialect {\n    /// Whether this build parses the dialect: its language's `lang-<id>` feature is on. Files of a dialect\n    /// not built are routed to none, as a planned language's are.\n    pub(crate) const fn built(self) -> bool {\n        match self {\n");
+    out.push_str(&built);
+    out.push_str("            #[cfg(test)]\n            _ => false,\n        }\n    }\n}\n\n");
 
     out.push_str(
         "/// A code-rule language the registry marks supported: the `language` of a query, a define\n/// or a transform.\n",
@@ -879,8 +895,16 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
 
     out.push_str("/// Evaluates `$body` with `$a` the adapter of `$family` (`adapter`): one arm per registry family.\n");
     out.push_str("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n");
-    for (family, _, _) in &families {
+    for (family, _, ids) in &families {
         let family = pascal(family);
+        // A family whose every language this build leaves out reads no file: its adapter is never linked.
+        if ids.iter().all(|id| omitted.iter().any(|omitted| omitted == id)) {
+            let _ = writeln!(
+                out,
+                "            $crate::code_rule_dsl::language::Family::{family} => unreachable!(\"{family}: no language of this family is in this build\"),"
+            );
+            continue;
+        }
         let _ = writeln!(
             out,
             "            $crate::code_rule_dsl::language::Family::{family} => {{\n                type $a = $crate::code_rule_dsl::language::adapter::{family};\n                $body\n            }}"
@@ -939,6 +963,7 @@ mod tests {
                 &self.0.join("languages"),
                 self.1.then_some(test_directory.as_path()),
                 &["one"],
+                &[],
                 &self.0.join("out"),
             );
             std::fs::read_to_string(self.0.join("out/language_registry.rs")).expect("generated")
@@ -1076,6 +1101,26 @@ mod tests {
     }
 
     #[test]
+    fn a_language_left_out_of_the_build_keeps_its_tables_but_no_grammar() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue"];
+        let out = Registry::new("omitted", &[]);
+        generate(&root.join("../languages"), None, &vendored, &["php".to_owned(), "sql".to_owned()], &out.0.join("out"));
+        let generated = std::fs::read_to_string(out.0.join("out/language_registry.rs")).expect("generated");
+        // No grammar and no extern symbol for SQL, which is not built; Python keeps both.
+        assert!(generated.contains("        GrammarDialect::Sql => None,"));
+        assert!(!generated.contains("fn tree_sitter_sql()"));
+        assert!(generated.contains("fn tree_sitter_python()"));
+        assert!(generated.contains("            GrammarDialect::Sql => false,"));
+        assert!(generated.contains("            GrammarDialect::Python => true,"));
+        // PHP's family has no language in the build: its adapter is unreachable. Blade's still is.
+        assert!(generated.contains("Family::Php => unreachable!"));
+        assert!(!generated.contains("Family::Blade => unreachable!"));
+        // Nothing embeds SQL.
+        assert!(!generated.contains("GrammarDialect::Sql)"));
+    }
+
+    #[test]
     fn the_repository_registry_generates_the_engine_tables() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue"];
@@ -1087,6 +1132,7 @@ mod tests {
             &root.join("../languages"),
             None,
             &vendored,
+            &[],
             &out.0.join("out"),
         );
         let product =
@@ -1100,6 +1146,7 @@ mod tests {
             &root.join("../languages"),
             Some(&root.join("test-languages")),
             &vendored,
+            &[],
             &out.0.join("out"),
         );
         let tested =
@@ -1124,6 +1171,7 @@ mod tests {
                 &root.join("../languages"),
                 test_directory,
                 &["python", "sql", "typescript", "tsx", "javascript", "vue"],
+                &[],
                 &out.0.join("out"),
             )
         };

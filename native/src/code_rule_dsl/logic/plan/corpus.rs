@@ -524,6 +524,9 @@ pub(crate) fn run_with_options(
     }
     let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
     let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
+    if !dialect.built() {
+        return Err(Error::Plan(format!("{label} is not in this build (its `lang-{label}` feature is off)")));
+    }
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
     let path = out.join("store.sqlite");
     let cross_path = out.join("cross.sqlite");
