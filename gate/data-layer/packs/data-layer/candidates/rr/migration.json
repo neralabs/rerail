@@ -1338,6 +1338,13 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
+      "sha256": "369236e97f1e5abe7deb44069cf154df817b8312248ba318270cefdb9c82ac16",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_unresolved_forward_refs.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
       "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
       "origin": "authored",
@@ -1459,8 +1466,9 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-unresolved-forward-refs.json",
       "legacySha256": "084da92045c5621c0305bfaeee185abc331c46a6e1ad45de61e89ee3c382d231",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
+      "ruleSha256": "369236e97f1e5abe7deb44069cf154df817b8312248ba318270cefdb9c82ac16"
     },
     {
       "check": "classvar_check",

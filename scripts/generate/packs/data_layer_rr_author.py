@@ -148,6 +148,7 @@ def main():
     from data_layer_rr_error_handling import error_handling
     from data_layer_rr_backend_types import backend_type_strings
     from data_layer_rr_grammar_surface import serverplan_grammar_surface
+    from data_layer_rr_unresolved import unresolved_forward_refs
     from data_layer_rr_aliases import data_layer_compat_aliases
     generators = [('removed_compat_surfaces', removed), ('versioned_lifecycle_legacy_surfaces', lifecycle),
                   ('permission_error', permission_error),
@@ -170,6 +171,7 @@ def main():
                   ('error_handling', lambda s, t: error_handling(s, t, header)),
                   ('backend_type_strings', lambda s, t: backend_type_strings(s, t, header)),
                   ('serverplan_grammar_surface', lambda s, t: serverplan_grammar_surface(s, t, header)),
+                  ('unresolved_forward_refs', lambda s, t: unresolved_forward_refs(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     for check, generate in generators:
         entry = by_check[check]

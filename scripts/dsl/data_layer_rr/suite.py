@@ -47,6 +47,10 @@ ENTRIES = {
     'error_handling': ['scan_file_content'],
     'backend_type_strings': ['check_file', 'check_file_content', 'should_skip_file', 'find_python_files'],
     'serverplan_grammar_surface': ['scan_file', 'iter_python_files'],
+    'unresolved_forward_refs': ['analyze_file', 'AnnotationUsageFinder._is_field_annotation_access',
+        'AnnotationUsageFinder._is_safe_str_conversion', 'AnnotationUsageFinder._is_none_check',
+        'AnnotationUsageFinder._is_isinstance_none_check', 'AnnotationUsageFinder._node_contains',
+        'AnnotationUsageFinder._is_using_resolved_hints', 'AnnotationUsageFinder._is_assignment_from_resolved'],
     'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
@@ -201,7 +205,7 @@ class Suite:
             from replay import result as diagnostic_result
             actual = diagnostic_result(dict(check=check), self.calls[-1]['diagnostics'])
         else:
-            actual = (normalize_two(check, result, root, files) if check in {'admin_async_purity', 'async_executor', 'dynamic_module_loading', 'classvar_check', 'type_safety_patterns', 'forwardref'}
+            actual = (normalize_two(check, result, root, files) if check in {'admin_async_purity', 'async_executor', 'dynamic_module_loading', 'classvar_check', 'type_safety_patterns', 'forwardref', 'unresolved_forward_refs'}
                       else normalize(check, entry, result, root, files))
         observation.update(expected=original['findings'], actual=actual, status='passed')
         compare(original['findings'], actual)
@@ -219,6 +223,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'unresolved_forward_refs':
+            from unresolved_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'serverplan_grammar_surface':
             from grammar_surface_port import scan
             return scan(self, entry, module, arguments)
@@ -507,6 +514,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'unresolved_forward_refs':
+                from unresolved_port import install
+                install(self, module)
             if check == 'serverplan_grammar_surface':
                 from grammar_surface_port import install
                 install(self, module)
@@ -553,7 +563,7 @@ class Suite:
                     'data_layer_facade_purity': {'cli_main', '_print_results'},
                     'backend_coupling': {'cli_main', 'get_project_root'},
                     'connection_caches': {'cli_main'}, 'backend_type_strings': {'cli_main'},
-                    'serverplan_grammar_surface': {'cli_main'}}
+                    'serverplan_grammar_surface': {'cli_main'}, 'unresolved_forward_refs': {'cli_main'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])
@@ -784,6 +794,7 @@ def main():
         collected=backend.collected, part=args.part, parts=args.parts, cases=backend.cases,
         calls=backend.calls, assertionTranslations=backend.translations,
         configurationBindings=getattr(backend, 'configuration_bindings', {}),
+        hostTransfers=getattr(backend, 'host_transfers', []),
         originalRecordingSha256=backend.baseline_sha, detectorObservations=backend.observations,
         pythonHashSeed=os.environ.get('PYTHONHASHSEED'),
         executionIsolation='One owned persistent cache per assertion shard; shared-cache concurrency is a separate failing engine contract',

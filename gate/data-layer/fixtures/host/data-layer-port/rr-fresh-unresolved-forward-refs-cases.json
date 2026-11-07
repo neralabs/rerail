@@ -1,0 +1,3122 @@
+{
+  "format": "rerail.rr-fresh-contract-cases/v1",
+  "cases": [
+    {
+      "id": "field_info-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field_info-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return get_args(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field_info-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return get_type_hints(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field_info-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field_info-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return issubclass(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field_info-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return TypeAdapter(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "FIELD_INFO-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(FIELD_INFO):\n    return get_origin(FIELD_INFO.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "FIELD_INFO-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(FIELD_INFO):\n    return get_args(FIELD_INFO.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "FIELD_INFO-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(FIELD_INFO):\n    return get_type_hints(FIELD_INFO.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "FIELD_INFO-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(FIELD_INFO):\n    return isinstance(FIELD_INFO.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "FIELD_INFO-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(FIELD_INFO):\n    return issubclass(FIELD_INFO.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "FIELD_INFO-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(FIELD_INFO):\n    return TypeAdapter(FIELD_INFO.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "some_field_info-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(some_field_info):\n    return get_origin(some_field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "some_field_info-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(some_field_info):\n    return get_args(some_field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "some_field_info-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(some_field_info):\n    return get_type_hints(some_field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "some_field_info-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(some_field_info):\n    return isinstance(some_field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "some_field_info-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(some_field_info):\n    return issubclass(some_field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "some_field_info-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(some_field_info):\n    return TypeAdapter(some_field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fk_info-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fk_info):\n    return get_origin(fk_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fk_info-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fk_info):\n    return get_args(fk_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fk_info-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fk_info):\n    return get_type_hints(fk_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fk_info-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fk_info):\n    return isinstance(fk_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fk_info-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fk_info):\n    return issubclass(fk_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fk_info-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fk_info):\n    return TypeAdapter(fk_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "f-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(f):\n    return get_origin(f.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "f-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(f):\n    return get_args(f.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "f-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(f):\n    return get_type_hints(f.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "f-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(f):\n    return isinstance(f.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "f-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(f):\n    return issubclass(f.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "f-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(f):\n    return TypeAdapter(f.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "F-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(F):\n    return get_origin(F.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "F-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(F):\n    return get_args(F.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "F-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(F):\n    return get_type_hints(F.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "F-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(F):\n    return isinstance(F.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "F-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(F):\n    return issubclass(F.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "F-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(F):\n    return TypeAdapter(F.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field):\n    return get_origin(field.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field):\n    return get_args(field.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field):\n    return get_type_hints(field.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field):\n    return isinstance(field.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field):\n    return issubclass(field.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "field-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field):\n    return TypeAdapter(field.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fi-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fi):\n    return get_origin(fi.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fi-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fi):\n    return get_args(fi.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fi-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fi):\n    return get_type_hints(fi.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fi-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fi):\n    return isinstance(fi.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fi-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fi):\n    return issubclass(fi.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fi-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(fi):\n    return TypeAdapter(fi.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-0-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_origin(M.model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-0-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_args(M.model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-0-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_type_hints(M.model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-0-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return isinstance(M.model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-0-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return issubclass(M.model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-0-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return TypeAdapter(M.model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-1-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_origin(model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-1-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_args(model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-1-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_type_hints(model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-1-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return isinstance(model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-1-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return issubclass(model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-1-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return TypeAdapter(model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-2-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_origin(M.other['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-2-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_args(M.other['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-2-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_type_hints(M.other['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-2-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return isinstance(M.other['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-2-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return issubclass(M.other['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-2-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return TypeAdapter(M.other['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-3-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_origin(M.model_fields[0].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-3-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_args(M.model_fields[0].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-3-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_type_hints(M.model_fields[0].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-3-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return isinstance(M.model_fields[0].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-3-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return issubclass(M.model_fields[0].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-3-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return TypeAdapter(M.model_fields[0].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-4-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_origin((M.model_fields)['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-4-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_args((M.model_fields)['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-4-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_type_hints((M.model_fields)['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-4-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return isinstance((M.model_fields)['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-4-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return issubclass((M.model_fields)['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-4-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return TypeAdapter((M.model_fields)['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-5-get_origin",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_origin(build().model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-5-get_args",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_args(build().model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-5-get_type_hints",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return get_type_hints(build().model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-5-isinstance",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return isinstance(build().model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-5-issubclass",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return issubclass(build().model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "subscript-5-TypeAdapter",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return TypeAdapter(build().model_fields['x'].annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-0-0",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-0-1",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is some_type\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-0-2",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is None\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-0-3",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is typing.SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-0-4",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is (str,int)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-0-5",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is 'X'\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-0-6",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is False\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-1-0",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is not SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-1-1",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is not some_type\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-1-2",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is not None\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-1-3",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is not typing.SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-1-4",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is not (str,int)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-1-5",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is not 'X'\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-1-6",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation is not False\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-2-0",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation == SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-2-1",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation == some_type\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-2-2",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation == None\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-2-3",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation == typing.SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-2-4",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation == (str,int)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-2-5",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation == 'X'\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-2-6",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation == False\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-3-0",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation != SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-3-1",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation != some_type\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-3-2",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation != None\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-3-3",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation != typing.SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-3-4",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation != (str,int)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-3-5",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation != 'X'\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-3-6",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation != False\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-4-0",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation < SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-4-1",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation < some_type\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-4-2",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation < None\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-4-3",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation < typing.SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-4-4",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation < (str,int)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-4-5",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation < 'X'\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-4-6",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation < False\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-5-0",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation in SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-5-1",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation in some_type\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-5-2",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation in None\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-5-3",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation in typing.SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-5-4",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation in (str,int)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-5-5",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation in 'X'\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "comparison-5-6",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return field_info.annotation in False\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-0",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, str)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-1",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, ForwardRef)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-2",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, TypeVar)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-3",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, type)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-4",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, (str, type))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-5",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, (type,))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-6",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, (typing.ForwardRef,))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-7",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, typing.ForwardRef)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-8",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, *[str])\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-9",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, ((str,),))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-10",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, (str,))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "detection-type-11",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return isinstance(field_info.annotation, (str, *others))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "module-context",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "async-context",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "async def check(field_info):\n    return get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "qualified-call",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return typing.get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "parenthesized-call",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(field_info):\n    return (get_origin)(((field_info.annotation)))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "keyword-argument",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(arg=field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "starred-argument",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(*(field_info.annotation,))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "safe-str",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "str(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "qualified-str",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "obj.str(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "reverse-is",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "SomeType is field_info.annotation\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "reverse-equality",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "SomeType == field_info.annotation\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "none-anywhere",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "field_info.annotation is SomeType == None\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "none-left",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "None == field_info.annotation is SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "first-is-wins",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "field_info.annotation == SomeType is lower\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "first-generic-is-wins",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "SomeType is field_info.annotation is Other\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "first-equality-wins",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "field_info.annotation == SomeType != Other\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "commented-comparison",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = (field_info.annotation\n    # comparator\n    is SomeType)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-receiver",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(outer.field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "nested-annotation",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(field_info.annotation.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "assignment-target",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "field_info.annotation = SomeType\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "attribute-chain-parent",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "field_info.annotation.method()\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "raw-trigger-absent",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(field_info.annotat\ud835\ude92on)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "raw-trigger-present",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "# .annotation\nget_origin(field_info.annotat\ud835\ude92on)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "nfkc-name",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(\ud835\ude8f.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "nfkc-function",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def \ud835\ude8check(field_info):\n    return get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "decorator-context",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "@deco(get_origin(field_info.annotation))\ndef check():\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "default-context",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(x=get_origin(field_info.annotation)):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "return-annotation-context",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check() -> get_origin(field_info.annotation):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "lambda-keeps-context",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    return lambda: get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "class-keeps-context",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    class Nested:\n        x = get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "known-fallback",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "resolved_hints.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "custom-unresolved",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "resolved-before",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    custom = get_type_hints(Model)\n    return custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "resolved-after",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    result = custom.get(name, get_origin(field_info.annotation))\n    custom = get_type_hints(Model)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "resolved-qualified",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    custom = typing.get_type_hints(Model)\n    return custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "nested-assignment-contributes",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    def inner():\n        custom = get_type_hints(Model)\n    return custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "outer-does-not-resolve-inner",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def outer():\n    custom = get_type_hints(Model)\n    def inner():\n        return custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "module-assignment-not-discovered",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "custom = get_type_hints(Model)\ncustom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "annotated-assignment-not-discovered",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    custom: dict = get_type_hints(Model)\n    return custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "tuple-assignment-not-discovered",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    custom, other = get_type_hints(Model)\n    return custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "walrus-not-discovered",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    (custom := get_type_hints(Model))\n    return custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "chained-assignment",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check():\n    other = custom = get_type_hints(Model)\n    return custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fallback-first-argument-not-safe",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "resolved_hints.get(get_origin(field_info.annotation), default)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fallback-keyword-not-safe",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "resolved_hints.get(name, default=get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "fallback-deep",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "resolved_hints.get(name, Box(TypeAdapter(field_info.annotation)))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "different-functions",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def first():\n    custom = get_type_hints(Model)\ndef second():\n    return custom.get(name, get_origin(field_info.annotation))\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "conditional-field-order",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(field_info.annotation) if TypeAdapter(f.annotation) else get_args(fk_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "two-same-line",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(field_info.annotation);get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "long-snippet",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(field_info.annotation) # paddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpaddingpadding\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "strip-unit-separator",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(field_info.annotation) # comment\u001f\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "logical-line-offset",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "# header\u001c\nget_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "syntax-error",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def check(:\n    get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "clean-text",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "# field_info.annotation\nx = \"get_origin(field_info.annotation)\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "non-python-suffix",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.txt",
+          "source": "get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.txt"
+        }
+      }
+    },
+    {
+      "id": "missing-file",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "missing.py"
+        }
+      }
+    },
+    {
+      "id": "directory-read",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "directory.py/child.txt",
+          "source": ""
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "directory.py"
+        }
+      }
+    },
+    {
+      "id": "invalid-utf8",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "input.py",
+          "bytesHex": "ff"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "relative-api-path",
+      "check": "unresolved_forward_refs",
+      "entry": "analyze_file",
+      "cwd": "fixture",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "get_origin(field_info.annotation)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "input.py",
+          "relative": true
+        }
+      }
+    }
+  ]
+}
