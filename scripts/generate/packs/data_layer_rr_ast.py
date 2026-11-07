@@ -92,7 +92,17 @@ fr_checked(c) :- fr_latest(c, a), fr_scope(c, f), fr_good(g), fr_scope(g, f), ea
 fr_bad(c, which, column, ordinal) :- fr_candidate(c, _, which), fr_latest(c, _), !fr_checked(c),
     docof(c, d), fr_file(d), fr_trigger(d), fr_api_gate(d), !syntax_error(d, _, _), col(c, column), visit_index(c, ordinal).
 .decl fr_file(d: number)
-fr_file(d) :- file_name(d, n), suffix(".py", n), !path_part(d, "tests"), !path_part(d, "test"), !fr_excluded(d).
+fr_file(d) :- file_name(d, n), suffix(".py", n), !path_part(d, "tests"), !path_part(d, "test"), !fr_excluded(d), fr_selected(d).
+.decl fr_selected(d: number)
+fr_selected(d) :- doc(d, _, _), option("entryPoint", _).
+fr_selected(d) :- doc(d, p, _), !option("entryPoint", _),
+    (prefix("api/", p) ; prefix("impl/", p) ; prefix("public/", p)), !fr_hidden(d).
+.decl fr_hidden(d: number)
+fr_hidden(d) :- path_part(d, ".git").
+fr_hidden(d) :- path_part(d, ".venv").
+fr_hidden(d) :- path_part(d, "venv").
+fr_hidden(d) :- path_part(d, "__pycache__").
+fr_hidden(d) :- path_part(d, "tmp").
 .decl fr_excluded(d: number)
 fr_excluded(d) :- doc(d, p, _), option_item("logicalPaths", i, p), option_item("originalPaths", i, original),
     option_item("excludePatterns", _, pattern), contains(pattern, original).

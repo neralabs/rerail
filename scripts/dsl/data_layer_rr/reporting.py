@@ -80,8 +80,10 @@ def run(args):
                     path=v.path.relative_to(root).as_posix() if v.path.is_absolute() else v.path.as_posix(),
                     line=v.line, message=v.message, severity=v.severity) for v in plugin.reporter(view)]
             program, phases = None, None
-        # The upstream reporter specifies this ordering.
-        actual.sort(key=lambda row: (row['path'], row['line'], row['message']))
+        # Keep the source reporter order. Adapt native rows to that interface's order.
+        if native:
+            last = {'type_safety_patterns': 'message', 'forwardref': 'code'}[case['check']]
+            actual.sort(key=lambda row: (row['path'], row['line'], row[last]))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)
         if native:
             row['metadata'] = metadata

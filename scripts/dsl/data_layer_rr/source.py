@@ -17,6 +17,8 @@ def main():
             super().pytest_configure()
             adapters = {(check, entry): kind for check, entry, kind in
                         (*recording.ADAPTERS, *recording.batch_two.ADAPTERS)}
+            adapters.update({('data_layer_compat_aliases', entry): 'facade_aliases'
+                for entry in ['lint_file', 'lint_file_content']})
             for module, entry, _ in self.originals:
                 check = module.__name__.removeprefix('scripts.lint_')
                 kind = adapters.get((check, entry))
@@ -31,7 +33,11 @@ def main():
                             return wrapped(*args, **kwargs)
                         first = len(self.events)
                         try:
-                            _, _, root = (recording.batch_two.snapshot(module, entry, args, kwargs)
+                            if kind == 'facade_aliases':
+                                from aliases_port import snapshot
+                                _, _, root = snapshot(module, entry, args, kwargs, self.item, self.root)
+                            else:
+                                _, _, root = (recording.batch_two.snapshot(module, entry, args, kwargs)
                                           if kind == 'batch_two' else recording.snapshot(module, kind, args, kwargs))
                         except Exception:
                             root = None

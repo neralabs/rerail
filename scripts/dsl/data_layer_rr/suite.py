@@ -39,6 +39,7 @@ ENTRIES = {
     'type_safety_patterns': ['check_file_for_patterns', 'check_file_content_for_patterns', 'check_function_signatures',
         'check_function_signature_content', 'normalize_path', 'is_allowlisted', 'find_python_files', '_issues_for_files', '_dedupe_issues'],
     'forwardref': ['lint_file', 'lint_file_content', 'lint_directory'],
+    'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
 
 
@@ -120,7 +121,10 @@ class Suite:
                            originalRetainedReason=original.get('retained_reason'))
         self.observations.append(observation)
         from data_layer_record import ADAPTERS, snapshot, normalize
-        if check == 'admin_async_purity':
+        if check == 'data_layer_compat_aliases':
+            from aliases_port import snapshot
+            files, scope, root = snapshot(module, entry, args, kwargs, self.item, self.source)
+        elif check == 'admin_async_purity':
             from data_layer_batch_two import normalize as normalize_two
             root = Path(args[0] if args else kwargs['project_root'])
             files = self.admin_files(module, root)
@@ -140,7 +144,10 @@ class Suite:
             return
         compare_inputs(original, files, scope)
         from data_layer_batch_two import normalize as normalize_two
-        if check == 'versioned_lifecycle_legacy_surfaces':
+        if check == 'data_layer_compat_aliases':
+            from data_layer_batch_five import normalize as normalize_five
+            actual = normalize_five(check, result, root, files)
+        elif check == 'versioned_lifecycle_legacy_surfaces':
             # This DTO has no message field. Use the engine's complete diagnostic instead of
             # calling the source Violation.render() from the legacy recording normalizer.
             from replay import result as diagnostic_result
@@ -164,6 +171,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'data_layer_compat_aliases':
+            from aliases_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'forwardref':
             path = Path(arguments.get('filepath', arguments.get('dirpath')))
             paths = list(path.rglob('*.py')) if entry == 'lint_directory' else [path]
@@ -417,6 +427,9 @@ class Suite:
         self.modules = {check: importlib.import_module('scripts.lint_' + check) for check in self.checks}
         originals = codes(self.modules)
         for check, module in self.modules.items():
+            if check == 'data_layer_compat_aliases':
+                # Passive list storage retains the original DTO assertion without source methods.
+                self.replace(module.LintResults, 'add', lambda result, violation: result.violations.append(violation))
             for entry in ENTRIES[check]:
                 original = getattr(module, entry)
                 signature = inspect.signature(original)
@@ -438,7 +451,8 @@ class Suite:
             host = {'no_source_inspection': {'cli_main'}, 'hasattr_async': {'cli_main', '_default_directories'},
                     'no_blanket_grammar_bypass': {'cli_main'}, 'admin_async_purity': {'cli_main'},
                     'async_executor': {'cli_main'}, 'dynamic_module_loading': {'cli_main'}, 'classvar_check': {'cli_main'},
-                    'type_safety_patterns': {'cli_main'}}
+                    'type_safety_patterns': {'cli_main'},
+                    'data_layer_compat_aliases': {'cli_main', '_print_results'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])

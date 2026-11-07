@@ -1042,9 +1042,16 @@
     },
     {
       "destination": "packs/data-layer/candidates/rr/forwardref.rr",
-      "sha256": "afe5cd7191943c1dccbfe7f3aa250b4381ab58701820749fe322a3d85d2d8138",
+      "sha256": "5a270def9a5c798919a65add13d66bef02846b4c1de2ca4337d8745bab782839",
       "origin": "authored",
       "upstreamPath": "scripts/lint_forwardref.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "packs/data-layer/candidates/rr/data-layer-compat-aliases.rr",
+      "sha256": "2e37bd3b806a31034fbe543e44ff4d72262dcd71f475c8d33e5c2b92eb1aabb6",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_data_layer_compat_aliases.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
@@ -1159,7 +1166,7 @@
       "legacySha256": "9bccddea5856ae1e41d834d68d7da4d96fdebe512c93c03bcef605a818f35333",
       "status": "draft",
       "rulePath": "packs/data-layer/candidates/rr/forwardref.rr",
-      "ruleSha256": "afe5cd7191943c1dccbfe7f3aa250b4381ab58701820749fe322a3d85d2d8138"
+      "ruleSha256": "5a270def9a5c798919a65add13d66bef02846b4c1de2ca4337d8745bab782839"
     },
     {
       "check": "unresolved_forward_refs",
@@ -1439,8 +1446,9 @@
       "batch": 5,
       "legacyPath": "packs/data-layer/candidates/rules/data-layer-data-layer-compat-aliases.json",
       "legacySha256": "821e77b0f992fe9397f7820a5e8391c4be607c0a0cd9326233793295f5d24eb4",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "packs/data-layer/candidates/rr/data-layer-compat-aliases.rr",
+      "ruleSha256": "2e37bd3b806a31034fbe543e44ff4d72262dcd71f475c8d33e5c2b92eb1aabb6"
     },
     {
       "check": "layer_violations",
