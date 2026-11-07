@@ -42,6 +42,7 @@ pub(crate) const WITHIN: &str = "within";
 /// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
 pub(crate) const SPAN_WITHIN: &str = "span_within";
 mod core_rr;
+mod python_order;
 use core_rr::Family;
 
 /// Which projection of the tree a batch serves.
@@ -242,6 +243,8 @@ struct Projected {
     fielded: Vec<u32>,
     /// `core.rr`'s lines and spans; `None` in T's shape.
     extra: Option<Box<Extra>>,
+    /// A demanded semantic visit column, shared by every consumer in this document batch.
+    python_visit: std::sync::OnceLock<Vec<u32>>,
 }
 
 /// A document's lines, and its spans past its nodes: from local id `len()`, its anonymous tokens (`tokens` of them,
@@ -266,6 +269,7 @@ impl Projected {
             depth: Vec::new(),
             fielded: Vec::new(),
             extra: None,
+            python_visit: Default::default(),
             facts: Arc::clone(&facts),
         };
         let mut next_idx: Vec<u32> = Vec::new();
@@ -392,7 +396,7 @@ enum View {
     /// `core_node(d, t, n)`: document `d`'s tape node `t` (the matcher's preorder id over every
     /// node) is node `n`. The wave's matches are tape nodes; this joins them to the rows above.
     Core,
-    /// `visit_index(n, i)`: the node's preorder index in its document, from 0 (`core.rr`).
+    /// `visit_index(n, i)`: semantic field order in core Python, preorder elsewhere.
     Visit,
     /// `ast_depth(n, k)`: the node's depth, the root's 0.
     Depth,
@@ -841,7 +845,14 @@ impl Source for Viewed {
             (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field[id])),
             (View::Tape, 2) => i64::from(p.size[l]),
             (View::Tape, 3) => i64::from(p.depth[l]),
-            (View::Visit, 1) => i64::from(local),
+            (View::Visit, 1) => {
+                let dialect = &self.batch.dialects[&p.tag];
+                if self.batch.shape == Shape::Core && dialect.family == Family::Python {
+                    i64::from(p.python_visit.get_or_init(|| python_order::ranks(p, dialect))[local as usize])
+                } else {
+                    i64::from(local)
+                }
+            },
             (View::Depth, 1) => i64::from(p.depth[l]),
             _ => p.global(local),
         }

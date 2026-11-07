@@ -813,9 +813,8 @@ impl Lowerer {
         ])
     }
 
-    /// `earlier(m, n)`: m comes before n in one document. A node is `d << 32 | its preorder index`, so that is
-    /// `docof(m, d), docof(n, d), m < n`: document order. CPython's visit order differs from it for a few
-    /// children (a def's decorators and return annotation after its body, `core.rr`); that is not followed yet.
+    /// Semantic visit order in one document. Node ids keep source geometry; the typed
+    /// visit column follows Python AST fields even where those fields reverse source order.
     fn earlier(&mut self, args: &[STerm], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
         let [m, n] = args else { return not_yet(format!("earlier/{}", args.len())) };
         if neg {
@@ -823,8 +822,15 @@ impl Lowerer {
         }
         let (m, n) = (self.term(m)?, self.term(n)?);
         let d = Term::Var(self.fresh("doc"));
+        let a = Term::Var(self.fresh("before"));
+        let b = Term::Var(self.fresh("after"));
+        self.prog.decls.entry("visit_index".to_owned()).or_insert_with(|| vec![("n".to_owned(), "node".to_owned()), ("i".to_owned(), "int".to_owned())]);
+        if !self.prog.inputs.iter().any(|r| r == "visit_index") {
+            self.prog.inputs.push("visit_index".to_owned());
+        }
         let docof = |x: &Term| Literal::Atom(Atom { rel: "docof".to_owned(), args: vec![x.clone(), d.clone()], neg: false, gated: false });
-        Ok(vec![vec![docof(&m), docof(&n), Literal::Cmp { l: m.clone(), op: "<", r: n.clone() }]])
+        let visit = |x: &Term, i: &Term| Literal::Atom(Atom { rel: "visit_index".to_owned(), args: vec![x.clone(), i.clone()], neg: false, gated: false });
+        Ok(vec![vec![docof(&m), docof(&n), visit(&m, &a), visit(&n, &b), Literal::Cmp { l: a, op: "<", r: b }]])
     }
 
     /// `match("(?<x>…)", s)`: s matches, and each named group binds the variable of its name to its text:
