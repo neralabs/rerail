@@ -52,6 +52,27 @@ Before(a) :- call_name(a, "body"), call_name(b, "decor"), earlier(a, b).
         "key1", "key2", "value1", "value2", "box", "positional", "keyword"]);
 }
 
+#[test]
+fn public_rr_report_preserves_compiled_policy_metadata() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-metadata");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("rule.rr");
+    std::fs::write(&rule, r#"
+.policy "contract:metadata" revision 7
+.mode block
+.scope include "impl/**/*.py"
+.violation Nothing(at: span) "nothing"
+Nothing(@place("input.py", 1)) :- 0 = 1.
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(report["metadata"]["policies"][0]["id"], "contract:metadata");
+    assert_eq!(report["metadata"]["policies"][0]["revision"], 7);
+    let settings = report["metadata"]["settings"].as_array().expect("compiled settings");
+    assert!(settings.contains(&serde_json::json!(["mode", "block"])));
+    assert!(settings.contains(&serde_json::json!(["scope", "include \"impl/**/*.py\""])));
+}
+
 /// A public rule's full diagnostic survives the production planner and transport. Distinct witnesses
 /// and tags at the same line do not collapse into the old five-column finding index.
 #[test]
