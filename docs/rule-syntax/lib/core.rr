@@ -202,6 +202,18 @@
 .decl tape_of(d: number, t: symbol)                      // document d places tape t; equal texts share a tape
 .decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
 .input sub_tape, guest, doc_role, doc_root, tape_of, host_node
+// What a rule sees (decision 0058): files, and guests in the run's language unless `.guests off`. A rule that
+// reaches a guest through one of the relations above sees it whatever its grammar, and names its kinds in that
+// grammar: guest(g, _, _, "sql"), node(g, n, "object_reference", _, _) is SQL's object_reference ("sql:…" also
+// names one). A guest made from a string is parsed from its str: the decoded text, placed through the escapes.
+// Tape operations, made on demand in the chunk that asks (value documents: no host, their own lines):
+//   t = @parse("sql", q)     parse_of(q, "sql", t)     q parsed as SQL; tape_of(d, t) gives its document
+//   x = @unparse(t)          unparse_of(t, x)          a guest's or a value's text
+//   t3 = @splice(t, n, t2)   splice_of(t, n, t2, t3)   t with node n's text replaced by t2's, parsed again
+.decl parse_of(x: symbol, g: symbol, t: symbol)
+.decl unparse_of(t: symbol, x: symbol)
+.decl splice_of(t: symbol, n: node, t2: symbol, t3: symbol)
+.input parse_of, unparse_of, splice_of
 // embed(d, at, "sql", "query"): a library declares that the code at node `at` of document d is a guest of that
 // grammar and role (`.guests off` leaves these out). embed_value(d, at, g, role, text) for a computed text,
 // which stands at `at`. Rules derive them; the engine makes the guests.
@@ -491,7 +503,7 @@
 //   embed(at, grammar, role)      a library rule that declares a guest (embeds of embeds up to depth 4)
 // parsed(s, g, root) becomes a view over guest and root, and `.scope embedded false` keeps a policy to primary
 // documents. A tape may also become a value: `@parse(grammar, text)` and, for fixes, `@splice` and `@unparse`.
-// None of this is built yet.
+// Built as decisions 0055 and 0058 (the guests section above); `.guests off` is the `.scope` here.
 
 // ---- edits (native applier) -----------------------------------------------------------------------------------
 // Addition 4. A fix is a set of edits. Rules derive edits like any other rows: a rule ending in `=> e1, e2`
@@ -545,8 +557,9 @@
 // .on syntax_error report CODE [at line 1]    also report each syntax error as a finding. Either way the document
 //                                              is withheld (no facts) and its outcome is Unknown(parse).
 // .on input_error report CODE                 a repository input that is missing or malformed is a finding.
-// .guests on | off                            whether libraries' embeds are made (on by default); a rule's own
-//                                              parsed or sub_tape still asks for its guests.
+// .guests on | off                            whether the run language's guests are shown to rules that do not
+//                                              reach them through a guest relation (on by default); embeds are
+//                                              made either way (decision 0058).
 // .on guest_error [GRAMMAR] skip | partial [warn | report CODE]
 //                                              a guest that does not parse: skip (the default) has no nodes;
 //                                              partial keeps the tree the parser recovered. warn or report also

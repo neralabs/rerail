@@ -26,7 +26,7 @@ pub(in crate::code_rule_dsl) mod match_all;
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, register_symbols};
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
     pub(in crate::code_rule_dsl) use super::setfix::{close, columns_source, derived, live, materialize, open, reprobe, run, step_counts, table_source};
@@ -129,7 +129,7 @@ pub(in crate::code_rule_dsl) fn declare(name: &str, lattice: Arc<dyn Lattice>) {
     lattices.push((name.to_owned(), lattice));
 }
 
-fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
+pub(in crate::code_rule_dsl) fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
     LATTICES.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l))
         .ok_or_else(|| user_err(format!("no lattice named {name:?}")))
 }

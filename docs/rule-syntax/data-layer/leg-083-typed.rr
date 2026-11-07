@@ -5,7 +5,7 @@
 // A pathlib path resolving itself, or a lookup such as `catalog.resolve(ref)`, is not one
 // (data-layer/upstream/LEG-083.md: all 18 findings at the 2026-10-18 commit are such calls).
 // sketches/transitive-eager.rr's LEG_083_SOUND tells them apart by guessing which names hold a path. This check
-// asks the receiver's type instead, from the Python typing program (python/calls.rr):
+// asks the receiver's type instead, from the Python typing program (python/types.rr):
 //
 //     path = Path(source).resolve()                 # a pathlib path: not a lazy result, not counted
 //     rows = txn.select_one_lazy(User, k).resolve() # select_one_lazy is declared `-> LazyResult[T | None]`: counted
@@ -17,7 +17,9 @@
 //
 // Interface: LEG_083_TYPED(f), lazy_terminal(c), terminal_unknown(c), lazy_class(t).
 #include "python/calls.rr"
-// attr_of comes from python/names; callee, call_arg, owner and calls from python/calls.
+#include "python/types.rr"
+// attr_of comes from python/names; callee, call_arg, owner and calls from python/calls; possible_type and
+// possible_open from python/types.
 
 // lazy_class(t): the lazy result classes, by qualified name. A subclass counts (`possible_type` is up to subclassing).
 .decl lazy_class(t: symbol)

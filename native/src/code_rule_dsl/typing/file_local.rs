@@ -222,17 +222,20 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
     split_located(prog).0
 }
 
-/// The document column of a base relation, if it has one.
-fn document_column(relation: &str) -> Option<usize> {
+/// A base relation's document column, including raw text views.
+pub(crate) fn document_column(relation: &str) -> Option<usize> {
     match relation {
         "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" |
         "source" | "src_line" | "split_line" | "lf_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
-        | "doc_role" | "doc_root" | "tape_of" | "guest" => Some(0),
+        | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
         "docof" => Some(1),
         _ => None,
     }
 }
+
+/// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).
+const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
 
 /// [`split`], with each derived relation's location columns: those every rule fills from a location (a node, or a
 /// document of `node`, `doc`, …), and the same-document columns of each file-local or base relation: its location
@@ -336,7 +339,9 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
                     Literal::Cmp { .. } => continue,
                 };
                 let constant = !derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel);
-                if constant || test_relation(&atom.rel) || filters.contains(&atom.rel) || filters.contains(&rule.head.rel) {
+                // A tape operation's rows (decision 0058 §4) are made in the chunk that asked: they place nothing.
+                let chunk_value = !derived.contains(atom.rel.as_str()) && CHUNK_VALUES.contains(&atom.rel.as_str());
+                if constant || chunk_value || test_relation(&atom.rel) || filters.contains(&atom.rel) || filters.contains(&rule.head.rel) {
                     continue;
                 }
                 if derived.contains(atom.rel.as_str()) && !local.contains(&atom.rel) {

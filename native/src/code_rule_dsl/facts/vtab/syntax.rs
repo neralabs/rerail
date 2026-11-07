@@ -43,6 +43,7 @@ pub(crate) const WITHIN: &str = "within";
 /// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
 pub(crate) const SPAN_WITHIN: &str = "span_within";
 mod core_rr;
+pub(crate) mod normalized;
 mod python_order;
 mod python_syntax;
 mod python_parts;
@@ -165,6 +166,12 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BT
 /// `guest_policy("library", "on" | "off")`, `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
 pub(crate) const GUEST_POLICY: &str = "guest_policy";
 
+/// The first guest document's key: files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), guests in the run's
+/// language `GUEST_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
+/// (decision 0058 §1: what a rule sees is a bound on these keys).
+pub(crate) const GUEST_KEYS: u32 = 1 << 30;
+pub(crate) const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);
+
 /// A guest document's place (decision 0055): the host document and the node or span it stands at, its grammar and
 /// role, its root, and how its bytes map to the host's.
 #[derive(Clone, Debug)]
@@ -183,36 +190,126 @@ pub(crate) struct Guest {
     /// Where they stand in its file's text: `place` composed with its host's `in_file` when the host is a guest
     /// too (a string inside a parsed annotation). Its positions are these.
     pub in_file: Placement,
+    /// What made it: a host's code, or a value a rule computed (decision 0058 §4).
+    pub made: Made,
+}
+
+/// What made a guest document.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Made {
+    /// The code at `at` in its host (`embed`, `parsed`, `sub_tape`).
+    Host,
+    /// `@parse(grammar, text)`: a value document, with no host; its places are its own text's.
+    Parse { text: String },
+    /// `@splice(tape, node, with)`: tape `tape` with node `node`'s text replaced by tape `with`'s, parsed in its
+    /// grammar; a value document.
+    Splice { tape: String, node: i64, with: String },
+}
+
+/// A document's text as a rule gets it back (`@unparse`): a wrapped fragment's root's text (the expression inside
+/// `( … )`), else the whole text.
+pub(crate) fn unparsed(d: &Document) -> &str {
+    match d.guest.as_deref() {
+        Some(g) if g.root != 0 => d.facts.text(g.root),
+        _ => d.facts.source.as_str(),
+    }
+}
+
+/// A document's tape: its content key, hex (`tape_of`).
+pub(crate) fn tape_hex(digest: &[u8; 32]) -> String {
+    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Where a guest's bytes stand in its host's source.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Placement {
     /// A copied stretch: guest byte `b` is host byte `b + delta`, kept within the host bytes `within` (a wrapper's
     /// written `(` and `)` stand at the stretch's ends).
     Copied { delta: i64, within: [u32; 2] },
-    /// A decoded value (an escaped string, a concatenation): every node stands at the host bytes `at`.
+    /// A normalized string (decision 0058 §3): its stretches (`normalized::Piece`, host bytes absolute, sorted, the
+    /// last ending the text) copied byte for byte, an escape's output standing at the escape; kept within `within`.
+    Mapped { pieces: Arc<[normalized::Piece]>, within: [u32; 2] },
+    /// A decoded value with no map: every node stands at the host bytes `at`.
     At([u32; 2]),
 }
 
 impl Placement {
-    fn host(&self, [a, b]: [u32; 2]) -> [u32; 2] {
-        match *self {
-            Placement::Copied { delta, within: [lo, hi] } => {
-                let map = |x: u32| (i64::from(x) + delta).clamp(i64::from(lo), i64::from(hi)) as u32;
-                [map(a), map(b)]
+    pub(crate) fn host(&self, [a, b]: [u32; 2]) -> [u32; 2] {
+        let clamp = |x: i64, [lo, hi]: [u32; 2]| x.clamp(i64::from(lo), i64::from(hi)) as u32;
+        match self {
+            Placement::Copied { delta, within } => [clamp(i64::from(a) + delta, *within), clamp(i64::from(b) + delta, *within)],
+            Placement::Mapped { pieces, within } => {
+                let start = clamp(mapped_start(pieces, a), *within);
+                if b <= a { [start, start] } else { [start, clamp(mapped_end(pieces, b), *within).max(start)] }
             }
-            Placement::At(at) => at,
+            Placement::At(at) => *at,
+        }
+    }
+
+    /// This placement's stretches: a copied stretch is one, unbounded.
+    fn pieces(&self) -> Option<Vec<normalized::Piece>> {
+        match self {
+            Placement::Copied { delta, .. } => Some(vec![normalized::Piece { d: 0, s: *delta, escape: false }]),
+            Placement::Mapped { pieces, .. } => Some(pieces.to_vec()),
+            Placement::At(_) => None,
         }
     }
 
     /// `inner`, a placement in this one's text, as a placement in this one's host's.
-    pub fn then(self, inner: Placement) -> Placement {
-        match (self, inner) {
-            (Placement::At(at), _) => Placement::At(at),
-            (Placement::Copied { delta, .. }, Placement::Copied { delta: d, within }) => Placement::Copied { delta: delta + d, within: self.host(within) },
-            (Placement::Copied { .. }, Placement::At(at)) => Placement::At(self.host(at)),
+    pub fn then(&self, inner: Placement) -> Placement {
+        match (self, &inner) {
+            (Placement::At(at), _) => Placement::At(*at),
+            (_, Placement::At(at)) => Placement::At(self.host(*at)),
+            (Placement::Copied { delta, .. }, Placement::Copied { delta: d, within }) => Placement::Copied { delta: delta + d, within: self.host(*within) },
+            _ => {
+                let (Some(outer), Some(pieces), Placement::Copied { within, .. } | Placement::Mapped { within, .. }) = (self.pieces(), inner.pieces(), &inner) else {
+                    unreachable!("At is matched above")
+                };
+                // Cut where either map cuts: the inner's stretches, and the outer's, pulled back through a copied
+                // inner stretch.
+                let mut cuts: Vec<u32> = std::iter::once(0).chain(pieces.iter().map(|p| p.d)).collect();
+                for (i, p) in pieces.iter().enumerate().filter(|(_, p)| !p.escape) {
+                    let hi = pieces.get(i + 1).map_or(i64::MAX, |n| i64::from(n.d));
+                    for o in &outer {
+                        let x = i64::from(o.d) - p.s + i64::from(p.d);
+                        if x >= i64::from(p.d) && x < hi {
+                            cuts.push(x as u32);
+                        }
+                    }
+                }
+                cuts.sort_unstable();
+                cuts.dedup();
+                let escape_at = |ps: &[normalized::Piece], x: i64| ps.iter().rev().find(|p| i64::from(p.d) <= x).is_some_and(|p| p.escape);
+                let composed: Vec<normalized::Piece> = cuts
+                    .into_iter()
+                    .map(|x| {
+                        let mid = mapped_start(&pieces, x);
+                        normalized::Piece { d: x, s: mapped_start(&outer, mid.max(0) as u32), escape: escape_at(&pieces, i64::from(x)) || escape_at(&outer, mid) }
+                    })
+                    .collect();
+                Placement::Mapped { pieces: composed.into(), within: self.host(*within) }
+            }
         }
+    }
+}
+
+/// Where decoded byte `x` starts in the host: its stretch's source, plus its offset when the stretch is copied.
+fn mapped_start(pieces: &[normalized::Piece], x: u32) -> i64 {
+    let i = pieces.partition_point(|p| p.d <= x).saturating_sub(1);
+    match pieces.get(i) {
+        Some(p) if p.escape && pieces.get(i + 1).is_some_and(|n| n.d > x) => p.s,
+        Some(p) => p.s + i64::from(x) - i64::from(p.d),
+        None => i64::from(x),
+    }
+}
+
+/// Where the decoded text ending before byte `x` ends in the host: an escape's whole source.
+fn mapped_end(pieces: &[normalized::Piece], x: u32) -> i64 {
+    let i = pieces.partition_point(|p| p.d < x).saturating_sub(1);
+    match (pieces.get(i), pieces.get(i + 1)) {
+        (Some(p), Some(n)) if p.escape => n.s,
+        (Some(p), _) => p.s + i64::from(x) - i64::from(p.d),
+        (None, _) => i64::from(x),
     }
 }
 
@@ -503,7 +600,7 @@ impl Projected {
                 spans.extend((1..=lines.count()).map(|l| lines.span(l)));
             }
             let matched = spans.len() as u32;
-            let host = guest.map(|(g, lines)| (lines, g.in_file));
+            let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
             p.extra = Some(Box::new(Extra { lines, spans, tokens, matched, host }));
         }
         p
@@ -808,11 +905,10 @@ impl Batch {
             }
             docs.push(p);
         }
-        // The guests' rows, once every document is projected: a guest's host may be a guest after it.
-        if core {
-            for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
-                g.document(p, d, d.guest.as_deref(), withheld, &docs, projection.wants("host_node"), &mut string);
-            }
+        // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
+        // a program that declares its base relations itself (T's) reads guests as core.rr's do.
+        for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
+            g.document(p, d, d.guest.as_deref(), withheld, &docs, [projection.wants("host_node"), projection.wants("unparse_of")], &mut string);
         }
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
@@ -845,9 +941,9 @@ impl Batch {
             ("intval", pairs(&["n", "v"], &intval, [false, false])),
             ("op_t", pairs(&["n", "s"], &op_t, [false, true])),
         ];
+        relations.extend(g.relations(&atom));
         if core {
             relations.extend(c.relations(&atom));
-            relations.extend(g.relations(&atom));
         } else {
             relations.extend([
                 ("value", pairs(&["n", "s"], &value, [false, true])),
@@ -1354,33 +1450,38 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
         return known;
     }
     let rows = source.len();
-    // Postings by sorting (no map per value): a run of equal values is one value's postings.
-    let moments = |mut values: Vec<(i64, i64)>| -> (i64, i64) {
-        values.sort_unstable();
-        let (mut ndv, mut sq, mut at) = (0, 0, 0);
-        while at < values.len() {
-            let run = values[at..].iter().take_while(|v| **v == values[at]).count();
-            ndv += 1;
-            sq += (run * run) as i64;
-            at += run;
-        }
-        (ndv, sq)
-    };
     // Each row's document (the first column's high half), read once for every column.
     let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();
+    // One sort per column by (value, document): a run of one value is its postings (ndv, and the sum of squares of
+    // their lengths), and within it a run of one document is that document's (the sum of squares per document).
     source
         .columns()
         .into_iter()
         .enumerate()
         .map(|(c, name)| {
-            let values: Vec<i64> = (0..rows).map(|row| source.value(row, c)).collect();
             // A key column (strictly increasing, as a node column of a relation in node order): every value once,
             // and so every (document, value) once. No sort.
-            if values.windows(2).all(|pair| pair[0] < pair[1]) {
+            if (1..rows).all(|row| source.value(row - 1, c) < source.value(row, c)) {
                 return (name, rows as i64, rows as i64, rows as i64, rows as i64);
             }
-            let (ndv, sq) = moments(values.iter().map(|&v| (0, v)).collect());
-            let (_, sqd) = moments(docs.iter().zip(&values).map(|(&d, &v)| (d, v)).collect());
+            let mut values: Vec<(i64, i64)> = (0..rows).map(|row| (source.value(row, c), docs[row])).collect();
+            values.sort_unstable();
+            let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
+            let mut at = 0;
+            while at < values.len() {
+                let v = values[at].0;
+                let end = at + values[at..].partition_point(|x| x.0 == v);
+                ndv += 1;
+                sq += ((end - at) * (end - at)) as i64;
+                let mut d = at;
+                while d < end {
+                    let doc = values[d].1;
+                    let de = d + values[d..end].partition_point(|x| x.1 == doc);
+                    sqd += ((de - d) * (de - d)) as i64;
+                    d = de;
+                }
+                at = end;
+            }
             (name, rows as i64, ndv, sq, sqd)
         })
         .collect()

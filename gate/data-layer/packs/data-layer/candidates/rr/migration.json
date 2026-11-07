@@ -3,7 +3,7 @@
   "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "syntaxSource": {
     "branch": "jeremybarnes/final-rerail-shape",
-    "commit": "879486272cd1b44b3567320c85847ba0fd19a918",
+    "commit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5",
     "uncommitted": []
   },
   "legacyBaseline": "ce3669ddba89d09acec1094e006446a16a7b296d",
@@ -438,41 +438,41 @@
     {
       "destination": "docs/rule-syntax/lib/blade/syntax.rr",
       "sha256": "aa3abe37f5ff88cdf57a805b713cd5d9ed013efb68e605b229f145876f05c99d",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/blade/values.rr",
       "sha256": "213d536691ef01298a2ea7c04a47a1659a9c54442192c23ce4e3bd73cabfb58e",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/complexity/cyclomatic.rr",
       "sha256": "7d01598d9db1689c71d88e9be03911b5f5ec5c008df9f91f10960d654150c1e9",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/complexity/ecma.rr",
       "sha256": "d5f57d0dfdf3344a9833ddfc5250d90f79a952c473047cecb19490a8ad1cc52e",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/complexity/php.rr",
       "sha256": "89713384f7085b6ab5e964b8fd353843214ac1763d1bdf996b1941844ad2a136",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/complexity/python.rr",
       "sha256": "7e74ef68ca9cc6b2dc56dcc5e81dcb973ec9aaf7c94c78b80326c55e82a8eb58",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/complexity/rust.rr",
       "sha256": "6c0dac4e91a753c9f20ca634965e70c9d7bb12882572dc21e3558ea1f2b83b81",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "8d0dcfc059515ae3351b78ec0a76c8f62c6399a2f0bd13856f973fca28054cac",
+      "sha256": "fd59da60e87078cfd87d766be93cb89eb4422331b7fc7683d2f1727eceb339a5",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -525,84 +525,90 @@
           "before": "8dcb01912bcda4021a0112ce7621ca5823f7e91a37d52c6448ed4846ff861768",
           "after": "8d0dcfc059515ae3351b78ec0a76c8f62c6399a2f0bd13856f973fca28054cac",
           "reason": "Forward-port the generic positional regex occurrence API onto Final shape; keep its existing engine and library resolutions"
+        },
+        {
+          "before": "8d0dcfc059515ae3351b78ec0a76c8f62c6399a2f0bd13856f973fca28054cac",
+          "after": "fd59da60e87078cfd87d766be93cb89eb4422331b7fc7683d2f1727eceb339a5",
+          "reason": "Adopt committed Final shape resolutions for guest documents and typing",
+          "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
         }
       ],
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/boot-lazy-sql.rr",
       "sha256": "dc7770983b9f2182f082a2890e0867d2678196022ee25a3c42bce9f1e81be8a0",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/boot-python.rr",
       "sha256": "f8e8f09241ab8fa2c8826d3910248e43f991c684c2a2b3604236e6856c05bdfc",
       "upstreamSha256": "f8e8f09241ab8fa2c8826d3910248e43f991c684c2a2b3604236e6856c05bdfc",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/lazy-analyzer.rr",
       "sha256": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
       "upstreamSha256": "e77c49883228aff93893551a4e823bda41ef9ea93cbddb780f8fc304145ab1f2",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/match-frames.rr",
       "sha256": "b68a7359729ff3e25015f176492307a76fc3a1fac74bb11e0cf681f8146a83c7",
       "upstreamSha256": "b68a7359729ff3e25015f176492307a76fc3a1fac74bb11e0cf681f8146a83c7",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/pub-lines.rr",
       "sha256": "f2efd4bb7206fc4ae4affc3aa50c91aa6673c38fa3c8c9670c264656092a3f39",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/purity-ast.rr",
       "sha256": "4587d4d0aa768d82deab155c42eb2a480d1b7bcb9c3394d82c91767820010201",
       "upstreamSha256": "4587d4d0aa768d82deab155c42eb2a480d1b7bcb9c3394d82c91767820010201",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/signing.rr",
       "sha256": "07d42ecda753194a32566b35c088913f8a6774b8535cc3d84203450b6cf6a94d",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/php/arrays.rr",
       "sha256": "2cfb920594f093b4981066d62503df0cae37aabc209da97d01c607d1eead52c5",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/php/format.rr",
       "sha256": "e6fcd78c639ee0e067ee2f68e5a68e19d103e537e7f1151589e9d00688014016",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/php/names.rr",
       "sha256": "9b4a74418c81a849a7acf249d5378f0dc4c6ba946fce02c95b25b466d1d03709",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/php/phpdoc.rr",
       "sha256": "ce5598cdb06510a57dbde2a6810a3feecfe20514619695190e5ec3360a4f7cb8",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/php/values.rr",
       "sha256": "a681fe7dabbb2f749ad227e5ce6f0d689f67536aca153f09895d579216eb6fe7",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/annotations.rr",
       "sha256": "cb15fe34ea8758ce4b3b4bb7297cb01f7a1531535149eb54b58a091189ddb305",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/ast.rr",
       "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a",
       "upstreamSha256": "5f72729eba6db24aed31dde22e5b6a2c7c35b77f8e0d1be0179e055ddece88f4",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918",
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5",
       "repairs": [
         {
           "before": "5f72729eba6db24aed31dde22e5b6a2c7c35b77f8e0d1be0179e055ddece88f4",
@@ -614,18 +620,18 @@
     {
       "destination": "docs/rule-syntax/lib/python/bugbear-loops.rr",
       "sha256": "8bec3bc714fcab76202bf68ae506db3f01ef9a0632375bbffa1746210d3bf495",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/bugbear.rr",
       "sha256": "ac443b1b539de5f7cfd70783d3c90635cdf3e562bb6ec63585871f672ea1f82a",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/calls.rr",
       "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a",
       "upstreamSha256": "b086577eaec7d4c5856d838b5077294c188885be67ee1c4af9bdf6b55fb67120",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918",
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5",
       "repairs": [
         {
           "before": "b086577eaec7d4c5856d838b5077294c188885be67ee1c4af9bdf6b55fb67120",
@@ -637,187 +643,187 @@
     {
       "destination": "docs/rule-syntax/lib/python/compare.rr",
       "sha256": "1fcdd3620b05b090c1cba2d7574556a8b510ec136760fb731c6461ca3cdfad72",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/comprehensions.rr",
       "sha256": "e314cc0c626d313aae433267c659e67c5af1102a310e9201e46ad4baba48e9f7",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/datetime.rr",
       "sha256": "2d74f26908a9bd778d68833677237c788a8f4c8f1bb3f6c4d0d94def5f699ead",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/docstrings-sections.rr",
       "sha256": "5d09583aa3814cf7733faea47e48a9553d593e9e86b2a27162a1fc4e7ee75c4b",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/docstrings.rr",
       "sha256": "aed0d0a570881ae04731b42944cb6d37dbea62f55c4d63624791574fe3a47e68",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/exceptions.rr",
       "sha256": "9d6c35ea0aba5876fb7c5e7e3ec81f968019a5c2fbd5ddd733d0de0dc22feb59",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/flow-return.rr",
       "sha256": "4539cffb384e9c066f900206b04897bd621c3c9297b87b7a59dd39b395f5e50d",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/flow.rr",
       "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/imports.rr",
       "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/logging.rr",
       "sha256": "b27442bd1551615844342fac6d8987693eb782b9053fcf5b3a3d78df3b0bcdd1",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc-airflow.rr",
       "sha256": "a38376f883fb917868e4bb6f8c01319315732593c3627c42f9bf4776edd0f4e3",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc-boolean-trap.rr",
       "sha256": "29095a956dfe99bf50557c65c555f7526eff618cf49f6a15ba6bc667f6027bae",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc-comments.rr",
       "sha256": "9a1e35dcea0afd6bc00f5d89b0aa95c00e78acf96c9589c50afedc634600bfbc",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc-seen.rr",
       "sha256": "23d5e7ca82cb073f9a5fedc45d1407ea3ce06e8bc74f2ea79c271aafb1ec5457",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-args.rr",
       "sha256": "dc69077dbc4e41f8dd8f8789cddde223fcb63dc89f6108484eb37b4561d0f4b9",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-async.rr",
       "sha256": "79608e8b3c095ca1b7df2d5675e6c00d0bea5fac8c7f5dc7615b01a69474fcfa",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-case.rr",
       "sha256": "3e360fd55112447cb0a005b79715ce69dbfbcf610bbb3608945fbf5012ced911",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-fastapi.rr",
       "sha256": "8907ea07d91d099f45a0eeb47316ef0dddb8602c5ec267e20c2927cad5feb6da",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-messages.rr",
       "sha256": "2223ed671c2fe0bb2048d0ac78eab0274c3486397b81bd2d2bb118022f90e1b2",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-noqa.rr",
       "sha256": "eaba84d2a79eab1ddac867748be7ffa5eca86176dcbbe05613f99f91e36bb5b3",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-numpy.rr",
       "sha256": "919c1ab318a64acffdb37d099a23939d5f747b176e006a8c5efb107349d738e7",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-perf.rr",
       "sha256": "8696db58923ff7d488d18a9d7f93b8a386c0051fa52bb20e32a7ad261349a565",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-self.rr",
       "sha256": "efdd7ef57c6a838e1ab27fce19c9aa5e0b970d2d11b79a5daaecf449bfcc75d6",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-slots.rr",
       "sha256": "113d03bf4e29a9b672fc899ca83ae55ff9499802bae6703ddba34bc5e6c84460",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-todo-span.rr",
       "sha256": "bb3072dc8c34a2440fe45768590b65b1a578455a0dedf921aa418d522e46518e",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-todo.rr",
       "sha256": "5036c2434d35179883fd8c7e562624d460808b032501a01a3ff34542403e5cda",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-typecheck.rr",
       "sha256": "ab680bfd8d8b5dde949a164eb02007c19b5206c0d0a585c57376e0149a9af455",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-version.rr",
       "sha256": "45a5974dddf126cff0e1aa9f4446bad25087b12eae9c12bf31249bc51b7c5ee4",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/names.rr",
       "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/naming.rr",
       "sha256": "aefbabc3e046e5c64813a7562c3a330ff0dcd3c6d836ed028778fc1963fde458",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/pathlib.rr",
       "sha256": "c7793aa57b608bae3960e12464bcdc3b0fc81858238d081d3dcc5699341246fe",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/pyflakes-format.rr",
       "sha256": "7b7361f67368ad6ee3f9c961d7a18ded6125723e7dbe142a62b9e305adf59c28",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/pyflakes.rr",
       "sha256": "c5dc1a2d35d4a703a2fd2c58559ab64d7c15f5e5c90deddeb6f6c28d06a7dd41",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/pytest.rr",
       "sha256": "73bbf132df858c1ad05e625bd9eb0975f9adb462fe1a4459ec750dcf94f4998b",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/ruff-classes.rr",
       "sha256": "14e0ed7c1b253e10f27604592c96fb0866ed79fc10713f881738699481013656",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/ruff-sorting.rr",
       "sha256": "b69269eea6e49ed8016c9deb0e95c5178b2f6efa2c251dcd7dae6d0ca5fbd331",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/ruff.rr",
       "sha256": "49bcb306de32f4115f2c534221aca9d431b2fc468d65747eb7cc1f276787c758",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/security-blacklist.rr",
@@ -835,233 +841,233 @@
           "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
         }
       ],
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/security.rr",
       "sha256": "c9ca13a7e8e502b04425b205ce8a1b936541c5d33105a47557d89bcbc2f024fa",
       "upstreamSha256": "c9ca13a7e8e502b04425b205ce8a1b936541c5d33105a47557d89bcbc2f024fa",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/simplify.rr",
       "sha256": "ff27d1e6a5b79cee65948c4c7757d53a254ff6ab98d660fa6cdecc41da02b415",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/typing-context.rr",
       "sha256": "2ea9556b8ebee64bc060b31e3f94b9931b136be124f346e30025b21ae387e959",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/typing.rr",
       "sha256": "64ce1afc83e6c8cb98a9b292523cfb9297eff92967b393fa8434b98fa7aef1d2",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/upgrade-format.rr",
       "sha256": "c05166d25cfc6e0c31fc98998ea37fe28d6b6c405d47086dc84ad472e6fc2ea8",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/upgrade-imports.rr",
       "sha256": "c761abd535ba490684c1106f0948181ba673a088e7a93b321e65212799db1f8b",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/upgrade-typing.rr",
       "sha256": "caa44251d1a5692fe430500ad5b6f357a6b5c3d627468434b19a4e40bb0f034b",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/upgrade.rr",
       "sha256": "c533f0a6e8ebb508aeaf216a17ffac37a670286f9c2520e84948ec5ddefaee69",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/version.rr",
       "sha256": "9f311c6853d186f320393f0d770f9bb8bf7e66b1222102a030c2f3b54096d682",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/rust/syntax-attrs.rr",
       "sha256": "b023724ddb183b5cc07deccd4757f19afc20be4556d550e465d0b2b2df46e3f1",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/rust/syntax-literals.rr",
       "sha256": "6b7b67216af5f4bedf9216537f6d198df1a31b8b5fd9e5316dd297a0ff63292a",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/rust/syntax-patterns.rr",
       "sha256": "4bbf73d66a9064009f4117f11f397c9d77a19d5e045cbebac334d3240af70569",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/rust/syntax.rr",
       "sha256": "670a2e969f29939d5c37718e61fd88c3e57e9b61d63fb674390be8c1b686fbae",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/sql/syntax.rr",
       "sha256": "e644a35bdf6438686677238360bece57fdaa3d1910af46b949400363c0dc0a45",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-common.rr",
       "sha256": "391f05e8ebd97493c51f6007118ee2582e89ae73fc3e2d5e47ad7f0875be0ef8",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-control.rr",
       "sha256": "9c66ab1c2106707f48dc9de58756fa2c215209998261cb5bf61bfbb517fc47c2",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-expressions.rr",
       "sha256": "12b39fa956c17bd81bf2f7596f1c86b0a452b51315cb731850509e59c771e046",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-functions.rr",
       "sha256": "9bda03916c1b1b773ea9d59d0eed4b55db9084b95fe8d6989e2187eb638335dc",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-globals.rr",
       "sha256": "7e04004e6a114b0c85764ff2ba711acc8487349fa0b301a2d4756e276e7ecfc1",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-text.rr",
       "sha256": "05e8ec0b8bf7a2c1c79d6b835364493fd289b0c17cc47d85ab87ae1a89053bbc",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-b-control.rr",
       "sha256": "54c20e7422edf681f68f4daf39ca1fe0946b265083a01c64e14ee1c82eaa926c",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-b-literals.rr",
       "sha256": "2b5f63dfb954c2df8004a856c80b31bc2051a8708dd68588d22d8d71a9088b71",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-b-objects.rr",
       "sha256": "65678ee9adbfed4c0fda3fbf7bd8a4e870d643798e54c9ba2451ff70fb095384",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-b-scope.rr",
       "sha256": "79ed2c42a8d1b207c73a3e409cb39fe1082fac88c6f90fc8eee35ad143b1ecd1",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/jsx.rr",
       "sha256": "f1b3936280fb35c212ba8db1772e14f224ecb7f0897c25eea00964e4e3d95182",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/modules.rr",
       "sha256": "305ade4633dd650b1d777f1b50f84540166aa6e7b027afb139072484e501571f",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/names.rr",
       "sha256": "5eba9aa507bcf66977546b9c52eb6f200df16d50c14e74dd439404c2e02ff9a9",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/next.rr",
       "sha256": "228be3cf5bc4fbf81c9698d018d5e0459996e8e5a862541c7b70becc3e1cfaa3",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/node-package.rr",
       "sha256": "afcde1aefbff397c033aa5a4a8f97ab4f421374164ab3259b35b1086d092bee5",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/node-resolve.rr",
       "sha256": "0ce98a3bdbced82c16a460eb3d094bb5183388d8c47b40498c3f1dc67fda73a1",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/node-trace.rr",
       "sha256": "e1a750be5dcc7ec43ce1db6024b34310d39f033342fa1e5cc2404fa48b3f7e1f",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/node.rr",
       "sha256": "3f351fd764649fef21d4540771c71e629aee86a8427fb617eb03a25e77879a00",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/react-class.rr",
       "sha256": "f1460a643769d9af2d4420746dc60de3896d8b19e1c8470f0dc1a75b07a91f8f",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/react-compiler.rr",
       "sha256": "8a6e823f93436fd563d445ee7c336817baa789a9c6b7e623bc26942a1105c215",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/react-hooks.rr",
       "sha256": "76fa3d175858eeb062789056aac4322cda1de6c2245e8cd558dca410b95d1086",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/react.rr",
       "sha256": "b28ad9cf5979b9b2bc7ef5a3bc05178a0691d72adc5614a792bfe5939090c8ee",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/statements.rr",
       "sha256": "567b392deb1cbb678f227a52a73e4f2df0dddc57600cdffd451b3c1f59e76f2d",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/ts-a-returns.rr",
       "sha256": "23307e41c5e3f6310cb6d2d5856c940afd91b07a873e3c0551af2b74555c835e",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/ts-a.rr",
       "sha256": "3ab6507eacfd5d8767031085906b42031c7448c7a010c719f4f737c093c64c60",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/ts-b-scope.rr",
       "sha256": "6c341471801bc9de8ca5731a2cd2852b0fa10ec77dcadfb86caf1e3996d1a06f",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/ts-b-vitest.rr",
       "sha256": "f4ba2e9e97076daa5584e1fc57a93093f9edd2174b82338f915c9c1a5de4c7a2",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/ts-b.rr",
       "sha256": "1041397d2b59ecbcb2e3087ff6d769be8f8b4e29c5c9c9afbec2468e97a5ac22",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/values.rr",
       "sha256": "82d9cc1537efcf6d1a8b2f1fb6613a0bb3361ec717ef90ff79f874466c8e5d76",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/vue/code.rr",
       "sha256": "17ab35d9f96cff891a9404e94265527238038da95c7c5594be0693b1b5280592",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/vue/component.rr",
       "sha256": "73f6ed3d68f28bf48f06ff86cb0d7dfab483489003eec6740cfebae589d106cd",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/vue/elements.rr",
@@ -1079,22 +1085,22 @@
           "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
         }
       ],
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/vue/flow.rr",
       "sha256": "2d4c218243e1f7227b55004fa5897bc2c7a4f466bc04e6f8a4342874a437c9be",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/vue/mutation.rr",
       "sha256": "2771c84eed49cc30dff95672ed074339e26e92a69bba4a67da299fe2b1ae07ff",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/vue/template.rr",
       "sha256": "40b7ab398c6b0bcf8d6a48d119fb28b259c4cc30ab5eae552de5912636921c42",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/eager-resolve.rr",
@@ -1139,13 +1145,13 @@
       "importedSha256": "d379099a7677d64b46a268f38923d84687d462e976bfa50218d45132ee4cafd1",
       "sha256": "d379099a7677d64b46a268f38923d84687d462e976bfa50218d45132ee4cafd1",
       "upstreamSha256": "d379099a7677d64b46a268f38923d84687d462e976bfa50218d45132ee4cafd1",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/types.rr",
       "origin": "Final rerail shape",
       "sha256": "b93a1ec08fd31b7bbf8e8387ebb2b0e6321a0114ff8ed8c09896b168a94b336a",
-      "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918"
+      "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5"
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
@@ -2229,12 +2235,17 @@
       "branch": "jeremybarnes/More-ergonomic-rule-syntax",
       "commit": "fa50cd94c1bb2621647cc73c31e119f1db9f3be2",
       "uncommitted": []
+    },
+    {
+      "branch": "jeremybarnes/final-rerail-shape",
+      "commit": "879486272cd1b44b3567320c85847ba0fd19a918",
+      "uncommitted": []
     }
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "879486272cd1b44b3567320c85847ba0fd19a918",
-    "status": "Final rerail shape engine is the sole active engine; build and test from the repository root",
+    "upstreamCommit": "ca76fe78f74d9e6b74f9d8cf25cd69f526b0adf5",
+    "status": "Root engine exactly matches committed Final shape; nested checkout remains retired",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine"
   }
 }

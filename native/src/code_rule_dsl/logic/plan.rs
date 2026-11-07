@@ -14,7 +14,7 @@
 //! T's native modes (`RDL_NATIVE`, `run_sql_native`) are ported too: `native_stratum` (the native set engine for a
 //! whole stratum, `program`), `native_fixpoint` (a flat-lattice component, `fixpoint` with `kseed`, `vtab`,
 //! `direct`), `native_set_fixpoint` (`setfix`), `join_spec` (`join`), `observe` and `live_stats` (statistics the
-//! native store reports), `merge_upsert` (`upsert`) and the `tape_nearest` climb (`nearest`). They call the SQL
+//! native store reports), the `tape_nearest` climb (`nearest`). They call the SQL
 //! functions of T's extension (`logic::native`), which the caller registers on the connection, as T loads it.
 //! Rule bodies are typed queries (`sql::select`, over `sql_ast`'s expressions), checked before they are rendered; the wave keeps its planned program in `compiled_plans` (`waves::matches`). Left out of the
 //! port: T's measurement switches (`RDL_PLAN0`, `RDL_SQL_REPLAN`, `RDL_CLUSTER=0`, `RDL_WHOLE=0`, `RDL_REPLAN`, traces
@@ -553,14 +553,19 @@ thread_local! {
     /// searched.
     /// When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it with its own work and rows.
     static PLANS: std::cell::RefCell<Option<HashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
+    /// The last priced body's cheapest start: the least work of any one join literal read first, from no binding.
+    /// Every order costs at least this, so a kept order's work over it measures how far the order is from the best
+    /// any start allows.
+    static SEED: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
 }
 
 /// A kept plan's key: the rule as text, the delta and the component solved. Not the rule's address: each chunk's
 /// program is a new value (the demand split makes one per chunk), so no address is kept between chunks.
 type PlanKey = String;
 
-/// A kept plan: its order, its work per node when searched, and when profiling its EXPLAIN.
-type Kept = (std::rc::Rc<[Step]>, f64, Option<super::profile::RulePlan>);
+/// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, and its work over its body's
+/// cheapest start (`SEED`) when searched.
+type Kept = (std::rc::Rc<[Step]>, f64, Option<super::profile::RulePlan>, f64);
 
 /// Plans kept across chunks on this thread while held (a corpus run), none kept at the start.
 pub(in crate::code_rule_dsl) struct KeepPlans;
@@ -637,7 +642,7 @@ impl Model {
         let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.get(&key).cloned())) else {
             return self.plan_inner(prog, head, body, first, None, true);
         };
-        if let Some((order, per_node, searched)) = kept {
+        if let Some((order, per_node, searched, gap)) = kept {
             let priced = {
                 let _span = super::profile::span(|| "re-price".into());
                 // The search's EXPLAIN (its steps' rows as the search priced them), with this pricing's work, rows and
@@ -647,7 +652,12 @@ impl Model {
                     (got, x)
                 })
             };
+            // A start much cheaper than when the order was searched (a text test that matched thousands of strings
+            // there and dozens here): the kept order may now scan what that start would look up, and pricing the
+            // kept order alone never shows it.
+            let cheaper_start = |work: f64| work / SEED.with(|c| c.get()).max(1.0) > REPLAN * gap.max(1.0) && work > REPLAN_ROWS;
             match priced {
+                Ok(got) if cheaper_start(got.0.1) => super::profile::decision("plan cache (decision 0038)", || "replanned: a start much cheaper than when the kept order was searched".into()),
                 Ok(got) if got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS => {
                     super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
                     return Ok(got);
@@ -664,7 +674,8 @@ impl Model {
         };
         PLANS.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
-                p.insert(key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone()));
+                let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
+                p.insert(key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap));
             }
         });
         Ok(got)
@@ -888,6 +899,7 @@ impl Model {
             return Err(Error::Plan(format!("rule for {head}: no executor for {l} yet")));
         }
         let joins: Vec<usize> = (0..body.len()).filter(|&i| is_join(&body[i])).collect();
+        SEED.with(|c| c.set(joins.iter().filter_map(|&i| step(&body[i], 1.0, &BTreeSet::new()).map(|w| w.0)).fold(f64::INFINITY, f64::min).min(1e300)));
         if !joins.is_empty() && !joins.iter().any(|&i| matches!(body[i], Literal::Atom(_))) {
             return Err(Error::Plan(format!("rule for {head} has no positive atom")));
         }
@@ -1907,9 +1919,8 @@ impl Model {
             .enumerate()
             .map(|(i, t)| Ok((sql_term(t, &env, atoms)?, Some(format!("c{i}")))))
             .collect::<Result<Vec<_>>>()?;
-        if frm.is_empty() {
-            return Err(Error::Plan(format!("rule for {head} reads nothing")));
-        }
+        // A safe scalar rule (global aggregates, ground comparisons, or Boolean negation)
+        // evaluates once. SQLite permits its SELECT and WHERE without an outer FROM.
         let (from, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.into_iter().unzip();
         let body = Select { distinct: true, columns, from, predicates: conds.into_iter().flatten().chain(wh).collect() };
         Ok(Query { ctes, body })
@@ -2062,7 +2073,6 @@ fn projections(prog: &Program) -> HashSet<String> {
 }
 
 /// A recursive atom's delta variant: the rule's head, its plan with that atom first, and the atom's plan position.
-type Delta = (Atom, Vec<Step>, usize);
 
 impl Run<'_> {
     /// A composite index on each derived relation for every bound-column pattern the plan probes it with.
@@ -2164,90 +2174,12 @@ impl Run<'_> {
     /// The rows `select` added to `head`'s relation (keys changed, for a lattice).
     fn insert_rows(&self, head: &Atom, select: &str) -> Result<usize> {
         Ok(if self.prog.lattice.contains_key(&head.rel) {
-            self.merge_lattice(&head.rel, select, false)?.max(0) as usize
+            sql_kernel::merge(self, &head.rel, select)?
         } else {
             let statement = format!("INSERT OR IGNORE INTO {} {select}", head.rel);
             super::profile::plan(self.db, &statement);
             self.db.execute(&statement, [])?
         })
-    }
-
-    /// Joins candidate values per key (flat lattice: equal stays, different becomes top) into `rel`; with `delta`,
-    /// records the keys whose value changed in `new_<rel>`. Returns the number of changed keys.
-    fn merge_lattice(&self, rel: &str, select: &str, delta: bool) -> Result<i64> {
-        if self.model.inputs.native.contains("upsert") {
-            return self.merge_upsert(rel, select, delta);
-        }
-        let k = self.prog.lattice[rel].keys;
-        let keys = (0..k).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-        let v = format!("c{k}");
-        let on = (0..k).map(|i| format!("r.c{i} = j.c{i}")).collect::<Vec<_>>().join(" AND ");
-        let joined = format!(
-            "SELECT {keys}, CASE WHEN count(DISTINCT {v}) > 1 OR max({v}) = {TOP} THEN {TOP} ELSE min({v}) END AS {v} FROM cand GROUP BY {keys}"
-        );
-        let changed = format!("SELECT j.* FROM ({joined}) j LEFT JOIN {rel} r ON {on} WHERE r.{v} IS NULL OR (r.{v} <> {TOP} AND r.{v} <> j.{v})");
-        let same = (0..k).map(|i| format!("r.c{i} = chg.c{i}")).collect::<Vec<_>>().join(" AND ");
-        self.db.execute_batch(&format!(
-            "DROP TABLE IF EXISTS cand; CREATE TEMP TABLE cand AS SELECT * FROM ({select}) WHERE 0; INSERT INTO cand {select};
-             DROP TABLE IF EXISTS chg; CREATE TEMP TABLE chg AS {changed};
-             UPDATE chg SET {v} = {TOP} WHERE EXISTS (SELECT 1 FROM {rel} r WHERE {same} AND r.{v} <> chg.{v});
-             INSERT OR REPLACE INTO {rel} SELECT * FROM chg;"
-        ))?;
-        let n = self.count("SELECT count(*) FROM chg")?;
-        if delta {
-            self.db.execute(&format!("INSERT INTO new_{rel} SELECT * FROM chg"), [])?;
-        }
-        Ok(n)
-    }
-
-    /// One round: every rule over the full relations (`first`), else each delta variant of `deltas`, or of `planned`
-    /// with its one order.
-    fn semi_naive_round(&self, scc: &BTreeSet<String>, planned: &[(Atom, Vec<Step>)], first: bool, deltas: &[Delta]) -> Result<i64> {
-        for r in scc {
-            self.db.execute_batch(&format!("DROP TABLE IF EXISTS new_{r}; CREATE TEMP TABLE new_{r} AS SELECT * FROM {r} WHERE 0;"))?;
-        }
-        let rec_idx =
-            |order: &[Step]| -> Vec<usize> { (0..order.len()).filter(|&i| matches!(&order[i].lit, Literal::Atom(a) if !a.neg && scc.contains(&a.rel))).collect() };
-        let variants: Vec<(&Atom, &[Step], Vec<usize>)> = if !deltas.is_empty() && !first {
-            deltas.iter().map(|(h, o, i)| (h, o.as_slice(), vec![*i])).collect()
-        } else {
-            planned.iter().map(|(h, o)| (h, o.as_slice(), rec_idx(o))).collect()
-        };
-        let mut by_head: IndexMap<&str, Vec<String>> = IndexMap::new();
-        for (h, order, idx) in variants {
-            let selects = by_head.entry(h.rel.as_str()).or_default();
-            if first {
-                selects.push(self.model.sql_select(self.prog, h, order, None, None)?);
-            } else {
-                // One variant per recursive atom, that atom reading the previous round's delta.
-                for i in idx {
-                    selects.push(self.model.sql_select(self.prog, h, order, Some(i), None)?);
-                }
-            }
-        }
-        let mut total = 0;
-        for (rel, selects) in by_head {
-            let union = selects.iter().map(|s| format!("SELECT * FROM ({s})")).collect::<Vec<_>>().join(" UNION ALL ");
-            if self.prog.lattice.contains_key(rel) {
-                total += self.merge_lattice(rel, &union, true)?;
-            } else {
-                // The new rows by an anti-join on the relation's key (every column), probing it once per
-                // candidate; `EXCEPT` would scan the whole relation every round. `IS` keeps EXCEPT's NULLs.
-                let k = self.prog.decls.get(rel).map_or(0, Vec::len);
-                let on: Vec<String> = (0..k).map(|i| format!("r.c{i} IS n.c{i}")).collect();
-                self.db.execute_batch(&format!(
-                    "DROP TABLE IF EXISTS cand; CREATE TEMP TABLE cand AS {union};
-                     INSERT INTO new_{rel} SELECT DISTINCT * FROM cand n WHERE NOT EXISTS (SELECT 1 FROM {rel} r WHERE {});",
-                    if on.is_empty() { "1".to_owned() } else { on.join(" AND ") }
-                ))?;
-                total += self.count(&format!("SELECT count(*) FROM new_{rel}"))?;
-                self.db.execute(&format!("INSERT OR IGNORE INTO {rel} SELECT * FROM new_{rel}"), [])?;
-            }
-        }
-        for r in scc {
-            self.db.execute_batch(&format!("DROP TABLE IF EXISTS delta_{r}; ALTER TABLE new_{r} RENAME TO delta_{r};"))?;
-        }
-        Ok(total)
     }
 
     /// Makes `rel`'s rows natively from the tables of the relations it reads (`front::Native`); returns them.
@@ -3433,44 +3365,7 @@ impl Run<'_> {
         Ok(true)
     }
 
-    /// The same merge as `merge_lattice`, as one UPSERT (T's `merge_upsert`): each candidate either inserts its key
-    /// or joins into the stored value (flat lattice: a different constant makes top). Triggers record the keys that
-    /// changed, so there is no candidate table, GROUP BY, or compare pass.
-    fn merge_upsert(&self, rel: &str, select: &str, delta: bool) -> Result<i64> {
-        let k = self.prog.lattice[rel].keys;
-        let keys = (0..k).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-        let v = format!("c{k}");
-        let exists: Option<i64> =
-            self.db.query_row(&format!("SELECT 1 FROM sqlite_temp_master WHERE name = 'chg_{rel}'"), [], |r| r.get(0)).ok();
-        if exists.is_none() {
-            let cols = (0..=k).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-            let news = (0..=k).map(|i| format!("NEW.c{i}")).collect::<Vec<_>>().join(", ");
-            self.db.execute(&format!("CREATE TEMP TABLE chg_{rel}({cols}, PRIMARY KEY ({keys}))"), [])?;
-            for ev in ["INSERT", "UPDATE"] {
-                self.db.execute(
-                    &format!(
-                        "CREATE TEMP TRIGGER chg_{rel}_{} AFTER {ev} ON {rel} BEGIN \
-                         INSERT INTO chg_{rel} VALUES ({news}) ON CONFLICT({keys}) DO UPDATE SET {v} = excluded.{v}; END",
-                        ev.to_lowercase()
-                    ),
-                    [],
-                )?;
-            }
-        }
-        self.db.execute(
-            &format!(
-                "INSERT INTO {rel} SELECT * FROM ({select}) WHERE true ON CONFLICT({keys}) DO UPDATE SET {v} = {TOP} \
-                 WHERE {v} <> {TOP} AND {v} <> excluded.{v}"
-            ),
-            [],
-        )?;
-        let n = self.count(&format!("SELECT count(*) FROM chg_{rel}"))?;
-        if delta {
-            self.db.execute(&format!("INSERT INTO new_{rel} SELECT * FROM chg_{rel}"), [])?;
-        }
-        self.db.execute(&format!("DELETE FROM chg_{rel}"), [])?;
-        Ok(n)
-    }
+
 }
 
 /// Evaluates `prog` over the facts database at `facts` (T's `run_sql`, pure SQL mode): views for projections of
@@ -3561,7 +3456,9 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     let out = run(&lowered.program, db, inputs, Some(lowered));
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
+    let flush = super::profile::span(|| "flush symbols".into());
     super::native::flush_symbols(db)?;
+    drop(flush);
     out
 }
 
@@ -3606,9 +3503,11 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         }
         let order = vec![Step { at: 0, lit: b[0].clone(), mode: None }];
         let mut query = model.checked_query(prog, h, &order, None, None)?;
-        // A Boolean relation lowered to a unit (or any constant head) has at most one row,
-        // even when its input has many. Aggregates must not count its witnesses instead.
-        query.body.distinct = h.args.iter().all(|term| matches!(term, Term::Int(_) | Term::Str(_)));
+        // A projection is a set. Omit DISTINCT only when the head retains an input key;
+        // otherwise alternate input supports must not multiply aggregate counts.
+        let preserves=|t:&Term|match t{Term::Var(v)=>h.args.iter().any(|x|matches!(x,Term::Var(x) if x==v)),Term::Wild=>false,_=>true};
+        let key=match a.rel.as_str(){"node" if a.args.len()==5=>Some(1),"doc"|"tape"=>Some(0),_=>None};
+        query.body.distinct=!(key.is_some_and(|k|a.args.get(k).is_some_and(preserves))||a.args.iter().all(preserves));
         views.push((rel.to_owned(), query));
         model.view_stats(rel, h, a);
         let src = first_columns(a);
@@ -3633,7 +3532,14 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
 }
 
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
-    let db = db;
+    let (normalized,sentinels)=sql_kernel::normalize(prog)?;
+    let prog=&normalized;
+    let adjusted=lowered.map(|l|{
+        let mut domains=l.domains.clone();
+        for rel in &sentinels {if let Some(columns)=domains.get_mut(rel){while columns.len()<prog.decls[rel].len(){columns.insert(0,lower::Domain::Int);}}}
+        lower::Lowered{program:prog.clone(),domains,ops:l.ops,dialect:l.dialect}
+    });
+    let lowered=adjusted.as_ref();
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
@@ -3732,7 +3638,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             .iter()
             .enumerate()
             .map(|(i, (_, t))| match t.as_str() {
-                "node" | "int" | "flat" => Ok(format!("c{i} INTEGER")),
+                "node" | "int" | "flat" | "min" | "max" => Ok(format!("c{i} INTEGER")),
                 "sym" if atoms => Ok(format!("c{i} INTEGER")),
                 "sym" => Ok(format!("c{i} TEXT")),
                 _ => Err(Error::Plan(format!("{rel}: no SQL type for {t}"))),
@@ -3767,7 +3673,14 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                     .collect()
             })
             .collect();
-        insert_many(db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;
+        if prog.lattice.contains_key(rel) && !rows.is_empty(){
+            let select=rows.iter().map(|row|format!("SELECT {}",row.iter().enumerate().map(|(i,v)|match v {
+                SqlValue::Integer(n)=>format!("{n} AS c{i}"),
+                SqlValue::Text(s)=>format!("'{}' AS c{i}",s.replace(char::from(39),"''")),
+                _=>unreachable!(),
+            }).collect::<Vec<_>>().join(","))).collect::<Vec<_>>().join(" UNION ALL ");
+            sql_kernel::merge(&run,rel,&select)?;
+        }else{insert_many(db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;}
     }
     drop(tables);
     let mut outcome = Outcome::default();
@@ -3844,7 +3757,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 rule: prog.rules.iter().position(|r| std::ptr::eq(r, *rule)).expect("a rule of the program"),
                 steps: order.iter().map(|s| (s.at, s.mode)).collect(),
                 head: rule.head.to_string(),
-                anchor: order[0].lit.to_string(),
+                anchor: order.first().map_or_else(|| "scalar".into(),|s|s.lit.to_string()),
                 walks: order.iter().filter_map(|s| s.mode.map(|m| (s.lit.to_string(), m.name()))).collect(),
                 work: work.round_ties_even() as i64,
             });
@@ -3857,63 +3770,18 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         }
         let recursive =
             scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && scc.contains(&a.rel)));
-        if !recursive {
-            super::profile::stratum(&skey, "SQLite (INSERT ... SELECT per rule)", || why.clone());
-            for (((h, order), rule), (x, took)) in planned.iter().zip(&rules).zip(&explained) {
-                let _rule = super::profile::span(|| format!("sql #{:04} {}", rule_no(rule), h.rel));
-                let sql = run.model.sql_select(prog, h, order, None, None)?;
-                let n = run.insert_rows(h, &sql)?;
-                if let Some(x) = x {
-                    super::profile::planned(&skey, &format!("sql insert {} (span sql #{:04})", h.rel, rule_no(rule)), Some(rule_no(rule)), x, *took, 0, None, Some(n as u64));
-                }
-            }
-        } else {
-            for r in scc {
-                db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {r} WHERE 0"), [])?;
-            }
-            if native.contains("fixpoint") && run.native_fixpoint(scc, &rules)? {
-                super::profile::stratum(&skey, "lattice fixpoint (lattice_fixpoint: CPU waves, or the Metal work queue)", || why.clone());
-                outcome.native.insert(key);
-                for r in scc {
-                    run.refresh(r, false)?;
-                }
-                continue;
-            }
-            if native.contains("setfix") && run.native_set_fixpoint(scc, &rules)? {
-                super::profile::stratum(&skey, "native set fixpoint (setfix)", || why.clone());
-                outcome.native.insert(key);
-            } else {
-                // First round: every rule over the full (initially empty or seeded) relations.
-                let mut changed = run.semi_naive_round(scc, &planned, true, &[])?;
-                let mut n = 1;
-                // Each delta variant is planned with its delta first, from the first round's counts; a still-growing
-                // relation scanned unjoined is priced as the native planner prices it (`atom_rows`).
-                for r in scc {
-                    run.refresh(r, true)?;
-                }
-                run.model.stats.solving = scc.clone();
-                let mut deltas = Vec::new();
-                for rule in &rules {
-                    for (i, l) in rule.body.iter().enumerate() {
-                        if matches!(l, Literal::Atom(a) if !a.neg && scc.contains(&a.rel)) {
-                            let (order, _, _) = run.model.plan_rule(prog, &rule.head, &rule.body, Some(i))?;
-                            let at = order.iter().position(|s| s.at == i).expect("the delta atom");
-                            deltas.push((rule.head.clone(), order, at));
-                        }
-                    }
-                }
-                run.model.stats.solving.clear();
-                while changed != 0 {
-                    changed = run.semi_naive_round(scc, &planned, false, &deltas)?;
-                    n += 1;
-                }
-                super::profile::stratum(&skey, "SQLite semi-naive fixpoint", || format!("{why}; {n} rounds"));
-                for (((h, _), rule), (x, took)) in planned.iter().zip(&rules).zip(&explained) {
-                    if let Some(x) = x {
-                        super::profile::planned(&skey, &format!("sql round {}", h.rel), Some(rule_no(rule)), x, *took, 0, None, None);
-                    }
-                }
-                outcome.iterations.insert(key, n);
+        let mut ran_native=false;
+        if recursive {
+            for r in scc {db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {r} WHERE 0"),[])?;}
+            if native.contains("fixpoint") && run.native_fixpoint(scc,&rules)? {ran_native=true;outcome.native.insert(key.clone());}
+            else if native.contains("setfix") && run.native_set_fixpoint(scc,&rules)? {ran_native=true;outcome.native.insert(key.clone());}
+        }
+        if !ran_native {
+            let n=sql_kernel::component(&mut run,scc,&rules,&planned,recursive)?;
+            super::profile::stratum(&skey,"SQL wave kernel",||format!("{why}; {n} waves"));
+            if recursive {outcome.iterations.insert(key,n as usize);}
+            for (((h,_),rule),(x,took)) in planned.iter().zip(&rules).zip(&explained){
+                if let Some(x)=x{super::profile::planned(&skey,&format!("sql wave {}",h.rel),Some(rule_no(rule)),x,*took,0,None,None);}
             }
         }
         let _refresh = super::profile::span(|| "refresh and distinct counts".into());
@@ -3931,6 +3799,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let written: Vec<String> = prog.outputs.iter().filter(|r| !outcome.kept.contains(*r)).cloned().collect();
     run.materialize(&written)?;
     let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept)?;
+    let mut outputs=outputs;let mut nodes=nodes;
+    for rel in &sentinels {
+        if let Some(rows)=outputs.get_mut(rel){for row in rows { *row=row.split_once('\t').map_or(String::new(),|(_,rest)|rest.into()); }}
+        if let Some(cols)=nodes.get_mut(rel){*cols=cols.iter().filter_map(|i|i.checked_sub(1)).collect();}
+    }
     outcome.outputs = outputs;
     outcome.nodes = nodes;
     Ok(outcome)
@@ -3973,11 +3846,14 @@ fn decoded_outputs(
         };
         let name = if rel == "finding" { "finding_at".to_owned() } else { rel.clone() };
         let kinds = lowered.map(|l| l.dialect.kinds());
+        // A value names its grammar (its tape tag): a guest's kinds are its grammar's (decision 0058 §2).
+        let of_tag = |tag: i64| u8::try_from(tag).ok().and_then(crate::code_rule_dsl::language::from_tape_tag).map(|d| d.kinds());
         let decode = |i: usize, v: i64| -> Option<String> {
-            let kinds = kinds?;
+            let run = kinds?;
+            let stride = i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE);
             match domains.get(i)? {
-                lower::Domain::Kind => Some(kinds.kind_name((v % i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE)) as u16)?.to_owned()),
-                lower::Domain::Field => Some(kinds.field_name((v & 0xffff) as u16)?.to_owned()),
+                lower::Domain::Kind => Some(of_tag(v / stride).unwrap_or(run).kind_name((v % stride) as u16)?.to_owned()),
+                lower::Domain::Field => Some(of_tag(v >> 16).unwrap_or(run).field_name((v & 0xffff) as u16)?.to_owned()),
                 _ => None,
             }
         };
@@ -4008,6 +3884,7 @@ fn decoded_outputs(
 }
 
 pub(in crate::code_rule_dsl) mod emit;
+mod sql_kernel;
 
 #[cfg(test)]
 mod tests;

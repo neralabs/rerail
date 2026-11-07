@@ -1,4 +1,6 @@
 use super::*;
+mod recovery;
+mod updates;
 
 fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();
@@ -211,7 +213,7 @@ fn queries_are_parameterized_bounded_and_failures_do_not_publish_partial_results
     );
     executor.run(CLOSURE.into(), "python".into(), None).unwrap();
     assert_eq!(rows(&executor, "SELECT count(*) FROM reach"), json!([[6]]));
-    assert!(executor.run(CLOSURE.into(), "python".into(), None).is_err());
+    executor.run(CLOSURE.into(), "python".into(), None).unwrap();
     assert_eq!(rows(&executor, "SELECT count(*) FROM reach"), json!([[6]]));
 }
 
@@ -287,7 +289,7 @@ fn duplicate_facts_are_sets_and_flat_lattice_conflicts_become_top() {
     assert_eq!(rows(&executor, "SELECT * FROM size"), json!([[1, 2]]));
     assert_eq!(
         rows(&executor, "SELECT * FROM joined"),
-        json!([[1, super::super::logic::native::TOP]])
+        json!([[1, wire::integer(super::super::logic::native::TOP)]])
     );
 }
 
@@ -322,11 +324,11 @@ fn corpus_sql_mode_matches_native_rule_execution() {
 #[test]
 fn unsupported_lattices_fail_explicitly_and_query_created_symbols_survive_close() {
     let (dir, executor) = executor();
-    let unsupported = ".decl v(k: number, x: max<>) widen 2\nv(1, 2).\n.output v\n";
+    let unsupported = ".lattice custom<number> { Lub -> @custom }\n.decl v(k: number, x: custom<>) widen 2\nv(1, 2).\n.output v\n";
     let failure = executor
         .lower(unsupported.into(), "python".into())
         .unwrap_err();
-    assert!(failure.reason.contains("flat lattices"), "{failure}");
+    assert!(failure.reason.contains("register SQL operations"), "{failure}");
     assert!(
         executor
             .query("SELECT 1; SELECT 2".into(), None, None)
@@ -414,3 +416,5 @@ fn stored_core_facts_bind_without_source_files_and_rebinding_refreshes_them() {
         json!([[0]])
     );
 }
+
+mod reductions;

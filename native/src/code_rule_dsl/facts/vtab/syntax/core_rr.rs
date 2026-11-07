@@ -239,7 +239,7 @@ pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool
 }
 
 /// A string literal's prefix letters, lowercased, and its decoded contents.
-fn string_contents(family: Family, text: &str) -> Option<(String, String)> {
+pub(super) fn string_contents(family: Family, text: &str) -> Option<(String, String)> {
     let p: String = text.chars().take_while(char::is_ascii_alphabetic).collect();
     let rest = &text[p.len()..];
     let prefix = p.to_lowercase();
@@ -440,11 +440,14 @@ pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
 }
 
 /// A shared native grammar verdict. Raw text projections do not request it.
+/// Without `python-syntax-error` (the browser build), Python's verdict is tree-sitter's, as for the other languages:
+/// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`).
 pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
+    #[cfg(feature = "python-syntax-error")]
     if dialect.family == Family::Python {
         return f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone();
     }
-    first_error(f, &Lines::new(&f.source, false), &|id| dialect.name(f, id))
+    first_error(f, &Lines::new(&f.source, dialect.family == Family::Python), &|id| dialect.name(f, id))
 }
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
@@ -822,6 +825,7 @@ mod tests {
     /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
     /// `match` statement is not; the line is the first error's.
     #[test]
+    #[cfg(feature = "python-syntax-error")]
     fn python_syntax_errors_follow_cpythons_grammar() {
         use super::super::python_syntax::error as python_error;
         assert_eq!(python_error("x = 1\n"), None);

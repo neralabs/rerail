@@ -479,10 +479,43 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
     let _ = std::fs::remove_dir_all(&rule_dir);
 }
 
+/// Quoted annotations (decision 0055's `parsed(s, "annotation", r)`): the string's code is the annotation, its
+/// names looked up from the string's scope.
+#[test]
+fn quoted_annotations_are_read_as_their_code() {
+    // fixtures/python/quoted_ann: `-> "Node"`, `Optional["Node"]`, `n: "Node"`, `"list[Node]"`, `"Node | None"`.
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/quoted_ann");
+    let rule = "
+#include \"python/calls.rr\"
+.decl at(p: symbol, s: number, what: symbol)
+at(p, s, \"target\") :- call_target(c, _), node(d, c, _, s, _), doc(d, p, _).
+at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
+.output at
+";
+    let rule_dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("quoted");
+    std::fs::create_dir_all(&rule_dir).unwrap();
+    let path = rule_dir.join("rule.rr");
+    std::fs::write(&path, rule).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+    let out = rule_dir.join("out");
+    corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let mut got: BTreeSet<(String, u64)> = BTreeSet::new();
+    for l in std::fs::read_to_string(out.join("at.csv")).unwrap().lines() {
+        let r: Vec<&str> = l.split('\t').collect();
+        let src = std::fs::read_to_string(project.join(r[0])).unwrap();
+        got.insert((r[2].to_owned(), line(&src, r[1].parse().unwrap())));
+    }
+    // pkg/use.py: n.label() (n: "Node"), make(), m.child() and m.child().label(): every call has its target and
+    // none is open.
+    let want: BTreeSet<(String, u64)> = [("target", 5), ("target", 9), ("target", 10)].into_iter().map(|(w, l)| (w.to_owned(), l)).collect();
+    assert_eq!(got, want);
+    let _ = std::fs::remove_dir_all(&rule_dir);
+}
+
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a
-/// class attribute's annotation and a chain of them; a pathlib path, a quoted annotation and an untyped parameter
+/// class attribute's annotation, a quoted annotation and a chain of them; a pathlib path and an untyped parameter
 /// are unknown, so not counted; `catalog.resolve(ref)` has an argument.
 #[test]
 fn leg_083_typed_counts_resolve_by_the_receivers_type() {
@@ -515,12 +548,13 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
         ("finding", 14, "pkg/use.py"), // decorated: @lazy keeps count_lazy's declared return
         ("finding", 18, "pkg/use.py"), // attribute: Holder.rows is a LazySeq
         ("finding", 22, "pkg/use.py"), // chained: h.txn.select_one_lazy(2).resolve_async()
+        ("finding", 26, "pkg/use.py"), // quoted: query_lazy is declared `-> "LazySeq[int]"`
         ("lazy", 7, "pkg/use.py"),
         ("lazy", 15, "pkg/use.py"),
         ("lazy", 19, "pkg/use.py"),
         ("lazy", 23, "pkg/use.py"),
+        ("lazy", 27, "pkg/use.py"),      // a quoted annotation is read as its code (decision 0055)
         ("unknown", 22, "pkg/reads.py"), // path.resolve(): a pathlib class is not typed yet
-        ("unknown", 27, "pkg/use.py"),   // a quoted annotation (`-> "LazySeq[int]"`) is not read
         ("unknown", 31, "pkg/use.py"),   // p: Path
         ("unknown", 39, "pkg/use.py"),   // x untyped
     ]

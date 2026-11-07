@@ -15,6 +15,16 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
+mod indexes;
+mod live;
+mod maintenance;
+mod reductions;
+mod updates;
+use super::logic::sql::lattices;
+use super::logic::sql::program;
+mod runtime;
+mod session;
+mod wire;
 
 fn error(e: impl std::fmt::Display) -> Error {
     Error::from_reason(e.to_string())
@@ -35,13 +45,20 @@ fn quote(name: &str) -> String {
 
 /// An explicit SQL execution context. The persistent content store is `main`; bound fact
 /// virtual tables and derived relations are local to this connection. No per-node SQL tables
-/// are populated. Results survive between calls until an input is rebound or the session closes.
+/// are populated. Results survive until their inputs change, their outputs are replaced, or
+/// the session closes. Independent results survive other input changes.
 #[napi]
 pub struct CodeRuleSqlExecutor {
     db: Database,
     store: ContentStore,
     inputs: BTreeMap<String, Arc<dyn Source>>,
     generated: Vec<(String, bool)>,
+    executions: Vec<session::Execution>,
+    limits: runtime::Limits,
+    lattice_extensions: BTreeMap<String, schedule::LatticeOperations>,
+    input_shapes: BTreeMap<String, (usize, Option<Vec<String>>)>,
+    mutable_inputs: BTreeSet<String>,
+    live_inputs: BTreeMap<String, Arc<live::Live>>,
 }
 
 #[napi]
@@ -52,11 +69,20 @@ impl CodeRuleSqlExecutor {
         let db = Database::open(&store).map_err(error)?;
         super::logic::native::register(&db).map_err(error)?;
         strings::register(&db).map_err(error)?;
+        wire::register(&db)?;
+        lattices::builtins(&db)?;
+        reductions::register(&db)?;
         Ok(Self {
             db,
             store,
             inputs: BTreeMap::new(),
             generated: Vec::new(),
+            executions: Vec::new(),
+            limits: runtime::Limits::default(),
+            lattice_extensions: BTreeMap::new(),
+            input_shapes: BTreeMap::new(),
+            mutable_inputs: BTreeSet::new(),
+            live_inputs: BTreeMap::new(),
         })
     }
 
@@ -119,8 +145,9 @@ impl CodeRuleSqlExecutor {
         self.replace_sources(sources)
     }
 
-    /// Bind additional integer facts, including rows emitted by a native AST matcher.
-    /// `relation_json` is {name, columns: [name, ...], rows: [[integer, ...], ...]}.
+    /// Bind integer or symbol facts, including rows emitted by a native AST matcher.
+    /// `relation_json` is {name, columns, rows, types?}. Strings become symbol atoms; tagged
+    /// decimal integers preserve values outside JavaScript's safe range.
     #[napi]
     pub fn bind_relation(&mut self, relation_json: String) -> Result<()> {
         #[derive(serde::Deserialize)]
@@ -128,9 +155,30 @@ impl CodeRuleSqlExecutor {
         struct Input {
             name: String,
             columns: Vec<String>,
-            rows: Vec<Vec<i64>>,
+            rows: Vec<Vec<Value>>,
+            types: Option<Vec<String>>,
         }
         let input: Input = serde_json::from_str(&relation_json).map_err(error)?;
+        let logical_arity = input.columns.len();
+        if self
+            .input_shapes
+            .get(&input.name)
+            .is_some_and(|(arity, _)| *arity != logical_arity)
+        {
+            return Err(error("rebinding a fact cannot change its logical arity"));
+        }
+        let logical_types = input.types.clone();
+        if let Some(types) = &input.types {
+            if types.len() != input.columns.len()
+                || types
+                    .iter()
+                    .any(|t| !matches!(t.as_str(), "number" | "symbol" | "node" | "loc"))
+            {
+                return Err(error(
+                    "fact types must match columns and be number, symbol, node, or loc",
+                ));
+            }
+        }
         if !identifier(&input.name) || reserved(&input.name) {
             return Err(error("a fact relation needs a non-reserved SQL identifier"));
         }
@@ -144,6 +192,18 @@ impl CodeRuleSqlExecutor {
             .map_err(error)?;
         if stored || input.name.eq_ignore_ascii_case("atoms") {
             return Err(error("a fact binding cannot replace a stored relation"));
+        }
+        let boolean = input.columns.is_empty();
+        if boolean && input.rows.iter().any(|row| !row.is_empty()) {
+            return Err(error("Boolean fact rows must have zero columns"));
+        }
+        let mut input = input;
+        if boolean {
+            input.columns.push("__presence".into());
+            for row in &mut input.rows {
+                row.push(json!(1));
+            }
+            input.types = None;
         }
         let columns: BTreeSet<String> = input
             .columns
@@ -175,15 +235,86 @@ impl CodeRuleSqlExecutor {
         }
         let mut source =
             Relation::new(&input.columns.iter().map(String::as_str).collect::<Vec<_>>());
-        for row in input.rows.into_iter().collect::<BTreeSet<_>>() {
+        let symbols: BTreeSet<&str> = input
+            .rows
+            .iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let names: Vec<&str> = symbols.into_iter().collect();
+        let atoms = self.store.intern_atoms(&names).map_err(error)?;
+        let symbols: BTreeMap<_, _> = names.into_iter().zip(atoms).collect();
+        let values = input
+            .rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .enumerate()
+                    .map(|(i, value)| {
+                        wire::fact(&symbols, value, input.types.as_ref().map(|t| t[i].as_str()))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .collect::<Result<BTreeSet<_>>>()?;
+        for row in values {
             source.push(&row);
         }
-        self.clear_results()?;
+        self.invalidate(&BTreeSet::from([input.name.clone()]))?;
         let source: Arc<dyn Source> = Arc::new(source);
         self.db
             .bind(&input.name, Arc::clone(&source))
             .map_err(error)?;
+        self.mutable_inputs.insert(input.name.clone());
+        self.live_inputs.remove(&input.name);
+        self.input_shapes
+            .insert(input.name.clone(), (logical_arity, logical_types));
         self.inputs.insert(input.name, source);
+        Ok(())
+    }
+
+    /// Clear generated results while keeping bound facts and connection-local extensions.
+    #[napi]
+    pub fn reset(&mut self) -> Result<()> {
+        self.clear_results()
+    }
+
+    /// Atomically insert/delete fact rows and maintain dependent retained programs.
+    #[napi]
+    pub fn apply_changes(
+        &mut self,
+        changes_json: String,
+        max_waves: Option<u32>,
+    ) -> Result<String> {
+        self.change_facts(changes_json, max_waves)
+    }
+
+    /// Limits apply independently to each subsequent run/query. An empty object removes limits.
+    #[napi]
+    pub fn set_limits(&mut self, limits_json: String) -> Result<()> {
+        self.limits = serde_json::from_str(&limits_json).map_err(error)?;
+        Ok(())
+    }
+
+    /// Reuse an index on a session-owned result for later rules and ad hoc queries.
+    #[napi]
+    pub fn create_index(&self, relation: String, columns: Vec<u32>) -> Result<()> {
+        self.result_index(&relation, &columns)
+    }
+
+    /// Register SQL functions implementing an associative, commutative, idempotent lattice join.
+    /// The aggregate and binary merge must agree; widening must terminate ascending chains.
+    #[napi]
+    pub fn register_lattice(&mut self, name: String, specification_json: String) -> Result<()> {
+        if !identifier(&name) || matches!(name.as_str(), "flat" | "min" | "max") {
+            return Err(error("custom lattices need a distinct SQL identifier"));
+        }
+        let mut value: Value = serde_json::from_str(&specification_json).map_err(error)?;
+        let top = wire::exact(&value["top"])?;
+        value["top"] = json!(top);
+        let ops: schedule::LatticeOperations = serde_json::from_value(value).map_err(error)?;
+        lattices::validate(&self.db, &ops)?;
+        self.clear_results()?;
+        self.lattice_extensions.insert(name, ops);
         Ok(())
     }
 
@@ -191,8 +322,14 @@ impl CodeRuleSqlExecutor {
     /// the session's bound facts, previous outputs, or existing database tables.
     #[napi]
     pub fn lower(&self, program: String, dialect: String) -> Result<String> {
-        let emitted = self.compile(front::prune(rr::parse(&program).map_err(error)?), &dialect)?;
-        serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program}))
+        let program = front::prune(rr::parse(&program).map_err(error)?);
+        let arities: BTreeMap<_, _> = program
+            .decls
+            .iter()
+            .map(|(name, _)| (name.clone(), program::logical_arity(&program,name)))
+            .collect();
+        let emitted = self.compile(program, &dialect)?;
+        serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program, "logical_arities":arities,"indexes":indexes::wanted(&emitted)}))
             .map_err(error)
     }
 
@@ -228,7 +365,8 @@ impl CodeRuleSqlExecutor {
     }
 
     /// One parameterized read query, including CTEs and joins over stored, virtual and derived
-    /// relations. JSON parameters are positional scalars. Blobs return {blob: [byte, ...]}.
+    /// relations. JSON parameters are positional scalars or tagged integers. Blobs return
+    /// {blob: [byte, ...]}; unsafe JavaScript integers return {integer: decimal-string}.
     #[napi]
     pub fn query(
         &self,
@@ -242,6 +380,7 @@ impl CodeRuleSqlExecutor {
             .into_iter()
             .map(parameter)
             .collect::<Result<Vec<_>>>()?;
+        let _budget = self.limits.enter(&self.db)?;
         let mut statement = self.db.prepare(&sql).map_err(error)?;
         if !statement.readonly() || statement.column_count() == 0 {
             return Err(error(
@@ -268,7 +407,7 @@ impl CodeRuleSqlExecutor {
             for c in 0..columns.len() {
                 values.push(match row.get_ref(c).map_err(error)? {
                     ValueRef::Null => Value::Null,
-                    ValueRef::Integer(n) => json!(n),
+                    ValueRef::Integer(n) => wire::integer(n),
                     ValueRef::Real(n) => json!(n),
                     ValueRef::Text(s) => {
                         Value::String(std::str::from_utf8(s).map_err(error)?.to_owned())
@@ -286,6 +425,7 @@ impl CodeRuleSqlExecutor {
 fn reserved(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name == "atoms"
+        || name.starts_with("__rr_update_")
         || ["sqlite_", "wave_", "delta_", "new_", "rdl_"]
             .iter()
             .any(|prefix| name.starts_with(prefix))
@@ -306,7 +446,8 @@ fn parameter(value: Value) -> Result<SqlValue> {
                 .ok_or_else(|| error("SQL parameter is out of range"))?,
         ),
         Value::String(s) => SqlValue::Text(s),
-        _ => return Err(error("SQL parameters must be scalar JSON values")),
+        Value::Object(_) => SqlValue::Integer(wire::exact(&value)?),
+        _ => return Err(error("SQL parameters must be scalars or tagged integers")),
     })
 }
 
@@ -321,7 +462,12 @@ impl CodeRuleSqlExecutor {
         self.clear_results()?;
         self.db.remove_bindings().map_err(error)?;
         self.inputs.clear();
+        self.input_shapes.clear();
+        self.mutable_inputs.clear();
+        self.live_inputs.clear();
         for (name, source) in sources {
+            self.input_shapes
+                .insert(name.to_owned(), (source.columns().len(), None));
             self.db.bind(name, Arc::clone(&source)).map_err(error)?;
             self.inputs.insert(name.to_owned(), source);
         }
@@ -329,6 +475,33 @@ impl CodeRuleSqlExecutor {
     }
 
     fn compile(&self, mut program: front::Program, dialect: &str) -> Result<plan::emit::Emitted> {
+        for name in &program.inputs {
+            if let Some((arity, types)) = self.input_shapes.get(name)
+                && let Some(cols) = program.decls.get(name)
+            {
+                if program::logical_arity(&program,name) != *arity {
+                    return Err(error(format!(
+                        "{name}: input logical arity differs from its declaration"
+                    )));
+                }
+                if let Some(types) = types {
+                    for ((_, declared), actual) in cols.iter().zip(types) {
+                        let actual = match actual.as_str() {
+                            "number" => "int",
+                            "symbol" => "sym",
+                            "loc" => "node",
+                            other => other,
+                        };
+                        if actual != declared {
+                            return Err(error(format!(
+                                "{name}: bound {actual} column differs from declared {declared}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        program::physical(&mut program);
         // The file front end includes all of core.rr. An extension needs bindings only for
         // inputs its retained rules or outputs actually read, not every possible core family.
         let read: BTreeSet<String> = program
@@ -353,14 +526,44 @@ impl CodeRuleSqlExecutor {
             program.decls.remove(&name);
             program.facts.remove(&name);
         }
+        let mut lattice_operations = BTreeMap::new();
         for (name, lattice) in &program.lattice {
-            if lattice.lattice() != "flat" {
+            if lattice.lattice() == "flat" {
+                continue;
+            }
+            let mut ops = lattices::specification(lattice.lattice())
+                .or_else(|| self.lattice_extensions.get(lattice.lattice()).cloned())
+                .or_else(|| lattices::registered(&self.db, lattice.lattice()).ok())
+                .ok_or_else(|| {
+                    error(format!(
+                        "{name}: register SQL operations for lattice {}",
+                        lattice.lattice()
+                    ))
+                })?;
+            ops.after = lattice.widen;
+            if ops.after.is_some() && ops.widen.is_none() {
                 return Err(error(format!(
-                    "{name}: the SQL wave executor supports flat lattices; {} needs a native producer",
-                    lattice.lattice()
+                    "{name}: this lattice needs a registered widening function"
                 )));
             }
+            lattice_operations.insert(name.clone(), ops);
         }
+        let tops = program
+            .lattice
+            .iter()
+            .map(|(name, l)| {
+                (
+                    name.clone(),
+                    (
+                        l.keys,
+                        lattice_operations
+                            .get(name)
+                            .map_or(super::logic::native::TOP, |ops| ops.top),
+                    ),
+                )
+            })
+            .collect();
+        program::tops(&mut program, &tops)?;
         let dialect = super::language::dialect_by_label(dialect)
             .ok_or_else(|| error(format!("unknown dialect: {dialect}")))?;
         let lowered = plan::lower::lower(&program, dialect, &mut |names| {
@@ -397,6 +600,14 @@ impl CodeRuleSqlExecutor {
                 Some(source) => source.estimated_len() as f64,
                 // Planning reads recorded counts, never rescans an input table. An arbitrary
                 // SQL table with no recorded count gets an estimate; this changes plans only.
+                None if self.executions.iter().any(|e| e.counts.contains_key(name)) => {
+                    self.executions
+                        .iter()
+                        .rev()
+                        .find_map(|e| e.counts.get(name))
+                        .copied()
+                        .unwrap() as f64
+                }
                 None if has_wave_stats => self
                     .db
                     .query_row(
@@ -411,7 +622,18 @@ impl CodeRuleSqlExecutor {
             };
             batch.insert(name.clone(), (source, rows));
         }
-        plan::emit::emit(&lowered, &self.db, "main", "sql-extension", None, &batch).map_err(error)
+        let mut emitted =
+            plan::emit::emit(&lowered, &self.db, "main", "sql-extension", None, &batch)
+                .map_err(error)?;
+        use sha2::Digest;
+        let key = format!(
+            "{:x}",
+            sha2::Sha256::digest(format!("{program:?}:{dialect:?}"))
+        );
+        lattices::transfers(&mut emitted, &tops);
+        emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
+        emitted.program.lattice_operations = lattice_operations;
+        Ok(emitted)
     }
 
     fn run_program(
@@ -420,7 +642,14 @@ impl CodeRuleSqlExecutor {
         dialect: &str,
         max_waves: u32,
     ) -> Result<String> {
+        let outputs = program.outputs.clone();
+        let arities: BTreeMap<_, _> = program
+            .decls
+            .iter()
+            .map(|(name, _)| (name.clone(), program::logical_arity(&program,name)))
+            .collect();
         let emitted = self.compile(program, dialect)?;
+        let indexes = indexes::wanted(&emitted);
         let mut objects: Vec<(String, bool)> = emitted
             .views
             .iter()
@@ -438,8 +667,21 @@ impl CodeRuleSqlExecutor {
                 (format!("new_{name}"), true),
                 (format!("delta_{name}"), true),
             ]);
+            if emitted
+                .program
+                .lattice_operations
+                .get(name)
+                .is_some_and(|ops| ops.after.is_some())
+            {
+                objects.push((format!("__sql_changes_{name}"), true));
+            }
         }
         let mut unique = BTreeSet::new();
+        let owned: BTreeSet<_> = self
+            .generated
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
         for (name, _) in &objects {
             if !identifier(name)
                 || name.to_ascii_lowercase().starts_with("wave_")
@@ -452,15 +694,11 @@ impl CodeRuleSqlExecutor {
                 )));
             }
             let exists: bool = self.db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1 COLLATE NOCASE UNION ALL SELECT 1 FROM temp.sqlite_schema WHERE name = ?1 COLLATE NOCASE)", [name], |r| r.get(0)).map_err(error)?;
-            if exists
+            if (exists && !owned.contains(name.as_str()))
                 || self
                     .inputs
                     .keys()
                     .any(|input| input.eq_ignore_ascii_case(name))
-                || self
-                    .generated
-                    .iter()
-                    .any(|(old, _)| old.eq_ignore_ascii_case(name))
             {
                 return Err(error(format!(
                     "{name}: SQL output already exists; rebind inputs to clear derived results"
@@ -470,7 +708,34 @@ impl CodeRuleSqlExecutor {
         self.db
             .execute_batch("SAVEPOINT sql_extension_run")
             .map_err(error)?;
+        let previous = (self.generated.clone(), self.executions.clone());
+        let mut affected: BTreeSet<usize> = self
+            .executions
+            .iter()
+            .enumerate()
+            .filter(|(_, run)| {
+                run.objects
+                    .iter()
+                    .any(|(name, _)| objects.iter().any(|(n, _)| n == name))
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let changed = affected
+            .iter()
+            .flat_map(|i| {
+                self.executions[*i]
+                    .objects
+                    .iter()
+                    .map(|(name, _)| name.clone())
+            })
+            .collect();
+        affected.extend(self.affected(&changed));
+        let limits = self.limits.clone();
         let result = (|| {
+            self.remove_executions(&affected)?;
+            self.clear_control()?;
+            self.db.reset_execution();
+            let _budget = limits.enter(&self.db)?;
             for statement in &emitted.setup {
                 // The split-position table is invariant across programs in this session.
                 if statement.starts_with("CREATE TEMP TABLE rdl_int")
@@ -480,27 +745,79 @@ impl CodeRuleSqlExecutor {
                 }
                 self.db.execute_batch(statement).map_err(error)?;
             }
-            let waves =
-                schedule::execute_sql(&self.db, &emitted.program, max_waves).map_err(error)?;
+            let waves = schedule::execute_sql_with(&self.db, &emitted.program, max_waves, || {
+                for (table, columns) in &indexes {
+                    session::index(&self.db, table, columns)?;
+                }
+                Ok(())
+            })
+            .map_err(error)?;
+            self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY, rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
+            let mut counts: BTreeMap<String, u64> = emitted
+                .program
+                .relations
+                .iter()
+                .map(|(r, _)| (r.clone(), 0))
+                .collect();
+            for row in self
+                .db
+                .prepare("SELECT tbl,rows FROM wave_stats")
+                .map_err(error)?
+                .query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
+                })
+                .map_err(error)?
+            {
+                let (name, n) = row.map_err(error)?;
+                if counts.contains_key(&name) {
+                    counts.insert(name, n);
+                }
+            }
             self.db
                 .execute_batch("RELEASE sql_extension_run")
                 .map_err(error)?;
-            Ok(waves)
+            Ok((waves, counts))
         })();
-        let waves = match result {
-            Ok(waves) => waves,
+        let (waves, counts) = match result {
+            Ok(value) => value,
             Err(e) => {
                 let _ = self
                     .db
                     .execute_batch("ROLLBACK TO sql_extension_run; RELEASE sql_extension_run");
-                self.clear_control()?;
+                self.generated = previous.0;
+                self.executions = previous.1;
                 self.db.reset_execution();
                 return Err(e);
             }
         };
-        self.generated.extend(objects);
+        self.generated.extend(objects.clone());
+        let owned: BTreeSet<_> = objects.iter().map(|(name, _)| name.as_str()).collect();
+        let mut dependencies: BTreeSet<String> = emitted.inputs.iter().cloned().collect();
+        for q in emitted
+            .queries
+            .iter()
+            .flatten()
+            .chain(emitted.views.iter().map(|(_, q)| q))
+        {
+            for r in q.reads() {
+                if let Some(name) = r.program_relation()
+                    && !owned.contains(name)
+                {
+                    dependencies.insert(name.into());
+                }
+            }
+        }
+        self.executions.push(session::Execution {
+            inputs: dependencies,
+            objects,
+            counts,
+            emitted: Arc::new(emitted.clone()),
+            outputs,
+            max_waves,
+            reductions: None,
+        });
         serde_json::to_string(
-            &json!({"waves": waves, "setup": emitted.setup, "program": emitted.program}),
+            &json!({"waves": waves, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes}),
         )
         .map_err(error)
     }
@@ -522,6 +839,7 @@ impl CodeRuleSqlExecutor {
         }
         self.clear_control()?;
         self.generated.clear();
+        self.executions.clear();
         self.db.reset_execution();
         Ok(())
     }

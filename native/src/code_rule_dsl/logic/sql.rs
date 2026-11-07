@@ -7,3 +7,6 @@ pub(in crate::code_rule_dsl) mod physical;
 pub(in crate::code_rule_dsl) mod select;
 pub(in crate::code_rule_dsl) mod sql_ast;
 pub(in crate::code_rule_dsl) mod typed_boundary;
+
+pub(in crate::code_rule_dsl) mod program;
+pub(in crate::code_rule_dsl) mod lattices;

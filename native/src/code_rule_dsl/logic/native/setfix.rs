@@ -1105,8 +1105,41 @@ static INPUTS: LazyLock<Mutex<HashMap<(String, String), Arc<InRel>>>> = LazyLock
 /// Drops the input relations loaded on `conn`'s database: a run starts over the relations bound now.
 pub fn forget_inputs(conn: &Connection) {
     let path = conn.path().unwrap_or_default().to_owned();
-    INPUTS.lock().unwrap().retain(|(p, _), _| *p != path);
-    STORED.lock().unwrap().retain(|(p, _), _| *p != path);
+    let changing = CHANGING.lock().unwrap().get(&path).cloned();
+    let Some(changing) = changing else {
+        INPUTS.lock().unwrap().retain(|(p, _), _| *p != path);
+        STORED.lock().unwrap().retain(|(p, _), _| *p != path);
+        return;
+    };
+    // Kept: base inputs (`b:` specs) that read none of the relations that change between runs; their rows and
+    // indexes are the same in the next run. Derived inputs (`d:`, a SQL stratum's table) are made again.
+    let reads_changing = |sel: &str| sel.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| changing.contains(w));
+    INPUTS.lock().unwrap().retain(|(p, spec), _| {
+        if *p != path {
+            return true;
+        }
+        let parts: Vec<&str> = spec.splitn(4, ':').collect();
+        matches!(parts.as_slice(), ["b", table, ..] if unhex(table).is_ok_and(|sel| !reads_changing(&sel)))
+    });
+    STORED.lock().unwrap().retain(|(p, table), _| *p != path || (!table.starts_with("main.") && !table.starts_with("temp.") && !reads_changing(table)));
+}
+
+/// Relations whose rows change between the native runs on `conn` (`keep_inputs`): while set, `forget_inputs` keeps
+/// every other base input loaded, with its indexes.
+static CHANGING: LazyLock<Mutex<HashMap<String, std::collections::BTreeSet<String>>>> = LazyLock::new(Default::default);
+
+/// Runs on `conn` that read the same inputs but for `changing` (the bounded rounds: each round rebinds only its
+/// `__prev` inputs) keep the others loaded; `None` ends it, and the next `forget_inputs` drops everything.
+pub fn keep_inputs(conn: &Connection, changing: Option<std::collections::BTreeSet<String>>) {
+    let path = conn.path().unwrap_or_default().to_owned();
+    match changing {
+        Some(c) => {
+            CHANGING.lock().unwrap().insert(path, c);
+        }
+        None => {
+            CHANGING.lock().unwrap().remove(&path);
+        }
+    }
 }
 
 fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel>> {

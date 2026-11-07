@@ -33,6 +33,8 @@ fn ancestry() -> Program {
         file_local: true,
         partitions: Vec::new(),
         lattices: Vec::new(),
+        lattice_operations: BTreeMap::new(),
+        column_types: BTreeMap::new(),
     }
 }
 fn none(_: &[Document]) -> StoreResult<Option<PackedDemand>> {
@@ -126,6 +128,8 @@ fn steps_read_the_chunks_demand_batch() {
         file_local: true,
         partitions: Vec::new(),
         lattices: Vec::new(),
+        lattice_operations: BTreeMap::new(),
+        column_types: BTreeMap::new(),
     };
     let mut batches = 0;
     let mut demand = |_: &[Document]| {
@@ -155,6 +159,8 @@ fn a_program_reading_py_families_records_them_once() {
         file_local: true,
         partitions: Vec::new(),
         lattices: Vec::new(),
+        lattice_operations: BTreeMap::new(),
+        column_types: BTreeMap::new(),
     };
     let backing = Backing::default();
     for (round, changed) in [(0, 1), (1, 0)] {

@@ -1402,7 +1402,9 @@ parsed as code) are read as empty, each named in the profile. Inputs read from a
 (`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
 since reading it is not written. **Closure:** these relations are built natively and the files are read. (`option`, `option_item`, `file` and
 `package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.) 2026-11-07: `parsed` is
-made (decision 0055); `string_annotation` is still empty.
+made (decision 0055); `string_annotation` is still empty. 2026-11-07, after the data-layer engine merge
+(ca930d974): repository files are read (`corpus::inputs`: JSON, YAML, JSON Lines, TSV, lines, `dir=` inputs, and
+`input_error` rows for missing or malformed files). The revision and stamped-artifact readers are still not written.
 
 ## O77. Lowering shortcuts in `.rr`
 
@@ -1576,28 +1578,17 @@ default, or the tests move with P's stage.
 
 ## O85. Guests (decision 0055): what is not built yet
 
-Decision 0055's guests are built for `.py` and `.rs` corpus runs. These parts are not:
+Decision 0055's guests are built for `.py` and `.rs` corpus runs. Decision 0058 built hiding, kind names across
+grammars, normalized strings and the tape operations (`@parse`, `@splice`, `@unparse`). These parts are not built:
 
-- **Hiding guests from rules that do not ask for them.** Guests are documents of the batch, so
-  `kind(n, "call")` also matches a call inside a parsed string annotation. `.guests off` only stops
-  the libraries' `embed`s; a rule's own `parsed` or `sub_tape` still makes its guest. 0055 §5 wanted
-  `.guests off` to hide guests as documents and keep them as facts.
-- **Kind names across grammars.** Kinds resolve in the run's dialect. A SQL guest in a Python run
-  is parsed, but `kind(n, "select_statement")` names no Python kind.
 - **Hosts the corpus runner does not collect** (Markdown, HTML, Vue, Blade), and the matcher path's
   Vue and Blade guests as these documents (0055 step 1).
-- **Global embeds** (an `embed` reading another chunk's facts), **`@parse`** (§7), and the tape
-  operations **`@splice` and `@unparse`**.
+- **Global embeds** (an `embed` reading another chunk's facts).
 - **The memo and guests.** A memoised file's rows include its guests' rows. Guest keys depend only
   on the host's path, place and grammar, so they are stable. No test yet checks a memo hit against
-  a fresh run on a file with guests.
+  a fresh run on a file with guests. Value documents are O96.
 - **Cost on the 9,010-file repository** (guests made, distinct texts, parse CPU): not measured yet.
-- **The shared tape cache races.** `core::build_cached` writes to one SQLite file in the temp dir,
-  which every run on the machine shares. Under parallel tests, a write sometimes fails with
-  `FOREIGN KEY constraint failed`. Guests write equal small texts often, so they hit it. A guest
-  whose cache write fails is parsed without the cache (`guests.cache_failed`). Primary files use
-  the same call and can fail the same way; the cause (probably a collector removing a source between
-  `put_source` and `put_tape`) is not investigated.
+- **The shared tape cache races:** O95.
 
 To close: each part is built or decided against in a decision record.
 ## O88. `calls.rr` against Jedi over a real corpus
@@ -1655,8 +1646,23 @@ of 835 MB. Its rounds do not converge by k = 4: hop rows 498,860 → … → 753
 of those files it takes 15.3 s, 13.0 s before annotations were read. The Jedi score was therefore taken on the 84
 files (t20). LEG-083's own scope (`impl/`, `data_layer/` and every `l<n>` package) is several times larger.
 
-**Closure:** profile the 489 files as O90 profiled django; the per-document cutoff (O41) for the rounds; the
-full l1–l20 Jedi score; then the LEG-083 files.
+**Profiled** (`RERAIL_PROFILE`, 2026-11-07; spans now cover the round bookkeeping, `8224f2c8a`, and each round's
+hop rows and changed documents, `6940b8a49`). 489 files: 86.4 s user, 777 MB; local 27 s, cross 52 s.
+On the 84 files (13.9 s user, load about 4): local 3.4 s, cross 8.7 s, of which the six rounds are 8.1 s at
+about 1.35 s each. Every round re-runs the whole cross part over every document, but few documents change:
+
+| round | 0 | 1 | 2 | 3 | 4 | pending |
+|---|---|---|---|---|---|---|
+| documents whose hop rows changed (of 83) | 82 | 65 | 43 | 26 | 10 | 30 |
+| `pv` rows | 9,426 | 15,191 | 18,098 | 19,947 | 20,146 | 20,155 |
+
+The rest of the cross part: copying and measuring hop rows 0.9 s, digest 0.35 s, sorting the previous rows
+0.2 s, loading the done inputs 0.45 s. In the local part, column statistics are 1.45 s of 3.4 s (`node`,
+constants, `child`, the three `rr_nearest_*`); they now take one sort per column, and are still exact.
+
+**Closure:** the per-document cutoff (O41) for the rounds: round r + 1 runs only the documents that read a row
+that changed in round r, and keeps the others' rows. Statistics sampled rather than exact. Then the full
+l1–l20 Jedi score and the LEG-083 files.
 
 ## O90. Cross-file costs `calls.rr` works around
 
@@ -1748,14 +1754,94 @@ typing's file-local part. A join that scans an axis makes every node's rows on t
 **Closure:** a scan of an axis over a large batch is measured on both paths, and the device solves the whole set
 where it is faster (the rows then filled from its answer), or the device path is recorded as typing's only.
 
-## O93. The hand-written data-layer rules do not run on a corpus
+## O93. The data-layer pack's rules do not run on the full corpus
 
-These are More-ergonomic's 56 rules in `docs/rule-syntax/data-layer`, measured with `RERAIL_MEASURE_HAND=only`.
+These are the 68 checks in `gate/data-layer/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
+with `RERAIL_HAND_DIR=<that dir> RERAIL_MEASURE_HAND=only`. They need the data-layer engine's `core.rr` relations,
+merged at ca930d974. Of the 68 run one at a time on s50:
 
-- **s200:** the run fails after 61 s of CPU with `content store database error: no such table: atom_segment`, raised
-  through a SQL user function. RSS is 7.6 GB, over the 1 GB budget.
-- **Full corpus:** the run takes more than 280 s.
-- **Directory inputs:** a `dir="…"` input (one row per line of each file) is not made at all. The runner stops with
-  `no columns for <rel>`, and the measure leaves the rule out (O76).
+- 50 run;
+- 7 take over 40 s: conditional-architecture, connection-service-architecture, data-layer-facade-purity,
+  hnsw-architecture, lazy-adapter-ownership, matching-architecture, versioned-lifecycle-legacy-surfaces;
+- eager-resolve takes over 45 s once its directory inputs are read;
+- the rest fail (below).
 
-**Closure:** the hand-written rules run on the full corpus, within the budgets, with every rule left out named.
+The 49 that run together:
+
+| corpus | CPU | instructions | peak RSS | violations |
+|---|---|---|---|---|
+| s50 | 17.2 s | 205e9 | 1.57 GB | 606 |
+| s200 | 100.5 s | 1,064e9 | 5.19 GB | 2,878 |
+
+Converted rules on s200 take about 2 s. On s200, the costs are:
+
+- **`gis_before`, 40.7 s of 100.** It is `gis_before(i, n) :- kind(n, "call"), earlier(i, n)`, every node before every
+  call of its file, which is quadratic in a file's size. Its readers bind both arguments. A filter (each rule
+  functional lookups and tests of its head) should be inlined, not built. A draft inliner (`/tmp/ai-trash/
+  simplify-inline-filters.rs`) was correct, but it moved base lookups into rules where the runner had not
+  measured their statistics or held their columns (`no statistics for docof.n`, `syntax_error has no column l`).
+  The runner must measure what the simplified program reads.
+- **`cc_line`, 14.9 s.** It runs in the cross-file part, in SQLite, because `@prefix(…) = 0` has no native step. It
+  crosses the 15 selected documents with every trimmed line (504k) before looking up `split_line` by document.
+  `split_line`'s statistics are not measured, so the lookup is estimated at 2M rows.
+- **Memory.** It grows with which rules are combined, not with their number: 12 rules take 417 MB, 22 take 1.27 GB.
+  A single rule's run is 220–290 MB; the test process adds about 650 MB.
+
+Failures, by kind:
+
+- **A span stored as a symbol** (bounded-composed-graph-paths, schema-architecture, bootstrap-engine-invariants):
+  `match` over a span gives span captures (`core.rr`). A column declared `symbol` then holds a span, and
+  `cat()` stops with `no symbol <id>`. The reader should refuse the program and name the column.
+- **`no such table: rr_ctx<k>`** (cached-pure-lazy-allowlist).
+- **`rule for x(…) reads nothing`**, a constant-head rule left with no body (connection-structural-boundaries,
+  post-op-side-effects, pure-lazy-runtime-purity).
+- **An aggregate in recursion** (lazy-architecture).
+- **Revision and stamped-artifact readers**, not written (plan-composition-architecture, test-budget).
+- **The `$O[:-$K]` slice pattern**, not lowered (versioned-table-names).
+
+**Closure:** the pack's rules run on the full corpus, within the budgets, with every rule left out named.
+
+## O95. The shared tape cache races
+
+`core::build_cached` writes tapes to one SQLite store in the temp directory, and every run on the machine shares it.
+Under parallel tests, a write sometimes fails with `FOREIGN KEY constraint failed`. Guests write many small, equal
+texts, so they hit it most. A guest whose cache write fails is parsed without the cache, and the run counts it
+(`guests.cache_failed`). Primary files use the same call and can fail the same way. The likely cause is a collector
+removing a source between `put_source` and `put_tape`; this is not investigated.
+
+**Closure:** the write is made atomic (source and tape in one transaction, or a collector that cannot remove a
+source a writer holds), with a test that runs parallel writers against one store; or the cache is made per run.
+
+## O96. Chunks that read value documents are not memoised
+
+Decision 0058's value documents (`@parse`, `@splice`) belong to no file. A chunk whose outputs hold a row that
+locates one cannot attribute it, so the chunk is not memoised (`memo_unattributed`). Attributing a value to the
+files whose rows asked for it needs the demand's provenance.
+
+**Closure:** value rows are attributed to the files that asked for them, with a test of a memo hit against a fresh
+run; or a measurement shows unmemoised value chunks cost too little to matter.
+
+## O97. A combined run's programs and their guest bounds
+
+Each program of a combined run is bounded by its own `.guests` setting (decision 0058 §1), but all programs share
+one batch. No test runs a program with `.guests off` beside one without.
+
+**Closure:** a combined-run test where the two programs see different guests.
+
+## O98. Kind sets across grammars
+
+`nearest`, `inside`, `has` and `within_stop` take kind sets resolved in the run's grammar. A scoped SQL node's
+`nearest(n, a, {"select_statement"})` names no SQL kind. The scalar kind and field constants are qualified (0058
+§2); the sets are not.
+
+**Closure:** a kind set over a scoped variable is resolved in its grammar, with a test over a SQL guest.
+
+## O99. Guests and hiding at scale
+
+Hiding (decision 0058) is a range test on columns the join already reads. Its cost, and the cost of the guests
+and values a policy makes, are not measured on the 9,010-file repository. Global embeds and the matcher path's
+guests are still not these documents (O85).
+
+**Closure:** a full-corpus run with guests on and off, in CPU time, with the guests made and the distinct texts
+parsed.
+
