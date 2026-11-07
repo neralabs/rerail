@@ -185,6 +185,9 @@ fn hand_written(check: &str) -> Option<String> {
         return None;
     }
     let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    if !path.exists() {
+        return None;
+    }
     // A rule that does not lower falls back to the converted JSON; say why, so a broken rule is not silent.
     let program = match crate::code_rule_dsl::logic::rr::parse_file(&path) {
         Ok(p) => p,
@@ -478,9 +481,11 @@ fn converted_rules_give_the_recorded_findings() {
             Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
             Err(_) => program,
         };
-        let mut got: Vec<String> = match super::super::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18) {
-            Ok(_) => std::fs::read_to_string(out.join("violation.csv"))
-                .unwrap_or_default()
+        let ran = super::super::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18)
+            // Every output has its file, empty or not: no `violation.csv` is a program without violations.
+            .and_then(|_| std::fs::read_to_string(out.join("violation.csv")).map_err(|e| super::super::plan::Error::Plan(format!("violation.csv: {e}"))));
+        let mut got: Vec<String> = match ran {
+            Ok(csv) => csv
                 .lines()
                 .map(|l| {
                     let f: Vec<&str> = l.split('\t').collect();
@@ -534,6 +539,49 @@ fn converted_rules_give_the_recorded_findings() {
     for m in misses.iter().take(40) {
         println!("{m}");
     }
+    check_baseline(&per_check, only.as_deref());
+}
+
+/// The replay's recorded result per check (`replay_baseline.txt`): `<group> | <check> | events converted exact
+/// errors`. A check may not convert fewer events, give fewer exact, or more errors than recorded; a better result
+/// is printed, and `RERAIL_REPLAY_BLESS=1` records it. With `RERAIL_REPLAY_CHECK`, only those checks compare.
+fn check_baseline(per_check: &BTreeMap<(String, String), [usize; 4]>, only: Option<&[String]>) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt");
+    let row = |line: &str| -> Option<((String, String), [usize; 4])> {
+        let mut parts = line.split(" | ");
+        let (group, check, numbers) = (parts.next()?, parts.next()?, parts.next()?);
+        let n: Vec<usize> = numbers.split_whitespace().map(|n| n.parse().ok()).collect::<Option<_>>()?;
+        Some(((group.to_owned(), check.to_owned()), n.try_into().ok()?))
+    };
+    let recorded: BTreeMap<_, _> = std::fs::read_to_string(&path).unwrap_or_default().lines().filter(|l| !l.starts_with('#')).filter_map(row).collect();
+    if std::env::var_os("RERAIL_REPLAY_BLESS").is_some() {
+        assert!(only.is_none() && std::env::var_os("RERAIL_REPLAY_EVENT").is_none(), "bless the whole replay only");
+        let mut text = String::from("# converted_rules_give_the_recorded_findings, per check: events converted exact errors\n");
+        for ((group, check), r) in per_check {
+            text.push_str(&format!("{group} | {check} | {} {} {} {}\n", r[0], r[1], r[2], r[3]));
+        }
+        std::fs::write(&path, text).unwrap();
+        return;
+    }
+    let mut worse = Vec::new();
+    for (key, want) in &recorded {
+        if only.is_some_and(|o| !o.contains(&key.1)) {
+            continue;
+        }
+        let got = per_check.get(key).copied().unwrap_or_default();
+        if got[1] < want[1] || got[2] < want[2] || got[3] > want[3] {
+            worse.push(format!("{} {}: {:?} (recorded {want:?})", key.0, key.1, got));
+        } else if got != *want {
+            println!("better than recorded: {} {}: {got:?} (recorded {want:?}); RERAIL_REPLAY_BLESS=1 records it", key.0, key.1);
+        }
+    }
+    for (key, got) in per_check {
+        if !recorded.contains_key(key) {
+            println!("not recorded: {} {}: {got:?}", key.0, key.1);
+        }
+    }
+    assert!(!recorded.is_empty(), "no replay baseline at {}", path.display());
+    assert!(worse.is_empty(), "worse than the replay baseline:\n{}", worse.join("\n"));
 }
 
 /// The rules `rules` (comma-separated ids, or `*`) in one corpus run: each file parsed and batched once, every rule
