@@ -1275,3 +1275,26 @@ Missing(@place("a.py", 1), p, i) :- pattern(p, re), sample(i, s), !match(re, s).
     assert_eq!(matches, [(0, 0), (1, 0), (1, 2)]);
     assert_eq!(rows.iter().filter(|row| row["code"] == "MISS").count(), 3);
 }
+
+#[test]
+fn requested_source_and_line_text_remain_exact_without_copying_large_subtrees() {
+    let source = format!("marker = 1 # {}\npass\n", "é".repeat(5000));
+    let rows = finding_contract(&source, r#"
+.language python
+.decl source_copy(sp: span)
+source_copy(sp) :- source(_, sp).
+.violation Whole(at: span, body: symbol) code "SOURCE" "source"
+Whole(sp, body) :- source_copy(sp), text(sp, body).
+.violation Physical(at: span, body: symbol) code "LINE" "line"
+Physical(sp, body) :- src_line(_, _, sp), text(sp, body).
+.violation Subtree(at: node) code "TREE" "whole AST text"
+Subtree(n) :- kind(n, "module"), text(n, _).
+"#);
+    assert_eq!(rows.iter().filter(|row| row["code"] == "SOURCE").count(), 1);
+    assert_eq!(rows.iter().find(|row| row["code"] == "SOURCE").unwrap()["parameters"]["body"], source);
+    let mut lines: Vec<_> = rows.iter().filter(|row| row["code"] == "LINE")
+        .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
+    lines.sort();
+    assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
+    assert!(!rows.iter().any(|row| row["code"] == "TREE"), "a requested source span must not enable all large AST texts");
+}
