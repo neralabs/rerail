@@ -1,0 +1,63 @@
+kind($n, $k)	node(_, $n, $k, _, _)	[]	15832
+assigns($s, $x, $r)	kind($a, "assignment")	[["nearest($a, $s, scope)", "climb"]]	1425
+augdef($s, $x, $a)	kind($a, "augmented_assignment")	[["nearest($a, $s, scope)", "climb"]]	116
+docof($n, $d)	node($d, $n, _, _, _)	[]	15832
+binds($d, $t, $t)	kind($i, "import_statement")	[]	70
+binds($d, $a, $m)	kind($x, "aliased_import")	[]	12
+binds($d, $s, @cat($m, $s))	kind($i, "import_from_statement")	[]	26
+binds($d, $a, @cat($m, $s))	kind($x, "aliased_import")	[]	12
+binval($n, $o, $l, $r)	kind($n, "binary_operator")	[]	396
+binval($a, $o, $l, $r)	kind($a, "augmented_assignment")	[]	383
+defines_class($s, $x, @cat($m, $x))	kind($c, "class_definition")	[["nearest($c, $s, scope)", "climb"]]	40
+defines_fn($s, $x, $f, @cat($m, $x))	kind($f, "function_definition")	[["nearest($f, $s, scope)", "climb"]]	521
+bound_in($s, $x)	assigns($s, $x, _)	[]	467
+bound_in($s, $x)	defines_class($s, $x, _)	[]	14
+bound_in($s, $x)	defines_fn($s, $x, _, _)	[]	53
+bound_in($f, $x)	kind($f, "function_definition")	[]	529
+bound_in($f, $x)	kind($f, "function_definition")	[]	417
+exc_type($n)	text($n, "Exception")	[]	4
+exc_type($n)	kind($n, "parenthesized_expression")	[]	376
+has_non_block($e)	kind($e, "except_clause")	[]	168
+catch_all($e)	kind($e, "except_clause")	[]	35
+catch_all($e)	exc_type($c)	[]	6
+catch_all($e)	exc_type($x)	[]	10
+class_q($q)	defines_class(_, _, $q)	[]	14
+modnode($d, $m)	node($d, $m, "module", _, _)	[]	10
+lookup($n, $x, $s)	bound_in($s, $x)	[["nearest($n, $s, scope)", "descend"]]	25748
+lookup($n, $x, $m)	modnode($d, $m)	[["text($n, $x)", "range"], ["nearest($n, $s, scope)", "climb"]]	5167
+resolves($n, $q)	binds($d, $s, $q)	[["text($n, $s)", "range"]]	3004
+resolves($n, @cat($m, $s))	resolves($o, $m)	[]	2114
+class_ref($f, $q)	defines_class($s, $x, $q)	[]	28
+class_ref($f, $q)	class_q($q)	[]	72
+has_def($n)	assigns($s, $x, _)	[]	958
+has_def($n)	augdef($s, $x, _)	[]	44
+is_lit($k)	lit_type($k, _)	[]	1001
+cv($n, $v)	intval($n, $v)	[]	274
+cv($n, top)	kind($n, "integer")	[]	289
+cv($n, top)	kind($n, $k)	[]	15832
+cv($n, top)	is_lit($k)	[]	13251
+cv($n, top)	kind($n, "identifier")	[]	4889
+cv($n, $v)	cv($r, $v)	[]	4055
+cv($n, $v)	augdef($s, $x, $a)	[]	1186
+cv($n, $v)	kind($n, "parenthesized_expression")	[]	2028
+cv($n, @flat_bin($o, $a, $b))	cv($r, $b)	[]	1004001
+cv_const($n, $v)	kind($n, "identifier")	[]	14665
+cv_const($n, $v)	kind($n, "binary_operator")	[]	535
+has_splat($c)	kind($k, "dictionary_splat")	[]	22
+kwarg($c, $s, $v)	kind($k, "keyword_argument")	[]	238
+has_timeout($c)	kwarg($c, "timeout", _)	[]	3
+mirror($l, $r)	kind($a, "assignment")	[]	1342
+mirror($l2, $r2)	mirror($l, $r)	[]	9260
+finding("B110", $e)	catch_all($e)	[]	40
+finding("SELF_ASSIGN", $l)	mirror($l, $r)	[]	2492
+finding("NO_TIMEOUT", $c)	resolves($f, $q)	[]	712
+finding("NO_TIMEOUT", $c)	kwarg($c, "timeout", $v)	[]	8
+fn_q($q, $f)	defines_fn(_, _, $f, $q)	[]	53
+fn_ref($n, $f)	defines_fn($s, $x, $f, _)	[]	108
+fn_ref($n, $f)	fn_q($q, $f)	[]	285
+returns($f, $t)	type_of($e, $t)	[["nearest($r, $f, scope)", "climb"]]	2290
+type_of($n, $t)	lit_type($k, $t)	[]	1891801
+type_of($n, $t)	type_of($r, $t)	[]	4055
+type_of($n, $t)	kind($n, "parenthesized_expression")	[]	2028
+type_of($c, $q)	class_ref($f, $q)	[]	146
+type_of($c, $t)	fn_ref($f, $fn)	[]	6146

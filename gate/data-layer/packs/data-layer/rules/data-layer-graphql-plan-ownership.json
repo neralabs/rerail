@@ -1,0 +1,340 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-graphql-plan-ownership",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer graphql_plan_ownership at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l9750_graphql/**/*.py",
+      "l9900_auto_api/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/tests/**",
+      "**/test/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "graphql-authority",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "$option": "entryPoint",
+                    "cases": {
+                      "scan_source": {
+                        "kind": "module"
+                      }
+                    },
+                    "default": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": "LazyResult|PlanScope|ServerPlan|Transaction"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_annotation"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,ast_annotation AS annotation,NULL AS annotation_repr,CAST(NULLIF(NULL,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "single_decorators",
+            "query": "SELECT d.__path,d.parent fn,d.id root,coalesce(c.kind,d.kind) kind,coalesce(c.name,d.name) name FROM a d LEFT JOIN a c ON c.__path=d.__path AND c.parent=d.id AND c.field='func' AND d.kind='Call' WHERE d.field='decorator_list'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "expression_roots",
+            "query": "WITH RECURSIVE r(__path,id,name) AS (SELECT __path,id,name FROM a WHERE kind='Name' UNION ALL SELECT p.__path,p.id,r.name FROM r JOIN a child ON child.__path=r.__path AND child.id=r.id JOIN a p ON p.__path=child.__path AND p.id=child.parent WHERE p.kind='Attribute' AND child.field='value' OR p.kind='Call' AND child.field='func') SELECT * FROM r",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "authority_words",
+            "query": "WITH RECURSIVE tokens(__path,annotation,rest,name) AS (SELECT __path,id,annotation,'' FROM a WHERE field='annotation' UNION ALL SELECT __path,annotation,substr(rest,length(rx_extract(rest,'(?s)\\A([^A-Za-z_]*)([A-Za-z_][\\p{L}\\p{N}_]*)',0))+1),rx_extract(rest,'(?s)\\A([^A-Za-z_]*)([A-Za-z_][\\p{L}\\p{N}_]*)',2) FROM tokens WHERE rx_matches(rest,'[A-Za-z_]')) SELECT __path,annotation,name FROM tokens WHERE name!=''",
+            "indexes": [
+              [
+                "__path",
+                "annotation",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "authority_seeds",
+            "query": "SELECT p.__path,p.fn,p.name FROM parameters p JOIN a ann ON ann.__path=p.__path AND ann.parent=p.id AND ann.field='annotation' WHERE p.field IN ('posonlyargs','args','kwonlyargs') AND EXISTS(SELECT 1 FROM authority_words word WHERE word.__path=ann.__path AND word.annotation=ann.id AND (word.name IN ('ServerPlan','BaseServerPlan','_GraphQLServerPlan','LazyResult') OR substr(word.name,-11)='Transaction' OR substr(word.name,-9)='PlanScope'))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "authority_edges",
+            "query": "SELECT n.__path,n.fn,r.name source,t.name target FROM a n JOIN a v ON v.__path=n.__path AND v.parent=n.id AND v.field='value' JOIN expression_roots r ON r.__path=v.__path AND r.id=v.id JOIN a t ON t.__path=n.__path AND t.parent=n.id AND t.field IN ('target','targets') AND t.kind='Name' WHERE n.kind IN ('Assign','AnnAssign')",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "source"
+              ]
+            ]
+          },
+          {
+            "name": "authority",
+            "query": "WITH RECURSIVE names(__path,fn,name) AS (SELECT * FROM authority_seeds UNION SELECT e.__path,e.fn,e.target FROM names n JOIN authority_edges e ON e.__path=n.__path AND e.fn=n.fn AND e.source=n.name) SELECT * FROM names",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "authority_accesses",
+            "query": "SELECT n.*,f.name function_name,f.last function_end FROM a n JOIN functions f ON f.__path=n.__path AND f.id=n.fn WHERE n.kind IN ('Call','Attribute')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GPO001' AS issue,n.function_name||' reads private plan authority attribute '||n.name||'; add a typed public plan-scope contract' AS message,n.id||':GPO001:'||(printf('%020d/%020d/%020d',n.function_end,1000000000-n.fn,n.id)) AS identity,0 AS phase,printf('%020d/%020d/%020d',n.function_end,1000000000-n.fn,n.id) AS ordering,'' AS symbol,'' AS sort_name FROM authority_accesses n JOIN a receiver ON receiver.__path=n.__path AND receiver.parent=n.id AND receiver.field='value' WHERE n.kind='Attribute' AND substr(n.name,1,1)='_' AND EXISTS(SELECT 1 FROM expression_roots r JOIN authority auth ON auth.__path=r.__path AND auth.fn=n.fn AND auth.name=r.name WHERE r.__path=receiver.__path AND r.id=receiver.id) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GPO002' AS issue,n.function_name||' reflectively dispatches on typed plan authority' AS message,n.id||':GPO002:'||(printf('%020d/%020d/%020d',n.function_end,1000000000-n.fn,n.id)) AS identity,0 AS phase,printf('%020d/%020d/%020d',n.function_end,1000000000-n.fn,n.id) AS ordering,'' AS symbol,'' AS sort_name FROM authority_accesses n JOIN calls call ON call.__path=n.__path AND call.id=n.id JOIN a arg ON arg.__path=n.__path AND arg.parent=n.id AND arg.field='args' AND arg.position=0 WHERE call.callee_kind='Name' AND call.callee='getattr' AND EXISTS(SELECT 1 FROM expression_roots r JOIN authority auth ON auth.__path=r.__path AND auth.fn=n.fn AND auth.name=r.name WHERE r.__path=arg.__path AND r.id=arg.id) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GPO003' AS issue,n.function_name||' bypasses typed plan authority with object.__getattribute__' AS message,n.id||':GPO003:'||(printf('%020d/%020d/%020d',n.function_end,1000000000-n.fn,n.id)) AS identity,0 AS phase,printf('%020d/%020d/%020d',n.function_end,1000000000-n.fn,n.id) AS ordering,'' AS symbol,'' AS sort_name FROM authority_accesses n JOIN calls call ON call.__path=n.__path AND call.id=n.id JOIN a arg ON arg.__path=n.__path AND arg.parent=n.id AND arg.field='args' AND arg.position=0 WHERE call.callee_kind='Attribute' AND call.callee='__getattribute__' AND call.receiver_kind='Name' AND call.receiver_name='object' AND EXISTS(SELECT 1 FROM expression_roots r JOIN authority auth ON auth.__path=r.__path AND auth.fn=n.fn AND auth.name=r.name WHERE r.__path=arg.__path AND r.id=arg.id) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GPO004' AS issue,'reusable dataclass '||cls.name||' retains runtime authority field '||CASE WHEN target.kind='Name' THEN target.name ELSE '<field>' END AS message,n.id||':GPO004:'||(printf('%020d/%020d/%020d',n.id,0,0)) AS identity,0 AS phase,printf('%020d/%020d/%020d',n.id,0,0) AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN classes cls ON cls.__path=n.__path AND cls.id=n.parent JOIN a ann ON ann.__path=n.__path AND ann.parent=n.id AND ann.field='annotation' JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field='target' WHERE n.kind='AnnAssign' AND EXISTS(SELECT 1 FROM authority_words word WHERE word.__path=ann.__path AND word.annotation=ann.id AND (word.name IN ('ServerPlan','BaseServerPlan','_GraphQLServerPlan','LazyResult') OR substr(word.name,-11)='Transaction' OR substr(word.name,-9)='PlanScope')) AND EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=cls.__path AND d.fn=cls.id AND d.name='reusable_template')",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "reported-parser-error",
+      "relational": {
+        "inputs": {
+          "invalid": {
+            "evidence": {
+              "as": "file",
+              "query": {
+                "regex": {
+                  "source": "file.content",
+                  "pattern": "(?s)\\A(?P<TEXT>.*)\\z"
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "requireNonemptyInput": "invalid",
+        "stages": [
+          {
+            "name": "parsed",
+            "pythonAst": {
+              "source": "invalid",
+              "roots": {
+                "$option": "entryPoint",
+                "cases": {
+                  "scan_source": "SELECT __path,source_text(__path) source FROM invalid"
+                },
+                "default": "SELECT __path,source_text(__path) source FROM invalid WHERE rx_matches(source_text(__path),'ServerPlan|PlanScope|Transaction|LazyResult')"
+              },
+              "fields": [
+                "syntax_error"
+              ]
+            }
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "scan_source": "SELECT i.__path path,0 start_byte,0 end_byte,1 line,'GPO000' issue,'SyntaxError: '||json_extract(p.syntax_error,'$.msg')||CASE WHEN json_extract(p.syntax_error,'$.lineno') IS NULL THEN '' ELSE ' ('||rx_replace(i.__path,'^.*/','')||', line '||json_extract(p.syntax_error,'$.lineno')||')' END message,i.__path identity,0 phase,0 ordering,'' symbol,'' sort_name FROM invalid i JOIN parsed p ON p.__path=i.__path WHERE p.syntax_error!='null'"
+          },
+          "default": "SELECT i.__path path,0 start_byte,0 end_byte,1 line,'GPO000' issue,'cannot inspect GraphQL plan ownership: SyntaxError: '||json_extract(p.syntax_error,'$.msg')||CASE WHEN json_extract(p.syntax_error,'$.lineno') IS NULL THEN '' ELSE ' ('||rx_replace(i.__path,'^.*/','')||', line '||json_extract(p.syntax_error,'$.lineno')||')' END message,i.__path identity,0 phase,0 ordering,'' symbol,'' sort_name FROM invalid i JOIN parsed p ON p.__path=i.__path WHERE p.syntax_error!='null'"
+        },
+        "key": [
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message"
+      },
+      "violation": {
+        "code": "GPO000",
+        "message": "Parser error",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

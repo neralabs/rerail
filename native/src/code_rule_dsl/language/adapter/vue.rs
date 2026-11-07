@@ -35,11 +35,6 @@ impl Adapter for Vue {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = <Ecma as Adapter>::DECLARATION_FILES;
-    const STRIPS_BOM: bool = <Ecma as Adapter>::STRIPS_BOM;
-    /// The component's own `<!-- -->` comments; its scripts' are read with the Ecma family.
-    const COMMENT_KINDS: &'static [&'static str] = &["comment"];
-    const PREAMBLE_KINDS: &'static [&'static str] = &[];
-    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Ecma;
     type Value = Ecma;
     type Arguments = Ecma;

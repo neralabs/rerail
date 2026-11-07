@@ -11,7 +11,6 @@ use super::super::{
     ScopeTable, stack_address,
 };
 use super::{Facts, PrivateDeclaration, PrivateMember, Steps, known};
-use crate::code_rule_dsl::identifier::ecma_name;
 use crate::code_rule_dsl::language::kind_ids;
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
@@ -287,13 +286,10 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
                     .map(|value| NodeRef::of(&value)),
                 annotation: annotation.map(|annotation| NodeRef::of(&annotation)),
             };
-            // espree decodes a private name's escapes, so `#\u0061` and `#a` are one member.
-            let index = *members
-                .entry(ecma_name(name.text()).into())
-                .or_insert_with(|| {
-                    self.privates.push(PrivateMember::default());
-                    self.privates.len() - 1
-                });
+            let index = *members.entry(name.text().into()).or_insert_with(|| {
+                self.privates.push(PrivateMember::default());
+                self.privates.len() - 1
+            });
             let private = &mut self.privates[index];
             private.occurrences.push(declaration.name);
             private.declarations.push(declaration);
@@ -315,7 +311,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
         if declaration {
             return;
         }
-        let name = ecma_name(node.text());
+        let name = node.text();
         let Some(index) = self
             .classes
             .iter()
@@ -786,7 +782,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
                     break;
                 }
                 "for_in_statement" => {
-                    let declared = has_token(ancestor, &["var", "let", "const", "using"]);
+                    let declared = has_token(ancestor, &["var", "let", "const"]);
                     writes += usize::from(is_field("left") && declared);
                     break;
                 }
@@ -925,13 +921,9 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
             _ => return false,
         };
         index = statement;
-        // A namespace statement stands in an expression statement, a `declare` member in an
-        // ambient declaration.
-        while let Some(parent) = index.checked_sub(1)
-            && matches!(
-                self.ancestors[parent].kind().as_ref(),
-                "expression_statement" | "ambient_declaration"
-            )
+        // A namespace statement stands in an expression statement.
+        if let Some(parent) = index.checked_sub(1)
+            && self.ancestors[parent].kind() == "expression_statement"
         {
             index = parent;
         }

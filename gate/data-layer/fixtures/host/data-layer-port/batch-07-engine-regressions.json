@@ -1,0 +1,68 @@
+{
+  "format": "rerail.data-layer-engine-regressions/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "source": {
+    "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+    "bytes": 763585,
+    "sha256": "df494dc3f15ede886d6d5073c208ccce7898d48048b1819312668dc865d068ad",
+    "existingRecording": "batch-06-recording.json"
+  },
+  "oracle": {
+    "entry": "legacy_execution_surfaces_plugin.reporter",
+    "findings": 0,
+    "sourceMismatches": []
+  },
+  "failure": "The node-correlated LEG-083 subquery repeatedly scans functions even when eager_anchors is empty.",
+  "fix": "Join from eager_anchors to functions and nodes; retain diagnostic identity and budget limits.",
+  "rejectedExperiment": "An additional function_symbols index did not clear the failure and was removed.",
+  "profiledAddonSha256": "5ad63e2e7c542e9befaca11f0c8ad77cf5a5f0ab1e5fe4e1b8ae36d975064c33",
+  "statementCountersOrder": [
+    "vmSteps",
+    "fullscanSteps",
+    "sorts",
+    "autoIndexRows"
+  ],
+  "statementMeasurements": {
+    "before": [
+      {
+        "context": {
+          "clauseId": "legacy-execution-graphs",
+          "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+          "ruleId": "data-layer-legacy-execution-surfaces",
+          "scope": "relational",
+          "stage": "result"
+        },
+        "counters": [
+          72992521,
+          2538677,
+          0,
+          0
+        ],
+        "cpuNs": 660179417,
+        "wallNs": 669948375,
+        "rows": 0
+      }
+    ],
+    "after": [
+      {
+        "context": {
+          "clauseId": "legacy-execution-graphs",
+          "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+          "ruleId": "data-layer-legacy-execution-surfaces",
+          "scope": "relational",
+          "stage": "result"
+        },
+        "counters": [
+          657518,
+          124773,
+          0,
+          382
+        ],
+        "cpuNs": 7299625,
+        "wallNs": 7299208,
+        "rows": 0
+      }
+    ]
+  },
+  "measurementBoundary": "Single final statement on a complete pinned source file. Profile build; not an end-to-end speed comparison."
+}

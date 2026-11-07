@@ -6721,23 +6721,40 @@
           "type": "CHOICE",
           "members": [
             {
-              "type": "SEQ",
+              "type": "CHOICE",
               "members": [
                 {
                   "type": "STRING",
                   "value": "static"
                 },
                 {
-                  "type": "CHOICE",
-                  "members": [
-                    {
-                      "type": "SYMBOL",
-                      "name": "_member_name_here"
-                    },
-                    {
-                      "type": "BLANK"
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "TOKEN",
+                    "content": {
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "STRING",
+                          "value": "static"
+                        },
+                        {
+                          "type": "PATTERN",
+                          "value": "\\s+"
+                        },
+                        {
+                          "type": "STRING",
+                          "value": "get"
+                        },
+                        {
+                          "type": "PATTERN",
+                          "value": "\\s*\\n"
+                        }
+                      ]
                     }
-                  ]
+                  },
+                  "named": false,
+                  "value": "static get"
                 }
               ]
             },
@@ -6765,34 +6782,12 @@
               "type": "CHOICE",
               "members": [
                 {
-                  "type": "SEQ",
-                  "members": [
-                    {
-                      "type": "CHOICE",
-                      "members": [
-                        {
-                          "type": "STRING",
-                          "value": "get"
-                        },
-                        {
-                          "type": "STRING",
-                          "value": "set"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "CHOICE",
-                      "members": [
-                        {
-                          "type": "SYMBOL",
-                          "name": "_member_name_here"
-                        },
-                        {
-                          "type": "BLANK"
-                        }
-                      ]
-                    }
-                  ]
+                  "type": "STRING",
+                  "value": "get"
+                },
+                {
+                  "type": "STRING",
+                  "value": "set"
                 },
                 {
                   "type": "STRING",
@@ -7356,10 +7351,6 @@
     {
       "type": "SYMBOL",
       "name": "_no_line_terminator_here"
-    },
-    {
-      "type": "SYMBOL",
-      "name": "_member_name_here"
     }
   ],
   "inline": [

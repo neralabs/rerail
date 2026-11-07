@@ -1,0 +1,230 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-generated-index-sources",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer generated_index_sources at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/common/l7245_versioned_backends/generic_sparse.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/tests/**",
+      "**/test/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "generated-index-source",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "Index\\(|IndexSource|_generated_index"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_alias",
+                "ast_module",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_annotation"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,ast_alias AS alias,ast_module AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,ast_annotation AS annotation,NULL AS annotation_repr,CAST(NULLIF(NULL,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "index_aliases",
+            "query": "SELECT __path,alias name,id FROM a WHERE kind='alias' AND name='Index' AND EXISTS(SELECT 1 FROM a p WHERE p.__path=a.__path AND p.id=a.parent AND p.kind='ImportFrom' AND p.module='l1000_schema.schema_def') AND alias!=''",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "schema_aliases",
+            "query": "SELECT __path,CASE WHEN alias='' THEN 'schema_def' ELSE alias END name,id FROM a WHERE kind='alias' AND name='l1000_schema.schema_def' AND EXISTS(SELECT 1 FROM a p WHERE p.__path=a.__path AND p.id=a.parent AND p.kind='Import')",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "index_calls",
+            "query": "SELECT n.* FROM calls n WHERE n.callee_kind='Name' AND (n.callee='Index' OR EXISTS(SELECT 1 FROM index_aliases s WHERE s.__path=n.__path AND s.name=n.callee AND s.id<n.id)) OR n.callee_kind='Attribute' AND n.callee='Index' AND n.receiver_kind='Name' AND (n.receiver_name='schema_def' OR EXISTS(SELECT 1 FROM schema_aliases s WHERE s.__path=n.__path AND s.name=n.receiver_name AND s.id<n.id))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "source_parameters",
+            "query": "SELECT p.*,v.annotation AS source_annotation FROM parameters p LEFT JOIN a v ON v.__path=p.__path AND v.parent=p.id AND v.field='annotation' WHERE p.name='source' AND p.field IN ('args','kwonlyargs') AND p.id=(SELECT min(first.id) FROM parameters first WHERE first.__path=p.__path AND first.fn=p.fn AND first.name=p.name AND first.field IN ('args','kwonlyargs'))",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'missing_source' AS issue,'generated indexes must use _generated_index(..., source=IndexSource.*)' AS message,n.id||':missing_source:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM index_calls n LEFT JOIN functions f ON f.__path=n.__path AND f.id=n.fn WHERE coalesce(f.name,'')!='_generated_index' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'missing_source' AS issue,'_generated_index must forward source=source into Index(...)' AS message,n.id||':missing_source:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM index_calls n JOIN functions f ON f.__path=n.__path AND f.id=n.fn WHERE f.name='_generated_index' AND NOT EXISTS(SELECT 1 FROM a kw JOIN a v ON v.__path=kw.__path AND v.parent=kw.id AND v.field='value' WHERE kw.__path=n.__path AND kw.parent=n.id AND kw.field='keywords' AND kw.name='source' AND kw.position=(SELECT min(first.position) FROM a first WHERE first.__path=kw.__path AND first.parent=kw.parent AND first.field='keywords' AND first.name='source') AND v.kind='Name' AND v.name='source') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'missing_source' AS issue,'_generated_index must require a source: IndexSource parameter' AS message,n.id||':missing_source:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM functions n WHERE n.kind='FunctionDef' AND n.name='_generated_index' AND NOT EXISTS(SELECT 1 FROM source_parameters p WHERE p.__path=n.__path AND p.fn=n.id) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'missing_source' AS issue,'_generated_index source parameter must be annotated as IndexSource' AS message,n.id||':missing_source:'||(n.id+0.001) AS identity,0 AS phase,n.id+0.001 AS ordering,'' AS symbol,'' AS sort_name FROM functions n JOIN source_parameters p ON p.__path=n.__path AND p.fn=n.id WHERE n.kind='FunctionDef' AND n.name='_generated_index' AND coalesce(p.source_annotation,'')!='IndexSource' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'missing_source' AS issue,'_generated_index source must not default to MODEL_DECLARED' AS message,n.id||':missing_source:'||(n.id+0.002) AS identity,0 AS phase,n.id+0.002 AS ordering,'' AS symbol,'' AS sort_name FROM functions n JOIN parameters p ON p.__path=n.__path AND p.fn=n.id JOIN a arglist ON arglist.__path=p.__path AND arglist.id=p.parent JOIN a d ON d.__path=arglist.__path AND d.parent=arglist.id AND d.field='kw_defaults' AND d.position=p.position WHERE n.kind='FunctionDef' AND n.name='_generated_index' AND p.field='kwonlyargs' AND p.name='source' AND p.position=(SELECT max(last.position) FROM parameters last WHERE last.__path=p.__path AND last.fn=p.fn AND last.name=p.name AND last.field='kwonlyargs') AND (d.kind='Name' AND d.name='MODEL_DECLARED' OR d.kind='Attribute' AND d.name='MODEL_DECLARED' AND EXISTS(SELECT 1 FROM a value WHERE value.__path=d.__path AND value.parent=d.id AND value.field='value' AND (value.kind='Name' AND value.name='IndexSource')))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

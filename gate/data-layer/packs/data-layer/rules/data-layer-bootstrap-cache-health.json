@@ -1,0 +1,275 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-bootstrap-cache-health",
+  "revision": 1,
+  "mode": "block",
+  "description": "Exact port of nera-data-layer bootstrap_cache_health at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "conform/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "bootstrap-cache",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "qualified",
+            "query": "WITH RECURSIVE q(__path,id,name) AS (\n      SELECT __path,id,name FROM a WHERE kind='Name'\n      UNION ALL SELECT p.__path,p.id,CASE WHEN p.kind='Attribute' THEN q.name||'.'||p.name ELSE q.name END\n      FROM q JOIN a child ON child.__path=q.__path AND child.id=q.id\n      JOIN a p ON p.__path=child.__path AND p.id=child.parent\n      WHERE p.kind='Attribute' AND child.field='value' OR p.kind='Call' AND child.field='func') SELECT * FROM q",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "call_lines",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='call'",
+              "fields": [
+                "source_line",
+                "previous_line"
+              ]
+            }
+          },
+          {
+            "name": "cache_calls",
+            "query": "SELECT c.*,CASE WHEN substr(f.name,1,5)='test_' OR EXISTS(SELECT 1 FROM a d JOIN qualified q ON q.__path=d.__path AND q.id=d.id WHERE d.__path=f.__path AND d.parent=f.id AND d.field='decorator_list' AND (q.name='fixture' OR substr(q.name,-14)='pytest.fixture')) THEN 1 ELSE 0 END AS inside_test\n FROM calls c LEFT JOIN functions f ON f.__path=c.__path AND f.id=c.fn\n JOIN cst s ON s.__path=c.__path AND s.kind='call' AND s.__start=c.__start AND s.__end=c.__end\n JOIN call_lines l ON l.__path=s.__path AND l.id=s.id\n WHERE instr(l.source_line,'bootstrap-cache-health: allow')=0 AND instr(l.previous_line,'bootstrap-cache-health: allow')=0",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BCH001' AS issue,n.callee||'() inside a test/fixture can create repeated cold bootstraps; prefer module-level TEST_BOOTSTRAP_TABLES or TEST_BOOTSTRAP_VERSIONING_DOMAINS' AS message,n.id||':BCH001:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM cache_calls n WHERE n.inside_test AND n.callee IN ('bootstrap_test_logged_tables_for_tests','bootstrap_test_logged_tables_for_tests_async','bootstrap_test_queues_for_tests','bootstrap_test_queues_for_tests_async','bootstrap_test_schema_for_tests','bootstrap_test_schema_for_tests_async','bootstrap_test_table_triggers_for_tests','bootstrap_test_table_triggers_for_tests_async','bootstrap_test_tables_for_tests','bootstrap_test_tables_for_tests_async','bootstrap_test_versioning_domain_for_tests','bootstrap_test_versioning_domain_for_tests_async') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BCH002' AS issue,n.callee||'() uses an explicit manifest_key; per-test manifest keys commonly cause BOOT-WARM-CACHE-MISS' AS message,n.id||':BCH002:'||(n.id+0.0001) AS identity,0 AS phase,n.id+0.0001 AS ordering,'' AS symbol,'' AS sort_name FROM cache_calls n WHERE n.callee IN ('bootstrap_test_logged_tables_for_tests','bootstrap_test_logged_tables_for_tests_async','bootstrap_test_queues_for_tests','bootstrap_test_queues_for_tests_async','bootstrap_test_schema_for_tests','bootstrap_test_schema_for_tests_async','bootstrap_test_table_triggers_for_tests','bootstrap_test_table_triggers_for_tests_async','bootstrap_test_tables_for_tests','bootstrap_test_tables_for_tests_async','bootstrap_test_versioning_domain_for_tests','bootstrap_test_versioning_domain_for_tests_async') AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='keywords' AND (v.name='manifest_key')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BCH003' AS issue,n.callee||'() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES' AS message,n.id||':BCH003:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM cache_calls n WHERE n.inside_test AND n.callee_kind='Name' AND n.callee IN ('create_table','create_tables')",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "reported-parser-error",
+      "relational": {
+        "inputs": {
+          "invalid": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "invalid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "regex": "bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables"
+                          }
+                        ]
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "filePath": {
+                              "regex": "\\b\\B"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "requireNonemptyInput": "invalid",
+        "stages": [
+          {
+            "name": "parsed",
+            "pythonAst": {
+              "source": "invalid",
+              "roots": "SELECT __path,source_text(__path,0,__end) AS source FROM invalid",
+              "fields": [
+                "syntax_error"
+              ]
+            }
+          }
+        ],
+        "query": "SELECT i.__path path,0 start_byte,0 end_byte,1 line,'BCH000' issue,'SyntaxError: '||json_extract(p.syntax_error,'$.msg')||CASE WHEN json_extract(p.syntax_error,'$.lineno') IS NULL THEN '' ELSE ' ('||rx_replace(i.__path,'^.*/','')||', line '||json_extract(p.syntax_error,'$.lineno')||')' END message,i.__path identity,0 phase,0 ordering,'' symbol,'' sort_name FROM invalid i JOIN parsed p ON p.__path=i.__path WHERE p.syntax_error!='null'",
+        "key": [
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message"
+      },
+      "violation": {
+        "code": "BCH000",
+        "message": "Parser error",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

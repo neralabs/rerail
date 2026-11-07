@@ -1,0 +1,186 @@
+// data-layer-serverplan-steps in Rerail logic: clause `step-contracts-6` (STEP-028), a part of serverplan_steps.rdl;
+// options at their defaults (entryPoint "all", strictModulesOnly true: `raw_nodes` keeps strict modules, `relaxed`
+// matches nothing). Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
+//
+// One relation per SQL stage, under the stage's name. The clause is per file (partitionBy file): a SQL row keyed by
+// (__path, id) is a node, `id = kind:start:end` being that node, and text joins stay in one document (`docof`).
+// `nodes` is the set `raw_nodes` matches; a stage that joins `nodes` on a captured id needs that node in the set. The
+// optional captures are tree relations: NAME, LEFT, RIGHT, VALUE, TYPE, FUNCTION, ARGUMENTS, OBJECT, ATTRIBUTE
+// (`has $X, field f, stopBy neighbor`) are `field`, PARENT (`inside $X, stopBy neighbor`) is `child`, ANCESTOR (the
+// nearest strict ancestor matching the region selector) is the deepest strict ancestor in `nodes`: every ancestor of
+// a node of a strict module is in that module, so the region selector and the selector of `nodes` agree there. A
+// nullable column is a side relation that holds where it is not NULL; a boolean column a relation that holds where
+// it is true.
+//
+// Builtins: @rx_matches, @lower, @trim, @within, @depth. A builtin with no value (SQL NULL) binds nothing.
+// findings layer (§8): identity (`value:`/`callback:` || node id) and entry; a finding is (issue, node).
+// ties: `ordinal` (start, end, kind) and `position` (start) cannot tie on distinct nodes; `legacy_callbacks` keeps
+// the last function of the name by start.
+
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl cdef(kind: symbol)
+cdef("class_definition").
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+
+// ---- inputs (evidence) ----
+.decl raw_nodes(n: node)
+raw_nodes(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "strictModulesOnly", "cases": {"true": {"any": [{"matches": "step-strict-module"}, {"inside": {"matches": "step-strict-module", "stopBy": "end"}}]}, "false": {"filePath": {"regex": "(?s).*"}}}}, {"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "check_legacy_postop_user_callable_escape_hatches": {"filePath": {"regex": "(?s).*"}}, "_scan_source": {"filePath": {"regex": "(?s).*"}}, "_scan_file": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"any": [{"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}]}, {"inside": {"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "keyword_argument"}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"all": [{"kind": "call"}, {"matches": "step-user-callable"}]}, {"inside": {"all": [{"kind": "call"}, {"matches": "step-user-callable"}], "stopBy": "end"}}, {"all": [{"kind": "assignment"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CLOSED_POST_OP_STRICT)$"}], "stopBy": "neighbor", "field": "left"}}]}, {"inside": {"all": [{"kind": "assignment"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CLOSED_POST_OP_STRICT)$"}], "stopBy": "neighbor", "field": "left"}}], "stopBy": "neighbor"}}]}, {"any": [{"inside": {"all": [{"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"any": [{"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}]}, {"inside": {"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "keyword_argument"}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"all": [{"kind": "call"}, {"matches": "step-user-callable"}]}, {"inside": {"all": [{"kind": "call"}, {"matches": "step-user-callable"}], "stopBy": "end"}}, {"all": [{"kind": "assignment"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CLOSED_POST_OP_STRICT)$"}], "stopBy": "neighbor", "field": "left"}}]}, {"inside": {"all": [{"kind": "assignment"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CLOSED_POST_OP_STRICT)$"}], "stopBy": "neighbor", "field": "left"}}], "stopBy": "neighbor"}}]}, {"pattern": "$ANCESTOR"}], "stopBy": {"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"any": [{"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}]}, {"inside": {"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "keyword_argument"}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:ResultAssertionSpec|ResultMaterializationSpec|assert_result|materialize|static_exception_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}]}, {"all": [{"kind": "call"}, {"inside": {"kind": "return_statement", "stopBy": "neighbor"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"all": [{"kind": "call"}, {"matches": "step-user-callable"}]}, {"inside": {"all": [{"kind": "call"}, {"matches": "step-user-callable"}], "stopBy": "end"}}, {"all": [{"kind": "assignment"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CLOSED_POST_OP_STRICT)$"}], "stopBy": "neighbor", "field": "left"}}]}, {"inside": {"all": [{"kind": "assignment"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CLOSED_POST_OP_STRICT)$"}], "stopBy": "neighbor", "field": "left"}}], "stopBy": "neighbor"}}]}}}, {"pattern": "$_"}]}, {"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$LEFT", "stopBy": "neighbor", "field": "left"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$RIGHT", "stopBy": "neighbor", "field": "right"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$VALUE", "stopBy": "neighbor", "field": "value"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$TYPE", "stopBy": "neighbor", "field": "type"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}]}}).
+.decl relaxed(d: number)
+relaxed(d) :- ast(d, m, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "module"}, {"$option": "strictModulesOnly", "cases": {"true": {"filePath": {"regex": "\\b\\B"}}, "false": {"filePath": {"regex": "(?s).*"}}}}]}}).
+
+// ---- nodes, edges ----
+.decl nodes(n: node)
+nodes(n) :- raw_nodes(n).
+.decl nodes_parent(n: node, p: node)
+nodes_parent(n, p) :- nodes(n), child(p, n, _).
+// edge_parent: ANCESTOR, the deepest node of `nodes` strictly above.
+.decl nodes_above(n: node, a: node, depth: number)
+nodes_above(n, a, k) :- nodes(n), nodes(a), @within(n, a) = 1, k = @depth(a).
+.decl nodes_above_deepest(n: node, depth: number)
+nodes_above_deepest(n, k) :- nodes_above(n, _, _), k = max j : { nodes_above(n, _, j) }.
+.decl nodes_edge_parent(n: node, a: node)
+nodes_edge_parent(n, a) :- nodes_above(n, a, k), nodes_above_deepest(n, k).
+// ordinal: row_number() OVER (PARTITION BY parent ORDER BY __start, __end, kind) - 1, among `nodes`.
+.decl nodes_before(n: node, m: node)
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), start(n, sn), start(m, sm), sm < sn.
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), node(_, n, _, s, en), node(_, m, _, s, em), em < en.
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), node(_, n, kn, s, e), node(_, m, km, s, e), km < kn.
+.decl nodes_has_before(n: node)
+nodes_has_before(n) :- nodes_before(n, _).
+.decl nodes_ordinal(n: node, ordinal: number)
+nodes_ordinal(n, 0) :- nodes(n), !nodes_has_before(n).
+nodes_ordinal(n, k) :- nodes_has_before(n), k = count : { nodes_before(n, _) }.
+.decl edges(src: node, dst: node, ordinal: number)
+edges(s, n, o) :- nodes_edge_parent(n, s), nodes_ordinal(n, o).
+
+// ---- functions, ownership, attributes ----
+.decl functions(f: node)
+functions(f) :- nodes(f), kind(f, "function_definition").
+.decl functions_name(f: node, name: symbol)
+functions_name(f, s) :- functions(f), field(f, "name", x), text(x, s).
+// The SQL walks `edges` down from the roots, carrying the nearest function and class and the outermost function
+// (E0 row 64). Every function_definition and class_definition of a strict module is in `nodes`, so these are
+// ancestors-or-self on the tape.
+.decl ownership(n: node)
+ownership(n) :- nodes(n).
+.decl ownership_fn(n: node, fn: node)
+ownership_fn(n, n) :- nodes(n), kind(n, "function_definition").
+ownership_fn(n, f) :- nodes(n), kind(n, k), k != "function_definition", nearest(n, f, fdef).
+.decl ownership_cls(n: node, cls: node)
+ownership_cls(n, n) :- nodes(n), kind(n, "class_definition").
+ownership_cls(n, c) :- nodes(n), kind(n, k), k != "class_definition", nearest(n, c, cdef).
+.decl fn_nested(f: node)
+fn_nested(f) :- functions(f), nearest(f, g, fdef).
+.decl ownership_top_fn(n: node, fn: node)
+ownership_top_fn(n, n) :- functions(n), !fn_nested(n).
+ownership_top_fn(n, f) :- nodes(n), functions(f), @within(n, f) = 1, !fn_nested(f).
+.decl attributes(a: node)
+attributes(a) :- nodes(a), kind(a, "attribute").
+.decl attributes_attr(a: node, attr: symbol)
+attributes_attr(a, s) :- attributes(a), field(a, "attribute", x), text(x, s).
+.decl attributes_object(a: node, object: node)
+attributes_object(a, o) :- attributes(a), field(a, "object", o).
+
+// ---- calls, arguments, keywords, descendants ----
+// callee = coalesce(attribute's attr, function text).
+.decl calls(c: node, callee_id: node, full_callee: symbol, callee: symbol)
+calls(c, f, t, a) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), text(f, t), attributes_attr(f, a).
+calls(c, f, t, t) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), text(f, t), !attributes_attr(f, _).
+.decl calls_receiver(c: node, receiver: node)
+calls_receiver(c, o) :- calls(c, f, _, _), attributes_object(f, o).
+.decl argument_row(n: node, call: node)
+argument_row(n, c) :- calls(c, _, _, _), field(c, "arguments", l), child(l, n, _), nodes(n), kind(n, k),
+    k != "comment", k != "keyword_argument", k != "list_splat", k != "dictionary_splat".
+.decl argument_before(n: node, m: node)
+argument_before(n, m) :- argument_row(n, c), argument_row(m, c), start(n, sn), start(m, sm), sm < sn.
+.decl argument_has_before(n: node)
+argument_has_before(n) :- argument_before(n, _).
+.decl arguments(n: node, call: node, position: number)
+arguments(n, c, 0) :- argument_row(n, c), !argument_has_before(n).
+arguments(n, c, p) :- argument_row(n, c), argument_has_before(n), p = count : { argument_before(n, _) }.
+.decl keywords(call: node, keyword: node, name: symbol, value: node)
+keywords(c, k, s, v) :- calls(c, _, _, _), field(c, "arguments", l), child(l, k, _), nodes(k), kind(k, "keyword_argument"),
+    field(k, "name", kn), nodes(kn), text(kn, s), field(k, "value", v), nodes(v).
+// The SQL's reflexive closure of `edges` (E0 row 65): a node of `nodes` and every node of `nodes` below it, since
+// `edges` links each node to the deepest one above it.
+.decl descendants(root: node, node: node)
+descendants(n, n) :- nodes(n).
+descendants(r, n) :- nodes(n), nodes(r), @within(n, r) = 1.
+
+// ---- assignments ----
+.decl assignments(n: node, target: node)
+assignments(n, l) :- nodes(n), kind(n, "assignment"), field(n, "left", l), nodes(l).
+.decl assignments_value(n: node, value: node)
+assignments_value(n, r) :- assignments(n, _), field(n, "right", r), nodes(r).
+.decl assignments_fn(n: node, fn: node)
+assignments_fn(n, f) :- assignments(n, _), ownership_fn(n, f).
+// type_start: TYPE captured.
+.decl assignments_type(n: node, type: node)
+assignments_type(n, t) :- assignments(n, _), field(n, "type", t).
+
+// ---- nonempty_keywords, compiled ----
+.decl string_kind(k: symbol)
+string_kind("string"). string_kind("concatenated_string").
+.decl container_kind(k: symbol)
+container_kind("list"). container_kind("tuple"). container_kind("set").
+.decl keyword_empty(v: node)
+keyword_empty(v) :- keywords(_, _, _, v), kind(v, "none").
+keyword_empty(v) :- keywords(_, _, _, v), kind(v, k), string_kind(k), text(v, s), @trim(s, "\"'") = "".
+keyword_empty(v) :- keywords(_, _, _, v), kind(v, k), container_kind(k), !has_node_child(v).
+.decl has_node_child(p: node)
+has_node_child(p) :- nodes(c), nodes_parent(c, p).
+.decl nonempty_keywords(call: node, keyword: node, name: symbol, value: node)
+nonempty_keywords(c, k, s, v) :- keywords(c, k, s, v), !keyword_empty(v).
+.decl compiled(c: node)
+compiled(c) :- calls(c, _, "CompiledStep", _).
+// grammarless is NOT compiled_grammar.
+.decl compiled_grammar(c: node)
+compiled_grammar(c) :- compiled(c), keywords(c, _, "grammar", v), kind(v, k), k != "none".
+.decl compiled_refs(c: node)
+compiled_refs(c) :- compiled(c), nonempty_keywords(c, _, "runtime_ref_ids", _).
+compiled_refs(c) :- compiled(c), nonempty_keywords(c, _, "source_refs", _).
+.decl compiled_sql_surface(c: node)
+compiled_sql_surface(c) :- compiled_refs(c).
+compiled_sql_surface(c) :- compiled(c), nonempty_keywords(c, _, "auxiliary_ctes", _).
+compiled_sql_surface(c) :- compiled_grammar(c).
+
+// ---- callable_edges, user_callable: a set recursion over in-file dataflow (E0 row 66) ----
+.decl callable_edges(src: node, dst: node)
+callable_edges(o, a) :- attributes_object(a, o).
+callable_edges(x, a) :- attributes(a), field(a, "attribute", x).
+callable_edges(f, c) :- calls(c, f, _, _).
+callable_edges(a, c) :- arguments(a, c, _).
+callable_edges(v, c) :- keywords(c, _, _, v).
+callable_edges(c, n) :- nodes(n), kind(n, "subscript"), child(n, c, _), nodes(c), nodes_ordinal(c, 0).
+callable_edges(c, n) :- nodes(n), kind(n, "parenthesized_expression"), child(n, c, _), nodes(c), nodes_ordinal(c, 0).
+.decl user_callable(n: node)
+user_callable(n) :- nodes(n), kind(n, "lambda").
+user_callable(n) :- nodes(n), kind(n, "identifier"), text(n, s),
+    @rx_matches(@lower(s), "callable|callback|decoder|fn|function|hook|mapper|picker|processor|projector|row_decoder|transform") = 1.
+user_callable(t) :- user_callable(s), callable_edges(s, t).
+
+// ---- legacy_postops, legacy_callbacks ----
+// The document opts into the closed post-op migration: `relaxed`, or a module-level CLOSED_POST_OP_STRICT = True
+// with no annotation (the assignment's parent and that one's parent, a module, in `nodes`).
+.decl strict_opt_in(d: number)
+strict_opt_in(d) :- relaxed(d).
+strict_opt_in(d) :- assignments(a, l), text(l, "CLOSED_POST_OP_STRICT"), assignments_value(a, r), kind(r, "true"),
+    !assignments_type(a, _), nodes_parent(a, p), nodes(p), nodes_parent(p, m), nodes(m), kind(m, "module"), docof(a, d).
+.decl legacy_postops(call: node, keyword: node, name: symbol, value: node)
+legacy_postops(c, k, "post_op", v) :- keywords(c, k, "post_op", v), compiled(c), docof(k, d), strict_opt_in(d).
+legacy_postops(c, k, "post_op_with_refs", v) :- keywords(c, k, "post_op_with_refs", v), compiled(c), docof(k, d), strict_opt_in(d).
+.decl function_newer(f: node)
+function_newer(f) :- functions_name(f, s), docof(f, d), start(f, sf), functions_name(g, s), docof(g, d), start(g, sg), sg > sf.
+.decl legacy_callbacks(keyword: node, fn: node)
+legacy_callbacks(k, f) :- legacy_postops(_, k, _, v), kind(v, "identifier"), text(v, s), docof(v, d), functions_name(f, s),
+    docof(f, d), !function_newer(f).
+
+// ---- the clause's query: STEP-028 ----
+// 'value:' || n.id: a legacy post-op value that is a user callable, a partial of one, or any call under post_op_with_refs.
+finding("step-contracts-6", "STEP-028", n) :- legacy_postops(_, _, _, n), nodes(n), calls(n, _, "partial", _), user_callable(n).
+finding("step-contracts-6", "STEP-028", n) :- legacy_postops(_, _, "post_op_with_refs", n), nodes(n), calls(n, _, t, _), t != "partial".
+finding("step-contracts-6", "STEP-028", n) :- legacy_postops(_, _, _, n), nodes(n), kind(n, k), k != "call", user_callable(n).
+// 'callback:' || n.id: a user callable call inside the function a legacy post-op names.
+finding("step-contracts-6", "STEP-028", n) :- calls(n, _, _, _), legacy_callbacks(_, f), descendants(f, n), user_callable(n).

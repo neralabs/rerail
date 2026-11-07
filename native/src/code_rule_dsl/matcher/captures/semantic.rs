@@ -43,8 +43,8 @@ pub(super) fn collect_binds(
         Semantic::Resolves(_)
         | Semantic::Value(_)
         | Semantic::Layout(_)
-        | Semantic::Host(_)
-        | Semantic::ImportTarget(_) => {}
+        | Semantic::FilePath(_)
+        | Semantic::Host(_) => {}
     }
 }
 
@@ -92,7 +92,7 @@ pub(super) fn reads(
         | Semantic::Host(_)
         | Semantic::Embedded(_)
         | Semantic::Capture(_)
-        | Semantic::ImportTarget(_) => Names::new(),
+        | Semantic::FilePath(_) => Names::new(),
     }
 }
 
@@ -140,10 +140,7 @@ pub(super) fn collect_mentions(
         }
         Semantic::Calls(test) => names.extend(test.chain.iter().cloned()),
         Semantic::Layout(layout) => names.extend(layout.reads().map(str::to_owned)),
-        Semantic::Resolves(_)
-        | Semantic::Value(_)
-        | Semantic::Host(_)
-        | Semantic::ImportTarget(_) => {}
+        Semantic::Resolves(_) | Semantic::Value(_) | Semantic::FilePath(_) | Semantic::Host(_) => {}
     }
 }
 
@@ -157,9 +154,9 @@ pub(super) fn collect_in(
     match semantic {
         Semantic::Resolves(_)
         | Semantic::Layout(_)
+        | Semantic::FilePath(_)
         | Semantic::Host(_)
-        | Semantic::Value(_)
-        | Semantic::ImportTarget(_) => {}
+        | Semantic::Value(_) => {}
         Semantic::Calls(test) => {
             if let Some(name) = &test.chain {
                 merge_capture(variables, name, Capture::Single);

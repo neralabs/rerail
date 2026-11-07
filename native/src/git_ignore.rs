@@ -29,7 +29,11 @@ impl GitIgnore {
             .map_err(|error| format!("cannot resolve {}: {error}", root.display()))?;
         let repository = match gix::discover(&root) {
             Ok(repository) => repository,
-            Err(error) if crate::git_workspace::is_no_repository(&error) => return Ok(None),
+            Err(gix::discover::Error::Discover(
+                gix::discover::upwards::Error::NoGitRepository { .. }
+                | gix::discover::upwards::Error::NoGitRepositoryWithinCeiling { .. }
+                | gix::discover::upwards::Error::NoGitRepositoryWithinFs { .. },
+            )) => return Ok(None),
             Err(error) => return Err(format!("cannot discover Git repository: {error}")),
         };
         let Some(worktree) = repository.workdir() else {
@@ -136,7 +140,7 @@ pub struct GitIgnoreMatcher {
 impl GitIgnoreMatcher {
     /// Whether Git ignores `relative_path` (to the root the matcher was opened for, `/`-separated);
     /// `is_directory` lets directory-only patterns (`build/`) match.
-    #[napi(catch_unwind)]
+    #[napi]
     pub fn ignored(&self, relative_path: String, is_directory: bool) -> Result<bool> {
         let mut inner = self
             .inner
@@ -149,7 +153,7 @@ impl GitIgnoreMatcher {
 }
 
 /// The Git exclude stack for paths below `root`; null when `root` is in no Git worktree.
-#[napi(catch_unwind)]
+#[napi]
 pub fn open_git_ignore_matcher(root: String) -> Result<Option<GitIgnoreMatcher>> {
     GitIgnore::open(Path::new(&root))
         .map(|opened| {

@@ -4,6 +4,60 @@ use crate::code_rule_dsl::test_support::CAPABILITIES;
 use crate::code_rule_dsl::{CodeRuleDslEditor, CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use serde_json::{Value, json};
 
+#[test]
+#[cfg_attr(
+    not(feature = "p-anchor-corpus"),
+    ignore = "P's anchor corpus selects roots only on the p-anchor-corpus path (open item O20)"
+)]
+fn stateless_fact_extraction_uses_selective_anchor_postings() {
+    let compiled = crate::code_rule_dsl::test_support::compile_typescript_ast(json!({
+        "rule": { "matches": "selected" }, "utils": { "selected": {
+            "kind": "call_expression", "has": { "field": "function", "kind": "identifier", "regex": "^target$" }
+        } }
+    })).unwrap();
+    let mut source = "other(value);\n".repeat(500);
+    source.push_str("target(value);\nother(target);\n");
+    crate::code_rule_dsl::matcher::reset_roots_matched();
+    let result =
+        crate::code_rule_dsl::test_support::evaluate_file(&compiled, "typescript", "a.ts", &source);
+    crate::code_rule_dsl::test_support::assert_violations(&result, 1);
+    assert_eq!(crate::code_rule_dsl::matcher::roots_matched(), 1);
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "p-anchor-corpus"),
+    ignore = "P's anchor corpus selects roots only on the p-anchor-corpus path (open item O20)"
+)]
+fn relational_inputs_share_one_anchor_index_and_keep_distinct_selections() {
+    use crate::code_rule_dsl::test_support::{Walk, compile_document_with, reset_walks, walks};
+    let input = |name: &str| {
+        json!({ "evidence": { "as": "f", "query": { "ast": {
+        "language": "typescript", "rule": { "kind": "call_expression", "has": {
+            "field": "function", "kind": "identifier", "regex": format!("^{name}$"), "pattern": "$NAME"
+        } }
+    } }, "project": { "name": "capture.NAME" } } })
+    };
+    let document = json!({ "format": "rerail.policy/v1", "id": "shared-anchors", "revision": 1, "mode": "log", "clauses": [{
+        "id": "selected", "relational": { "partitionBy": "file", "inputs": { "a": input("target"), "b": input("other") },
+            "query": "SELECT a.__path AS path,a.__start AS start_byte,a.__end AS end_byte,a.name AS name,'found' AS issue FROM a WHERE EXISTS(SELECT 1 FROM b)",
+            "key": ["name"], "code": "issue" },
+        "violation": { "anchor": "witness.span", "code": "FOUND", "message": "found" }
+    }] });
+    let compiled =
+        compile_document_with(document, &serde_json::from_str(CAPABILITIES).unwrap()).unwrap();
+    let source = "other(value);\n".repeat(500) + "target(value);\nother(target);\n";
+    reset_walks();
+    let result =
+        crate::code_rule_dsl::test_support::evaluate_file(&compiled, "typescript", "a.ts", &source);
+    crate::code_rule_dsl::test_support::assert_violations(&result, 1);
+    assert_eq!(walks(Walk::AnchorBuild), 1);
+    assert_eq!(
+        result["violations"][0]["variables"]["row"]["name"],
+        "target"
+    );
+}
+
 /// A code rule reporting each TypeScript program in (`SERVER`) and out of (`CLIENT`) its Next
 /// app's server graph.
 fn server_graph_rule() -> CompiledCodeRuleDsl {

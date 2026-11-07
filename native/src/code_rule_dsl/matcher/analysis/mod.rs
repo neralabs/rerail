@@ -4,5 +4,5 @@
 mod polarity;
 mod required_text;
 
-pub(crate) use polarity::{calls_positive_only, reads_import_targets};
+pub(crate) use polarity::calls_positive_only;
 pub(in crate::code_rule_dsl) use required_text::RequiredText;

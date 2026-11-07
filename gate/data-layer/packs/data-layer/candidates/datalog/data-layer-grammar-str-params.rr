@@ -1,0 +1,48 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.input doc, node, child, field, text, name, op
+.decl k0(kind: symbol)
+k0("function_definition").
+.decl k1(kind: symbol)
+k1("class_definition").
+.decl in_scope(d: number)
+.decl m23(n: node)
+.decl m30(n: node)
+.decl m38(n: node)
+.decl m39(n: node)
+.decl m4(n: node)
+.decl m47(n: node)
+.decl m48(n: node)
+.decl m58(n: node)
+.decl out_scope(d: number)
+.decl u1(n: node)
+.decl u55(n: node)
+.decl u6(n: node)
+.decl u60(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+m4(n) :- node(_, n, "identifier", _, _), text(n, v3), v3 = "self".
+m23(n) :- field(n, "name", v21), node(_, v21, "identifier", _, _), text(v21, v22), (v22 = "CheckExpressionLexer" ; v22 = "SqlAdminToolRawStatement" ; v22 = "SqlColumnConstraint" ; v22 = "SqlColumnType" ; v22 = "SqlEscapedLiteral" ; v22 = "SqlExplain" ; v22 = "SqlFragment" ; v22 = "SqlHybridSearchQuery" ; v22 = "SqlIntegerLiteral" ; v22 = "SqlPreRenderedFragment" ; v22 = "SqlQuotedIdentifier" ; v22 = "SqlTypeRef" ; v22 = "ViewDefinition" ; v22 = "sql_ddl_comment").
+m30(n) :- node(_, n, "identifier", _, _), text(n, v26), (prefix("Sql", v26) ; prefix("_Sql", v26)).
+m30(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v27), name(v27, v29), (prefix("Sql", v29) ; prefix("_Sql", v29)).
+m38(n) :- node(_, n, "function_definition", _, _), field(n, "name", v33), node(_, v33, "identifier", _, _), text(v33, v34), v34 = "render", !op(n, "async").
+m38(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v35), node(_, v35, "function_definition", _, _), field(v35, "name", v36), node(_, v36, "identifier", _, _), text(v36, v37), v37 = "render", !op(v35, "async").
+m39(n) :- field(n, "superclasses", v24), child(v24, v25, _), m30(v25).
+m39(n) :- field(n, "body", v31), child(v31, v32, _), m38(v32).
+m47(n) :- node(_, n, "function_definition", _, _), field(n, "name", v42), node(_, v42, "identifier", _, _), text(v42, v43), v43 = "__init__", !op(n, "async").
+m47(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v44), node(_, v44, "function_definition", _, _), field(v44, "name", v45), node(_, v45, "identifier", _, _), text(v45, v46), v46 = "__init__", !op(v44, "async").
+m48(n) :- field(n, "body", v40), child(v40, v41, _), m47(v41).
+m58(n) :- node(_, n, "identifier", _, _), text(n, v57), v57 = "self".
+.output violation

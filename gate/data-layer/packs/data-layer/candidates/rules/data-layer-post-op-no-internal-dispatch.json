@@ -1,0 +1,2382 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-post-op-no-internal-dispatch",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer post_op_no_internal_dispatch at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2070_batching/**/*.py",
+      "impl/common/**/*.py",
+      "l2060_query_builder/**/*.py",
+      "l5200_vector_index/**/*.py",
+      "l5100_fts/**/*.py",
+      "l6500_evidence/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "duplicate-enum",
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "row",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "all": [
+                        {
+                          "kind": "comparison_operator"
+                        },
+                        {
+                          "any": [
+                            {
+                              "pattern": "$LEFT == $RIGHT"
+                            },
+                            {
+                              "pattern": "$LEFT is $RIGHT"
+                            }
+                          ]
+                        },
+                        {
+                          "any": [
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "attribute"
+                                      },
+                                      {
+                                        "pattern": "$SYMBOL"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)$"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "pattern": "$ENUM"
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "object"
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "pattern": "$MEMBER",
+                                          "stopBy": "neighbor",
+                                          "field": "attribute"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "nthChild": 1
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            },
+                            {
+                              "all": [
+                                {
+                                  "not": {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "pattern": "$SYMBOL"
+                                            },
+                                            {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)$"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "pattern": "$ENUM"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor",
+                                                "field": "object"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$MEMBER",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "nthChild": 1
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "pattern": "$SYMBOL"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)$"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "pattern": "$ENUM"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "object"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "pattern": "$MEMBER",
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "nthChild": 2
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "function_definition"
+                              },
+                              {
+                                "pattern": "$FUNCTION"
+                              },
+                              {
+                                "has": {
+                                  "pattern": "$FUNCTION_NAME",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "function_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "module"
+                            },
+                            {
+                              "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                            }
+                          ]
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "path": "file.path",
+              "owner": "capture.FUNCTION.startByte",
+              "enum": "capture.ENUM",
+              "member": "capture.MEMBER"
+            }
+          }
+        },
+        "group_by": [
+          "row.path",
+          "row.owner",
+          "row.enum",
+          "row.member"
+        ],
+        "count": {
+          "lte": 1
+        }
+      },
+      "violation": {
+        "code": "POSTOPDISPATCH001",
+        "anchor": "witness.span",
+        "message": "POSTOPDISPATCH001"
+      }
+    },
+    {
+      "id": "builder-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "comparison_operator"
+                      },
+                      {
+                        "any": [
+                          {
+                            "pattern": "$LEFT == $RIGHT"
+                          },
+                          {
+                            "pattern": "$LEFT is $RIGHT"
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "pattern": "$SYMBOL"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)$"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "pattern": "$ENUM"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "object"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "pattern": "$MEMBER",
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nthChild": 1
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "all": [
+                              {
+                                "not": {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "pattern": "$SYMBOL"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)$"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "pattern": "$ENUM"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "object"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "pattern": "$MEMBER",
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "nthChild": 1
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "attribute"
+                                        },
+                                        {
+                                          "pattern": "$SYMBOL"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "all": [
+                                                  {
+                                                    "kind": "identifier"
+                                                  },
+                                                  {
+                                                    "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)$"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "pattern": "$ENUM"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "object"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "pattern": "$MEMBER",
+                                            "stopBy": "neighbor",
+                                            "field": "attribute"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "nthChild": 2
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "pattern": "$FUNCTION"
+                            },
+                            {
+                              "has": {
+                                "pattern": "$FUNCTION_NAME",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ],
+                          "stopBy": {
+                            "kind": "function_definition"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:materialize_result|materialize_runtime_builder|materialize_.*builder)$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "constraints": {
+            "ENUM": {
+              "all": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "regex": "^(?:RuntimeBuilderName)$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "POSTOPDISPATCH002",
+        "anchor": "witness.span",
+        "message": "POSTOPDISPATCH002"
+      }
+    },
+    {
+      "id": "literal-kwargs",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "comparison_operator"
+                      },
+                      {
+                        "pattern": "$KEY in $CONTAINER"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "string"
+                                },
+                                {
+                                  "regex": "(?i)^[ru]*[\"']"
+                                },
+                                {
+                                  "value": {
+                                    "regex": "(?s).*"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "nthChild": 1
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:kwargs|literal_kwargs)$"
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:keys)$"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "attribute"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:keys)$"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "has": {
+                                    "kind": "attribute",
+                                    "stopBy": "neighbor",
+                                    "field": "function"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nthChild": 2
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^(?:materialize_result|materialize_runtime_builder|materialize_.*builder)$",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "filePath": {
+                                "regex": "^l2070_batching/post_op\\.py$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "regex": "^_materialize_",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "POSTOPDISPATCH003",
+        "anchor": "witness.span",
+        "message": "POSTOPDISPATCH003"
+      }
+    },
+    {
+      "id": "multi-enum-builder",
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "row",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "kind": "comparison_operator"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "pattern": "$LEFT == $RIGHT"
+                                },
+                                {
+                                  "pattern": "$LEFT is $RIGHT"
+                                }
+                              ]
+                            },
+                            {
+                              "any": [
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "pattern": "$SYMBOL"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)$"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "pattern": "$ENUM"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "object"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "pattern": "$MEMBER",
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "nthChild": 1
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "not": {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "attribute"
+                                                },
+                                                {
+                                                  "pattern": "$SYMBOL"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "all": [
+                                                          {
+                                                            "kind": "identifier"
+                                                          },
+                                                          {
+                                                            "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)$"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "pattern": "$ENUM"
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "object"
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "pattern": "$MEMBER",
+                                                    "stopBy": "neighbor",
+                                                    "field": "attribute"
+                                                  }
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "nthChild": 1
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "attribute"
+                                              },
+                                              {
+                                                "pattern": "$SYMBOL"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "all": [
+                                                        {
+                                                          "kind": "identifier"
+                                                        },
+                                                        {
+                                                          "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)$"
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "pattern": "$ENUM"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "object"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "pattern": "$MEMBER",
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "nthChild": 2
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "pattern": "$FUNCTION"
+                                  },
+                                  {
+                                    "has": {
+                                      "pattern": "$FUNCTION_NAME",
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ],
+                                "stopBy": {
+                                  "kind": "function_definition"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "function_definition"
+                              },
+                              {
+                                "has": {
+                                  "regex": "^materialize_.*builder$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "kind": "function_definition"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "module"
+                            },
+                            {
+                              "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                            }
+                          ]
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "path": "file.path",
+              "owner": "capture.FUNCTION.startByte"
+            },
+            "anchor": "capture.FUNCTION"
+          }
+        },
+        "group_by": [
+          "row.path",
+          "row.owner"
+        ],
+        "count": {
+          "lte": 1
+        }
+      },
+      "violation": {
+        "code": "POSTOPDISPATCH004",
+        "anchor": "witness.span",
+        "message": "POSTOPDISPATCH004"
+      }
+    },
+    {
+      "id": "removed-surface",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|materialize_runtime_builder|runtime_builder_post_op)$"
+                          }
+                        ]
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "import_statement"
+                              },
+                              {
+                                "kind": "import_from_statement"
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "attribute",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "keyword_argument",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "function_definition",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "class_definition",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "default_parameter",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "typed_default_parameter",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "parameters"
+                              },
+                              {
+                                "kind": "list_splat_pattern"
+                              },
+                              {
+                                "kind": "dictionary_splat_pattern"
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "all": [
+                            {
+                              "inside": {
+                                "kind": "typed_parameter",
+                                "stopBy": "neighbor"
+                              }
+                            },
+                            {
+                              "nthChild": {
+                                "position": 1,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|materialize_runtime_builder|runtime_builder_post_op)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "POSTOPDISPATCH005",
+        "anchor": "witness.span",
+        "message": "POSTOPDISPATCH005"
+      }
+    },
+    {
+      "id": "domain-helper",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l2070_batching/post_op\\.py$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^_materialize_",
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:_materialize_assertion_from_row|_materialize_by_post_op_behavior|_materialize_hydrate_dict_many|_materialize_hydrate_dict_one|_materialize_scalar_column|_materialize_scalar_column_list|_materialize_scalar_row_value|_materialize_scalar_tuple|_materialize_terminal_array|_materialize_terminal_object|_materialize_terminal_scalar)$"
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "POSTOPDISPATCH006",
+        "anchor": "witness.span",
+        "message": "POSTOPDISPATCH006"
+      }
+    },
+    {
+      "id": "removed-base",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "class_definition"
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:ResultRowMaterializer)$"
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "attribute"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:ResultRowMaterializer)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "attribute"
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "pattern": "$BASE"
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "superclasses"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "POSTOPDISPATCH008",
+        "anchor": "witness.span",
+        "message": "POSTOPDISPATCH008",
+        "each": "BASE"
+      }
+    },
+    {
+      "id": "removed-keyword",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "keyword_argument"
+                          },
+                          {
+                            "pattern": "$KEYWORD"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:row_materializer)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "POSTOPDISPATCH009",
+        "anchor": "witness.span",
+        "message": "POSTOPDISPATCH009",
+        "each": "KEYWORD"
+      }
+    },
+    {
+      "id": "payload-aliases",
+      "relational": {
+        "inputs": {
+          "functions": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "pattern": "$FUNCTION"
+                          },
+                          {
+                            "has": {
+                              "pattern": "$FUNCTION_NAME",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                              }
+                            ]
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.FUNCTION_NAME"
+              }
+            }
+          },
+          "raw_assignments": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "pattern": "$TARGET"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "pattern": "$VALUE",
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "has": {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "attribute"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:literal_payload)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "attribute"
+                                          }
+                                        },
+                                        {
+                                          "pattern": "$PAYLOAD"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:literal_payload)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          },
+                                          {
+                                            "pattern": "$PAYLOAD"
+                                          }
+                                        ],
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "right"
+                                }
+                              },
+                              {
+                                "pattern": "$_"
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                              }
+                            ]
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "target": "capture.TARGET",
+                "value": "capture.VALUE",
+                "value_kind": "capture.VALUE.kind",
+                "payload": "capture.PAYLOAD.startByte"
+              }
+            }
+          },
+          "raw_probes": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "call"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "attribute"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "pattern": "$RECEIVER"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "object"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:get)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "attribute"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "function"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "string"
+                                              },
+                                              {
+                                                "regex": "(?i)^[ru]*[\"']"
+                                              },
+                                              {
+                                                "value": {
+                                                  "regex": "(?s).*"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "nthChild": 1
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      },
+                                      "stopBy": "neighbor",
+                                      "field": "arguments"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "subscript"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "pattern": "$RECEIVER"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "value"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "string"
+                                        },
+                                        {
+                                          "regex": "(?i)^[ru]*[\"']"
+                                        },
+                                        {
+                                          "value": {
+                                            "regex": "(?s).*"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "subscript"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "comparison_operator"
+                                      },
+                                      {
+                                        "pattern": "$KEY in $CONTAINER"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "string"
+                                                },
+                                                {
+                                                  "regex": "(?i)^[ru]*[\"']"
+                                                },
+                                                {
+                                                  "value": {
+                                                    "regex": "(?s).*"
+                                                  }
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "nthChild": 1
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "pattern": "$RECEIVER"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "nthChild": 2
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "inside": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "identifier",
+                                        "regex": "^(?:materialize_result|materialize_runtime_builder|materialize_.*builder)$",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "filePath": {
+                                        "regex": "^l2070_batching/post_op\\.py$"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "regex": "^_materialize_",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": {
+                                "kind": "function_definition"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                              }
+                            ]
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "receiver": "capture.RECEIVER",
+                "membership": {
+                  "source": "capture.RECEIVER",
+                  "regex": "^(kwargs|literal_kwargs)$",
+                  "group": 1
+                }
+              }
+            }
+          },
+          "key_calls": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "comparison_operator"
+                                  },
+                                  {
+                                    "pattern": "$KEY in $CONTAINER"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "string"
+                                            },
+                                            {
+                                              "regex": "(?i)^[ru]*[\"']"
+                                            },
+                                            {
+                                              "value": {
+                                                "regex": "(?s).*"
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "nthChild": 1
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "call"
+                                            },
+                                            {
+                                              "has": {
+                                                "any": [
+                                                  {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:keys)$"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "all": [
+                                                      {
+                                                        "kind": "attribute"
+                                                      },
+                                                      {
+                                                        "has": {
+                                                          "all": [
+                                                            {
+                                                              "kind": "identifier"
+                                                            },
+                                                            {
+                                                              "regex": "^(?:keys)$"
+                                                            }
+                                                          ],
+                                                          "stopBy": "neighbor",
+                                                          "field": "attribute"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor",
+                                                "field": "function"
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "has": {
+                                            "kind": "attribute",
+                                            "stopBy": "neighbor",
+                                            "field": "function"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "nthChild": 2
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "inside": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "identifier",
+                                        "regex": "^(?:materialize_result|materialize_runtime_builder|materialize_.*builder)$",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "filePath": {
+                                        "regex": "^l2070_batching/post_op\\.py$"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "regex": "^_materialize_",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": {
+                                "kind": "function_definition"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                              }
+                            ]
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
+          "direct_membership": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "kind": "comparison_operator"
+                              },
+                              {
+                                "pattern": "$KEY in $CONTAINER"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "string"
+                                        },
+                                        {
+                                          "regex": "(?i)^[ru]*[\"']"
+                                        },
+                                        {
+                                          "value": {
+                                            "regex": "(?s).*"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "nthChild": 1
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:kwargs|literal_kwargs)$"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nthChild": 2
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "identifier",
+                                        "regex": "^(?:materialize_result|materialize_runtime_builder|materialize_.*builder)$",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "filePath": {
+                                        "regex": "^l2070_batching/post_op\\.py$"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "regex": "^_materialize_",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": {
+                                "kind": "function_definition"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                              }
+                            ]
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "regex": "ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "partitionBy": "file",
+        "stages": [
+          {
+            "name": "assignments",
+            "query": "SELECT a.*,(SELECT f.__start FROM functions f WHERE f.__path=a.__path AND f.__start<a.__start AND f.__end>=a.__end ORDER BY f.__start DESC LIMIT 1) AS owner FROM raw_assignments a",
+            "indexes": [
+              [
+                "__path",
+                "owner",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "aliases",
+            "query": "WITH RECURSIVE alias(path,owner,name,since) AS (\n            SELECT __path,__start,'literal_payload',-1 FROM functions\n            UNION SELECT __path,owner,target,__start FROM assignments WHERE payload IS NOT NULL\n            UNION SELECT a.__path,a.owner,a.target,a.__start FROM assignments a JOIN alias old ON old.path=a.__path AND old.owner=a.owner AND old.name=a.value AND old.since<=a.__start WHERE a.value_kind='identifier')\n            SELECT path,owner,name,min(since) AS since FROM alias GROUP BY path,owner,name",
+            "indexes": [
+              [
+                "path",
+                "owner",
+                "name",
+                "since"
+              ]
+            ]
+          },
+          {
+            "name": "probes",
+            "query": "SELECT p.*,(SELECT f.__start FROM functions f WHERE f.__path=p.__path AND f.__start<p.__start AND f.__end>=p.__end ORDER BY f.__start DESC LIMIT 1) AS owner FROM raw_probes p"
+          }
+        ],
+        "query": "SELECT p.__path AS path,p.__start AS start_byte,p.__end AS end_byte FROM probes p\n        WHERE EXISTS(SELECT 1 FROM aliases a WHERE a.path=p.__path AND a.owner=p.owner AND a.name=p.receiver AND a.since<=p.__start)\n        UNION ALL SELECT __path,__start,__end FROM key_calls UNION SELECT __path,__start,__end FROM direct_membership",
+        "key": [
+          "start_byte"
+        ]
+      },
+      "violation": {
+        "code": "POSTOPDISPATCH007",
+        "anchor": "witness.span",
+        "message": "Post-op payload dispatch"
+      }
+    }
+  ]
+}

@@ -67,7 +67,7 @@ import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
-import { runRuleApproveCommand } from "./rule-approval-cli.js";
+import { ENGINE_USAGE, runEngineCommand } from "./engine-cli.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
@@ -188,12 +188,7 @@ function usage(): string {
     "",
     internalTesting("Not part of the 0.1.0 release:"),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
-    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
-    "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
-    "  rerail remote list|status [--json]",
-    "  rerail remote remove <name|url>",
-    "  rerail remote push [--json]",
-    "  rerail remote exclude|include [--repo <dir>]",
+    ...ENGINE_USAGE,
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
@@ -729,8 +724,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "support-bundle") return await runSupportBundleCommand(args, usage, { packageVersion: context.packageVersion });
   if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
-  if (command === "feedback") return await runFeedbackCommand(args, usage, { packageVersion: context.packageVersion });
-  if (command === "scrub") return await runScrubCommand(args, usage);
+  if (command === "engine") return runEngineCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });

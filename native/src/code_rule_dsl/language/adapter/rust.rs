@@ -55,12 +55,6 @@ impl Adapter for Rust {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
-    const STRIPS_BOM: bool = false;
-    const COMMENT_KINDS: &'static [&'static str] = &["line_comment", "block_comment"];
-    /// A `shebang` is passed over by its `#!` text, as in every grammar.
-    const PREAMBLE_KINDS: &'static [&'static str] = &[];
-    /// A `block` starts at its `{` or label, never at its first statement.
-    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -668,9 +662,6 @@ impl ValueRules for Rust {
 
     fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal> {
         match feature {
-            ValueFeature::ToPrecision => refused(
-                "`toPrecision` lays a number out as ECMAScript's Number.prototype.toPrecision; Rust numbers have no such layout",
-            ),
             ValueFeature::Type(name) if RUST_TYPES.contains(&name) => Ok(()),
             ValueFeature::Type(name) => refused(format!(
                 "`{name}` is not a Rust type name; expected one of {}",

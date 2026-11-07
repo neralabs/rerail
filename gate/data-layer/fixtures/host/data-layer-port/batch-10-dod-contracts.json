@@ -1,0 +1,598 @@
+{
+  "format": "rerail.data-layer-dod-contracts/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "sourceFilesChecked": 116,
+  "deployedPublicKey": "7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6",
+  "fixturePublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "fixtureKeyNotice": "Public deterministic test vector only; never trusted by the shipped pack.",
+  "originalSignerFunctions": "def compute_allowlist_message(\n    linter_name: str,\n    entries: list[str],\n    *,\n    version: int = 1,\n) -> bytes:\n    \"\"\"Compute canonical message for an allowlist.\n\n    Args:\n        linter_name: Identifier for the linter owning this allowlist.\n        entries: Sorted list of allowlist entries.\n        version: Schema version (bump when canonical format changes).\n    \"\"\"\n    canonical: dict[str, object] = {\n        \"allowlist\": entries,\n        \"linter\": linter_name,\n        \"version\": version,\n    }\n    return json.dumps(canonical, sort_keys=True, separators=(\",\", \":\")).encode(\"utf-8\")\n\n\ndef sign_allowlist(\n    linter_name: str,\n    entries: list[str],\n    *,\n    version: int = 1,\n) -> str | None:\n    \"\"\"Sign an allowlist. Returns base64 signature or None on error.\"\"\"\n    try:\n        import nacl.signing\n    except ImportError:\n        print(\"ERROR: PyNaCl not installed. Run: uv add pynacl\", file=sys.stderr)\n        return None\n\n    key_hex: str | None = os.environ.get(\"NERA_SIGNING_KEY\")\n    if not key_hex:\n        print(\"ERROR: NERA_SIGNING_KEY environment variable not set.\", file=sys.stderr)\n        print(\n            \"Only the user may have access to NERA_SIGNING_KEY. Ask the user to run the \"\n            \"documented `uv run ... --sign-allowlist` command in an environment where \"\n            \"the key is already present.\",\n            file=sys.stderr,\n        )\n        print(\n            \"AI agents must never have access to this proof-of-human key and must never try to obtain it.\",\n            file=sys.stderr,\n        )\n        return None\n\n    try:\n        key_bytes: bytes = bytes.fromhex(key_hex)\n        if len(key_bytes) != 32:\n            print(\"ERROR: NERA_SIGNING_KEY must be 32 bytes\", file=sys.stderr)\n            return None\n    except ValueError as e:\n        print(f\"ERROR: Failed to decode NERA_SIGNING_KEY: {e}\", file=sys.stderr)\n        return None\n\n    signing_key = nacl.signing.SigningKey(key_bytes)\n    message: bytes = compute_allowlist_message(linter_name, entries, version=version)\n    signed = signing_key.sign(message)\n    return base64.b64encode(signed.signature).decode(\"ascii\")\n\n\ndef update_signature_in_file(\n    script_path: Path,\n    variable_name: str,\n    new_signature: str,\n) -> bool:\n    \"\"\"Update a signature variable in a Python script in-place.\n\n    Finds a line matching ``variable_name = \"...\"``,\n    ``variable_name: str = \"...\"``, or a pending sentinel assignment such as\n    ``variable_name: str = NEEDS_SIGNING`` and replaces the value.\n\n    Returns True if the file was updated.\n    \"\"\"\n    source: str = script_path.read_text(encoding=\"utf-8\")\n\n    # Match: VAR = \"...\", VAR: str = \"...\", or bare sentinel constants used\n    # before a maintainer signature has been generated.\n    pattern: str = (\n        rf\"^({re.escape(variable_name)}(?:\\s*:\\s*str)?\\s*=\\s*)\"\n        rf'(?:\"[^\"]*\"|NEEDS_SIGNING|UNSIGNED)(.*)'\n    )\n    new_source, count = re.subn(\n        pattern,\n        rf'\\g<1>\"{new_signature}\"\\2',\n        source,\n        flags=re.MULTILINE,\n    )\n\n    if count == 0:\n        print(\n            f\"ERROR: Could not find {variable_name} in {script_path}\",\n            file=sys.stderr,\n        )\n        return False\n\n    script_path.write_text(new_source, encoding=\"utf-8\")\n    print(f\"Updated {variable_name} in {script_path}\")\n    return True\n\n\ndef sign_and_update_allowlist(\n    script_path: Path,\n    linter_name: str,\n    entries: list[str],\n    variable_name: str,\n    *,\n    version: int = 1,\n) -> bool:\n    \"\"\"Sign an allowlist and write the signature back into the script.\n\n    Args:\n        script_path: Path to the linter script to modify.\n        linter_name: Linter identifier for the canonical message.\n        entries: Sorted allowlist entries.\n        variable_name: Name of the signature variable in the script.\n        version: Schema version.\n\n    Returns:\n        True if signature was written successfully.\n    \"\"\"\n    sig: str | None = sign_allowlist(linter_name, entries, version=version)\n    if sig is None:\n        return False\n    return update_signature_in_file(script_path, variable_name, sig)\n",
+  "originalSignerSha256": "f620659369256186918a01f724119e5bc29128b620aad5cef68d7a53010f205c",
+  "approvalCases": [
+    {
+      "id": "empty",
+      "entries": [],
+      "signature": "",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 2,
+          "message": "schema introspection call table_exists in runtime data path"
+        },
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "invalid-internal",
+      "entries": [
+        "impl/bad.py:1:table_exists"
+      ],
+      "signature": "NEEDS_SIGNING",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"impl/bad.py:1:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "impl/bad.py:1:table_exists: approved schema checks must not be internal impl callsites"
+        }
+      ]
+    },
+    {
+      "id": "invalid-test",
+      "entries": [
+        "l2050_transaction/tests/bad.py:1:table_exists"
+      ],
+      "signature": "NEEDS_SIGNING",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/tests/bad.py:1:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "l2050_transaction/tests/bad.py:1:table_exists: approved schema checks must be production user-facing callsites"
+        }
+      ]
+    },
+    {
+      "id": "invalid-multiple",
+      "entries": [
+        "impl/tests/bad.py:1:table_exists",
+        "scripts/bad.py:1:table_exists"
+      ],
+      "signature": "",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"impl/tests/bad.py:1:table_exists\",\"scripts/bad.py:1:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "impl/tests/bad.py:1:table_exists: approved schema checks must not be internal impl callsites"
+        },
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "impl/tests/bad.py:1:table_exists: approved schema checks must be production user-facing callsites"
+        },
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "scripts/bad.py:1:table_exists: approved schema checks must be production user-facing callsites"
+        }
+      ]
+    },
+    {
+      "id": "invalid-duplicates",
+      "entries": [
+        "impl/bad.py:1:table_exists",
+        "impl/bad.py:1:table_exists"
+      ],
+      "signature": "",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"impl/bad.py:1:table_exists\",\"impl/bad.py:1:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "impl/bad.py:1:table_exists: approved schema checks must not be internal impl callsites"
+        },
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "impl/bad.py:1:table_exists: approved schema checks must not be internal impl callsites"
+        }
+      ]
+    },
+    {
+      "id": "unsigned",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "NEEDS_SIGNING",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "empty-signature",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "malformed-signature",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "not-a-signature",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "approved-one",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "approved-all",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists",
+        "l2050_transaction/consumer.py:3:table_exists_async"
+      ],
+      "signature": "Uiqa/BfarTpm6rnXqBMPmJRJPnvdIrYuLzsgq9ASPhty0PyGcIGufNTzNGO6S7M2yTpteceSL9jlW5US7g5dCw==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\",\"l2050_transaction/consumer.py:3:table_exists_async\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "id": "approved-duplicates",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists",
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "MgQWVzYgZ9l6QGpvsv7BKaDjaLbuU05wuv4sHufhNcpevBTsmmwJtP4eqhj5LfCegrY4Wh7WYYPuB/5Mlj4yAw==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\",\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "approved-unicode",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists",
+        "l2050_transaction/\ue000.py:1:table_exists",
+        "l2050_transaction/\ud83d\ude00.py:1:table_exists"
+      ],
+      "signature": "a0AB9v9JWz6skEBUZ8LeFQnLg0MLDdqVmsdz42RhmRx/jCz5frpfmHl3BtF0ejGWXLjmQsS8acUO738H3SG+BA==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\",\"l2050_transaction/\\ue000.py:1:table_exists\",\"l2050_transaction/\\ud83d\\ude00.py:1:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "tampered-entries",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists",
+        "l2050_transaction/consumer.py:3:table_exists_async"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\",\"l2050_transaction/consumer.py:3:table_exists_async\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "wrong-trust-key",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "712651f450ba05b63898b99ef5f7ba45632e8e2527f7f715cd671ec4024cc51e",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    }
+  ],
+  "approvalEncodingCases": [
+    {
+      "id": "encoding-ascii-junk",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH! \n6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "encoding-non-ascii",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==\u00e9",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "encoding-url-alphabet",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK_dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT-G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "encoding-missing-padding",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "encoding-leading-padding",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "=mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "encoding-interrupted-data",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "m=NfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "encoding-trailing-data",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==AAAA",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "encoding-discontinuous-padding",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg=!=",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    }
+  ],
+  "matchingRootSources": [
+    {
+      "id": "utf8-bom",
+      "path": "consumers/probe.py",
+      "source": "\ufeffimport impl.common.hidden\n",
+      "expected": []
+    },
+    {
+      "id": "bare-cr",
+      "path": "consumers/probe.py",
+      "source": "# comment\rimport impl.common.hidden\r",
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "consumers/probe.py",
+          "line": 2,
+          "message": "Application matching code cannot import implementation modules"
+        }
+      ]
+    },
+    {
+      "id": "crlf",
+      "path": "consumers/probe.py",
+      "source": "# comment\r\nimport impl.common.hidden\r\n",
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "consumers/probe.py",
+          "line": 2,
+          "message": "Application matching code cannot import implementation modules"
+        }
+      ]
+    }
+  ]
+}

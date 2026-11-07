@@ -14,7 +14,6 @@ pub(crate) mod ops;
 
 use super::{ContainerKind, Context, MAX_ELEMENTS, MAX_STRING_BYTES, Value};
 use ast_grep_core::{Doc, Node};
-pub(crate) use calls::to_precision;
 pub(crate) use destructure::destructured;
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
@@ -515,6 +514,11 @@ fn template<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         return Value::Unknown;
     }
     Value::Utf16(units)
+}
+
+/// A template chunk's cooked text (`cooked`), lone surrogates replaced.
+pub(crate) fn cooked_text(chunk: &str) -> Option<String> {
+    cooked(chunk).map(|units| String::from_utf16_lossy(&units))
 }
 
 /// A template chunk's cooked code units: line terminators normalized to LF, escapes decoded.

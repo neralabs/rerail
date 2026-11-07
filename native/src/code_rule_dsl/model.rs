@@ -1,4 +1,4 @@
-use super::calls::{SeedScope, TermId, Through};
+use super::calls::{Mode, SeedScope, TermId};
 use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
 use super::module_path::ModulePath;
@@ -10,7 +10,7 @@ use napi::Result;
 use regex::Regex;
 use serde_json::Value;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// The failure code of an output cap: a clause found more witnesses (or regex matches) than
@@ -128,12 +128,16 @@ fn folder_contains(folder: &str, path: &str) -> bool {
 
 #[derive(Clone)]
 pub(super) struct ViolationSpec {
+    /// SQL inputs retain only their anchor and typed fields, without diagnostic payloads.
+    pub(super) input_only: bool,
     pub(super) code: String,
     pub(super) message: String,
     pub(super) anchor: Anchor,
     /// The message's `$NAME` references; `None` when it is literal text.
     pub(super) message_template: Option<Template>,
     pub(super) fix: Option<Arc<FixPlan>>,
+    /// The source fix template for relational output rendering.
+    pub(super) fix_template: Option<Template>,
     /// Per dialect, the rule's regexes with named groups that test the witness node itself.
     pub(super) node_regexes: Vec<(GrammarDialect, Vec<Regex>)>,
     /// `each`: an ast query's capture, one violation per distinct binding of it at a root.
@@ -332,6 +336,17 @@ impl Template {
         self.vars().next().is_none()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::code_rule_dsl) fn parts(&self) -> impl Iterator<Item = TemplatePart<'_>> {
+        self.segments.iter().map(|segment| match segment {
+            Segment::Text(text) => TemplatePart::Text(text),
+            Segment::Var { name, multi } => TemplatePart::Var {
+                name,
+                multi: *multi,
+            },
+        })
+    }
+
     /// Each referenced metavariable and whether it is referenced as `$$$NAME`.
     pub(super) fn vars(&self) -> impl Iterator<Item = (&str, bool)> {
         self.segments.iter().filter_map(|segment| match segment {
@@ -359,6 +374,12 @@ impl Template {
 
 /// `${NAME}` or `$$${NAME}` at the start of `source`: the name, whether it is a multi-capture, and
 /// the length read.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(in crate::code_rule_dsl) enum TemplatePart<'a> {
+    Text(&'a str),
+    Var { name: &'a str, multi: bool },
+}
+
 fn braced_var(source: &str) -> Option<(String, bool, usize)> {
     let (multi, rest) = match source.strip_prefix("$$${") {
         Some(rest) => (true, rest),
@@ -418,12 +439,21 @@ pub(super) enum FixPlan {
 pub(super) struct Projection {
     pub(super) field: String,
     pub(super) source: ProjectionSource,
+    /// First regex match's selected group, or null when the source/group does not match.
+    pub(super) extract: Option<(Regex, usize)>,
 }
 
 #[derive(Clone)]
 pub(super) enum ProjectionSource {
     /// A capture's text (a multi-node capture's nodes joined as in the source).
     Capture(String),
+    /// A capture's source byte offset, for identity and partition keys.
+    CaptureStart(String),
+    CaptureEnd(String),
+    CaptureKind(String),
+    CaptureLine(String),
+    /// Decoded/exported capture text, or a host node's source text.
+    CaptureText(String),
     /// The file's path, its directory, its file name, or its name without extensions.
     Path,
     Directory,
@@ -441,21 +471,95 @@ pub(super) struct FactQuery {
     pub(super) predicate: Option<Value>,
     /// Rows projected from an AST query's matches in every file of the code rule's scope.
     pub(super) ast: Arc<AstRelation>,
+    /// Consumer columns are independent of the shared matcher and file domain.
+    pub(super) project: Arc<[Projection]>,
+    pub(super) closure: Vec<NameClosure>,
+    pub(super) each: Option<String>,
+    pub(super) anchor: Anchor,
+}
+
+impl FactQuery {
+    // Read by P's relational compiler (test-only, open item O18).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn retain_projected_fields(&mut self, fields: Option<&BTreeSet<String>>) {
+        let needed = |p: &Projection| fields.is_some_and(|f| f.contains(&p.field));
+        if self.project.iter().any(|p| !needed(p)) {
+            self.project = self.project.iter().filter(|p| needed(p)).cloned().collect();
+        }
+    }
+}
+
+/// A staged, cycle-safe closure over authored relation fields. Earlier sets may seed later sets;
+/// later edges never feed back into an earlier stage.
+#[derive(Clone, Debug)]
+pub(super) struct NameClosure {
+    pub(super) name: String,
+    pub(super) seeds: Vec<String>,
+    pub(super) seed_field: Option<String>,
+    pub(super) edges: Option<(String, String)>,
+    pub(super) extends: Vec<String>,
+    pub(super) partition_by: Vec<String>,
+    pub(super) contains: Vec<(String, String)>,
 }
 
 #[derive(Clone)]
 pub(super) struct AstRelation {
     /// A `Query::Ast`.
     pub(super) query: Query,
-    pub(super) project: Vec<Projection>,
     /// The files the relation reads, within the code rule's scope; `None` reads all of it.
     pub(super) domain: Option<CodeRuleScope>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum RegexSource {
     Content,
     Path,
+}
+
+/// Optional filters over matched text and independent source lines.
+#[derive(Clone, Default)]
+pub(super) struct RegexOptions {
+    pub(super) include: Vec<Regex>,
+    pub(super) exclude: Vec<Regex>,
+    pub(super) content_include: Vec<Regex>,
+    pub(super) content_exclude: Vec<Regex>,
+    pub(super) lines: Option<RegexLines>,
+    pub(super) paths: Option<CodeRuleScope>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLines {
+    pub(super) include: Vec<Regex>,
+    pub(super) exclude: Vec<Regex>,
+    pub(super) first: bool,
+    pub(super) lf_only: bool,
+    pub(super) state: Option<RegexLineState>,
+    pub(super) indentation: Option<RegexIndentation>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLineState {
+    pub(super) initial: usize,
+    pub(super) emit: Vec<bool>,
+    pub(super) transitions: Vec<RegexLineTransition>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLineTransition {
+    pub(super) from: usize,
+    pub(super) to: usize,
+    pub(super) pattern: Regex,
+    pub(super) min: u64,
+    pub(super) max: Option<u64>,
+    pub(super) odd: Option<bool>,
+    pub(super) skip: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexIndentation {
+    pub(super) exclude_under: Regex,
+    pub(super) reset: Regex,
+    pub(super) ignore: Vec<Regex>,
 }
 
 #[derive(Clone)]
@@ -463,12 +567,11 @@ pub(super) enum Query {
     Regex {
         regex: Regex,
         source: RegexSource,
+        options: Box<RegexOptions>,
     },
     Ast {
         /// One compiled matcher per grammar the rule language spans; a file uses the grammar its label selects.
-        /// Shared: a workspace copies a code rule's clauses into the synthetic clauses it adds, and the
-        /// matchers never change once compiled.
-        matchers: Arc<[GrammarMatcher]>,
+        matchers: Vec<GrammarMatcher>,
         /// The `calls` terms of the rule and its utilities, each once: their seeds run per file,
         /// their closure is read at call nodes.
         calls: Vec<Arc<CallsTerm>>,
@@ -477,9 +580,6 @@ pub(super) enum Query {
         select: Box<Query>,
         exists: Box<Query>,
     },
-    /// `{ "file": {} }`: one witness per file in the code rule's scope, without a source location;
-    /// it reads neither the file's content nor its path.
-    File,
 }
 
 impl Query {
@@ -492,7 +592,7 @@ impl Query {
                 terms.extend(exists.calls());
                 terms
             }
-            Query::Regex { .. } | Query::File => Vec::new(),
+            Query::Regex { .. } => Vec::new(),
         }
     }
 
@@ -510,29 +610,7 @@ impl Query {
             Query::SelectWhen { select, exists } => {
                 select.reads_server_graph() || exists.reads_server_graph()
             }
-            Query::Regex { .. } | Query::File => false,
-        }
-    }
-
-    /// Whether an AST query here reads `importTarget`, whose answer depends on files besides the
-    /// one matched (`import_target::fs::View`).
-    pub(super) fn reads_import_targets(&self) -> bool {
-        match self {
-            Query::Ast { matchers, .. } => matchers.iter().any(|matcher| matcher.import_target),
-            Query::SelectWhen { select, exists } => {
-                select.reads_import_targets() || exists.reads_import_targets()
-            }
-            Query::Regex { .. } | Query::File => false,
-        }
-    }
-
-    /// Whether a leaf here reads a file as text (a regex over either source) or stands for the
-    /// file itself (`file`): such a query reads files no code-rule language lists.
-    pub(super) fn reads_text(&self) -> bool {
-        match self {
-            Query::Regex { .. } | Query::File => true,
-            Query::Ast { .. } => false,
-            Query::SelectWhen { select, exists } => select.reads_text() || exists.reads_text(),
+            Query::Regex { .. } => false,
         }
     }
 }
@@ -544,7 +622,7 @@ pub(super) struct CallsTerm {
     pub(super) key: Arc<str>,
     /// Identifies its seed query: terms differing only in `through` share it.
     pub(super) seed_key: Arc<str>,
-    pub(super) through: Through,
+    pub(super) through: Mode,
     /// Which definitions the seed query's witnesses stand for.
     pub(super) seed_scope: SeedScope,
     /// `{ all: [{ kind: function_definition }, <inner rule>] }` with the query's utilities: its
@@ -580,7 +658,7 @@ impl Terms {
     }
 
     /// Each term's key and mode, by id: what a `CallsView` asks.
-    pub(super) fn questions(&self) -> Vec<(Arc<str>, Through)> {
+    pub(super) fn questions(&self) -> Vec<(Arc<str>, Mode)> {
         self.terms
             .iter()
             .map(|term| (Arc::clone(&term.key), term.through))
@@ -603,6 +681,23 @@ pub(super) enum ClauseKind {
         distinct: Vec<String>,
     },
     Llm,
+    /// P's relational clause, compiled only under test (`residency::admission::relational`,
+    /// open item O18).
+    #[cfg(test)]
+    Relational(crate::code_rule_dsl::residency::admission::relational::Plan),
+}
+
+impl ClauseKind {
+    /// The query whose `calls` terms the clause holds (P's; a relational clause's reference query
+    /// is P's test-only stage, O18).
+    pub(super) fn calls_query(&self) -> Option<&Query> {
+        match self {
+            Self::Forbid(query) => Some(query),
+            #[cfg(test)]
+            Self::Relational(plan) => plan.references.as_ref().map(|reference| &reference.query),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -614,6 +709,9 @@ pub(super) struct CompiledClause {
     /// A synthetic leaf under a `select_when`'s `exists` side: one witness answers it, so a file's
     /// evaluation stops at its first witness.
     pub(super) decision: bool,
+    /// D's plan for a relational clause, compiled by D's compiler beside P's (test-only, O19).
+    #[cfg(test)]
+    pub(super) data_layer: Option<std::sync::Arc<crate::code_rule_dsl::waves::relational::Plan>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -645,6 +743,8 @@ impl RuleMode {
 #[derive(Clone)]
 pub(super) struct CompiledCodeRule {
     pub(super) id: String,
+    /// Report the rule's combined findings only when their count exceeds this ceiling.
+    pub(super) report_count_gt: Option<usize>,
     pub(super) rule_mode: RuleMode,
     pub(super) canonical: String,
     pub(super) digest: String,
@@ -664,32 +764,11 @@ impl CompiledCodeRule {
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_server_graph(),
             ClauseKind::Llm => false,
-        })
-    }
-
-    /// Whether any clause reads `importTarget` (`Query::reads_import_targets`).
-    pub(super) fn reads_import_targets(&self) -> bool {
-        self.clauses.iter().any(|clause| match &clause.kind {
-            ClauseKind::Forbid(query) => query.reads_import_targets(),
-            ClauseKind::RequireEach { subject, evidence } => {
-                subject.ast.query.reads_import_targets()
-                    || evidence.ast.query.reads_import_targets()
-            }
-            ClauseKind::Budget { query, .. } => query.ast.query.reads_import_targets(),
-            ClauseKind::Llm => false,
-        })
-    }
-
-    /// Whether any clause reads text (`Query::reads_text`): files no code-rule language lists are
-    /// read, as text, for such a code rule alone.
-    pub(super) fn reads_text(&self) -> bool {
-        self.clauses.iter().any(|clause| match &clause.kind {
-            ClauseKind::Forbid(query) => query.reads_text(),
-            ClauseKind::RequireEach { subject, evidence } => {
-                subject.ast.query.reads_text() || evidence.ast.query.reads_text()
-            }
-            ClauseKind::Budget { query, .. } => query.ast.query.reads_text(),
-            ClauseKind::Llm => false,
+            #[cfg(test)]
+            ClauseKind::Relational(plan) => plan
+                .inputs
+                .iter()
+                .any(|(_, input)| input.ast.query.reads_server_graph()),
         })
     }
 }

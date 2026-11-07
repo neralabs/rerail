@@ -1,0 +1,124 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.input doc, node, field, text, name, line, syntax_error
+.decl k0(kind: symbol)
+k0("call"). k0("raise_statement").
+.decl k1(kind: symbol)
+k1("function_definition").
+.decl in_scope(d: number)
+.decl m18(n: node)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1000_cache/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1000_schema/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1050_model_registry/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1050_polymorphism/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1100_exceptions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1200_capabilities/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1200_content_hash/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1200_json/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1200_versioned_ids/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1250_security/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1300_session/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1350_foundational_types/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1400_config/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1400_types/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1450_index_policy_contracts/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1450_keys/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1470_matching_contracts/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1500_llm/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1900_retry/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2000_connection/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2050_transaction/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2055_lazy_result/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2060_query_builder/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2070_batching/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2080_lazy_orm/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2090_byte_tracking/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2090_response/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2091_rtt_tracking/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2092_timing_tracking/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2100_include/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2110_limits/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2150_prepared_cache/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2200_notification/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2500_binary_diff/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3000_schema_builder/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3100_schema_introspector/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3150_schema_diff/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3200_metadata/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3250_migrations/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3260_startup/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3500_bulk_ops/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4000_permissions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4050_background_reaper/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4100_queue/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4150_scheduler/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4170_inbound_bridge/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4200_event_pipeline/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4250_timers/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4300_ipc/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4300_timers/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4350_timer_driver/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4400_scheduler/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4500_trust/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5000_search_index_policy/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5000_subscriptions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5100_fts/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5100_llm_router/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5175_chunking/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5195_embedding_compute_tables/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5200_vector_index/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5250_matching/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5300_config_compatibility/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6000_log_table/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6300_config/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6500_evidence/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6510_credentials/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6520_auth/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6530_managed_secrets/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6600_cleanup/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7000_versioned_schema/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7100_versioned_operations/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7250_versioned_operations/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7350_versioned_timer_driver/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7390_versioned_diff_entrypoint/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7400_versioned_diff/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7450_versioned_revert/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7500_commit_triggers/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7800_versioned_merge/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7900_versioned_rebase/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l8000_admin/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l8100_ops_analytics/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9600_graphs/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9700_graph_query/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9710_graph_algorithms/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9720_sparql/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9750_graphql/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9800_rippling/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9850_workflow/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9875_mcp/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9900_auto_api/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+violation("data-layer-raw-execute-regression", "removed-calls", "RER001", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), node(_, n, "call", _, _), field(n, "function", v3), node(_, v3, "attribute", _, _), field(v3, "attribute", v4), node(_, v4, "identifier", _, _), text(v4, v5), (v5 = "_execute_grammar" ; v5 = "_execute_sql_or_schema_statement" ; v5 = "_execute_sql_or_schema_statement_async" ; v5 = "_execute_template_with_params" ; v5 = "_execute_template_with_params_async" ; v5 = "execute_grammar" ; v5 = "execute_sql" ; v5 = "fetchall_grammar" ; v5 = "fetchall_raw" ; v5 = "fetchall_raw_async" ; v5 = "fetchone_grammar" ; v5 = "fetchone_raw" ; v5 = "fetchone_raw_async" ; v5 = "nonportably_execute_sql" ; v5 = "raw_execute" ; v5 = "raw_execute_async" ; v5 = "raw_execute_fetch" ; v5 = "raw_execute_fetch_async"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m18(n) :- node(_, n, "raise_statement", _, _).
+m18(n) :- node(_, n, "call", _, _), field(n, "function", v14), node(_, v14, "attribute", _, _), field(v14, "attribute", v15), name(v15, v17), prefix("_raise_", v17).
+violation("data-layer-raw-execute-regression", "mixed-marker-0", "RER001", p, 1) :- node(v20, n, _, _, _), doc(v20, v21, _), node(_, n, "module", _, _), node(v22, n, _, _, _), node(v22, v23, _, _, _), name(v23, v24), contains("_execute_sql_or_schema_statement", v24), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+violation("data-layer-raw-execute-regression", "mixed-marker-1", "RER001", p, 1) :- node(v25, n, _, _, _), doc(v25, v26, _), node(_, n, "module", _, _), node(v27, n, _, _, _), node(v27, v28, _, _, _), name(v28, v29), contains("_execute_sql_or_schema_statement_async", v29), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+violation("data-layer-raw-execute-regression", "mixed-marker-2", "RER001", p, 1) :- node(v30, n, _, _, _), doc(v30, v31, _), node(_, n, "module", _, _), node(v32, n, _, _, _), node(v32, v33, _, _, _), name(v33, v34), contains("_is_schema_ddl_statement", v34), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+.output violation

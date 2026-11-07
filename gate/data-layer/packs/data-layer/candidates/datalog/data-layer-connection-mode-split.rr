@@ -1,0 +1,30 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.input doc
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1000_schema/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1100_exceptions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1200_capabilities/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1300_session/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1400_types/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1900_retry/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2000_connection/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2050_transaction/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2055_lazy_result/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2070_batching/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7000_versioned_schema/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l8000_admin/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+.output violation

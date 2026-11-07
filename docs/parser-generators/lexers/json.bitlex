@@ -1,0 +1,170 @@
+# tree-sitter-json's tokens, without branches.
+#
+# Every token below is a leaf kind of tree-sitter-json 0.24.8:
+#   '{' '}' '[' ']' ',' ':' '"'  string_content  escape_sequence  number  true  false  null
+#   comment (an extra: `//` to the end of the line, or `/* … */`)
+#
+# Observed facts this file relies on (tree-sitter-json 0.24.8, checked with its parser):
+#   - `\s` in the extras is ASCII: space, \t \n \v \f \r. U+00A0, U+2028, U+3000 and U+FEFF are
+#     errors. Outside strings, any byte of 0x80 or above is an error.
+#   - `//.*` ends before '\n' and keeps a '\r': `//x\r\n` is the comment "//x\r".
+#   - `/*/ */` is one comment: the '*' of `/*` cannot start the `*/`. `/**/` is a comment.
+#   - escape_sequence is two bytes, even for \u: "\u00e9" is escape_sequence "\u" and then
+#     string_content "00e9". A raw tab or control byte is string_content; '\n' is an error.
+#   - A comment's parent is the lowest common ancestor of the tokens before and after it, or the
+#     document at either end of the file (01-branch-free-design.md §5). Nothing here depends on it.
+
+lexer json
+
+# --- Byte classes --------------------------------------------------------------------------------
+
+class quote     = '"'
+class backslash = '\\'
+class ws        = ' ' '\t' '\n' '\r' 0x0b 0x0c
+class lf        = '\n'
+class lbrace    = '{'
+class rbrace    = '}'
+class lbracket  = '['
+class rbracket  = ']'
+class comma     = ','
+class colon     = ':'
+class slash     = '/'
+class star      = '*'
+class high      = 0x80..0xff
+# Bytes a number or a literal word may contain. Which word it is gets checked per token below.
+class scalar    = '-' '+' '.' '0'..'9' 'a'..'z' 'A'..'Z'
+class digit     = '0'..'9'
+class zero      = '0'
+class letter    = 'a'..'z' 'A'..'Z'
+class minus     = '-'
+class sign      = '+' '-'
+class dot       = '.'
+class expc      = 'e' 'E'
+# The letters that may follow a backslash in tree-sitter-json's escape_sequence.
+class escapable = '"' '\\' '/' 'b' 'f' 'n' 'r' 't' 'u'
+
+# --- Strings -------------------------------------------------------------------------------------
+
+# simdjson's carry trick: the byte after an odd run of backslashes is escaped.
+mask escaped    = after_odd_run(backslash)
+
+# Strings and comments hide each other: a quote in a comment opens nothing, and `//` in a string
+# is text. One automaton over the quotes, slashes, stars and newlines settles both.
+#
+#   input    {"a//b": 1 /* x */}
+#   states    .ssssss.....bbbbbe.          s = str, b = blk or bend, e = the comment's last byte
+#
+# Its events are 8.9% of bytes on the data-layer JSON (quotes 8.4%, '/' 0.41%, newlines 0.13%,
+# '*' almost none), and none of those files has a comment. So a file runs one of two variants,
+# chosen once per file as fallback is:
+#   - no '/' outside toggle(q)'s strings: strings are toggle(q), as in simdjson, and there are no
+#     comments. `lex` does not run. The choice is exact: toggle(q) is right up to the first
+#     comment, and a file with none has no such byte.
+#   - otherwise: `lex` runs over all its events.
+# The masks below are written for the second variant; in the first, lex.in(str) is toggle(q).
+
+machine lex {
+  events {
+    q   = quote & ~escaped
+    sc  = star & next(slash)          # listed before star: a '*' that may close a block comment
+    st  = star
+    sl  = slash
+    eol = lf
+  }
+  states code str s1 line blk bend error
+  group cmt = s1 line blk bend
+  start code
+  final code line
+
+  code  on q -> str,  on sl -> s1,  on st -> error,  on sc -> error
+  str   on q -> code                             # '/', '*' and newlines in a string are text
+  s1    on sl -> line,  on st -> blk,  on sc -> blk   # `/*/`: the '*' of the opener is not a closer
+  line  on eol -> code
+  blk   on sc -> bend
+  bend  on sl -> code                            # the '/' of `*/`, always the next byte
+}
+
+mask q          = lex.on(code -> str) | lex.on(str -> code)
+mask inside     = lex.in(str)                    # the opening quote, not the closing one
+mask opening    = lex.on(code -> str)
+mask closing    = lex.on(str -> code)
+mask body       = inside & ~opening              # between the quotes
+
+# An escape is a backslash at an even offset in its run of backslashes, and the byte after it.
+mask esc        = backslash & body & aligned(backslash, 2)
+mask esc_bytes  = span(esc, 2)
+mask content    = body & ~esc_bytes
+
+# --- Outside strings -----------------------------------------------------------------------------
+
+mask cmt_start  = lex.on(code -> s1)
+mask in_cmt     = lex.in(cmt) | lex.on(bend -> code)
+mask code       = ~inside & ~closing & ~in_cmt
+mask word       = code & scalar
+
+# --- Tokens --------------------------------------------------------------------------------------
+
+token '"'             = start q
+token string_content  = start starts(content) through content
+token escape_sequence = start esc through esc_bytes
+token '{'             = start code & lbrace
+token '}'             = start code & rbrace
+token '['             = start code & lbracket
+token ']'             = start code & rbracket
+token ','             = start code & comma
+token ':'             = start code & colon
+# A run of scalar bytes is one token. One that starts with a letter must be `true`, `false` or
+# `null`; any other is a number, checked below.
+mask wstart     = starts(word)
+mask lit        = fill(wstart & letter, ~word)
+mask num        = word & ~lit
+token number          = start wstart & ~letter through num
+token literal         = start wstart & letter through lit
+keywords literal { "true" -> true  "false" -> false  "null" -> null } required
+
+# `//` through the byte before '\n' (whose event returns to code); `/*` through '/'.
+token comment         = start cmt_start through in_cmt
+
+skip code & ws
+
+# --- Errors: the file goes to tree-sitter --------------------------------------------------------
+
+error "unterminated string"        when lex.final(str)
+error "newline in a string"        when body & lf
+error "invalid escape"             when prev(esc) & ~escapable
+error "a lone '/' or '*'"           when lex.reached(error) | (cmt_start & ~next(slash | star))
+error "unterminated comment"       when ~lex.final(code | line)
+error "non-ASCII outside a string" when code & high
+
+# --- Numbers: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? as masks -----------------------------
+#
+# The pattern is a fixed sequence of parts, so it needs no automaton. A token matches it exactly
+# when no byte breaks one of the rules below. Each rule looks at most two bytes away, or asks
+# whether a '.' or an 'e' came earlier in the same token: a `fill`, whose carry is one bit.
+# About 25 mask operations per 64 bytes, the same for every block, however many numbers it holds.
+#
+#   token     -0.5e+10     01      1.e5     1e5.0
+#   breaks    nothing      rule 6  rule 4   rule 3
+
+mask nstart     = wstart & num
+mask after_dot  = fill(prev(dot & num) & num, ~num)        # bytes after a '.' in the same token
+mask after_e    = fill(prev(expc & num) & num, ~num)       # bytes after an 'e' in the same token
+mask int_first  = (nstart & digit) | (prev(nstart & minus) & num)
+
+# 1. Only digits, '.', 'e', 'E', '+' and '-'.
+error "number: bad byte"        when num & ~(digit | dot | expc | sign)
+# 2. It starts with '-' or a digit, and a '-' is followed by a digit.
+error "number: bad start"       when (nstart & ~(digit | minus)) | (nstart & minus & ~next(digit))
+# 3. At most one '.', at most one 'e', and no '.' after the 'e'.
+error "number: '.' or e twice"  when (dot & (after_dot | after_e)) | (expc & after_e)
+# 4. A '.' has a digit on each side.
+error "number: bare '.'"        when num & dot & ~(prev(digit) & next(digit))
+# 5. A sign is first ('-' only) or right after the 'e'.
+error "number: misplaced sign"  when num & sign & ~prev(expc) & ~(nstart & minus)
+# 6. The integer part is 0, or does not start with 0.
+error "number: leading zero"    when int_first & zero & next(digit)
+# 7. An 'e' follows a digit, and is followed by a digit or by a sign and a digit.
+error "number: bare e"          when expc & num & (~prev(digit)
+                                                   | ~(next(digit) | (next(sign) & next(digit, 2))))
+# 8. The last byte is a digit.
+error "number: bad end"         when lasts(num) & ~digit

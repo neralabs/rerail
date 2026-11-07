@@ -1,0 +1,344 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-plan-helpers-allowlist",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer plan_helpers_allowlist at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "entry",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "scan_repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "plan-helper-aliases",
+      "relational": {
+        "inputs": {
+          "syntax_gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "stages": [
+          {
+            "name": "functions",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",NULL AS \"module_name_start\",NULL AS \"module_name_end\",NULL AS \"module_name_kind\",NULL AS \"module_name_source\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='function_definition')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",NULL AS \"module_name_start\",NULL AS \"module_name_end\",NULL AS \"module_name_kind\",NULL AS \"module_name_source\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='class_definition')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "attributes",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",NULL AS \"module_name_start\",NULL AS \"module_name_end\",NULL AS \"module_name_kind\",NULL AS \"module_name_source\",\"attr\",\"object\",NULL AS \"object_text\" FROM (SELECT n.*,n.attribute_source AS attr,n.object_id AS object,n.object_source AS object_text FROM nodes n WHERE n.kind='attribute')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",NULL AS \"module_name_start\",NULL AS \"module_name_end\",NULL AS \"module_name_kind\",NULL AS \"module_name_source\",\"callee_id\",NULL AS \"callee_kind\",NULL AS \"full_callee\",\"callee\",NULL AS \"receiver\" FROM (SELECT n.*,f.id AS callee_id,f.kind AS callee_kind,f.text AS full_callee,coalesce(a.attr,f.text) AS callee,a.object AS receiver FROM nodes n JOIN nodes f ON f.__path=n.__path AND f.id=n.function_id LEFT JOIN attributes a ON a.__path=f.__path AND a.id=f.id WHERE n.kind='call')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ]
+            ]
+          },
+          {
+            "name": "assignments",
+            "query": "SELECT \"__path\",\"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",NULL AS \"module_name_start\",NULL AS \"module_name_end\",NULL AS \"module_name_kind\",NULL AS \"module_name_source\",\"target\",NULL AS \"target_kind\",\"target_text\",\"value\",NULL AS \"expr_kind\",NULL AS \"expr_text\",\"fn\" FROM (SELECT n.*,l.id AS target,l.kind AS target_kind,l.text AS target_text,r.id AS value,r.kind AS expr_kind,r.text AS expr_text,o.fn FROM nodes n JOIN nodes l ON l.__path=n.__path AND l.id=n.left_id LEFT JOIN nodes r ON r.__path=n.__path AND r.id=n.right_id LEFT JOIN ownership o ON o.__path=n.__path AND o.id=n.id WHERE n.kind='assignment')",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "target_text"
+              ],
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "value"
+              ]
+            ]
+          },
+          {
+            "name": "helper_names",
+            "query": "SELECT \"name\",\"public\",\"lazy\",\"legacy\" FROM (SELECT '_ddl_effect_lazy_impl_async' name,0 public,0 lazy,1 legacy UNION ALL SELECT '_ddl_effect_lazy_now' name,0 public,0 lazy,1 legacy UNION ALL SELECT '_ddl_via_plan_impl_async' name,0 public,0 lazy,0 legacy UNION ALL SELECT '_ddl_via_plan_now' name,0 public,0 lazy,0 legacy UNION ALL SELECT '_execute_via_plan_impl_async' name,0 public,0 lazy,0 legacy UNION ALL SELECT '_execute_via_plan_now' name,0 public,0 lazy,0 legacy UNION ALL SELECT '_fetchall_via_plan_impl_async' name,0 public,0 lazy,0 legacy UNION ALL SELECT '_fetchall_via_plan_now' name,0 public,0 lazy,0 legacy UNION ALL SELECT '_fetchone_via_plan_impl_async' name,0 public,0 lazy,0 legacy UNION ALL SELECT '_fetchone_via_plan_now' name,0 public,0 lazy,0 legacy UNION ALL SELECT '_grammar_effect_lazy_impl_async' name,0 public,0 lazy,1 legacy UNION ALL SELECT '_grammar_effect_lazy_now' name,0 public,0 lazy,1 legacy UNION ALL SELECT '_grammar_row_lazy_impl_async' name,0 public,0 lazy,1 legacy UNION ALL SELECT '_grammar_row_lazy_now' name,0 public,0 lazy,1 legacy UNION ALL SELECT '_grammar_rows_lazy_impl_async' name,0 public,0 lazy,1 legacy UNION ALL SELECT '_grammar_rows_lazy_now' name,0 public,0 lazy,1 legacy UNION ALL SELECT '_grammar_value_lazy_now' name,0 public,0 lazy,1 legacy UNION ALL SELECT '_scalar_via_plan_impl_async' name,0 public,0 lazy,0 legacy UNION ALL SELECT '_scalar_via_plan_now' name,0 public,0 lazy,0 legacy UNION ALL SELECT 'ddl_effect_lazy' name,0 public,1 lazy,0 legacy UNION ALL SELECT 'ddl_effect_lazy_async' name,0 public,1 lazy,0 legacy UNION ALL SELECT 'ddl_via_plan' name,1 public,0 lazy,0 legacy UNION ALL SELECT 'ddl_via_plan_async' name,1 public,0 lazy,0 legacy UNION ALL SELECT 'execute_via_plan' name,1 public,0 lazy,0 legacy UNION ALL SELECT 'execute_via_plan_async' name,1 public,0 lazy,0 legacy UNION ALL SELECT 'fetchall_via_plan' name,1 public,0 lazy,0 legacy UNION ALL SELECT 'fetchall_via_plan_async' name,1 public,0 lazy,0 legacy UNION ALL SELECT 'fetchone_via_plan' name,1 public,0 lazy,0 legacy UNION ALL SELECT 'fetchone_via_plan_async' name,1 public,0 lazy,0 legacy UNION ALL SELECT 'grammar_effect_lazy' name,0 public,1 lazy,0 legacy UNION ALL SELECT 'grammar_effect_lazy_async' name,0 public,1 lazy,0 legacy UNION ALL SELECT 'grammar_row_lazy' name,0 public,1 lazy,0 legacy UNION ALL SELECT 'grammar_row_lazy_async' name,0 public,1 lazy,0 legacy UNION ALL SELECT 'grammar_rows_lazy' name,0 public,1 lazy,0 legacy UNION ALL SELECT 'grammar_rows_lazy_async' name,0 public,1 lazy,0 legacy UNION ALL SELECT 'grammar_value_lazy' name,0 public,1 lazy,0 legacy UNION ALL SELECT 'scalar_via_plan' name,1 public,0 lazy,0 legacy)",
+            "indexes": [
+              [
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "imports",
+            "query": "SELECT \"__path\",NULL AS \"id\",\"__start\",\"__end\",\"module\",\"alias_id\",\"name\",\"local\" FROM (SELECT n.__path,n.id,n.__start,n.__end,n.module_name_source module,x.id alias_id,coalesce(x.name_source,x.text) name,coalesce(x.alias_source,x.name_source,x.text) local FROM nodes n JOIN nodes x ON x.__path=n.__path AND x.parent=n.id WHERE n.kind IN ('import_statement','import_from_statement') AND x.kind IN ('aliased_import','dotted_name') AND x.id IS NOT n.module_name_id)",
+            "indexes": [
+              [
+                "__path",
+                "local"
+              ]
+            ]
+          },
+          {
+            "name": "module_aliases",
+            "query": "SELECT \"__path\",\"__start\",\"name\" FROM (SELECT __path,__start,CASE WHEN module IS NULL AND name='impl.common.l2070_server_plan.plan_helpers' AND local=name THEN 'plan_helpers' ELSE local END name FROM imports WHERE module='impl.common.l2070_server_plan' AND name='plan_helpers' OR module IS NULL AND name='impl.common.l2070_server_plan.plan_helpers')",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "target_names",
+            "query": "SELECT \"__path\",\"assignment\",\"id\",\"__start\",\"__end\",\"name\" FROM (WITH RECURSIVE targets(__path,assignment,node) AS (\n         SELECT __path,id,target FROM assignments UNION ALL SELECT t.__path,t.assignment,n.id FROM targets t JOIN nodes p ON p.__path=t.__path AND p.id=t.node JOIN nodes n ON n.__path=p.__path AND n.parent=p.id WHERE p.kind IN ('pattern_list','tuple_pattern','list_pattern','tuple','list'))\n         SELECT t.__path,t.assignment,n.id,n.__start,n.__end,n.text name FROM targets t JOIN nodes n ON n.__path=t.__path AND n.id=t.node WHERE n.kind='identifier')",
+            "indexes": [
+              [
+                "__path",
+                "assignment"
+              ]
+            ]
+          },
+          {
+            "name": "bindings",
+            "query": "SELECT \"__path\",NULL AS \"id\",\"name\",\"helper\",\"expr\",\"at\" FROM (SELECT i.__path,i.alias_id id,i.local name,i.name helper,NULL expr,i.__start at FROM imports i WHERE i.module='impl.common.l2070_server_plan.plan_helpers' AND (i.name IN (SELECT name FROM helper_names) OR i.name GLOB '_*via_plan*') UNION ALL SELECT t.__path,t.id,t.name,NULL,a.value,a.__start FROM target_names t JOIN assignments a ON a.__path=t.__path AND a.id=t.assignment WHERE a.value IS NOT NULL)",
+            "indexes": [
+              [
+                "__path",
+                "name",
+                "at"
+              ]
+            ]
+          },
+          {
+            "name": "requests",
+            "query": "SELECT \"__path\",\"id\",\"expr\",\"at\" FROM (SELECT __path,id,callee_id expr,__start at FROM calls UNION ALL SELECT __path,id,value,__start FROM assignments WHERE value IS NOT NULL)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "resolved",
+            "query": "SELECT \"__path\",\"request\",\"helper\" FROM (WITH RECURSIVE lookup(__path,request,node,at,helper,priority) AS (\n        SELECT __path,id,expr,at,NULL,'' FROM requests\n        UNION ALL\n        SELECT w.__path,w.request,b.expr,b.at,b.helper,w.priority||printf('%020d/',b.at+1) FROM lookup w JOIN nodes n ON n.__path=w.__path AND n.id=w.node JOIN bindings b ON b.__path=n.__path AND b.name=n.text AND b.at<w.at WHERE w.helper IS NULL AND n.kind='identifier'\n        UNION ALL\n        SELECT w.__path,w.request,NULL,w.at,n.text,w.priority||'00000000000000000000/' FROM lookup w JOIN nodes n ON n.__path=w.__path AND n.id=w.node WHERE w.helper IS NULL AND n.kind='identifier' AND n.text IN (SELECT name FROM helper_names)\n        UNION ALL\n        SELECT w.__path,w.request,NULL,w.at,a.attr,w.priority||'00000000000000000000/' FROM lookup w JOIN attributes a ON a.__path=w.__path AND a.id=w.node JOIN nodes o ON o.__path=a.__path AND o.id=a.object WHERE w.helper IS NULL AND (a.attr IN (SELECT name FROM helper_names) OR a.attr GLOB '_*via_plan*' AND o.kind='identifier' AND EXISTS(SELECT 1 FROM module_aliases m WHERE m.__path=o.__path AND m.name=o.text AND m.__start<w.at)))\n        SELECT __path,request,helper FROM (SELECT __path,request,helper,row_number() OVER(PARTITION BY __path,request ORDER BY priority DESC) chosen FROM lookup WHERE helper IS NOT NULL) WHERE chosen=1)",
+            "indexes": [
+              [
+                "__path",
+                "request"
+              ]
+            ]
+          },
+          {
+            "name": "modules",
+            "query": "SELECT \"__path\",NULL AS \"raw\" FROM (SELECT __path,replace(substr(trim(replace(__path,char(92),'/'),'/'),1,length(trim(replace(__path,char(92),'/'),'/'))-3),'/','.') raw FROM nodes WHERE kind='module')",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "module_names",
+            "query": "SELECT \"__path\",\"name\" FROM (SELECT __path,CASE WHEN instr('.'||replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')||'.','.impl.')>0 THEN substr(replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.'),instr('.'||replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')||'.','.impl.')) WHEN instr('.'||replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')||'.','.api.')>0 THEN substr(replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.'),instr('.'||replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')||'.','.api.')+4) ELSE coalesce(rx_extract(replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.'),'(?:^|\\.)(l[0-9]{4}_.*)$',1),replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')) END name FROM modules)",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "regions",
+            "query": "SELECT \"__path\",NULL AS \"id\",\"name\",\"__start\",\"__end\",\"kind\" FROM (SELECT __path,id,name,__start,__end,'class' kind FROM classes UNION ALL SELECT f.__path,f.id,f.name,coalesce(d.__start,f.__start),f.__end,'function' FROM functions f LEFT JOIN nodes d ON d.__path=f.__path AND d.id=f.parent AND d.kind='decorated_definition')",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "raw_issues",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"identity\",\"kind\",\"helper\",\"local\" FROM (SELECT i.__path,i.__start,i.__end,i.alias_id identity,'import' kind,i.name helper,i.local FROM imports i WHERE i.module='impl.common.l2070_server_plan.plan_helpers' AND (i.name IN (SELECT name FROM helper_names WHERE public OR lazy) OR i.name GLOB '_*via_plan*' OR i.name IN (SELECT name FROM helper_names WHERE legacy))\n       UNION ALL SELECT t.__path,t.__start,t.__end,t.id,'alias',r.helper,t.name FROM target_names t JOIN resolved r ON r.__path=t.__path AND r.request=t.assignment\n       UNION ALL SELECT c.__path,c.__start,c.__end,c.id,'call',r.helper,NULL FROM calls c JOIN resolved r ON r.__path=c.__path AND r.request=c.id)"
+          },
+          {
+            "name": "issues",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"identity\",NULL AS \"kind\",NULL AS \"helper\",NULL AS \"local\",NULL AS \"module\",\"callsite\",\"reason\" FROM (SELECT i.*,m.name module,\n       m.name||'::'||coalesce((SELECT group_concat(name,'.') FROM (SELECT name FROM regions r WHERE r.__path=i.__path AND r.__start<=i.__start AND r.__end>=i.__end ORDER BY kind,__start)),'<module>') callsite,\n       CASE WHEN i.kind='call' THEN 'old or private '||helper||'() call is forbidden'\n        WHEN helper IN (SELECT name FROM helper_names WHERE public) OR helper GLOB '_*via_plan*' OR i.kind='import' AND helper IN (SELECT name FROM helper_names WHERE legacy) THEN 'old or private '||helper||' '||i.kind||' is forbidden'\n        WHEN helper IN (SELECT name FROM helper_names WHERE lazy) AND rx_matches(lower(local),'execute|fetch|scalar|ddl') THEN 'lazy terminal '||helper||CASE WHEN kind='import' THEN ' imported under eager alias' ELSE ' assigned to eager alias' END END reason\n       FROM raw_issues i JOIN module_names m ON m.__path=i.__path WHERE NOT (i.kind='alias' AND helper IN (SELECT name FROM helper_names WHERE legacy)) AND NOT (i.kind='call' AND m.name='impl.common.l2070_server_plan.plan_helpers' AND (helper GLOB '_*via_plan*' OR helper IN (SELECT name FROM helper_names WHERE legacy))))"
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "scan_repo": "SELECT __path path,__start start_byte,__end end_byte,reason issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows') AND substr(__path,-3)='.py' AND NOT rx_matches(__path,'(?:^|/)\\.py$') AND rx_matches(__path,'(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_') AND NOT rx_matches(__path,'(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')"
+          },
+          "default": "SELECT __path path,__start start_byte,__end end_byte,reason issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows')"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "partitionBy": "file",
+        "syntax": {
+          "columns": [
+            "__path",
+            "__start",
+            "__end",
+            "id",
+            "parent",
+            "edge_parent",
+            "ordinal",
+            "text",
+            "kind",
+            "line",
+            "parent_start",
+            "parent_end",
+            "parent_kind",
+            "ancestor_start",
+            "ancestor_end",
+            "ancestor_kind",
+            "name_source",
+            "left_start",
+            "left_end",
+            "left_kind",
+            "right_start",
+            "right_end",
+            "right_kind",
+            "function_start",
+            "function_end",
+            "function_kind",
+            "object_start",
+            "object_end",
+            "object_kind",
+            "object_source",
+            "attribute_source",
+            "alias_source",
+            "module_name_start",
+            "module_name_end",
+            "module_name_kind",
+            "module_name_source",
+            "name_id",
+            "left_id",
+            "right_id",
+            "function_id",
+            "object_id",
+            "attribute_id",
+            "alias_id",
+            "module_name_id"
+          ],
+          "name": "nodes",
+          "gate": "syntax_gate",
+          "fields": [
+            "name",
+            "left",
+            "right",
+            "function",
+            "object",
+            "attribute",
+            "alias",
+            "module_name"
+          ],
+          "excludeKinds": [
+            "comment",
+            "string_start",
+            "string_content",
+            "string_end",
+            "escape_sequence",
+            "line_continuation"
+          ],
+          "edges": "edges",
+          "ownership": "ownership",
+          "owners": {
+            "fn": {
+              "kind": "function_definition"
+            },
+            "cls": {
+              "kind": "class_definition"
+            },
+            "top_fn": {
+              "kind": "function_definition",
+              "outermost": true
+            }
+          }
+        },
+        "requireNonemptyInput": "syntax_gate"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

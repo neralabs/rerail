@@ -192,7 +192,6 @@ fn stored_workspace(
         workspace_id,
         snapshot_id: snapshot,
         owner,
-        secret_names: Default::default(),
         _maintenance: None,
     });
     workspace.add_code_rule(code_rule, None).unwrap();
@@ -642,32 +641,6 @@ fn async_blocking_code_rule() -> CompiledCodeRuleDsl {
             }
         }),
     )
-}
-
-/// Registering a code rule copies it only to add clauses to it: a workspace holds a rule without
-/// `calls` terms as compiled, however many workspaces are built from it, and a rule with them keeps
-/// its seed clauses to its own copy.
-#[test]
-fn only_a_rule_with_calls_terms_is_copied_into_a_workspace() {
-    let plain = compile(
-        "plain",
-        json!([{
-            "id": "needle",
-            "violation": violation("NEEDLE", "found needle"),
-            "forbid": { "regex": { "source": "file.content", "pattern": "NEEDLE" } }
-        }]),
-    );
-    let calls = async_blocking_code_rule();
-    let clauses = calls.inner.clauses.len();
-    let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&plain, None).unwrap();
-    workspace.add_code_rule(&calls, None).unwrap();
-
-    let state = workspace.state.lock().unwrap();
-    assert!(StdArc::ptr_eq(&state.code_rules[0], &plain.inner));
-    assert!(!StdArc::ptr_eq(&state.code_rules[1], &calls.inner));
-    assert!(state.code_rules[1].clauses.len() > clauses);
-    assert_eq!(calls.inner.clauses.len(), clauses);
 }
 
 /// A Python file with the module a package walk gives it (`pkg/__init__.py` is `pkg.__init__`).

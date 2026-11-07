@@ -1,0 +1,97 @@
+options: {'oracleAnalyzer': False, 'entryPoint': 'all', 'strictModulesOnly': True}
+keys: ['inputs', 'stages', 'query', 'key', 'code', 'partitionBy']
+  key: ["entry", "issue", "identity"]
+  code: "issue"
+  partitionBy: "file"
+
+== input raw_nodes as=row
+  rule: {"ast": {"language": "python", "syntax": "valid", "rule": {"all": [{"filePath": {"regex": "(?s).*"}}, {"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"all": [{"kind": "assignment"}, {"any": [{"has": {"kind": "lambda", "stopBy": "neighbor", "field": "right"}}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)callback|callable|effect|function|hook"}], "stopBy": "neighbor", "field": "left"}}, {"inside": {"all": [{"kind": "class_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderKind)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}]}, {"inside": {"all": [{"kind": "assignment"}, {"any": [{"has": {"kind": "lambda", "stopBy": "neighbor", "field": "right"}}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)callback|callable|effect|function|hook"}], "stopBy": "ne
+  project: {"kind": "capture.NODE.kind", "text": "capture.NODE", "line": "capture.NODE.startLine", "parent_start": "capture.PARENT.startByte", "parent_end": "capture.PARENT.endByte", "parent_kind": "capture.PARENT.kind", "ancestor_start": "capture.ANCESTOR.startByte", "ancestor_end": "capture.ANCESTOR.endByte", "ancestor_kind": "capture.ANCESTOR.kind", "name_start": "capture.NAME.startByte", "name_end": "capture.NAME.endByte", "name_kind": "capture.NAME.kind", "name_source": "capture.NAME", "left_start": "capture.LEFT.startByte", "left_end": "capture.LEFT.endByte", "left_kind": "capture.LEFT.kind", "right_start": "capture.RIGHT.startByte", "right_end": "capture.RIGHT.endByte", "right_kind": "capture.RIGHT.kind", "value_start": "capture.VALUE.startByte", "value_end": "capture.VALUE.endByte", "value_kind": "capture.VALUE.kind", "function_start": "capture.FUNCTION.startByte", "function_end": "capture.FUNCTION.endByte", "function_kind": "capture.FUNCTION.kind", "arguments_start": "capture.ARGUMENTS.startByte", "arguments_end": "capture.ARGUMENTS.endByte", "arguments_kind": "capture.ARGUMENTS.kind", "object_start": "capture.OBJECT.startByte", "object_end": "capture.OBJECT.endByte", "object_kind": 
+
+== input relaxed as=row
+  rule: {"ast": {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "module"}, {"filePath": {"regex": "\\b\\B"}}]}}}
+  project: {"path": "file.path"}
+
+-- stage nodes (310 chars) {"indexes": [["__path", "id"], ["__path", "parent"], ["__path", "kind"], ["__path", "__start", "__end"]]}
+SELECT *,kind||':'||__start||':'||__end AS id,
+ parent_kind||':'||parent_start||':'||parent_end AS parent,
+ ancestor_kind||':'||ancestor_start||':'||ancestor_end AS edge_parent,
+ row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1 AS ordinal
+ FROM raw_nodes
+
+-- stage edges (91 chars) {"indexes": [["__path", "src"], ["__path", "dst"]]}
+SELECT __path,edge_parent AS src,id AS dst,ordinal FROM nodes WHERE edge_parent IS NOT NULL
+
+-- stage functions (80 chars) {"indexes": [["__path", "id"], ["__path", "name"]]}
+SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='function_definition'
+
+-- stage ownership (787 chars) {"indexes": [["__path", "id"], ["__path", "fn"], ["__path", "top_fn"]]}
+WITH RECURSIVE owned(__path,id,fn,cls,top_fn) AS (
+ SELECT n.__path,n.id,CASE WHEN n.kind='function_definition' THEN n.id END,CASE WHEN n.kind='class_definition' THEN n.id END,CASE WHEN n.kind='function_definition' THEN n.id END FROM nodes n
+ LEFT JOIN nodes parent ON parent.__path=n.__path AND parent.id=n.edge_parent WHERE parent.id IS NULL
+ UNION ALL SELECT child.__path,child.id,CASE WHEN child.kind='function_definition' THEN child.id ELSE owned.fn END,CASE WHEN child.kind='class_definition' THEN child.id ELSE owned.cls END,CASE WHEN owned.top_fn IS NULL AND child.kind='function_definition' THEN child.id ELSE owned.top_fn END
+ FROM owned JOIN edges e ON e.__path=owned.__path AND e.src=owne
+
+-- stage classes (77 chars) {"indexes": [["__path", "id"], ["__path", "name"]]}
+SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='class_definition'
+
+-- stage attributes (170 chars) {"indexes": [["__path", "id"]]}
+SELECT n.*,n.attribute_source AS attr,n.object_kind||':'||n.object_start||':'||n.object_end AS object,n.object_source AS object_text FROM nodes n WHERE n.kind='attribute'
+
+-- stage calls (321 chars) {"indexes": [["__path", "id"], ["__path", "callee"]]}
+SELECT n.*,f.id AS callee_id,f.kind AS callee_kind,f.text AS full_callee,coalesce(a.attr,f.text) AS callee,a.object AS receiver FROM nodes n JOIN nodes f ON f.__path=n.__path AND f.id=n.function_kind||':'||n.function_start||':'||n.function_end LEFT JOIN attributes a ON a.__path=f.__path AND a.id=f.id WHERE n.kind='call'
+
+-- stage arguments (308 chars) {"indexes": [["__path", "call", "position"]]}
+SELECT n.*,c.id AS call,row_number() OVER(PARTITION BY c.__path,c.id ORDER BY n.__start)-1 AS position FROM calls c JOIN nodes n ON n.__path=c.__path AND n.parent=c.arguments_kind||':'||c.arguments_start||':'||c.arguments_end WHERE n.kind NOT IN ('comment','keyword_argument','list_splat','dictionary_splat')
+
+-- stage keywords (474 chars) {"indexes": [["__path", "call", "name"], ["__path", "value"]]}
+SELECT c.__path,c.id AS call,k.id AS keyword,k.__start AS keyword_start,kn.text AS name,v.id AS value,v.__start,v.__end,v.text,v.kind FROM calls c JOIN nodes k ON k.__path=c.__path AND k.parent=c.arguments_kind||':'||c.arguments_start||':'||c.arguments_end AND k.kind='keyword_argument' JOIN nodes kn ON kn.__path=k.__path AND kn.id=k.name_kind||':'||k.name_start||':'||k.name_end JOIN nodes v ON v.__path=k.__path AND v.id=k.value_kind||':'||k.value_start||':'||k.value_end
+
+-- stage returns (223 chars) {"indexes": [["__path", "fn"], ["__path", "value"]]}
+SELECT n.*,v.id AS value,v.kind AS expr_kind,v.text AS expr_text,o.fn FROM nodes n JOIN nodes v ON v.__path=n.__path AND v.parent=n.id LEFT JOIN ownership o ON o.__path=n.__path AND o.id=n.id WHERE n.kind='return_statement'
+
+-- stage assignments (414 chars) {"indexes": [["__path", "fn", "target_text"], ["__path", "id"], ["__path", "value"]]}
+SELECT n.*,l.id AS target,l.kind AS target_kind,l.text AS target_text,r.id AS value,r.kind AS expr_kind,r.text AS expr_text,o.fn FROM nodes n JOIN nodes l ON l.__path=n.__path AND l.id=n.left_kind||':'||n.left_start||':'||n.left_end LEFT JOIN nodes r ON r.__path=n.__path AND r.id=n.right_kind||':'||n.right_start||':'||n.right_end LEFT JOIN ownership o ON o.__path=n.__path AND o.id=n.id WHERE n.kind='assignment'
+
+-- stage local_bindings (347 chars) {"indexes": [["__path", "owner", "name"]]}
+SELECT * FROM (SELECT f.__path,f.id AS owner,a.target_text AS name,a.value,row_number() OVER(PARTITION BY f.__path,f.id,a.target_text ORDER BY a.__start DESC) AS selected FROM functions f JOIN assignments a ON a.__path=f.__path AND a.__start>f.__start AND a.__end<=f.__end WHERE a.target_kind='identifier' AND a.value IS NOT NULL) WHERE selected=1
+
+-- stage expression_edges (1052 chars) {"indexes": [["__path", "src"], ["__path", "dst"]]}
+SELECT p.__path,c.id AS src,p.id AS dst FROM nodes p JOIN nodes c ON c.__path=p.__path AND c.parent=p.id WHERE p.kind IN ('tuple','list','set','expression_list','parenthesized_expression','keyword_argument','argument_list')
+ UNION SELECT p.__path,c.id,p.id FROM nodes p JOIN nodes c ON c.__path=p.__path AND c.parent=p.id AND c.ordinal=1 WHERE p.kind='pair'
+ UNION SELECT p.__path,c.id,p.id FROM nodes p JOIN nodes c ON c.__path=p.__path AND c.parent=p.id WHERE p.kind='dictionary'
+ UNION SELECT c.__path,a.id,c.id FROM calls c JOIN arguments a ON a.__path=c.__path AND a.call=c.id
+ UNION SELECT c.__path,k.value,c.id FROM calls c JOIN keywords k ON k.__path=c.__path AND k.call=c.id
+ UNION SELECT n.
+
+-- stage callable_edges (596 chars) {"indexes": [["__path", "src"]]}
+SELECT a.__path,a.object AS src,a.id AS dst FROM attributes a
+ UNION SELECT a.__path,a.attribute_kind||':'||a.attribute_start||':'||a.attribute_end,a.id FROM attributes a
+ UNION SELECT c.__path,c.callee_id,c.id FROM calls c
+ UNION SELECT c.__path,a.id,c.id FROM calls c JOIN arguments a ON a.__path=c.__path AND a.call=c.id
+ UNION SELECT c.__path,k.value,c.id FROM calls c JOIN keywords k ON k.__path=c.__path AND k.call=c.id
+ UNION SELECT n.__path,c.id,n.id FROM nodes n JOIN nodes c ON c.__path=n.__path AND c.parent=n.id AND c.ordinal=0 WHERE n.kind IN ('subscript','parenthesized_expression')
+
+-- stage user_callable (356 chars) {"indexes": [["__path", "id"]]}
+WITH RECURSIVE shaped(__path,id) AS (SELECT __path,id FROM nodes WHERE kind='lambda' OR kind='identifier' AND rx_matches(lower(text),'callable|callback|decoder|fn|function|hook|mapper|picker|processor|projector|row_decoder|transform') UNION SELECT s.__path,e.dst FROM shaped s JOIN callable_edges e ON e.__path=s.__path AND e.src=s.id) SELECT * FROM shaped
+
+-- stage direct_callable (601 chars) {"indexes": [["__path", "id"]]}
+WITH RECURSIVE direct(__path,id) AS (
+ SELECT n.__path,n.id FROM nodes n WHERE n.kind='lambda' OR n.kind='identifier' AND (EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND f.name=n.text) OR EXISTS(SELECT 1 FROM assignments a WHERE a.__path=n.__path AND a.target_text=n.text AND a.expr_kind='lambda'))
+ UNION SELECT __path,id FROM calls WHERE full_callee IN ('partial','functools.partial')
+ UNION SELECT s.__path,e.dst FROM direct s JOIN expression_edges e ON e.__path=s.__path AND e.src=s.id JOIN nodes n ON n.__path=e.__path AND n.id=e.dst WHERE n.kind!='identifier') SELECT * FROM direct
+
+-- stage mutable_values (363 chars) {"indexes": [["__path", "id"]]}
+WITH RECURSIVE mutable(__path,id) AS (SELECT __path,id FROM nodes WHERE kind IN ('list','dictionary','set','list_comprehension','dictionary_comprehension','set_comprehension') UNION SELECT m.__path,n.parent FROM mutable m JOIN nodes n ON n.__path=m.__path AND n.id=m.id JOIN nodes p ON p.__path=n.__path AND p.id=n.parent AND p.kind='tuple') SELECT * FROM mutable
+
+-- stage builder_calls (105 chars) {"indexes": [["__path", "id"]]}
+SELECT * FROM calls WHERE callee IN ('RuntimeBuilderSpec','runtime_builder_post_op','runtime_op_post_op')
+
+-- stage literal_kwargs (148 chars) {"indexes": [["__path", "value"]]}
+SELECT k.* FROM keywords k JOIN builder_calls c ON c.__path=k.__path AND c.id=k.call AND c.callee='RuntimeBuilderSpec' WHERE k.name='literal_kwargs'
+
+-- stage literal_pairs (415 chars) {"indexes": [["__path", "root"]]}
+SELECT k.__path,k.value AS root,key.text AS key,value.id AS value FROM literal_kwargs k JOIN nodes pair ON pair.__path=k.__path AND pair.parent=k.value JOIN nodes key ON key.__path=pair.__path AND key.parent=pair.id AND key.ordinal=0 JOIN nodes value ON value.__path=pair.__path AND value.parent=pair.id AND value.ordinal=1 WHERE pair.kind IN ('pair','tuple','list') AND key.kind IN ('string','concatenated_string')
+
+-- final (5107 chars)
+SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'STEP-029' AS issue,n.id AS identity,'check_closed_post_op_runtime_builder_no_callable_escape_hatches' AS entry FROM assignments n WHERE n.target_kind IN ('identifier','attribute') AND rx_matches(lower(n.target_text),'runtime') AND rx_matches(lower(n.target_text),'callback|callable|effect|function|hook') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'STEP-029' AS issue,'kind:'||n.id AS identity,'check_closed_post_op_runtime_builder_no_callable_escape_hatches' AS entry FROM assignments n WHERE EXISTS(SELECT 1 FROM classes c WHERE c.__path=n.__path AND c.name='RuntimeBuilderKind' AND EXISTS(SELECT 1 FROM nodes expr WHERE expr.__path=n.__path AND expr.id=n.parent AND expr.kind='expression_statement' AND expr.parent=c.body_kind||':'||c.body_start||':'||c.body_end)) AND (n.target_kind='identifier' AND rx_matches(lower(n.target_text),'callable|callback|closure|function|lambda|partial') OR n.expr_kind IN ('string','concatenated_string') AND rx_matches(lower(n.expr_text),'callable|callback|closure|function|lambda|partial')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'STEP-029' AS issue,'registry:'||n.id AS identity,'check_closed_post_op_runtime_builder_no_callable_escape_hatches' AS entry FROM calls n WHERE rx_matches(lower(n.full_callee),'runtime') AND rx_matches(lower(n.full_callee),'register') AND rx_matches(lower(n.full_callee),'callback|callable|

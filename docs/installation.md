@@ -72,13 +72,179 @@ made after set-up is swapped the same way, by `/rerail-start` run again or by th
 
 ### From OMP's plugins
 
-If you installed it with `omp plugin install @neralabs/rerail`, run `omp plugin uninstall @neralabs/rerail` after
-set-up and restart OMP. Set-up cannot replace OMP's own plugin copy, so both would load; set-up and `rerail update`
-remind you while it stays.
+Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
+`/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`,
+`/rerail-uninstall`, `/rerail-help` and `/rerail-show-me` (`$rerail`,
+`$rerail-manage`, and so on in Codex). `rerail install` also removes the
+`rerail-ui` and `rerail-rage-quit` files an earlier build wrote. `rerail update`
+then runs `rerail install --refresh` from the version it activated: every coding
+agent already connected gets that version's commands, skills and hooks, and loses
+the ones it retired; a coding agent never connected is left alone. Command files
+and skills Rerail generated are replaced without a `.bak` copy. Updating from
+0.1.0-next.2 or earlier runs that version's update, which does not do this: run
+`rerail install --refresh` once afterwards.
+Settings, scans, status, update checks, rollback and reset are the CLI
+commands above.
+Restart the coding agent after installing or rebuilding to load the commands.
+A scan or settings invocation must supply the exact session
+identity. See the [scan and settings contract](../README.md#scan-and-settings-controls)
+for scope, mode, persistence, diagnostics, and background versus next-event
+delivery.
 
-## Update
+Updates only happen when you ask for one. Nothing in Rerail polls the registry
+or installs a version in the background; `rerail update` and re-running
+`npx @neralabs/rerail setup` are the only paths. `rerail update --channel <tag>`
+selects the npm dist-tag (`latest`, `beta`, or `next`).
 
-Updates happen only when you ask for one: nothing in Rerail polls the registry or installs a version in the background.
+Rerail keeps one database, `~/.rerail/rerail.sqlite` (`$RERAIL_HOME/rerail.sqlite`),
+holding each repository's rule configuration, the rules you created, and the
+sessions, events, and work links of every repository on the machine; each
+session is attributed to its repository (`rerail status` names the file). The
+daemon serves every repository; its pages are scoped to one with
+`?repository=<key>&checkout=<path>`. The rules of the rule packs you install
+(`$RERAIL_HOME/packs`, see [Rule packs](rule-packs.md#installing-packs)) run only
+in repositories that add them (see [Rule scoping](rule-scoping.md)).
+`rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`
+(kept only when the update changes the version, and recorded with that change), and
+`rerail update rollback` puts that copy back when rolling that change back and the
+update changed the database in a way the older version cannot read (see
+[Database compatibility](#database-compatibility));
+`rerail rules export [--output <file>]` and `rerail rules import <file>` move
+your rules and each repository's configuration by hand. `rerail seed` fills the
+database with mock rules to work against.
+
+Policy evaluation caches parsed files and results in a content store. Which
+one a Rerail uses depends on where its package lives, not on a flag: the
+managed installation (a package under `~/.rerail/versions/<version>/`, or
+`$RERAIL_HOME/versions/`, normally loaded through `current`) owns the
+machine-wide `~/.cache/rerail/content-v3.sqlite`. Any build running from a
+Git checkout — source, `dist/`, tests, benchmarks, every worktree — uses
+`<checkout>/.rerail/content-v3.sqlite` instead (`.rerail/` is gitignored), so a
+checkout on a newer store schema never changes the store the installed version
+reads. The file name follows the store's compatibility floor (`v2` today) and
+changes whenever the floor rises. `RERAIL_CONTENT_STORE_PATH` overrides the
+location for either. A package that is neither (for example an `npx` copy) has
+no store and reports that on its first scan.
+
+### Starting and stopping Rerail
+
+Rerail is off in every repository until it is started there. Rules belong to
+the repository; on and off belong to each checkout, stored in
+`~/.rerail/rerail.sqlite`. A checkout without its own value follows the nearest
+checkout of the same repository that contains it and has one, and otherwise
+the repository. Two clones of one remote are one repository.
+
+- `/rerail-start` (OMP, Pi, Claude Code, Cursor) or `rerail start` (terminal,
+  and the only spelling in Codex, which cannot expose an exact third-party
+  slash-command name) starts Rerail in the current checkout and the checkouts
+  inside it. In a repository that is not set up, it runs set-up's steps 2 to 6
+  there first: it asks, recommends rule packs, and starts once you confirm
+  ("Skip, I’ll pick packs" lists every rule pack set-up fetched, installs
+  the ones you pick and adds each for the whole repository, without reading
+  it; "None for now" sets it up with none). Until a repository is set up, its sessions are
+  recorded but no rules run.
+- `/rerail-stop` or `rerail stop` stops Rerail in the current checkout and the
+  checkouts inside it: no recording, evaluation, steering, or daemon autostart
+  from their sessions. Recorded history, rules, and the shared daemon stay,
+  and other repositories are unaffected.
+- `rerail start --repository` and `rerail stop --repository` act on every
+  checkout of the repository, clearing their own values.
+
+`rerail daemon start` and `rerail daemon stop` control the background daemon
+itself, which serves every started repository on the machine.
+
+### One main instance
+
+At most one main Rerail instance runs on a machine: the managed
+installation's daemon, the only process that opens the machine-wide content
+store. It holds an exclusive OS lock (`flock` / `LockFileEx`) on
+`~/.cache/rerail/main-instance.lock` for its whole life and records its
+pid, version, package root, and start time beside it in `main-instance.json`.
+The OS drops the lock however the daemon ends, `kill -9` included, so there is
+never a stale lock to clear. A second main daemon — another `$RERAIL_HOME`, or
+an orphan its `daemon.json` no longer names — exits at startup with
+`Another main Rerail instance is running: pid …, version …`, which `rerail daemon start`
+prints from `daemon.log`; stop that process (`rerail daemon stop`, or end it by pid)
+and start again.
+
+Everything else in the managed installation goes through that daemon rather
+than evaluating in-process: the Claude Code, Codex, and Cursor hooks, OMP and
+Pi sessions, and `rerail events` streams (in internal testing) send their events
+to it, starting it when it is not running (unless `RERAIL_AUTOSTART=0`), and CLI
+commands such as `rerail settings` and `rerail scan` (in internal testing) use its API. Any process other than the lock holder that tries to
+open the machine-wide store gets an error and a failed policy run instead of a
+second writer. Development builds never take the lock and never open that
+store.
+
+Updates hand over without overlap: `rerail update` only activates the new
+version, and the next hook or session from it stops the old daemon, waits
+until that process has exited and the OS has released its lock, then starts
+the new daemon, which takes the lock. `rerail setup` replaces a stale daemon
+the same way. A `rerail events` stream (in internal testing) that outlives an update keeps sending to
+whichever daemon is running and never brings its own version back.
+
+### Database compatibility
+
+`rerail.sqlite` records its compatibility floor in `PRAGMA user_version`: the
+oldest schema version a Rerail must read to open it, 3 in this release. Which
+migration steps the file has run is recorded in its `schema_migrations` table.
+
+When a newer Rerail first opens the file (the daemon, `rerail start`, set-up,
+or a command, hook or status line that only reads), it runs the steps the file
+has not run, in one transaction: a step that fails leaves the file as it was.
+A process that only reads and cannot write the file (its permissions) gets an
+error naming those steps instead, and the file, its mode included, is left as
+it was.
+Most steps add a column or a table, which older versions read correctly, so
+they keep the floor and an older Rerail still opens the file; a hook or the
+status line runs them before reading. A step an older version would misread
+raises the floor and waits for the new version's daemon or a command that
+writes (until then a hook or the status line says to start Rerail, `rerail
+daemon start`); from then on older versions refuse the file, and `rerail update
+rollback` puts back the copy `rerail update` took before that version change
+when the floor is now above what the version rolled back to opens. It writes the
+copy into the database file itself, so anything that has the file open goes on
+with the restored database, after keeping what the database held as
+`rerail.sqlite.before-rollback` (readable only by you; a later rollback keeps its
+own as `.before-rollback.2`, `.3`, …, never over an earlier one). A copy's
+record is used once: once the copy is put back, or you are told how to put it
+back yourself, no later rollback puts it back again. While it writes,
+`rerail.sqlite.restoring` (holding the rollback's process id) sits beside the
+database and every Rerail process refuses to open it; try again in a moment. A
+rollback that was killed leaves the file behind, but once its process is gone
+Rerail opens the database again and the next rollback takes the file over. While
+a coding agent session still has the database open, or another rollback is
+restoring, the copy is not put back: copy it over yourself, as the message says
+(it also says when it stopped the daemon). An update that finds nothing
+newer, or fails, keeps the copy of the last change; one that changes the version
+but cannot keep a copy removes the last one, which no longer belongs to the
+change a rollback would undo.
+
+A database written by 0.1.0-next.1 (stamped 1, before the migration path) is
+adopted: the first Rerail process that opens it records the baseline and stamps
+it 3, keeping everything in it. 0.1.0-next.1 then no longer opens it, and its
+`rerail update` kept a copy with no record of the change, so `rerail update
+rollback` to it does not put the copy back itself: it prints how to (copy
+`rerail.sqlite.pre-update` over `rerail.sqlite` with Rerail stopped, keeping
+the current file if you need what changed since). A database file written by a newer Rerail (a
+floor above this release's), by other software, by 0.1.0-next.0 (stamped 1, in
+an older shape) or by a development build (stamped 2) is refused with an error
+and left untouched. Move such a file aside (or point `RERAIL_HOME` elsewhere)
+and start again, then re-import rules with `rerail rules import`.
+
+### Resetting session history
+
+To clear a repository's recorded sessions, run `rerail reset` from any of its
+checkouts (safe to repeat).
+
+It deletes that repository's ended sessions and every session's events, work
+links, audits, and audit requests in one transaction. Rules, settings, and
+other repositories are untouched; the file is never unlinked, so open daemons
+and harness sessions keep working, and running sessions keep recording.
+
+### Removing Rerail
+
+To take Rerail off a machine:
 
 ```sh
 rerail update check   # is a newer version on the channel?

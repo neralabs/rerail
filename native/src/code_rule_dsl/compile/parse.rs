@@ -77,6 +77,19 @@ pub(super) fn validate_parse(
             grammar.name()
         )));
     }
+    if let Some(marker) = parse.get("interpolation") {
+        if grammar != Grammar::PythonFString {
+            return Err(invalid(format!(
+                "{path}/interpolation requires pythonFString"
+            )));
+        }
+        let marker = marker
+            .as_str()
+            .ok_or_else(|| invalid(format!("{path}/interpolation must be a string")))?;
+        if marker.len() > 1024 {
+            return Err(invalid(format!("{path}/interpolation exceeds 1024 bytes")));
+        }
+    }
     let rule = sub_rule(parse);
     validate_sub_rule(&rule, path, grammar, true, limits, utils)?;
     Ok(grammar)
@@ -87,6 +100,7 @@ fn sub_rule(parse: &Map<String, Value>) -> Value {
     let mut rule = parse.clone();
     rule.remove("grammar");
     rule.remove("flags");
+    rule.remove("interpolation");
     Value::Object(rule)
 }
 
@@ -347,6 +361,11 @@ pub(super) fn compile_parse(
     host_rules(&rule, false, &mut hosts);
     Ok(AstMatcher::Semantic(Semantic::Parse(Box::new(ParseTest {
         grammar,
+        interpolation: parse
+            .get("interpolation")
+            .and_then(Value::as_str)
+            .unwrap_or("{}")
+            .to_owned(),
         host_sound: (!hosts.is_empty()).then(|| {
             hosts
                 .iter()
@@ -355,7 +374,14 @@ pub(super) fn compile_parse(
         rule,
         exports: exports.into_iter().collect(),
         host_kinds: Arc::new(match grammar.literal_host() {
-            LiteralHost::PythonString => kind_ids(language, &["string", "concatenated_string"]),
+            LiteralHost::PythonString => {
+                let kinds: &[&str] = if grammar == Grammar::PythonFString {
+                    &["string", "concatenated_string", "format_specifier"]
+                } else {
+                    &["string", "concatenated_string"]
+                };
+                kind_ids(language, kinds)
+            }
             LiteralHost::EcmaComment => kind_ids(language, &["comment"]),
             LiteralHost::PhpString => kind_ids(
                 language,

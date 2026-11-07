@@ -5,28 +5,47 @@ edition = "2024"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [features]
 code-rule-profile = []
-bench-backends = ["dep:metal"]
+# P's workspace anchor path (Pulling-it-all-together@cbee7a03): its anchor corpus prepared for every
+# rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over
+# the test-only copy `matcher::p_anchors`, until open item O20 picks one engine.
+p-anchor-corpus = []
+# The Metal transducer suites (485 tests). Every GPU dispatch takes the process-wide
+# `METAL_EXECUTION_LOCK`, so these run one at a time and were 82% of the default suite's test
+# time; they run as their own gate: `cargo test --lib --features metal-tests -- transducer::`.
+metal-tests = []
 [dependencies]
-ast-grep-core = "=0.51.0"
+ast-grep-core = "=0.50.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md), and no second
 # parser is linked.
 # Rust parses with ast-grep's tree-sitter-rust 0.24.2 (MIT), the grammar its feasibility census measured.
-ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-php", "tree-sitter-rust"] }
+ast-grep-language = { version = "=0.50.0", default-features = false, features = ["tree-sitter-php", "tree-sitter-rust"] }
+# The transducer's CPU JIT (code_rule_dsl/transducer/packed).
+cranelift-codegen = "=0.125.4"
+cranelift-frontend = "=0.125.4"
+# Executable code needs dedicated mappings, separate from mimalloc heap pages (G).
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
+cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
-gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
-globset = "=0.4.21"
+hashbrown = { version = "=0.16.1", default-features = false }
+gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
+globset = "=0.4.20"
+# Multi-literal search for the text layer (code_rule_dsl/text): already in the tree through `regex`.
+aho-corasick = "=1.1.5"
+# Verifying signed repository artifacts (`@ed25519_ok`); never signs.
+base64 = "=0.22.1"
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
 napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-symbols"] }
 napi-derive = "3.0"
 indexmap = "=2.14.2"
 memchr = "=2.8.3"
-num-bigint = "=0.5.1"
+num-bigint = "=0.4.6"
 num-integer = "=0.1.47"
 num-traits = "=0.2.19"
 parking_lot = { version = "0.12", features = ["arc_lock"] }
@@ -34,12 +53,17 @@ rayon = "=1.12.0"
 serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
+regex-automata = "=0.4.18"
 regex-syntax = "=0.8.11"
-rusqlite = { version = "=0.41.1", features = ["bundled", "limits"] }
+rusqlite = { version = "=0.40.2", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
+fallible-iterator = "0.3"
 rustc-hash = "=2.1.3"
+# `core.rr`'s `syntax_error` for Python: a parser that follows CPython's grammar (Ruff's), since tree-sitter
+# recovers from errors. 0.0.10 is the last release that builds on the pinned toolchain (1.95).
+ruff_python_parser = "=0.0.10"
 serde_json = "1.0"
 serde_yaml_ng = "=0.10.0"
-sha2 = "0.11"
+sha2 = "0.10"
 tree-sitter-language = "=0.1.9"
 tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
 tree-sitter = "=0.27.1"
@@ -48,33 +72,44 @@ unicode-normalization = "=0.1.26"
 zstd = "=0.14.3"
 
 [target.'cfg(unix)'.dependencies]
+# G's global allocator, ported as a dependency only: W keeps jemalloc (`lib.rs`) until O16.
+mimalloc = { version = "=0.1.52", default-features = false }
 libc = "0.2.189"
 
 # jemalloc does not build for MSVC targets; Windows keeps the system allocator (`lib.rs`).
 [target.'cfg(not(windows))'.dependencies]
 # The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
-tikv-jemallocator = { version = "=0.7.0", features = ["disable_initial_exec_tls"] }
-tikv-jemalloc-ctl = { version = "=0.7.0", features = ["stats"] }
+tikv-jemallocator = { version = "=0.6.1", features = ["disable_initial_exec_tls"] }
+tikv-jemalloc-ctl = { version = "=0.6.1", features = ["stats"] }
 # Tree-sitter's allocator (`lib.rs`): the same jemalloc, linked by tikv-jemallocator.
-tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
+tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
+# SHA-256 on the CPU's SHA instructions (`sha2`'s aarch64 backend is behind `asm`; without it every digest runs
+# `soft::compress`, 8% of a corpus run's samples). Not on Windows: `asm` builds `sha2-asm`, which MSVC does not.
+[target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]
+sha2 = { version = "0.10", features = ["asm"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
-metal = { version = "0.33.0", optional = true }
+block = "0.1.6"
+metal = "0.33.0"
 
 [dev-dependencies]
 # The test-only dialects' grammars: `builtin-parser` without tree-sitter-python,
 # tree-sitter-typescript and tree-sitter-javascript, which Rerail vendors.
-ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
-# Tests count SQLite VM steps (`Connection::progress_handler`) to bound statement work.
-rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks"] }
+ast-grep-language = { version = "=0.50.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
+# Tests count SQLite VM steps (`Connection::progress_handler`) to bound statement work; G's
+# positional search index (test-only) reads `rarray`.
+rusqlite = { version = "=0.40.2", features = ["bundled", "limits", "hooks", "array"] }
+# Temporary files in tests copied from P and D (P pins it as a dependency).
+tempfile = "=3.27.0"
 
 [build-dependencies]
-cc = "=1.10.0"
+cc = "=1.8.0"
 napi-build = "2.2"
-sha2 = "0.11"
+sha2 = "0.10"
 # Reads and validates the language registry (`languages/*.json`) the build generates tables from.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

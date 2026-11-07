@@ -1,0 +1,48 @@
+# Data-layer migration corpus
+
+`batches.json` assigns all 142 pinned source checks to migration batches.
+`batch-01-recording.json`, `batch-02-recording.json`, and `batch-03-recording.json` contain inputs and oracle results from each batch’s ten original pytest modules.
+Their corresponding `batch-XX-evidence.json` files record provenance, coverage, and repository measurements.
+`batch-02-probes.json` contains 58 additional source cases, each evaluated through the original analyzer and plugin reporter.
+Its 116 calls are supplemental oracle probes, not original pytest cases.
+
+The source commit is recorded in each JSON file.
+Regenerate original-test expectations with `scripts/dsl/data_layer_record.py` against that revision, with `--batch 1`, `--batch 2`, or `--batch 3`.
+Regenerate supplemental probe expectations with `scripts/dsl/data_layer_probe_record.py`.
+Do not edit expected findings to match a candidate rule.
+The original Python test modules and complete repository snapshot are not bundled here.
+This corpus is excluded from published package files.
+
+The native tests replay positive and clean cases and reject deliberately incorrect detectors.
+See [the execution report](../../../docs/data-layer-port-execution-plan.md) for commands and remaining coverage gaps.
+
+The [second-batch report](../../../docs/data-layer-batch-two.md) explains production reporter filters and additional native capabilities.
+
+`batch-03-probes.json` contains 88 additional source cases and their original analyzer/reporter results.
+The native gate compares 167 calls and retains nine signed aggregate reporter calls separately.
+`batch-03-evidence.json` distinguishes source detection parity from retained integration contracts.
+See [the third-batch report](../../../docs/data-layer-batch-three.md).
+
+`batch-04-recording.json` contains the fourth batch’s original analyzer calls and mechanically translated classifier inputs.
+`batch-04-probes.json` contains 171 supplemental cases, including positive and clean Rust cases and aggregate escape-hatch reporters.
+The combined native gate compares 573 calls with positive and clean coverage for all ten checks.
+Only two upstream duplicate-owner ambiguities and three original I/O observations remain separate.
+`batch-04-evidence.json` records parity counts and repository measurements.
+`escape-hatch-allowlist-signature.json` contains the pinned public verification material for the host adapter.
+Use `data_layer_record.py --batch 4` and `data_layer_probe_four.py` to regenerate their oracle results.
+See [the fourth-batch report](../../../docs/data-layer-batch-four.md).
+
+`batch-05-recording.json` contains the fifth batch's original observations.
+`batch-05-probe-inputs.json` and `batch-05-probes.json` contain supplemental source inputs and verified oracle results.
+The ten candidates pass 312 native source comparisons and match all 23,835 repository findings.
+The graph and relational probe files preserve reduced reference, family, and reachability cases.
+The 114 synthetic graph observations remain separate from native source passes.
+See [the fifth-batch report](../../../docs/data-layer-batch-five.md) and `batch-05-evidence.json`.
+
+`batch-06-recording.json` records 1,234 source observations from 933 original tests.
+`batch-06-probes.json` adds twenty-five original-analyzer probes for callbacks, assignments, strategy line limits, executor annotations, and production scope.
+The native gate compares 1,259 calls, with 417 positive and 842 clean observations.
+Seven I/O or behavioral observations and 324 tests without captured analyzer boundaries remain separate.
+Use `data_layer_record.py --batch 6` and `data_layer_probe_six.py` to regenerate the oracle results.
+The incremental harness checks 40 clean and positive transitions in resident workspaces.
+See [the sixth-batch report](../../../docs/data-layer-batch-six.md) and `batch-06-evidence.json`.

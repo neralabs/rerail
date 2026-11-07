@@ -1,0 +1,319 @@
+{
+  "format": "rerail.data-layer-batch-evidence/v1",
+  "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "batch": 3,
+  "state": "candidate detector ports; recorded detection parity passed; integration not certified",
+  "oracle": {
+    "python": "3.13.12",
+    "pytest": "9.0.2",
+    "collected": 568,
+    "passed": 568,
+    "skipped": 0,
+    "root_conftest_present": true,
+    "loaded_sources_verified": 1513,
+    "source_mismatches": []
+  },
+  "corpus": {
+    "calls": 194,
+    "positive": 116,
+    "clean": 78,
+    "expected_findings": 132,
+    "retained_calls": 3,
+    "uncaptured_tests": 402,
+    "checks": [
+      {
+        "check": "plan_scope_side_effects",
+        "reporting_clauses": 6,
+        "calls": 7,
+        "positive": 6,
+        "clean": 1,
+        "expected_findings": 6
+      },
+      {
+        "check": "plan_scope_ownership",
+        "reporting_clauses": 26,
+        "calls": 14,
+        "positive": 13,
+        "clean": 1,
+        "expected_findings": 14
+      },
+      {
+        "check": "transaction_closures",
+        "reporting_clauses": 6,
+        "calls": 76,
+        "positive": 29,
+        "clean": 47,
+        "expected_findings": 32
+      },
+      {
+        "check": "transaction_callback_wrappers",
+        "reporting_clauses": 2,
+        "calls": 4,
+        "positive": 2,
+        "clean": 2,
+        "expected_findings": 2
+      },
+      {
+        "check": "transaction_patterns",
+        "reporting_clauses": 58,
+        "calls": 26,
+        "positive": 21,
+        "clean": 5,
+        "expected_findings": 25
+      },
+      {
+        "check": "lazy_result_usage",
+        "reporting_clauses": 6,
+        "calls": 5,
+        "positive": 2,
+        "clean": 3,
+        "expected_findings": 2
+      },
+      {
+        "check": "swallowed_exceptions",
+        "reporting_clauses": 4,
+        "calls": 16,
+        "positive": 11,
+        "clean": 5,
+        "expected_findings": 13
+      },
+      {
+        "check": "error_handling",
+        "reporting_clauses": 2,
+        "calls": 3,
+        "positive": 2,
+        "clean": 1,
+        "expected_findings": 2
+      },
+      {
+        "check": "module_level_caches",
+        "reporting_clauses": 40,
+        "calls": 5,
+        "positive": 3,
+        "clean": 2,
+        "expected_findings": 7
+      },
+      {
+        "check": "connection_caches",
+        "reporting_clauses": 48,
+        "calls": 38,
+        "positive": 27,
+        "clean": 11,
+        "expected_findings": 29
+      }
+    ],
+    "diagnostic_counts": {
+      "plan_scope_side_effects/PSE-AUDIT-010": 1,
+      "plan_scope_side_effects/PSE-020": 5,
+      "plan_scope_ownership/PSO001": 2,
+      "plan_scope_ownership/PSO002": 1,
+      "plan_scope_ownership/PSO003": 1,
+      "plan_scope_ownership/PSO004": 1,
+      "plan_scope_ownership/PSO005": 1,
+      "plan_scope_ownership/PSO006": 1,
+      "plan_scope_ownership/PSO007": 1,
+      "plan_scope_ownership/PSO008": 1,
+      "plan_scope_ownership/PSO009": 1,
+      "plan_scope_ownership/PSO010": 1,
+      "plan_scope_ownership/PSO011": 1,
+      "plan_scope_ownership/PSO012": 1,
+      "plan_scope_ownership/PSO013": 1,
+      "transaction_closures/TXN003": 29,
+      "transaction_closures/TXN001": 3,
+      "transaction_callback_wrappers/transaction_callback_wrapper/callback-helper": 1,
+      "transaction_callback_wrappers/transaction_callback_wrapper/inline-reentrant": 1,
+      "transaction_patterns/BACKEND_OPS": 17,
+      "transaction_patterns/LEGITIMATE": 4,
+      "transaction_patterns/BOOTSTRAP": 2,
+      "transaction_patterns/INTERNAL_TXN_VIOLATION": 1,
+      "transaction_patterns/BACKEND_SPECIFIC": 1,
+      "lazy_result_usage/lazy_result_usage": 2,
+      "swallowed_exceptions/CRITICAL/except-critical": 8,
+      "swallowed_exceptions/WARNING/except-warning": 1,
+      "swallowed_exceptions/CRITICAL/suppress-legacy": 2,
+      "swallowed_exceptions/CRITICAL/suppress-critical": 2,
+      "error_handling/EH001/log-reraise": 1,
+      "error_handling/EH001/admin-commit": 1,
+      "module_level_caches/dict_cache": 1,
+      "module_level_caches/lru_cache": 1,
+      "module_level_caches/constructor_cache": 4,
+      "module_level_caches/list_cache": 1,
+      "connection_caches/CC001/pattern-0": 24,
+      "connection_caches/CC001/pattern-1": 1,
+      "connection_caches/CC001/pattern-3": 2,
+      "connection_caches/CC001/pattern-2": 2
+    }
+  },
+  "supplemental_oracle_probes": {
+    "original_pytest_cases": false,
+    "source_cases": 88,
+    "observed_calls": 176,
+    "compared_calls": 167,
+    "positive": 76,
+    "clean": 91,
+    "expected_findings": 92,
+    "retained_reporter_calls": 9,
+    "loaded_sources_verified": 125,
+    "source_mismatches": [],
+    "project_root_globals": "temporary resolved project root",
+    "signed_artifacts": "copied unchanged from pinned source"
+  },
+  "cumulative_corpus": {
+    "batches": [
+      1,
+      2,
+      3
+    ],
+    "includes_batch_two_and_three_supplemental_probes": true,
+    "calls": 1069,
+    "positive": 671,
+    "clean": 398,
+    "expected_findings": 796
+  },
+  "scoring_dimensions": [
+    "multiplicity",
+    "relative path",
+    "line",
+    "diagnostic code",
+    "backend comparison column",
+    "diagnostic category where recorded"
+  ],
+  "strict_gate": {
+    "false_positives": 0,
+    "false_negatives": 0,
+    "engine_failures": 0,
+    "stateless_workspace_differences": 0,
+    "earlier_batch_regressions_passed": true,
+    "missing_positive_or_clean_coverage": []
+  },
+  "sentinels": {
+    "empty_detector_false_negatives": 132,
+    "always_reporting_detector_rejected": true,
+    "wrong_exception_severity_rejected": true
+  },
+  "repository_measurement": {
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "files": 9010,
+    "bytes": 137896473,
+    "oracleMs": 20381.410667003365,
+    "oracleWorkers": 4,
+    "policyDigests": {
+      "data-layer-admin-async-purity": "sha256:28deddcad1b387ac3b546cca10895436e0c72fd351e7b2b500ca8192e3a4987e",
+      "data-layer-async-executor": "sha256:3bf76b24b1acd4c18e88904fc9c732f4fb30ce800c331499952d0c1dcf769154",
+      "data-layer-async-patterns": "sha256:555668ec0ddc233376e61b1c68258877a8c7f3304ae7cfc794fa3fd390be3d30",
+      "data-layer-async-sync-boundary": "sha256:8387d16fdbb47ca400d878ca97be6d1c42a48defe7e0b9909ff9b15b496ef82e",
+      "data-layer-backend-type-strings": "sha256:9a767dadcfe52ec2b2801588f36919e74f6a793cb0a072cc6af21f24288b5faf",
+      "data-layer-classvar-check": "sha256:f492d76f3f686b430c649080c9be8420d375e1be023d639cf5d6c7613acb03b4",
+      "data-layer-conn-or-txn-union": "sha256:deb16c1381ad2414041c981a4c56ff6990008093f05722c74ba10baf5d01258b",
+      "data-layer-connection-caches": "sha256:33bd67e8e1ca9a9ef6f3ba78442ee2338a4fbf8392ec5dd482310e674a195c8b",
+      "data-layer-dynamic-module-loading": "sha256:a877158fd13f016a1eaecc9cb229d08b82288cdea1bb297f6479feaf9b18c387",
+      "data-layer-error-handling": "sha256:148c2913f29d34155412e24ba97b9dcdfb08cf470d5c237f54059e5014b8fccf",
+      "data-layer-forwardref": "sha256:23e61b16ea5970188473c10aa8d47857b65e49a2e9a81d82c9fe4251467af585",
+      "data-layer-hasattr-async": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
+      "data-layer-lazy-result-usage": "sha256:861c4ce42ec168a6437789375ae80a05869654dde9d2d424a5da84ea646d4a1f",
+      "data-layer-module-level-caches": "sha256:c823d10e3d198b68284904d503860e04bf190e0e3e3dca19f7f96597288f490d",
+      "data-layer-no-api-root-imports": "sha256:ef339f54cbb5b61d815448ca08c6db8d1715d325663c711c43c22f50621f0cbc",
+      "data-layer-no-blanket-grammar-bypass": "sha256:0d6e692f4a48ed34de5928d35d05fefa5fd6f9d7181607084102b43389af48e5",
+      "data-layer-no-source-inspection": "sha256:cfedb7e006ea6b12e84cb9d960e0658cf7134067724181a5d8a212e25222ccfc",
+      "data-layer-permission-error": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
+      "data-layer-plan-scope-ownership": "sha256:2a251ae3d8d16f86a4297f3e499bbed943d878f41142fa2248434c31e7a828eb",
+      "data-layer-plan-scope-side-effects": "sha256:3c95c904567737c074afa6479d5aa55276be1afd311e37e1d22d8ab85162b10f",
+      "data-layer-removed-compat-surfaces": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
+      "data-layer-serverplan-grammar-surface": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
+      "data-layer-serverplan-name-inference": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
+      "data-layer-swallowed-exceptions": "sha256:b3fb96fa63706e2a7725795531374944218108708fd77da95368d9717ac3d53c",
+      "data-layer-transaction-callback-wrappers": "sha256:ec450b584c2d34983aae73770dd03bbb36488ab0de8e8f71fd2bb30c834c7697",
+      "data-layer-transaction-closures": "sha256:888f738714f199e81fbe0e0b34e51dc4109e0b9b4d7016a7444f60b6236b449a",
+      "data-layer-transaction-patterns": "sha256:cb8ed48327845bd31df6d4c2306f055705f28812f39ec9f8b08e95869c9b8968",
+      "data-layer-type-safety-patterns": "sha256:13a97ae41a7e1ebbee159bc9b7c693206b02740698bc5d479f05c8cc45f156ab",
+      "data-layer-unresolved-forward-refs": "sha256:86cdf97aa17812e9cc8b0d4f3edc65e099a7de3fc831426f1d5826ef37b2f94b",
+      "data-layer-versioned-lifecycle-legacy-surfaces": "sha256:579c7656724ba5a24b5ee0733b65f5561881a3df1160d4c48b5d14a63b518a46"
+    },
+    "compilationMs": 1215.703291,
+    "coldMs": 17135.459959,
+    "unchangedFileMs": 8.705999999998312,
+    "editedFileMs": 32.32795900000201,
+    "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+    "expected": 807,
+    "actual": 807,
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "allocator": "system-allocator-shim",
+    "nativeSha256": "a5f9809f18d87e8dbba7941c9ee5126074f32532b6f3d579cc9a80bbb7a8bed6",
+    "nativeWorkers": 4
+  },
+  "repository_contract": {
+    "production_plugin_reporters": 29,
+    "source_fact_extractors": [
+      "swallowed_exceptions"
+    ],
+    "retained_reporters": [
+      {
+        "check": "swallowed_exceptions",
+        "contract": "signed aggregate baseline reporter",
+        "findings": []
+      }
+    ],
+    "source_detections": 807,
+    "source_files_verified": 9010,
+    "native_snapshot": "empty resident workspace; no attached store"
+  },
+  "worker_phase_seconds": {
+    "parseNs": 10.981,
+    "tapeEncodeNs": 3.479,
+    "tapeDecodeRestoreNs": 1.427,
+    "anchorIndexNs": 2.385,
+    "anchorSelectionNs": 1.768,
+    "regexNs": 6.905,
+    "astMatchNs": 3.246,
+    "manifestCandidateLookupNs": 4.262
+  },
+  "worker_phase_note": "Aggregate cold-revision worker times; concurrent phases are not wall-time components.",
+  "validation": {
+    "focused_tests_passed": 249,
+    "focused_test_files_passed": 5,
+    "focused_pack_checks_passed": 6,
+    "structure_checks_passed": 25,
+    "native_engine_changed_for_batch_three": false,
+    "policy_generator_reproduces_bytes": true,
+    "generator_verifies_pinned_source_and_artifacts": true,
+    "second_batch_probe_regeneration_unchanged": true,
+    "typescript": "three errors in unchanged activation and PI integration files with the borrowed dependency installation",
+    "boundaries": "passed",
+    "licenses": "passed",
+    "windows_paths": "passed",
+    "dsl_reference_differences": 0,
+    "third_batch_probe_regeneration_unchanged": true
+  },
+  "limits": [
+    "Detection parity does not certify message wording, CLI rendering, signed policy integration, or ratchet activation.",
+    "Three original framework-error calls and 402 uncaptured tests are not counted as native passes.",
+    "Nine supplemental aggregate reporter observations are retained separately from native source detection parity.",
+    "The swallowed-exception candidate emits source detections in steer mode; the original signed aggregate reporter remains upstream.",
+    "Existing first-batch decoded-string location defects remain outside its passing corpus.",
+    "Performance samples use a system allocator shim on a shared machine and do not certify production jemalloc throughput."
+  ],
+  "linear_amendments": [
+    {
+      "identifier": "NER-1969",
+      "url": "https://linear.app/nera/issue/NER-1969",
+      "read_back_verified": true,
+      "state_changed": false
+    },
+    {
+      "identifier": "NER-1971",
+      "url": "https://linear.app/nera/issue/NER-1971",
+      "read_back_verified": true,
+      "state_changed": false
+    }
+  ],
+  "linear_issues_created": [],
+  "new_native_engine_features_required": [],
+  "repository_build": {
+    "features": [
+      "code-rule-profile"
+    ],
+    "allocator": "system-allocator-shim"
+  }
+}

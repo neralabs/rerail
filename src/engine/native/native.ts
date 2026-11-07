@@ -88,6 +88,8 @@ export type CodeRuleDslSourceFormat = "json" | "yaml";
 export type CodeRuleDslEvaluationMode = "decision" | "report";
 
 export interface NativeCompiledCodeRuleDsl {
+  /** Diagnostic availability depends on the installed addon version. Uses the normal compiler. */
+  candidateFrontierAudit?(): string;
   canonicalJson(): string;
   /** Whether a repository-relative path is inside the code rule's scope; the matcher evaluation uses. */
   inScope(path: string): boolean;
@@ -281,6 +283,42 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
 }
 
+/** A policy document for the first slice: its name (the file stem), source and format. */
+export interface NativeSlicePolicy {
+  name: string;
+  source: string;
+  format: CodeRuleDslSourceFormat;
+}
+
+/** An editor's unsaved source for `path` (relative to the directory, `/` separators); the file may not exist yet. */
+export interface NativeSliceBuffer {
+  path: string;
+  source: string;
+}
+
+/**
+ * The first slice over one content store (docs/final-shape/06-first-slice.md): the pack's lowered Python `ast`
+ * clauses, kept between runs. `audit` and `apply` return JSON: `findings` ({rule, code, path, line}), `coverage`
+ * ({rule, path, coverage, reason?}), `evaluated` paths, `rerun` derivations and the `changed` families.
+ */
+export interface NativeCodeRuleSlice {
+  clauses(): number;
+  /**
+   * A cold audit of `scope` at `directory` as `observer` sees it: `"directory"` (default, the working tree's
+   * snapshot, with `buffers` over it) or `"head"` (the `HEAD` tree of its Git checkout; no buffers).
+   */
+  audit(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
+  /** `scope` at `directory` as `observer` sees it, evaluating only the documents that changed since the last run. */
+  apply(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
+  /** The lowered rules as `rir` (list step 18): programs and label tables, with `fused` the packs and groups, with `setplan` the set plan. */
+  dump(fused?: boolean | null, setplan?: boolean | null): string;
+}
+
+export interface NativeCodeRuleSliceConstructor {
+  /** Opens the store at `storePath` and lowers `policies` for `backend` (`"cpu"` or `"metal"`). */
+  new (storePath: string, policies: NativeSlicePolicy[], capabilitiesJson: string, backend: "cpu" | "metal"): NativeCodeRuleSlice;
+}
+
 /** An OS advisory lock (`flock` / `LockFileEx`) the OS drops when the holding process exits, however it exits. */
 export interface NativeExclusiveFileLock {
   /** Unlocks and closes the file before process exit; later calls do nothing. */
@@ -321,7 +359,7 @@ export interface NativeBinding {
   validateRegex(pattern: string): void;
   /** Windows only: start a detached process that inherits only NUL stdin and the appended log file; returns its pid. */
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
-  /** The content-store file name this binary's store schema owns (`content-v1.sqlite` at store floor 1). */
+  /** The content-store file name this binary's store schema owns (`content-v3.sqlite` at store floor 3). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
@@ -331,6 +369,14 @@ export interface NativeBinding {
   PackageFactsReader: new (root: string) => NativePackageFactsReader;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
   CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;
+  CodeRuleSlice: NativeCodeRuleSliceConstructor;
+  /**
+   * `policies` lowered and dumped as `rir` without a store (`rerail engine dump`): every clause, or only `clause`
+   * (`policy/clause` or a clause id); `fused` adds the packs and groups, `setplan` the set plan.
+   */
+  dumpRir(policies: NativeSlicePolicy[], capabilitiesJson: string, clause?: string | null, fused?: boolean | null, setplan?: boolean | null): string;
+  /** Every `program` block of `text` assembled through the verifier and dumped again (`rerail engine asm`); throws the first refusal. */
+  assembleRir(text: string): string;
 }
 
 const require = createRequire(import.meta.url);
