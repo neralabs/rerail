@@ -8,7 +8,7 @@ def serverplan_grammar_surface(source, target, header):
     original = module(source, 'serverplan_grammar_surface')
     shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
     text = '\n'.join(line for line in header('serverplan_grammar_surface', target).splitlines()
-                     if not line.startswith('.scope exclude')) + '\n'
+                     if not line.startswith('.scope exclude')).replace('"python/ast.rr"', '"python/ast-shape.rr"') + '\n'
     text += '.setting severity "Surface error"\n'
     text += '.decl sgp_name(group: symbol, name: symbol)\n'
     for group, values in [('helper', shared.FORBIDDEN_GRAMMAR_NAMES),
@@ -38,15 +38,15 @@ sgp_hit(n, "helper_definition", @nfkc(raw), 0) :- kind(n, "function_definition")
     def_name(n, raw), sgp_name("helper", @nfkc(raw)).
 sgp_hit(n, "direct_helper_definition", @nfkc(raw), 0) :- kind(n, "function_definition"),
     def_name(n, raw), sgp_name("direct", @nfkc(raw)).
-sgp_hit(n, "helper_attribute", @nfkc(raw), 0) :- kind(n, "attribute"),
-    field(n, "attribute", a), text(a, raw), sgp_name("helper", @nfkc(raw)).
-sgp_hit(n, "direct_helper_attribute", @nfkc(raw), 0) :- kind(n, "attribute"),
-    field(n, "attribute", a), text(a, raw), sgp_name("direct", @nfkc(raw)).
+sgp_hit(n, "helper_attribute", @nfkc(raw), layer) :-
+    py_ast_attribute(n, raw, layer), sgp_name("helper", @nfkc(raw)).
+sgp_hit(n, "direct_helper_attribute", @nfkc(raw), layer) :-
+    py_ast_attribute(n, raw, layer), sgp_name("direct", @nfkc(raw)).
 sgp_hit(n, "ddl_escape", @nfkc(raw), 0) :- ast_name(n, raw), sgp_name("ddl", @nfkc(raw)).
 .decl sgp_alias(a: node, raw: symbol)
 sgp_alias(a, raw) :- kind(a, "dotted_name"), text(a, raw).
 sgp_alias(a, raw) :- kind(a, "aliased_import"), field(a, "name", name), text(name, raw).
-sgp_hit(n, "ddl_import", @nfkc(raw), i) :- kind(n, "import_from_statement"),
+sgp_hit(n, "ddl_import", @nfkc(raw), i) :- (kind(n, "import_from_statement") ; kind(n, "future_import_statement")),
     field(n, "name", a), child(n, a, i), sgp_alias(a, raw), sgp_name("ddl", @nfkc(raw)).
 .decl sgp_prefix(kind: symbol, value: symbol)
 sgp_prefix("helper_definition", "forbidden helper definition ").
@@ -55,11 +55,16 @@ sgp_prefix("helper_attribute", "forbidden helper attribute .").
 sgp_prefix("direct_helper_attribute", "forbidden direct grammar helper attribute .").
 sgp_prefix("ddl_escape", "forbidden DDL escape hatch ").
 sgp_prefix("ddl_import", "forbidden DDL escape import ").
+.decl sgp_depth(n: node, kind: symbol, witness: number, depth: number)
+sgp_depth(n, k, w, base + w) :- sgp_hit(n, k, _, w), py_ast_depth(n, base),
+    (k = "helper_attribute" ; k = "direct_helper_attribute").
+sgp_depth(n, k, w, base) :- sgp_hit(n, k, _, w), py_ast_depth(n, base),
+    k != "helper_attribute", k != "direct_helper_attribute".
 .violation Surface(at: node, code: symbol, message: symbol, kind: symbol, name: symbol,
     depth: number, ordinal: number, witness: number) code {code} "{message}"
 Surface(n, cat("SPG-", k), cat(p, name), k, name, depth, ordinal, witness) :-
     sgp_hit(n, k, name, witness), sgp_prefix(k, p), docof(n, d), sgp_active(d),
-    ast_depth(n, depth), visit_index(n, ordinal).
+    sgp_depth(n, k, witness, depth), visit_index(n, ordinal).
 .violation ParseError(at: span, detail: symbol, filename: symbol, errorLine: number) code "SPG-SYNTAX"
     "syntax error while scanning: {detail} ({filename}, line {errorLine})"
 ParseError(@place(path, 1), detail, filename, l) :- doc(d, path, _), option("entryPoint", "scan_file"),

@@ -1922,6 +1922,22 @@
       }
     },
     {
+      "id": "SqlPreRenderedDdlFragment-future-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from __future__ import SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
       "id": "SqlPreRenderedDdlFragment-duplicate-import",
       "check": "serverplan_grammar_surface",
       "entry": "scan_file",
@@ -2226,6 +2242,22 @@
       }
     },
     {
+      "id": "SqlPrerenderedDdl-future-import",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "from __future__ import SqlPrerenderedDdl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
       "id": "SqlPrerenderedDdl-duplicate-import",
       "check": "serverplan_grammar_surface",
       "entry": "scan_file",
@@ -2505,6 +2537,198 @@
         {
           "path": "input.py",
           "source": "# header\r\ndef grammar_execute():\r\n    return SqlPrerenderedDdl\r\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "pattern-value",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "match x:\n    case conn.grammar_execute:\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "pattern-class",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "match x:\n    case conn.grammar_execute():\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "pattern-chain",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "match x:\n    case conn.grammar_execute.grammar_fetchall:\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "parenthesized-breadth",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "a = (((SqlPrerenderedDdl)))\nb = SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "default-breadth",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "def f(x=SqlPrerenderedDdl):\n    pass\nx = ((SqlPreRenderedDdlFragment))\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "conditional-order",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = conn.grammar_execute if SqlPrerenderedDdl else conn.grammar_fetchall\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "dictionary-breadth",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "x = {1:SqlPrerenderedDdl}\ny = [SqlPreRenderedDdlFragment]\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "pattern-mixed",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "match x:\n    case SqlPrerenderedDdl.grammar_execute.grammar_fetchall:\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "pattern-composite",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "match x:\n    case [conn.grammar_execute, conn.grammar_fetchall()]:\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "with-breadth",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "with SqlPrerenderedDdl:\n    pass\nx = (SqlPreRenderedDdlFragment,)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "chained-assignment-breadth",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "a = b = SqlPrerenderedDdl\nc = SqlPreRenderedDdlFragment\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "input.py"
+        }
+      }
+    },
+    {
+      "id": "boolean-breadth",
+      "check": "serverplan_grammar_surface",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "input.py",
+          "source": "a = SqlPrerenderedDdl and b and c\nd = [SqlPreRenderedDdlFragment]\n"
         }
       ],
       "arguments": {

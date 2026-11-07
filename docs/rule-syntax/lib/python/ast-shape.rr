@@ -1,0 +1,36 @@
+// Semantic Python positions over existing tape nodes. No extra parser or native detector.
+#include "python/ast.rr"
+
+// A dotted value or class pattern has nested Attributes in ast, but one dotted_name in the tape.
+// layer 0 is the outer Attribute; successive layers are its value Attributes.
+.decl py_ast_attribute(n: node, name: symbol, layer: number)
+py_ast_attribute(n, name, 0) :- kind(n, "attribute"), field(n, "attribute", a), text(a, name).
+py_ast_attribute(n, name, last - i) :- kind(n, "dotted_name"), inside(n, _, "case_pattern"),
+    child(n, a, i), i > 0, text(a, name), last = max j : { child(n, _, j) }.
+
+// Tape depth includes syntax wrappers. Semantic depth also accounts for fields moved out of
+// wrappers, such as a default value owned by arguments rather than by ast.arg.
+.decl py_shape_skip(n: node)
+py_shape_skip(n) :- wrapper_node(n).
+py_shape_skip(n) :- kind(n, "pair").
+py_shape_skip(n) :- kind(n, "with_clause").
+py_shape_skip(n) :- kind(n, "dictionary_splat"), child(p, n, _), kind(p, "dictionary").
+py_shape_skip(n) :- kind(n, "as_pattern"), child(p, n, _), (kind(p, "with_item") ; kind(p, "except_clause")).
+py_shape_skip(n) :- kind(n, "assignment"), field(p, "right", n), kind(p, "assignment").
+py_shape_skip(n) :- kind(n, "boolean_operator"), child(p, n, _), kind(p, "boolean_operator"), op(p, x), op(n, x).
+py_shape_skip(n) :- kind(n, "case_pattern"), child(n, c, _),
+    (kind(c, "class_pattern") ; kind(c, "list_pattern") ; kind(c, "tuple_pattern") ;
+     kind(c, "dict_pattern") ; kind(c, "union_pattern") ; kind(c, "as_pattern") ; kind(c, "splat_pattern")).
+.decl py_shape_override(parent: node, n: node, weight: number)
+py_shape_override(p, n, 0) :-
+    (kind(p, "default_parameter") ; kind(p, "typed_default_parameter")), field(p, "value", n).
+py_shape_override(p, n, last) :- kind(p, "dotted_name"), inside(p, _, "case_pattern"), child(p, n, 0),
+    last = max j : { child(p, _, j) }, last > 0.
+.decl py_shape_weight(parent: node, n: node, weight: number)
+py_shape_weight(p, n, w) :- py_shape_override(p, n, w).
+py_shape_weight(p, n, 0) :- child(p, n, _), py_shape_skip(p), !py_shape_override(p, n, _).
+py_shape_weight(p, n, 1) :- child(p, n, _), !py_shape_skip(p), !py_shape_override(p, n, _).
+.decl py_ast_depth(n: node, depth: number)
+py_ast_depth(n, 0) :- kind(n, "module").
+// Keep the physical child edge explicit: value-generating recursion is bounded by the tape tree.
+py_ast_depth(n, d + w) :- child(p, n, _), py_shape_weight(p, n, w), py_ast_depth(p, d).

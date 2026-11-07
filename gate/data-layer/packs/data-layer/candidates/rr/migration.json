@@ -1325,7 +1325,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "sha256": "d2dae34fce75007619421c14309bafe291e33466883f09d2b75644f903a98d2b",
+      "sha256": "7de64de7566156b608314e54b86ace7714d6ef1a40300574b300958f697b8b74",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_grammar_surface.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1336,6 +1336,13 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/ast-shape.rr",
+      "sha256": "e26f714a94ea280d1845e2ec754017c42f36c74eeb867b83c4d09e4a6cebee2a",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_lib/serverplan_facts.py"
     }
   ],
   "rules": [
@@ -1418,7 +1425,7 @@
       "legacySha256": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "ruleSha256": "d2dae34fce75007619421c14309bafe291e33466883f09d2b75644f903a98d2b"
+      "ruleSha256": "7de64de7566156b608314e54b86ace7714d6ef1a40300574b300958f697b8b74"
     },
     {
       "check": "permission_error",
@@ -2279,8 +2286,14 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "ee59790f00ba0688e42da4313bcaa042fa18ba69",
-    "status": "Root Final shape engine with a generic repair for Boolean contexts created by demand planning",
+    "status": "Root Final shape engine with generic Boolean-context and Python AST diagnostic/order repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
-    "localRepairCommit": "25b580262"
+    "localRepairCommit": "25b580262",
+    "localRepairPaths": [
+      "native/src/code_rule_dsl/logic/plan.rs",
+      "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+      "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+      "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs"
+    ]
   }
 }

@@ -35,6 +35,7 @@ def f(a: ann() = default(), *v: varann(), k: kwann() = kwdefault(), **kw: kwargs
     body()
 x = {key1(): value1(), key2(): value2()}
 box(k=keyword(), *(positional(),))
+choice = left() if truth() else right()
 "#, r#"
 .policy "contract:python-visit-order" revision 1
 .language python
@@ -49,7 +50,22 @@ Before(a) :- call_name(a, "body"), call_name(b, "decor"), earlier(a, b).
     rows.sort_by_key(|r| r["parameters"]["ordinal"].as_i64().unwrap());
     let names: Vec<_> = rows.iter().map(|r| r["parameters"]["callee"].as_str().unwrap()).collect();
     assert_eq!(names, ["ann", "varann", "kwann", "kwdefault", "kwargsann", "default", "body", "decor", "result",
-        "key1", "key2", "value1", "value2", "box", "positional", "keyword"]);
+        "key1", "key2", "value1", "value2", "box", "positional", "keyword", "truth", "left", "right"]);
+}
+
+#[test]
+fn python_semantic_shape_removes_wrappers_and_expands_pattern_attributes() {
+    let rows = finding_contract("a = (((First)))\nb = Second\nmatch value:\n    case Root.Middle.Leaf:\n        pass\n", r#"
+.language python
+#include "python/ast-shape.rr"
+.violation NameDepth(at: node, name: symbol, depth: number) code "NAME" "{name}:{depth}"
+NameDepth(n, name, depth) :- ast_name(n, name), py_ast_depth(n, depth),
+    (name = "First" ; name = "Second" ; name = "Root").
+.violation AttributeDepth(at: node, name: symbol, depth: number, layer: number) code "ATTRIBUTE" "{name}:{depth}"
+AttributeDepth(n, name, depth + layer, layer) :- py_ast_attribute(n, name, layer), py_ast_depth(n, depth).
+"#);
+    let messages: BTreeSet<_> = rows.iter().map(|row| row["message"].as_str().unwrap()).collect();
+    assert_eq!(messages, BTreeSet::from(["First:2", "Second:2", "Root:6", "Leaf:4", "Middle:5"]));
 }
 
 #[test]

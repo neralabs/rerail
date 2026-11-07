@@ -160,6 +160,14 @@ impl Walker<'_> {
             "class_definition" => Some(self.definition(n, true)),
             "parameters" | "lambda_parameters" => Some(self.parameters(n)),
             "dictionary" => Some(self.dictionary(n)),
+            "conditional_expression" => {
+                let mut children = self.children(n);
+                let expressions: Vec<_> = children.iter().enumerate()
+                    .filter(|(_, c)| self.kind(**c) != "comment").map(|(i, _)| i).collect();
+                // IfExp fields are test, body, orelse; Python writes body before test.
+                if expressions.len() == 3 { children.swap(expressions[0], expressions[1]); }
+                Some(children)
+            }
             "argument_list" => {
                 let children = self.children(n);
                 let is_keyword =

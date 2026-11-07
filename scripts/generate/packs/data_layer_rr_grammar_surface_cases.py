@@ -30,6 +30,7 @@ def cases(source):
             ('nonlocal', f'def outer():\n    {name} = 1\n    def inner():\n        nonlocal {name}\n'),
             ('plain-import', f'import {name}\n'), ('alias-only', f'from module import allowed as {name}\n'),
             ('from-import', f'from module import {name} as alias\n'),
+            ('future-import', f'from __future__ import {name}\n'),
             ('duplicate-import', f'from module import {name}, {name} as other\n'),
             ('multiline-import', f'from module import (\n    {name},\n    {name} as other,\n)\n'),
             ('attribute-only', f'x = namespace.{name}\n'),
@@ -51,6 +52,18 @@ def cases(source):
         ('clean-step-import', 'from impl.common.l2070_server_plan.steps.grammar_execute import GrammarEffectStep\n'),
         ('clean-near-misses', 'def grammar_execute_extra():\n    return conn.execute_grammar\n'),
         ('logical-lines', '# header\r\ndef grammar_execute():\r\n    return SqlPrerenderedDdl\r\n'),
+        ('pattern-value', 'match x:\n    case conn.grammar_execute:\n        pass\n'),
+        ('pattern-class', 'match x:\n    case conn.grammar_execute():\n        pass\n'),
+        ('pattern-chain', 'match x:\n    case conn.grammar_execute.grammar_fetchall:\n        pass\n'),
+        ('parenthesized-breadth', 'a = (((SqlPrerenderedDdl)))\nb = SqlPreRenderedDdlFragment\n'),
+        ('default-breadth', 'def f(x=SqlPrerenderedDdl):\n    pass\nx = ((SqlPreRenderedDdlFragment))\n'),
+        ('conditional-order', 'x = conn.grammar_execute if SqlPrerenderedDdl else conn.grammar_fetchall\n'),
+        ('dictionary-breadth', 'x = {1:SqlPrerenderedDdl}\ny = [SqlPreRenderedDdlFragment]\n'),
+        ('pattern-mixed', 'match x:\n    case SqlPrerenderedDdl.grammar_execute.grammar_fetchall:\n        pass\n'),
+        ('pattern-composite', 'match x:\n    case [conn.grammar_execute, conn.grammar_fetchall()]:\n        pass\n'),
+        ('with-breadth', 'with SqlPrerenderedDdl:\n    pass\nx = (SqlPreRenderedDdlFragment,)\n'),
+        ('chained-assignment-breadth', 'a = b = SqlPrerenderedDdl\nc = SqlPreRenderedDdlFragment\n'),
+        ('boolean-breadth', 'a = SqlPrerenderedDdl and b and c\nd = [SqlPreRenderedDdlFragment]\n'),
     ]:
         add(label, text)
     malformed = [
