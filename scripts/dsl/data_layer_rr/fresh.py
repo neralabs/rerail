@@ -20,8 +20,15 @@ from native_guard import codes
 
 
 def arguments(values, root):
-    return {key: root / value['path'] if isinstance(value, dict) and set(value) == {'path'} else value
-            for key, value in values.items()}
+    def convert(value):
+        if isinstance(value, dict) and set(value) == {'path'}:
+            return root / value['path']
+        if isinstance(value, list):
+            return [convert(item) for item in value]
+        if isinstance(value, dict):
+            return {key: convert(item) for key, item in value.items()}
+        return value
+    return convert(values)
 
 
 def invoke(call, root):

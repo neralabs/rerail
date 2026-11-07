@@ -10,6 +10,7 @@ from dto import canonical
 def main():
     from migration import ROOT  # Also locates the existing source recorder.
     import data_layer_record as recording
+    recording.ADAPTERS += (('hnsw_architecture', 'find_hnsw_architecture_findings', 'files'),)
     original_recorder = recording.Recorder
 
     class Recorder(original_recorder):

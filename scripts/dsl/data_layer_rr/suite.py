@@ -39,6 +39,7 @@ ENTRIES = {
     'type_safety_patterns': ['check_file_for_patterns', 'check_file_content_for_patterns', 'check_function_signatures',
         'check_function_signature_content', 'normalize_path', 'is_allowlisted', 'find_python_files', '_issues_for_files', '_dedupe_issues'],
     'forwardref': ['lint_file', 'lint_file_content', 'lint_directory'],
+    'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
 
@@ -121,7 +122,9 @@ class Suite:
                            originalRetainedReason=original.get('retained_reason'))
         self.observations.append(observation)
         from data_layer_record import ADAPTERS, snapshot, normalize
-        if check == 'data_layer_compat_aliases':
+        if check == 'hnsw_architecture':
+            files, scope, root = snapshot(module, 'files', args, kwargs)
+        elif check == 'data_layer_compat_aliases':
             from aliases_port import snapshot
             files, scope, root = snapshot(module, entry, args, kwargs, self.item, self.source)
         elif check == 'admin_async_purity':
@@ -171,6 +174,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'hnsw_architecture':
+            from hnsw_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'data_layer_compat_aliases':
             from aliases_port import scan
             return scan(self, entry, module, arguments)
