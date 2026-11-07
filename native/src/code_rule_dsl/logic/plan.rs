@@ -3265,6 +3265,10 @@ impl Run<'_> {
                         if !rest.iter().any(|l| matches!(l, Literal::Atom(x) if !x.neg)) {
                             return Ok(Err("rest has no atom".to_owned()));
                         }
+                        // A rest sharing no variable (a constant test, `stage("library")`) has no edge table to keep.
+                        if key.is_empty() && ecols.is_empty() {
+                            return Ok(Err("rest binds no variable".to_owned()));
+                        }
                         let ehead = atom_of(format!("sfx_{}_{j}", h.rel), key.iter().chain(&ecols).map(|v| Term::Var(v.clone())).collect());
                         let Ok((order, work, _)) = self.model.plan_rule(prog, &ehead, &rest, None) else {
                             return Ok(Err("rest cannot be planned alone".to_owned()));

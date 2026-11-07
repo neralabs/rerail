@@ -1998,3 +1998,20 @@ assumed. The test passes (merge of Typing-support-final-shape, 56a615905).
 pattern, over the chunk, and give an input relation of its matches and captures, which the rule then joins.
 
 **Closure:** a pattern literal plans and runs, and versioned-table-names runs in the pack.
+
+## O104. Two guards keep a run's store objects from collection; one should go
+
+O95's fix pins what a run holds. The run's plan is pinned (`hold_corpus_plan`), and so is each source and tape it
+stores or finds (`hold_sources`), under a lease that expires. Rerail-rule-expressivity's fix adds a second guard, a
+shared file lock (`<db>.collection.lock`). Runs hold the lock while they read, and a collector takes it exclusively
+with `try_collect`, deferring if it cannot. Both guards are in place since the merge (31d3d15dc).
+
+The lock is coarse. While any run holds it, no collection happens at all, so a store in constant use (parallel
+runs, a long watch session) may never collect, and disk grows past the 10 GB budget. It also says nothing about
+which objects a run needs. The pins are exact, and they survive a crashed run until their lease expires. But they
+cost a row per held object, written in the transaction that stores the object.
+
+**Closure:** one guard is chosen in a decision citing O95's races
+(`a_source_collected_before_its_tape_is_stored_again_with_it`, `parallel_writers_and_a_collector_share_one_store`,
+`a_held_plan_stays_live_until_its_run_releases_it`, `a_held_source_survives_collection_until_released`). The other
+is removed, and those tests still pass. If the lock stays, collection under constant use is shown to make progress.
