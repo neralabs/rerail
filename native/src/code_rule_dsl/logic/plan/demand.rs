@@ -216,7 +216,9 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         for l in &kept {
             bound.extend(l.vars());
         }
-        let mut later = rule.head.vars();
+        // The head's variables, those inside a call (`@cat(p, s)`) too.
+        let mut later = BTreeSet::new();
+        rule.head.args.iter().for_each(|t| t.vars(&mut later));
         for l in &cut {
             later.extend(l.vars());
         }

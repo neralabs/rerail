@@ -265,7 +265,8 @@ fn fold_constants(rule: &mut Rule) -> usize {
     // Variables the head names, or a literal other than as a term (an aggregate's result, `nearest`, `ast`), stay
     // variables. A head column the rule fills from a text column is what keeps its relation a string filter, run per
     // chunk (`typing::file_local::split`); `t($s) :- doc(_, $s, _), $s = "a.py"` stays as it is.
-    let mut named = rule.head.vars();
+    let mut named = BTreeSet::new();
+    rule.head.args.iter().for_each(|t| t.vars(&mut named));
     for l in &rule.body {
         match l {
             Literal::Agg { var, over, .. } => {

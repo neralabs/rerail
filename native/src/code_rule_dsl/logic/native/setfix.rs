@@ -1383,6 +1383,11 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
             other => return Err(err(format!("unknown join item {other}"))),
         }
     }
+    // Every head term reads a slot the body binds: an unbound one is refused here, not read out of range later.
+    let unbound = |s: usize| !bound.get(s).copied().unwrap_or(false);
+    if out.iter().any(|t| match t { Term::Slot(s) => unbound(*s), Term::Cat(a, b) => unbound(*a) || unbound(*b), Term::Const(_) => false }) {
+        return Err(err(format!("a head reads a slot its body does not bind: {spec}")));
+    }
     let counts = steps.iter().map(|_| Default::default()).collect();
     Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts })
 }

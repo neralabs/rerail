@@ -489,7 +489,9 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
                         lits.insert(j);
                     }
                 }
-                let mut outside: BTreeSet<String> = rule.head.vars();
+                // The head's variables, those inside a call (`@cat(p, s)`) too.
+                let mut outside: BTreeSet<String> = BTreeSet::new();
+                rule.head.args.iter().for_each(|t| t.vars(&mut outside));
                 for (j, l) in rule.body.iter().enumerate() {
                     if !lits.contains(&j) {
                         outside.extend(l.vars());

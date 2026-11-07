@@ -1488,3 +1488,15 @@ cannot unwind, it ends every test that shares the process, so a filtered run ove
 device tests. It was not checked whether this predates O81's change; nothing in that change touches device
 buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
 zero-length contents pointer), and both tests pass in a debug build.
+
+## O83. Metal `transducer::packed` suites fail when run together; `explain` fails now and then
+
+- With `--features metal-tests` (profiling build), `transducer::packed` runs 733 tests and about 440 fail.
+  `metal_backend::launch::tests::command_boundaries_and_nested_scopes_do_not_reset_the_limit` fails alone
+  (`assertion failed: !reserve()`, `metal_launch.rs:324`), also on final-rerail-shape-rr-align's and
+  Parser-generators' own builds; others (e.g. `phase_four::literal_predicates::…`) pass alone and fail in the
+  batch, which points at the launch guard's process-wide budget carried from test to test.
+- `logic::profile::tests::explain_shows_engines_plans_devices_and_decisions` failed twice in a `logic::` run at
+  load 50-80 and passed on its own each time.
+**Closure:** the launch guard's budget is per test (or the suite runs its Metal tests in one thread), and the
+packed suites and `explain` pass in a filtered run.
