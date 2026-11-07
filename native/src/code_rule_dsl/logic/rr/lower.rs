@@ -568,6 +568,8 @@ impl Lowerer {
             Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "within" | "within_stop") => self.within(rel, args, *neg)?,
             Lit::Atom { rel, args, neg } if rel == "earlier" => self.earlier(args, *neg)?,
             Lit::Atom { rel, args, neg: false } if rel == "match" && matches!(args.as_slice(), [STerm::Str(re), _] if !groups(re).is_empty()) => self.captures(args)?,
+            // `match_all` (`core.rr`: every match, each a span) needs the text layer's matches (O80); it is not a relation.
+            Lit::Atom { rel, .. } if rel == "match_all" => return not_yet("match_all (O80)"),
             Lit::Atom { rel, args, neg } => {
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
                 // variables (`front::finish`'s computed-term check).
