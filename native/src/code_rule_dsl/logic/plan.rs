@@ -1952,6 +1952,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) nodes: BTreeMap<String, Vec<usize>>,
     /// The kept outputs (`Inputs::kept`) the native engine holds (`native::derived`); the others are in their tables.
     pub(in crate::code_rule_dsl) kept: BTreeSet<String>,
+    /// The kept relations handed to the caller during the run (`run_atoms_native_handing`), no longer held.
+    pub(in crate::code_rule_dsl) handed: BTreeSet<String>,
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -3398,7 +3400,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
     // (DISTINCT, sorts, materialized subqueries) in memory.
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
-    run(prog, &db, Inputs::file(), None)
+    run(prog, &db, Inputs::file(), None, None)
 }
 
 /// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
@@ -3413,7 +3415,7 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
     load(&db)?;
-    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None)
+    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, None)
 }
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
@@ -3432,7 +3434,7 @@ pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connect
         given: None,
         kept: BTreeSet::new(),
     };
-    let out = run(&lowered.program, db, inputs, Some(lowered));
+    let out = run(&lowered.program, db, inputs, Some(lowered), None);
     super::native::flush_symbols(db)?;
     out
 }
@@ -3446,7 +3448,7 @@ pub(in crate::code_rule_dsl) fn run_atoms_native(lowered: &lower::Lowered, db: &
     native.remove("nearest");
     native.remove("kseed");
     let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-    run_native_inputs(lowered, db, inputs)
+    run_native_inputs(lowered, db, inputs, None)
 }
 
 /// `run_atoms_native` over input relations in schema `facts` (the bound vtabs are `main`'s; a cross-file pass reads
@@ -3466,15 +3468,34 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_over(
     native.remove("kseed");
     // The statistics schema is still read for document ranges (`stat_docrange`).
     let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
-    run_native_inputs(lowered, db, inputs)
+    run_native_inputs(lowered, db, inputs, None)
 }
 
-fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) -> Result<Outcome> {
+/// `run_atoms_native_over`, handing each kept relation to `hand_off` once no later stratum reads it, and dropping
+/// it then (`Outcome::handed`): the caller writes it where it goes, and the run does not hold every kept relation
+/// to its end.
+pub(in crate::code_rule_dsl) fn run_atoms_native_handing(
+    lowered: &lower::Lowered,
+    db: &Connection,
+    facts: &str,
+    given: Stats,
+    kept: BTreeSet<String>,
+    modes: &str,
+    hand_off: &mut dyn FnMut(&str) -> Result<()>,
+) -> Result<Outcome> {
+    let mut native = native_modes(modes);
+    native.remove("nearest");
+    native.remove("kseed");
+    let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
+    run_native_inputs(lowered, db, inputs, Some(hand_off))
+}
+
+fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register(db)?;
     super::native::register_symbols(db)?;
     super::native::forget_inputs(db);
-    let out = run(&lowered.program, db, inputs, Some(lowered));
+    let out = run(&lowered.program, db, inputs, Some(lowered), hand_off);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
     let flush = super::profile::span(|| "flush symbols".into());
@@ -3552,7 +3573,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     Ok(views)
 }
 
-fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
+fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hand_off: Option<&mut dyn FnMut(&str) -> Result<()>>) -> Result<Outcome> {
     let (normalized,sentinels)=sql_kernel::normalize(prog)?;
     let prog=&normalized;
     let adjusted=lowered.map(|l|{
@@ -3708,7 +3729,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // Each native relation is dropped after the last stratum that reads it (an output, a relation kept for the caller
     // and a gate's relations stay to the end).
     let last = last_reads(prog, &sccs, &run.views);
-    let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps))).cloned().collect();
+    let gated: BTreeSet<String> = prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
+    let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
+    // Kept relations given to the caller (`hand_off`) and dropped once no later stratum reads them.
+    let mut handed: BTreeSet<String> = BTreeSet::new();
     let mut unindexed: BTreeSet<String> = BTreeSet::new();
     for (at, scc) in sccs.iter().enumerate() {
         let done: Vec<String> = run.native_rels.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
@@ -3716,8 +3740,20 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             super::native::component::release(db, &done);
             done.iter().for_each(|r| { run.native_rels.remove(r); });
         }
-        // One that stays but that no later stratum reads keeps its rows only.
+        // One that stays but that no later stratum reads keeps its rows only; a kept one the caller takes is handed
+        // off and dropped.
         let read_out: Vec<String> = run.native_rels.iter().filter(|r| stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at) && unindexed.insert((*r).clone())).cloned().collect();
+        if let Some(hand) = hand_off.as_deref_mut() {
+            let give: Vec<String> = read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r)).cloned().collect();
+            for r in &give {
+                hand(r)?;
+            }
+            if !give.is_empty() {
+                super::native::component::release(db, &give);
+                give.iter().for_each(|r| { run.native_rels.remove(r); });
+                handed.extend(give);
+            }
+        }
         if !read_out.is_empty() {
             super::native::component::unindex(db, &read_out);
         }
@@ -3832,7 +3868,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let _outputs = super::profile::span(|| "outputs".into());
     let kept = run.model.inputs.kept.clone();
     outcome.kept = kept.iter().filter(|r| run.native_rels.contains(*r)).cloned().collect();
-    let written: Vec<String> = prog.outputs.iter().filter(|r| !outcome.kept.contains(*r)).cloned().collect();
+    let written: Vec<String> = prog.outputs.iter().filter(|r| !outcome.kept.contains(*r) && !handed.contains(*r)).cloned().collect();
     run.materialize(&written)?;
     let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept)?;
     let mut outputs=outputs;let mut nodes=nodes;
@@ -3842,6 +3878,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     outcome.outputs = outputs;
     outcome.nodes = nodes;
+    outcome.handed = handed;
     Ok(outcome)
 }
 

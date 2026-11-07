@@ -1127,8 +1127,27 @@ pub(crate) fn run_with_options(
             bound.insert(rel);
         }
         let running = crate::code_rule_dsl::logic::profile::span(|| "run".into());
-        let got = super::run_atoms_native_over(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes)?;
+        // Without the memo (which attributes each row to its file once the run ends), an export the engine holds is
+        // written to `x` and measured as soon as no later stratum reads it, and dropped: the chunk's exports are not
+        // all held to its end.
+        let got = if memoised {
+            super::run_atoms_native_over(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes)?
+        } else {
+            let mut hand = |rel: &str| -> Result<()> {
+                if !split.exports.iter().any(|e| e == rel) {
+                    return Ok(());
+                }
+                let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
+                let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM set_derived WHERE rel = ?1"), [rel])?;
+                let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
+                totals.add_rows(rel, inserted, rows.as_ref(), &types);
+                Ok(())
+            };
+            super::run_atoms_native_handing(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes, &mut hand)?
+        };
         drop(running);
+        let handed = got.handed.clone();
         let kept = got.kept.clone();
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Per document of the chunk, what it hands on (`memo::Entry`), when the run is memoised. A row is its
@@ -1175,7 +1194,7 @@ pub(crate) fn run_with_options(
             }
         };
         db.execute_batch("BEGIN")?;
-        for rel in &split.exports {
+        for rel in split.exports.iter().filter(|r| !handed.contains(*r)) {
             // Rows another chunk wrote too (a file-local relation without a location column) are kept once. A kept
             // export goes from the engine to `x` in one statement and is measured in place; one a SQL stratum
             // derived is in its table.
