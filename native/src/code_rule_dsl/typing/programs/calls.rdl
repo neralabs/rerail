@@ -262,13 +262,17 @@ pv($n, $k, $v) :- alook($n, $c, $a), found($c, $a, $at), bv($at, $a, $k, $v).
 alook($n, $c, $a) :- attr_of($n, $o, $a), pv($o, "cls", $c).
 alook($n, $c, $a) :- attr_of($n, $o, $a), pv($o, "inst", $c).
 alook($n, $b, $a) :- attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b).
-pv($n, $k, $v) :- kind($n, "parenthesized_expression"), child($n, $c, 0), pv($c, $k, $v).
-pv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 0), pv($c, $k, $v).
-pv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 2), pv($c, $k, $v).
-pv($n, $k, $v) :- kind($n, "boolean_operator"), field($n, "left", $c), pv($c, $k, $v).
-pv($n, $k, $v) :- kind($n, "boolean_operator"), field($n, "right", $c), pv($c, $k, $v).
-pv($n, $k, $v) :- kind($n, "assignment"), field($n, "right", $c), pv($c, $k, $v).
-pv($n, $k, $v) :- kind($n, "named_expression"), field($n, "value", $c), pv($c, $k, $v).
+// pass(n, c): n's value is c's (a parenthesized value, either branch of a conditional, either operand of `and`/`or`,
+// an assignment's right side, a walrus's value).
+.decl pass(n: node, c: node)
+pass($n, $c) :- kind($n, "parenthesized_expression"), child($n, $c, 0).
+pass($n, $c) :- kind($n, "conditional_expression"), child($n, $c, 0).
+pass($n, $c) :- kind($n, "conditional_expression"), child($n, $c, 2).
+pass($n, $c) :- kind($n, "boolean_operator"), field($n, "left", $c).
+pass($n, $c) :- kind($n, "boolean_operator"), field($n, "right", $c).
+pass($n, $c) :- kind($n, "assignment"), field($n, "right", $c).
+pass($n, $c) :- kind($n, "named_expression"), field($n, "value", $c).
+pv($n, $k, $v) :- pass($n, $c), pv($c, $k, $v).
 // Calls: a class makes an instance; a function returns what its returns hold, or the argument it returns.
 pv($c, "inst", $k) :- callee($c, $e), pv($e, "cls", $k).
 pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), !isgen($f), retval($f, $r), pv($r, $k, $v).
@@ -354,12 +358,8 @@ vopen($n) :- vpos($n), alook($n, $c, $a), attr_open($c, $a).
 vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "super", $c), base_open($c).
 vopen($n) :- vpos($n), attr_of($n, $o, _), pv($o, "fn", _).
 vopen($n) :- vpos($n), ext_attr($n), !callee(_, $n).
-vopen($n) :- vpos($n), kind($n, "parenthesized_expression"), child($n, $c, 0), vopen($c).
-vopen($n) :- vpos($n), kind($n, "conditional_expression"), child($n, $c, 0), vopen($c).
-vopen($n) :- vpos($n), kind($n, "conditional_expression"), child($n, $c, 2), vopen($c).
+vopen($n) :- vpos($n), pass($n, $c), !kind($n, "boolean_operator"), vopen($c).
 vopen($n) :- vpos($n), kind($n, "boolean_operator"), child($n, $c, _), vopen($c).
-vopen($n) :- vpos($n), kind($n, "assignment"), field($n, "right", $c), vopen($c).
-vopen($n) :- vpos($n), kind($n, "named_expression"), field($n, "value", $c), vopen($c).
 // A call's value: unknown when the callee is, when no workspace definition is called (an external or builtin
 // callable), when a workspace function's return is, and for coroutines and generators.
 vopen($c) :- vpos($c), callee($c, $e), vopen($e).
@@ -547,13 +547,7 @@ tqv(@cat($q, $x), $k, $v) :- modname($m, $q), tbv($m, $x, $k, $v).
 tv($n, $k, $v) :- look($n, $x, $s), tbv($s, $x, $k, $v).
 tv($n, $k, $v) :- qn($n, $q), tqv($q, $k, $v).
 tv($n, $k, $v) :- alook($n, $c, $a), found($c, $a, $at), tbv($at, $a, $k, $v).
-tv($n, $k, $v) :- kind($n, "parenthesized_expression"), child($n, $c, 0), tv($c, $k, $v).
-tv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 0), tv($c, $k, $v).
-tv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 2), tv($c, $k, $v).
-tv($n, $k, $v) :- kind($n, "boolean_operator"), field($n, "left", $c), tv($c, $k, $v).
-tv($n, $k, $v) :- kind($n, "boolean_operator"), field($n, "right", $c), tv($c, $k, $v).
-tv($n, $k, $v) :- kind($n, "assignment"), field($n, "right", $c), tv($c, $k, $v).
-tv($n, $k, $v) :- kind($n, "named_expression"), field($n, "value", $c), tv($c, $k, $v).
+tv($n, $k, $v) :- pass($n, $c), tv($c, $k, $v).
 tv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), !isgen($f), retval($f, $r), tv($r, $k, $v).
 tv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !method($f, _), retparam($f, $i, _), posarg($c, $i, $a), tv($a, $k, $v).
 .decl declared_ret(q: sym, t: sym)
