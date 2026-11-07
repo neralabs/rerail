@@ -5,9 +5,10 @@
 //
 // Options as the run resolves them: every `$option` case is an alternative gated on the converter-given
 // option_value("entryPoint", v) and option_on("oracleAnalyzer") (defaults: "all", false).
-// Every clause of the policy is here. Parked in data-layer-serverplan-quality.pending.rr: only the quoted_atoms
-// rules of spq-runtime-state-annotations, which read `parsed` (W's `annotation` grammar: Ruff's parser on the string) and `string_annotation`
-// (Ruff's table), which the corpus runner does not bind; without them a string annotation contributes no atom.
+// Every clause of the policy is here. The program reads `parsed` (spq-runtime-state-annotations' quoted_atoms), so
+// the string annotations' trees are documents of the run too: their nodes have node/child/field/text rows but no
+// doc, in_scope or syntax_error row, and every violation reaches its path through doc(d, p, _), so none is reported
+// at one; a relation not joined to a document that reads them (in_attr, dotted) only feeds rules that are.
 // The forbid clauses are their matchers rule for rule:
 // - `kind` is node(_, n, kind, _, _); `regex` tests the node's whole source text (node_text), or the identifier
 //   text where the rule's kinds are identifiers only; a search, as W's `regex` (match() matches the whole string, so
@@ -48,6 +49,8 @@
 .decl value_type_of(n: node, t: symbol)
 // W's `parse: {grammar: pythonFString}` root children at a string host (the taxonomies' literal regex).
 .decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+// W's `parse: {grammar: annotation}` tree of a string Ruff's semantic model reads as a type definition.
+.decl parsed(s: node, grammar: symbol, root: node)
 
 // The resolved options (converter-given, read only).
 .decl option_value(name: symbol, v: symbol)
@@ -2288,12 +2291,17 @@ violation("data-layer-serverplan-quality", "spq-replay-step-tags", "SPQ-047", p,
 //   generic_type's nthChild 1 is its base and typed_params' its name, both where the parent starts: exact. A comment
 //   as any_args' ARG spans no atom, so it ignores none: exact.
 // node_text is used for the module regex, the dotted-chain regex and text, and a relative import's module text.
-// Blocked (named): quoted_atoms. W parses a string annotation (`x: "Conn"`) with `parse: {grammar: annotation}` and
-//   reads the parsed tree's identifiers and attributes as atoms. That needs `parsed` (core.rr's tree of a string;
-//   W's `annotation` grammar is Ruff's `parse_type_annotation`, not CPython's `ast.parse`, so the CPython verdict
-//   now bound does not supply it) and `string_annotation` (Ruff's table of the strings its semantic model reads as type definitions), which
-//   the corpus runner does not bind: here a string annotation gives no atom. The two quoted_atoms rules wait in
-//   data-layer-serverplan-quality.pending.rr.
+// quoted_atoms: W parses a string annotation (`x: "Conn"`) with `parse: {grammar: annotation}`, Ruff's
+//   `parse_type_annotation` over the string's value, at the strings Ruff's scope table reads as type definitions
+//   (`literal::annotation`, `matcher::parse`: no table entry, no match), and reads the tree's identifiers and
+//   attributes not under an attribute as atoms (`has` stopBy end from the tree's expression_statement root). That
+//   is `parsed(s, "annotation", root)` (only a string_annotation has one) and `inside(n, root, "expression_statement")`:
+//   exact. A string Ruff's parser refuses is an ERROR root in W, whose `has` finds nothing, and has no `parsed` row
+//   here. A nested string (`"List['A']"`'s `'A'`) is a node of the outer tree, not of the file: W's `has` reads no
+//   name inside it, and qstr's string is a node of the admitted file d. ATOM.text is the captured node's text in the
+//   tree's source, the decoded value: an identifier's text(), an attribute's node_text() (exact source bytes for a
+//   simple string, the value for an escaped or concatenated one, as W). The row is the string's (`each` keeps the
+//   matched node's span), so atom_id is 'quoted:'||string start||':'||atom and start/end the string's span.
 
 .decl spq_runtime_state_annotations_scope_kinds(kind: symbol)
 spq_runtime_state_annotations_scope_kinds("class_definition"). spq_runtime_state_annotations_scope_kinds("function_definition").
@@ -2337,6 +2345,7 @@ spq_runtime_state_annotations_typed_param_kinds("default_parameter"). spq_runtim
 .decl spq_runtime_state_annotations_ign(d: number, a: node, id: symbol)
 .decl spq_runtime_state_annotations_conn_trusted(d: number, a: node, id: symbol, origin: symbol)
 .decl spq_runtime_state_annotations_hit(d: number, a: node)
+.decl spq_runtime_state_annotations_qstr(d: number, q: node, a: node)
 
 spq_runtime_state_annotations_doc(d) :- option_value("entryPoint", "_check_serverplan_runtime_state_ingress"), doc(d, p, _), in_scope(d), !syntax_error(d), !out_scope(d), !match("(?s:.*)(?:(?:^|/)tests(?:/|$))(?s:.*)", p), node(d, m, "module", _, _), node_text(m, ms), match("(?s:.*)(?:Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction)(?s:.*)", ms).
 spq_runtime_state_annotations_doc(d) :- option_value("entryPoint", "_check_serverplan_quality_source"), doc(d, p, _), in_scope(d), !syntax_error(d), !out_scope(d), !match("(?s:.*)(?:(?:^|/)tests(?:/|$))(?s:.*)", p), node(d, m, "module", _, _), node_text(m, ms), match("(?s:.*)(?:Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction)(?s:.*)", ms).
@@ -2391,6 +2400,10 @@ spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), 
 spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, x) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_in_attr(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), !spq_runtime_state_annotations_dotted(n), field(n, "attribute", c), text(c, x).
 spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, v) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), spq_runtime_state_annotations_dotted(n), node_text(n, t), v = @rx_replace(t, "\\s+", "").
 spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, x) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), !spq_runtime_state_annotations_dotted(n), field(n, "attribute", c), text(c, x).
+spq_runtime_state_annotations_qstr(d, s, a) :- node(d, s, "string", _, _), spq_runtime_state_annotations_in_type(d, s, a), spq_runtime_state_annotations_ann0(d, a).
+spq_runtime_state_annotations_qstr(d, s, a) :- node(d, s, "concatenated_string", _, _), spq_runtime_state_annotations_in_type(d, s, a), spq_runtime_state_annotations_ann0(d, a).
+spq_runtime_state_annotations_atom(d, a, cat(cat(cat("quoted:", to_string(ss)), ":"), x), ss, se, x) :- spq_runtime_state_annotations_qstr(d, s, a), node(d, s, _, ss, se), parsed(s, "annotation", r), inside(n, r, "expression_statement"), node(_, n, "identifier", _, _), !spq_runtime_state_annotations_in_attr(n), text(n, x).
+spq_runtime_state_annotations_atom(d, a, cat(cat(cat("quoted:", to_string(ss)), ":"), x), ss, se, x) :- spq_runtime_state_annotations_qstr(d, s, a), node(d, s, _, ss, se), parsed(s, "annotation", r), inside(n, r, "expression_statement"), node(_, n, "attribute", _, _), !spq_runtime_state_annotations_in_attr(n), node_text(n, x).
 spq_runtime_state_annotations_head_s(x) :- spq_runtime_state_annotations_atom(_, _, _, _, _, x).
 spq_runtime_state_annotations_head(x, h) :- spq_runtime_state_annotations_head_s(x), match("[A-Za-z_](?s:.*)", x), h = @rx_replace(x, "^([A-Za-z_]\\w*)(?s:.*)$", "$1").
 spq_runtime_state_annotations_need(d, s, h) :- spq_runtime_state_annotations_atom(d, a, _, _, _, x), spq_runtime_state_annotations_ann(d, a, s), spq_runtime_state_annotations_head(x, h).
