@@ -49,6 +49,20 @@ pub(super) const TESTS: [(&str, &str); 11] = [
     ("match", "rx"),
 ];
 
+/// A regex the rule computes, made whole-string: `@concat(@concat("^(?:", re), ")$")` (`print` writes it back as `re`).
+pub(super) fn anchored(re: Term) -> Term {
+    let cat = |a: Term, b: Term| Term::Call("concat".to_owned(), vec![a, b]);
+    cat(cat(Term::Str("^(?:".to_owned()), re), Term::Str(")$".to_owned()))
+}
+
+/// The pattern `anchored` wrapped.
+pub(super) fn unanchored(t: &Term) -> Option<&Term> {
+    let Term::Call(f, args) = t else { return None };
+    let [Term::Call(g, inner), Term::Str(close)] = args.as_slice() else { return None };
+    let [Term::Str(open), re] = inner.as_slice() else { return None };
+    (f == "concat" && g == "concat" && open == "^(?:" && close == ")$").then_some(re)
+}
+
 fn test_of(rel: &str) -> Option<&'static str> {
     TESTS.iter().find(|(rr, _)| *rr == rel).map(|(_, engine)| *engine)
 }
@@ -1127,9 +1141,13 @@ impl Lowerer {
                 return not_yet(format!("match with named groups, {re:?}, here (`Lowerer::captures` lowers it in a body)"));
             }
             let (s, mut p) = (self.term(s)?, self.term(p)?);
-            // `match` is whole-string, as in Soufflé; the engine's `rx` searches.
-            if op == "rx" && let Term::Str(re) = &p {
-                p = Term::Str(format!("^(?:{re})$"));
+            // `match` is whole-string, as in Soufflé; the engine's `rx` searches. A pattern the rule reads (an
+            // option's) is anchored as it runs.
+            if op == "rx" {
+                p = match p {
+                    Term::Str(re) => Term::Str(format!("^(?:{re})$")),
+                    other => anchored(other),
+                };
             }
             return Ok(Literal::Cmp { l: Term::Call(op.to_owned(), vec![s, p]), op: "=", r: Term::Int(if neg { 0 } else { 1 }) });
         }

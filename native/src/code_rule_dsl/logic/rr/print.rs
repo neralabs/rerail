@@ -51,6 +51,10 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
     let bang = if neg { "!" } else { "" };
     let one = |p: &Term| -> Result<String, Error> {
         let Term::Str(p) = p else {
+            // A regex the rule computes: `match`, whose lowering anchored it (`lower::anchored`).
+            if op == "rx" && let Some(re) = super::lower::unanchored(p) {
+                return Ok(format!("{bang}match({}, {s})", term(re)?));
+            }
             let p = term(p)?;
             return Ok(if op == "equals" { format!("{s} {} {p}", if neg { "!=" } else { "=" }) } else { format!("{bang}{op}({p}, {s})") });
         };
