@@ -1285,6 +1285,32 @@ Count(@place("a.py", 1), n) :- n = count : { many() }.
     assert_eq!(rows.iter().find(|row| row["code"] == "COUNT").unwrap()["parameters"]["n"], 1);
 }
 
+/// Demand planning creates Boolean context relations after the initial SQL normalization.
+#[test]
+fn demand_generated_booleans_have_physical_columns_in_an_empty_corpus() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("nullary-demand");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("rule.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl blocked()
+blocked() :- option("skipOverride", "true").
+.decl ready()
+ready() :- !blocked().
+.violation Configuration(at: span) code "CONFIG" "enabled"
+Configuration(@place("config", 1)) :- ready(), option("entryPoint", "configuration").
+"#).unwrap();
+    for blocked in [false, true] {
+        let mut options = serde_json::json!({"entryPoint": "configuration", "inputFiles": []});
+        if blocked { options["skipOverride"] = "true".into(); }
+        let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &options).unwrap();
+        let rows = report["diagnostics"].as_array().unwrap();
+        assert_eq!(rows.len(), usize::from(!blocked), "{report}");
+        if !blocked { assert_eq!(rows[0]["code"], "CONFIG"); }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn dynamic_regex_patterns_preserve_whole_string_matching_and_roundtrip() {
     let rule = r#"

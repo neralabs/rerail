@@ -1314,6 +1314,21 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
+      "sha256": "9f936bb3c4c3734030a40a33f8e6249a15cfa37b120537b982a5fe660aee008a",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_backend_type_strings.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "importedSha256": "41dbca04772eda255af78100a035697850e2ffccf75be4c8e649da414493d38d",
+      "repairs": [
+        {
+          "before": "41dbca04772eda255af78100a035697850e2ffccf75be4c8e649da414493d38d",
+          "after": "9f936bb3c4c3734030a40a33f8e6249a15cfa37b120537b982a5fe660aee008a",
+          "reason": "Preserve native file-selection and skip-helper observations alongside backend findings"
+        }
+      ]
     }
   ],
   "rules": [
@@ -1349,8 +1364,9 @@
       "batch": 1,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-backend-type-strings.json",
       "legacySha256": "0ecc6dab424746bfd6007dfd0684f460851d26361ea3a5c0b1a2734d8f9d190c",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
+      "ruleSha256": "9f936bb3c4c3734030a40a33f8e6249a15cfa37b120537b982a5fe660aee008a"
     },
     {
       "check": "hasattr_async",

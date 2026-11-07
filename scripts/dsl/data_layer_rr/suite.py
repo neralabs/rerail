@@ -45,6 +45,7 @@ ENTRIES = {
     'connection_caches': ['find_violations', 'scan_file_content', '_is_allowed'],
     'no_api_root_imports': ['check_file', 'check_file_content'],
     'error_handling': ['scan_file_content'],
+    'backend_type_strings': ['check_file', 'check_file_content', 'should_skip_file', 'find_python_files'],
     'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
@@ -166,6 +167,8 @@ class Suite:
         if original.get('retained_reason'):
             observation['status'] = 'source-result-passed; legacy normalized DTO unavailable'
             return
+        if check == 'backend_type_strings' and any(row['code'] == 'BTS_SKIPPED' for row in self.calls[-1]['diagnostics']):
+            scope = dict(include=[], exclude=[])
         compare_inputs(original, files, scope)
         from data_layer_batch_two import normalize as normalize_two
         if check == 'connection_caches':
@@ -211,6 +214,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'backend_type_strings':
+            from backend_types_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'error_handling':
             from error_handling_port import scan
             return scan(self, entry, module, arguments)
@@ -490,6 +496,9 @@ class Suite:
         bind_aliases(self.modules)
         originals = codes(self.modules)
         for check, module in self.modules.items():
+            if check == 'backend_type_strings':
+                from backend_types_port import install
+                install(self, module)
             if check == 'connection_caches':
                 from connection_caches_port import install
                 install(self, module)
@@ -529,7 +538,7 @@ class Suite:
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},
                     'backend_coupling': {'cli_main', 'get_project_root'},
-                    'connection_caches': {'cli_main'}}
+                    'connection_caches': {'cli_main'}, 'backend_type_strings': {'cli_main'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])
@@ -759,6 +768,7 @@ def main():
             for k, n in wanted.items() if n != backend.observed[k]],
         collected=backend.collected, part=args.part, parts=args.parts, cases=backend.cases,
         calls=backend.calls, assertionTranslations=backend.translations,
+        configurationBindings=getattr(backend, 'configuration_bindings', {}),
         originalRecordingSha256=backend.baseline_sha, detectorObservations=backend.observations,
         pythonHashSeed=os.environ.get('PYTHONHASHSEED'),
         executionIsolation='One owned persistent cache per assertion shard; shared-cache concurrency is a separate failing engine contract',
