@@ -1239,7 +1239,10 @@ many() :- marker(_).
 Boolean(@place(p, 1)) :- doc(_, p, _), enabled(), !absent(), always(), many().
 .violation Bad(at: span) code "BAD" "false"
 Bad(@place(p, 1)) :- doc(_, p, _), absent().
+.violation Count(at: span, n: number) code "COUNT" "{n}"
+Count(@place("a.py", 1), n) :- n = count : { many() }.
 "#);
-    assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0]["code"], "BOOLEAN");
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows.iter().filter(|row| row["code"] == "BOOLEAN").count(), 1);
+    assert_eq!(rows.iter().find(|row| row["code"] == "COUNT").unwrap()["parameters"]["n"], 1);
 }

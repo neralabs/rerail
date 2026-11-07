@@ -199,7 +199,39 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
         l.prog.inputs.retain(|i| i != b);
     }
     l.kind_sets()?;
+    lower_boolean_relations(&mut l.prog);
     crate::code_rule_dsl::logic::front::finish(l.prog)
+}
+
+/// A nullary relation is a Boolean set: empty, or the single empty tuple. SQL tables need a column,
+/// so represent that tuple with the integer unit. Apply the same encoding to facts, heads, and reads
+/// (including aggregate reads); joins and negation then keep ordinary relational set semantics.
+fn lower_boolean_relations(prog: &mut Program) {
+    let names: BTreeSet<_> = prog.decls.iter().filter(|(_, cols)| cols.is_empty()).map(|(name, _)| name.clone()).collect();
+    if names.is_empty() {
+        return;
+    }
+    for name in &names {
+        prog.decls.get_mut(name).unwrap().push(("rr_unit".to_owned(), "int".to_owned()));
+        if let Some(rows) = prog.facts.get_mut(name) {
+            for row in rows {
+                row.push(Value::Int(1));
+            }
+        }
+    }
+    let encode = |atom: &mut Atom| {
+        if names.contains(&atom.rel) && atom.args.is_empty() {
+            atom.args.push(Term::Int(1));
+        }
+    };
+    for rule in &mut prog.rules {
+        encode(&mut rule.head);
+        for lit in &mut rule.body {
+            if let Literal::Atom(atom) | Literal::Agg { atom, .. } = lit {
+                encode(atom);
+            }
+        }
+    }
 }
 
 /// A clause of constant heads: its facts.

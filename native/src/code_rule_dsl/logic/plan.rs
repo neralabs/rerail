@@ -3253,7 +3253,9 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         }
         let order = vec![Step { at: 0, lit: b[0].clone(), mode: None }];
         let mut query = model.checked_query(prog, h, &order, None, None)?;
-        query.body.distinct = false;
+        // A Boolean relation lowered to a unit (or any constant head) has at most one row,
+        // even when its input has many. Aggregates must not count its witnesses instead.
+        query.body.distinct = h.args.iter().all(|term| matches!(term, Term::Int(_) | Term::Str(_)));
         views.push((rel.to_owned(), query));
         model.view_stats(rel, h, a);
         let src = first_columns(a);
