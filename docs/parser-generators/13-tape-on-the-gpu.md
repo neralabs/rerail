@@ -1,6 +1,6 @@
 # Parser generators: the tape from a Bitlex file
 
-Status: proposal (2026-11-06). Step 1 of §6 is built: the reference evaluator runs the tree
+Status: proposal (2026-11-06). Step 1 of §7 is built: the reference evaluator runs the tree
 section (§4).
 
 ## Intro
@@ -247,7 +247,7 @@ wrote, so the masks are not run again.
 
 ## 4. JSON's tree section
 
-`lexers/json.bitlex` ends with this section. The reference evaluator runs it (step 1 of §6),
+`lexers/json.bitlex` ends with this section. The reference evaluator runs it (step 1 of §7),
 and its nodes equal tree-sitter's on every JSON file tried.
 
 ```text
@@ -312,7 +312,80 @@ kind id, field id, supertypes, extra flag, span and the generic rule's `size`.
 These are the tape's inputs. The columns follow from them by `TapeImage::finish`'s formulas.
 Comparing the image itself byte for byte needs the engine, and is part of step 3.
 
-## 5. What changes where
+## 5. Carries in both directions
+
+Every carry so far runs forward: a block reads what the blocks before it left. Some facts depend
+on what comes after a byte. This section says how they are found, in one launch.
+
+### 5.1 simdjson's way: forward state instead
+
+simdjson's stage 1 has no backward carry. It asks whether the byte before was a scalar, not
+whether the next byte is one. Its only lookahead is writing each block's structurals one block
+late. Facts that depend on context, such as whether a string is a key, are left to stage 2. Stage
+2 walks the structural indexes in order with a stack, so it knows a key is due before it reads
+one.
+
+A Bitlex file can often do the same. JSON's tree section decides a key from what comes before it
+(§4), not from the `:` after it. That needs two kinds of operation:
+
+- **Bounded lookahead:** `next(a, k)`, and `lasts`, which uses it. The compiler retimes the
+  program instead of looking ahead. Each value is computed `d` bytes late, where `d` is the most
+  lookahead on any path to it. A `next(a, k)` is then `a` computed `k` bytes less late, and the
+  outputs come `D` bytes late, where `D` is the largest `d`. The tape writer subtracts `D` from
+  every position. No new carry is needed; reading bytes late is a `prev`.
+- **The innermost open frame:** `C.frame(a)`, for count `C`. Its carry is a stack: one bit per
+  open frame (whether `a` opened it), and the depth. A word's effect on the stack is to pop some
+  frames and push others. Two such effects combine into one, so the carry is a scan like the
+  others. It passes between groups by the look-back, forward. The stack is one 64-bit word, so
+  a file nested deeper than 64 goes to tree-sitter.
+
+### 5.2 When a fact really depends on what follows
+
+Some grammars have facts that only a later byte decides. In Python, an `assignment` starts at
+`x` but is known only at the `=`. These need a backward carry: `back_fill`, run from the end of
+the file to its start.
+
+- **A summary per chunk.** A backward carry's effect on a chunk is a table from the carry coming
+  in on its right to the carry going out on its left. The table depends only on the chunk's own
+  masks. Several backward carries in one pass compose into one table, as the fused forward
+  rounds' tables do.
+- **Sweeps.** Each direction is a sweep over the chunks. The compiler orders the carried
+  operations into sweeps by their dependencies. All the carries of one sweep run in the same
+  direction; operations with no carry are recomputed wherever they are needed. A program with
+  one backward fact runs two sweeps:
+  1. **forward:** the forward carries, and the backward operations' tables, are published per
+     chunk;
+  2. **backward:** each chunk takes the backward carry from the chunk on its right, then computes
+     the final masks and writes the tape.
+
+### 5.3 One launch for every sweep
+
+Metal has no barrier across threadgroups, so the sweeps cannot be separated by a barrier. They
+are separated by order instead:
+
+- **Persistent threadgroups.** The launch starts as many threadgroups as stay resident. Each one
+  loops, taking a work item from an atomic counter. Each loop is bounded.
+- **Items in sweep order.** The counter numbers every chunk of every sweep:
+  - the forward sweep's chunks come first, from the first chunk to the last;
+  - the backward sweep's come next, from the last chunk to the first.
+- **Every wait is on a smaller number.** An item waits only on items with smaller numbers. Those
+  were handed out earlier, to threadgroups that are running, so a bounded poll cannot deadlock.
+  If a poll runs out, the fallback computes the value from the tables already published.
+- **Inside a chunk,** threadgroup barriers and SIMD-group prefix operations resolve the carries.
+  A chunk can be large (1,024 lanes, 64 KB), so the look-back between chunks is rare.
+- **Masks between sweeps.** The compiler chooses, mask by mask, whether to recompute a mask or
+  keep it. A kept mask costs 8 bytes written and read per 64-byte block. A Python lexer has
+  hundreds of masks, so it keeps the operands of the later sweep that are expensive to rebuild,
+  and recomputes the rest.
+- **The tape in a backward sweep.** Node counts there accumulate from the right. The writer
+  places the records right-aligned in a buffer of the guessed capacity, and the tape starts at
+  `capacity − total`. If the tape view cannot take that offset, a third sweep, forward again,
+  writes the records in order instead, in the same launch.
+
+The JSON program needs only the forward sweep. Sweeps are built when a lexer first needs a
+backward fact: Python's.
+
+## 6. What changes where
 
 | part | change | language-specific? |
 |---|---|---|
@@ -322,7 +395,7 @@ Comparing the image itself byte for byte needs the engine, and is part of step 3
 | block programs | `node` and `code` rows; `count` levels as up and down masks | no |
 | the executors | write the tape from the rows (§3.2): generated code on Cranelift and Metal, step by step in the interpreters | no |
 
-## 6. Proposed steps
+## 7. Proposed steps
 
 Each step closes with its check passing.
 
@@ -338,3 +411,5 @@ Each step closes with its check passing.
    *Check:* the same; the fallback count reported; time per block next to the masks alone.
 5. **Python's tree section,** with indentation as a level.
    *Check:* as step 1, on the data-layer Python files.
+6. **Sweeps (§5.2, §5.3),** built when Python's section first needs a backward fact.
+   *Check:* the tapes still equal tree-sitter's; one launch; the fallback count reported.
