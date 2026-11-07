@@ -11,9 +11,13 @@ def main():
     from migration import ROOT  # Also locates the existing source recorder.
     import data_layer_record as recording
     recording.ADAPTERS += (('hnsw_architecture', 'find_hnsw_architecture_findings', 'files'),
+                           ('connection_caches', 'find_violations', 'connection_targets'),
                            ('data_layer_facade_purity', 'lint_targets', 'facade_targets'))
     original_snapshot = recording.snapshot
     def input_snapshot(module, kind, args, kwargs):
+        if kind == 'connection_targets':
+            from connection_caches_port import snapshot
+            return snapshot(module, 'find_violations', args, kwargs)
         if kind == 'facade_targets':
             from facade_purity_port import snapshot
             return snapshot(module, 'lint_targets', args, kwargs)
@@ -21,6 +25,9 @@ def main():
     recording.snapshot = input_snapshot
     original_normalize = recording.normalize
     def result_snapshot(check, entry, result, root, files):
+        if check == 'connection_caches' and entry == 'find_violations':
+            from connection_caches_port import normalize
+            return normalize(result, root)
         if check == 'data_layer_facade_purity' and entry == 'lint_targets':
             return recording.batch_five.normalize(check, result.violations, root, files)
         return original_normalize(check, entry, result, root, files)

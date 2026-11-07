@@ -42,6 +42,7 @@ ENTRIES = {
     'data_layer_facade_purity': ['lint_file', 'lint_targets'],
     'sync_async_signatures': ['analyze_file'],
     'backend_coupling': ['BackendCouplingChecker.check_file', 'BackendCouplingChecker.should_check_file'],
+    'connection_caches': ['find_violations', 'scan_file_content', '_is_allowed'],
     'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
@@ -64,6 +65,7 @@ class Suite:
         self.part, self.parts = part, parts
         self.rule_root = rule_root or ROOT / 'packs/data-layer/candidates/rr'
         self.originals, self.calls, self.cases, self.translations = [], [], {}, []
+        self.collected = []
         self.semantic_fallbacks = []
         self.item = None
         self.inputs = {}
@@ -133,6 +135,9 @@ class Suite:
         elif check == 'data_layer_facade_purity':
             from facade_purity_port import snapshot
             files, scope, root = snapshot(module, entry, args, kwargs)
+        elif check == 'connection_caches':
+            from connection_caches_port import snapshot
+            files, scope, root = snapshot(module, entry, args, kwargs)
         elif check == 'backend_coupling':
             from coupling_port import snapshot
             files, scope, root = snapshot(args[2], args[3])
@@ -158,7 +163,10 @@ class Suite:
             return
         compare_inputs(original, files, scope)
         from data_layer_batch_two import normalize as normalize_two
-        if check == 'backend_coupling':
+        if check == 'connection_caches':
+            from connection_caches_port import normalize
+            actual = normalize(result, root)
+        elif check == 'backend_coupling':
             from data_layer_batch_five import normalize as normalize_five
             actual = normalize_five(check, result, root, files)
         elif check == 'data_layer_facade_purity':
@@ -195,6 +203,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'connection_caches':
+            from connection_caches_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'backend_coupling':
             from coupling_port import scan
             return scan(self, entry, module, arguments)
@@ -465,6 +476,9 @@ class Suite:
         bind_aliases(self.modules)
         originals = codes(self.modules)
         for check, module in self.modules.items():
+            if check == 'connection_caches':
+                from connection_caches_port import install
+                install(self, module)
             if check == 'backend_coupling':
                 from coupling_port import install
                 install(self, module)
@@ -500,7 +514,8 @@ class Suite:
                     'type_safety_patterns': {'cli_main'},
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},
-                    'backend_coupling': {'cli_main', 'get_project_root'}}
+                    'backend_coupling': {'cli_main', 'get_project_root'},
+                    'connection_caches': {'cli_main'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])
@@ -508,7 +523,11 @@ class Suite:
         threading.setprofile(guard)
 
     def pattern_search(self, pattern, source):
-        if self.item.path.name == 'test_lint_type_safety_patterns.py':
+        if self.item.path.name == 'test_lint_connection_caches.py':
+            module = self.modules['connection_caches']
+            indices = [i for i, (p, _) in enumerate(module.ALL_PATTERNS) if p is pattern]
+            check, code = 'connection_caches', 'CC_PATTERN'
+        elif self.item.path.name == 'test_lint_type_safety_patterns.py':
             module = self.modules['type_safety_patterns']
             names = ['STR_EXPR_PATTERN', 'STR_FIELD_PATTERN', 'EXPR_ANY_ANY_PATTERN', 'DEPRECATED_OP_PATTERN', 'DEPRECATED_FILTER_METHOD_PATTERN']
             indices = [i for i, name in enumerate(names) if getattr(module, name) is pattern]
@@ -550,6 +569,12 @@ class Suite:
             return NativeRegexMatch({1: method})
         return NativeRegexMatch({})
 
+    def anchored_pattern_match(self, pattern, source):
+        module = self.modules['connection_caches']
+        if pattern is not module.MODULE_BRANCH_REVISION_DICT or not pattern.pattern.startswith('^'):
+            raise AssertionError('Only the source-anchored cache regex has an original match assertion')
+        return self.pattern_search(pattern, source)
+
     def allowed_pattern_witness(self, pattern):
         # These two source parameters skip their assertion because the test cannot
         # fabricate a richer-regex witness. The original pattern matches these tokens.
@@ -563,7 +588,7 @@ class Suite:
         self.collected = [item.nodeid for item in items]
         items[:] = items[self.part::self.parts]
         for item in items:
-            if item.path.name not in {'test_lint_no_source_inspection.py', 'test_lint_hasattr_async.py', 'test_lint_admin_async_purity.py', 'test_lint_async_executor.py', 'test_lint_dynamic_module_loading.py', 'test_lint_type_safety_patterns.py'}:
+            if item.path.name not in {'test_lint_connection_caches.py', 'test_lint_no_source_inspection.py', 'test_lint_hasattr_async.py', 'test_lint_admin_async_purity.py', 'test_lint_async_executor.py', 'test_lint_dynamic_module_loading.py', 'test_lint_type_safety_patterns.py'}:
                 continue
             source_lines, source_start = inspect.getsourcelines(item.obj)
             original = textwrap.dedent(''.join(source_lines))
@@ -584,6 +609,14 @@ class Suite:
 
                 def visit_Call(self, node):
                     self.generic_visit(node)
+                    if (item.path.name == 'test_lint_connection_caches.py' and isinstance(node.func, ast.Attribute)
+                            and node.func.attr == 'match'):
+                        if len(node.args) != 1 or node.keywords:
+                            raise AssertionError('Unsupported original anchored regex assertion')
+                        changed.append(node.lineno)
+                        operations.append(dict(line=node.lineno, kind='anchored-regex-match'))
+                        return ast.copy_location(ast.Call(func=ast.Name(id='_rr_anchored_match', ctx=ast.Load()),
+                            args=[node.func.value, *node.args], keywords=[]), node)
                     if isinstance(node.func, ast.Attribute) and node.func.attr == 'search':
                         if len(node.args) != 1 or node.keywords:
                             raise AssertionError('Unsupported original regex assertion')
@@ -616,6 +649,7 @@ class Suite:
             ast.fix_missing_locations(tree)
             ast.increment_lineno(tree, source_start - 1)
             namespace = {**item.obj.__globals__, '_rr_pattern_search': self.pattern_search,
+                         '_rr_anchored_match': self.anchored_pattern_match,
                          '_rr_allowed_pattern_witness': self.allowed_pattern_witness, '_rr_RegexMatch': NativeRegexMatch}
             exec(compile(tree, str(item.path), 'exec'), namespace)
             item.obj = namespace[function.name]
