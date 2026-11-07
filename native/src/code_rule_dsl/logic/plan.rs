@@ -2433,7 +2433,24 @@ impl Run<'_> {
                     lines.push(format!("{} {ta} {tb}", if *op == "=" { "deq" } else { "dne" }));
                 }
                 Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
-                    if let Term::Call(f, args) = r {
+                    if let Term::Call(f, args) = r
+                        && f != "cat"
+                    {
+                        // A text function (`strings::functions`) of bound arguments, its value bound or tested.
+                        let (Some((name, kinds, _)), Term::Var(_)) = (crate::code_rule_dsl::logic::strings::functions::signature(f), l) else {
+                            return None;
+                        };
+                        let bound = |t: &Term| match t {
+                            Term::Var(v) => slots.contains_key(v),
+                            Term::Int(_) | Term::Str(_) => true,
+                            _ => false,
+                        };
+                        if *op != "=" || args.len() != kinds.len() || !args.iter().all(bound) {
+                            return None;
+                        }
+                        let toks: Vec<String> = args.iter().map(|a| tok(a, &mut slots)).collect::<Option<_>>()?;
+                        lines.push(format!("func {name} {} {}", tok(l, &mut slots)?, toks.join(" ")));
+                    } else if let Term::Call(f, args) = r {
                         if *op != "=" || f != "cat" || !matches!(l, Term::Var(_)) {
                             return None;
                         }
@@ -2471,6 +2488,23 @@ impl Run<'_> {
                     }
                     let (sc, toks) = atom(a, None, &mut slots)?;
                     lines.push(format!("count {sc} {} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
+                }
+                Literal::Agg { var, op: op @ (AggOp::Min | AggOp::Max), over: Some(o), atom: a } => {
+                    // The aggregated variable is the atom's one free variable, in one column; the rest are bound.
+                    let col = a.args.iter().position(|t| matches!(t, Term::Var(v) if v == o))?;
+                    let free = |t: &Term| matches!(t, Term::Var(v) if !slots.contains_key(v));
+                    if slots.contains_key(o) || a.args.iter().enumerate().any(|(c, t)| c != col && (free(t) || matches!(t, Term::Var(v) if v == o))) {
+                        return None;
+                    }
+                    // Symbols order by text in SQL; as atoms (a corpus run) by atom on both sides, else not native.
+                    if self.model.inputs.atoms.is_none() && prog_types(prog, &a.rel).get(col).copied() == Some("sym") {
+                        return None;
+                    }
+                    let mut a = a.clone();
+                    a.args[col] = Term::Wild;
+                    let (sc, toks) = atom(&a, None, &mut slots)?;
+                    let name = if *op == AggOp::Min { "min" } else { "max" };
+                    lines.push(format!("{name} {sc} {} {col} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;

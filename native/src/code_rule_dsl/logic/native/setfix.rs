@@ -1238,8 +1238,14 @@ enum Step {
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
     Count { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, out: usize, bind: bool },
+    /// `out = min col : { atom }` (`max` when `max`): the least (greatest) value of column `col` over the atom's
+    /// matching rows; no rows, no binding.
+    Extreme { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, col: usize, out: usize, bind: bool, max: bool },
     Let { a: usize, b: Key },
     Ne { a: Key, b: Key },
+    /// `out = @f(args)` for a `strings::functions` function: text arguments are symbols' names, a text result is
+    /// interned; no value (NULL), no binding.
+    Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool },
     /// `@doc(a) = @doc(b)` (`eq`) or `!=`: the nodes' documents, `d` of `d << 32 | index`, compared.
     Doc { a: Key, b: Key, eq: bool },
 }
@@ -1262,16 +1268,17 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
         let toks: Vec<&str> = line.split_whitespace().collect();
         let is_bound = |b: &Vec<bool>, k: Key| match k { Key::Slot(s) => b.get(s).copied().unwrap_or(false), Key::Const(_) => true };
         match toks[0] {
-            "pos" | "neg" | "count" => {
-                let (neg, count) = (toks[0] == "neg", toks[0] == "count");
-                let atoks = if count { &toks[2..toks.len() - 1] } else { &toks[2..] };
+            "pos" | "neg" | "count" | "min" | "max" => {
+                let (neg, count, extreme) = (toks[0] == "neg", toks[0] == "count", matches!(toks[0], "min" | "max"));
+                // `min <src> <atom tokens> <column> <out>`: the aggregated column's token is `_`.
+                let atoks = if count { &toks[2..toks.len() - 1] } else if extreme { &toks[2..toks.len() - 2] } else { &toks[2..] };
                 let (mut keys, mut binds, mut tests) = (Vec::new(), Vec::new(), Vec::new());
                 for (col, t) in atoks.iter().enumerate() {
                     match tok(t, syms)? {
                         None => {}
                         Some(k) if is_bound(&bound, k) => keys.push((col, k)),
                         Some(Key::Slot(s)) => {
-                            if neg || count { return Err(err(format!("unbound v{s} in a negated or counted atom"))); }
+                            if neg || count || extreme { return Err(err(format!("unbound v{s} in a negated or aggregated atom"))); }
                             match binds.iter().find(|&&(_, b)| b == s) { Some(&(c0, _)) => tests.push((col, c0)), None => binds.push((col, s)) }
                         }
                         Some(Key::Const(_)) => unreachable!(),
@@ -1301,7 +1308,13 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     }
                     t => return Err(err(format!("bad source {t}"))),
                 };
-                if count {
+                if extreme {
+                    let col = num(toks[toks.len() - 2])?;
+                    let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad min or max")) };
+                    let bind = !is_bound(&bound, Key::Slot(o));
+                    grow(&mut bound, o); bound[o] = true;
+                    steps.push(Step::Extreme { src, keys, tests, col, out: o, bind, max: toks[0] == "max" });
+                } else if count {
                     let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad count")) };
                     let bind = !is_bound(&bound, Key::Slot(o));
                     grow(&mut bound, o); bound[o] = true;
@@ -1331,6 +1344,16 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("order of an unbound slot")); }
                 steps.push(Step::Lt { a, b, or_eq: toks[0] == "le" });
+            }
+            "func" => {
+                // `func <name> <out> <args…>`
+                let Some((name, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(toks[1]) else { return Err(err(format!("no function {}", toks[1]))) };
+                let args: Vec<Key> = toks[3..].iter().map(|t| tok(t, syms)).collect::<Result<Option<Vec<_>>>>()?.ok_or_else(|| err("a function of `_`"))?;
+                if args.len() != kinds.len() || args.iter().any(|&a| !is_bound(&bound, a)) { return Err(err(format!("{name} of unbound or missing arguments"))); }
+                let Some(Key::Slot(o)) = tok(toks[2], syms)? else { return Err(err("a function's value into a constant")) };
+                let bind = !is_bound(&bound, Key::Slot(o));
+                grow(&mut bound, o); bound[o] = true;
+                steps.push(Step::Func { name, kinds, args, out: o, bind });
             }
             "deq" | "dne" => {
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
@@ -1451,6 +1474,23 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 if *bind { slots[*out] = n } else if slots[*out] != n { return }
                 go(cx, i + 1, slots);
             }
+            Step::Extreme { src, keys, tests, col, out, bind, max } => {
+                cx.key.clear();
+                cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
+                let (rows, cands) = candidates(src, store, &cx.key, keys);
+                let mut best: Option<i64> = None;
+                cands.any(|id| {
+                    let row = rows.row(id);
+                    if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) {
+                        let v = row.at(*col);
+                        best = Some(best.map_or(v, |b| if *max { b.max(v) } else { b.min(v) }));
+                    }
+                    false
+                });
+                let Some(v) = best else { return };
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+            }
             Step::Lt { a, b, or_eq } => {
                 let (x, y) = (val(slots, *a), val(slots, *b));
                 if x < y || (*or_eq && x == y) { go(cx, i + 1, slots) }
@@ -1477,6 +1517,24 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             }
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
+            Step::Func { name, kinds, args, out, bind } => {
+                use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
+                let value = {
+                    let mut text = Vec::new();
+                    let mut numbers = Vec::new();
+                    for (k, a) in kinds.iter().zip(args) {
+                        match k { Kind::Text => text.push(cx.syms.name(val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                    }
+                    eval(name, &text, &numbers)
+                };
+                let v = match value {
+                    rusqlite::types::Value::Integer(n) => n,
+                    rusqlite::types::Value::Text(s) => cx.syms.id(&s),
+                    _ => return,
+                };
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+            }
             Step::Doc { a, b, eq } => if ((val(slots, *a) >> 32) == (val(slots, *b) >> 32)) == *eq { go(cx, i + 1, slots) },
             Step::Let { a, b } => { slots[*a] = val(slots, *b); go(cx, i + 1, slots) }
         }
