@@ -311,6 +311,7 @@ impl Guests {
             digest: core::digest(&facts),
             facts: Arc::new(facts),
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            module: host.module.clone(),
         }))
     }
 
@@ -338,6 +339,8 @@ impl Guests {
             digest: core::digest(&facts),
             facts: Arc::new(facts),
             guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
+            // A value is no module's: its text is a rule's, not a file's.
+            module: None,
         }))
     }
 

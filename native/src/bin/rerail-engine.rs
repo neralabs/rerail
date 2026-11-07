@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -72,13 +72,14 @@ fn run(args: &[String]) -> Result<String, String> {
 /// `logic`: a program over a corpus, its outputs as T's (list step 23).
 fn logic(args: &[String]) -> Result<String, String> {
     let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
-    let mut sql = false;
+    let (mut sql, mut env) = (false, Vec::new());
     let mut args = args.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--sql" => sql = true,
             "--metal" => metal = true,
             "--modes" => modes = Some(args.next().ok_or("--modes requires a value")?.clone()),
+            "--env" => env.push(args.next().ok_or("--env requires key=value")?.clone()),
             "--chunk" => chunk = args.next().ok_or("--chunk requires a value")?.parse().map_err(|_| "--chunk takes a node count")?,
             other => positional.push(other.to_owned()),
         }
@@ -111,7 +112,7 @@ fn logic(args: &[String]) -> Result<String, String> {
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
     }
-    rerail_engine::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
+    rerail_engine::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env)
 }
 
 /// `gc`: collects a store until nothing is left to collect (decision 0053): converts a store made before 0053 to

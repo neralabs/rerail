@@ -1660,9 +1660,31 @@ The rest of the cross part: copying and measuring hop rows 0.9 s, digest 0.35 s,
 0.2 s, loading the done inputs 0.45 s. In the local part, column statistics are 1.45 s of 3.4 s (`node`,
 constants, `child`, the three `rr_nearest_*`); they now take one sort per column, and are still exact.
 
-**Closure:** the per-document cutoff (O41) for the rounds: round r + 1 runs only the documents that read a row
-that changed in round r, and keeps the others' rows. Statistics sampled rather than exact. Then the full
-l1–l20 Jedi score and the LEG-083 files.
+**Since then** (2026-11-07, `88cda9248` … `629b15b33`):
+- Two declared-type rule shapes multiplied out: 14M of 28M join rows on typeshed's closure. They were declared
+  returns joined to subclasses before calls, and module TypeVars per function.
+- `found` now covers only the names that lookups read; the corpus runner does not apply `.demand`. Declared
+  parameter and attribute classes are expanded to subclasses only where read.
+- The rounds sort once, keep their base inputs loaded, and re-measure only hop relations that moved.
+- On the 84 files the outputs are unchanged. The rounds converge after 7 runs: rounds 4 and 5 change 12, then 3,
+  documents.
+
+**Per-document cutoff: design.** Every recursive read across documents already goes through `__prev`: a hop is
+keyed by its first node column, `qv`'s included. A round over the dirty documents D gives the full round's rows
+if:
+1. Every cone rule whose head has a node column carries `docof(h, d), rr_dirty(d)`.
+2. Reads that are not hops see the other documents' last rows. These are non-recursive atoms of cone relations,
+   and atoms in rules whose head has no node column (`need_name`). They read `X__all = X ∪ X__kept`.
+3. A relation without a node column that changed in the round sends the round back to all documents.
+4. D for round r + 1 comes from a touch program: each across rule's input literals over the rows its `__prev` atom
+   gained or lost, to `docof(head, d)`.
+5. Rounds 0, 1 and the final round run in full.
+
+On the 84 files that saves about a quarter of the rounds (about 1.5 s of 5.8 s), and it lets k rise until the
+rounds converge for little cost.
+
+**Closure:** the cutoff above, then k raised so the rounds converge; then the full l1–l20 Jedi score and the
+LEG-083 files.
 
 ## O90. Cross-file costs `calls.rr` works around
 

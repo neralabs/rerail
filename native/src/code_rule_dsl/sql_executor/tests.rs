@@ -310,6 +310,7 @@ fn corpus_sql_mode_matches_native_rule_execution() {
             modes,
             false,
             1024,
+            &[],
         )
         .unwrap();
         if modes.is_empty() {

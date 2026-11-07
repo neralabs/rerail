@@ -229,6 +229,7 @@ pub(super) fn prepare(
             digest: [0; 32],
             facts: Arc::new(facts),
             guest: None,
+            module: None,
         };
         let sources = native_sources(store, vec![document])?;
         next.insert(path.clone(), Document { file, key, sources });

@@ -30,6 +30,7 @@ pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod bridge;
 mod inputs;
+mod world;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -494,6 +495,26 @@ pub(crate) fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    // A program that reads the file system or loads documents runs in rounds of its requests first (`world`).
+    let world_round = options.get(world::OPTION).and_then(|v| v.as_str()).map(str::to_owned);
+    // The run's settings, as `env` facts (t21 E4): `<root>/rerail.env`, then the `env` option's `key=value`s (the
+    // command line's `--env`). A round of `discover` has them already.
+    let with_settings: Vec<String>;
+    let programs: &[&str] = if world_round.is_none() {
+        let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+        let settings = crate::code_rule_dsl::tools::settings(root, &flags).map_err(Error::Plan)?;
+        with_settings = programs.iter().map(|p| crate::code_rule_dsl::tools::with_settings(p, &settings)).collect();
+        &with_settings.iter().map(String::as_str).collect::<Vec<_>>()
+    } else {
+        programs
+    };
+    if world_round.is_none() {
+        let prog = combine(programs, "")?;
+        if world::wanted(&prog) {
+            return discover(programs, &prog, root, t_facts, out, modes, binding, chunk_nodes, typing, options);
+        }
+    }
+    let world_facts = options.get("worldFacts").and_then(|v| v.as_str()).unwrap_or("").to_owned();
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     // The main thread's CPU (the chunk builder's is its own, below) and the process's peak RSS.
     let main_usage = || { let (u, s) = thread_usage(); (u, s, usage().2) };
@@ -521,7 +542,13 @@ pub(crate) fn run_with_options(
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }
-    let mut prog = combine(programs, "")?;
+    let mut prog = combine(programs, &world_facts)?;
+    if world_round.as_deref() == Some("discover") {
+        prog.outputs = world::requests(&prog);
+    }
+    if let Some(summary) = options.get("worldSummary").and_then(|v| v.as_str()) {
+        crate::code_rule_dsl::logic::profile::decision("file system and loaded documents (t21)", || summary.to_owned());
+    }
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
     let add_bridged = |prog: &mut front::Program| {
@@ -565,12 +592,22 @@ pub(crate) fn run_with_options(
                 let rust = typing.rust.unwrap_or(rs.len() > python.len());
                 (if rust { rs } else { python }, rust)
             };
+            // Documents a rule loaded (`world`), after the corpus's own.
+            let mut files = files;
+            for (path, _) in world::library_files(options) {
+                if !files.contains(&path) {
+                    files.push(path);
+                }
+            }
             // A document's key is a function of its path (decision 0052), so a memoised row's node ids stay valid.
             let keys = memo::doc_keys(&files);
             (keys.into_iter().zip(files).collect(), HashMap::new(), rust)
         }
     };
     let paths: HashMap<i64, String> = docs.iter().cloned().collect();
+    // A loaded document's module, from its load; and the loaded documents' keys, whose rows are not written.
+    let named: HashMap<String, Arc<str>> = world::library_files(options).into_iter().map(|(p, m)| (p, Arc::from(m))).collect();
+    let library_keys: std::collections::HashSet<i64> = docs.iter().filter(|(_, p)| named.contains_key(p)).map(|(d, _)| *d).collect();
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
@@ -578,7 +615,7 @@ pub(crate) fn run_with_options(
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            prog = combine(programs, &facts)?;
+            prog = combine(programs, &format!("{world_facts}\n{facts}"))?;
             add_bridged(&mut prog);
         }
         declared = d;
@@ -860,10 +897,10 @@ pub(crate) fn run_with_options(
             } else {
                 None
             };
-            let known = stat.and_then(|now| stat_index.source(path, now));
+            let known = stat.and_then(|now| stat_index.source(world::store_path(path), now));
             if let (true, Some(id)) = (memoised, known) {
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
-                if let Some(entry) = memo::lookup(store, id, path, *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))? {
+                if let Some(entry) = memo::lookup(store, id, world::store_path(path), *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))? {
                     return Ok((known, Ok(entry)));
                 }
             }
@@ -879,12 +916,12 @@ pub(crate) fn run_with_options(
                 let id = memo::source(store, &source).map_err(|e| Error::Plan(e.to_string()))?;
                 source_id = Some(id);
                 if let Some(stat) = stat.filter(|_| known != Some(id)) {
-                    stats_read.push((path.clone(), stat, id));
+                    stats_read.push((world::store_path(path).to_owned(), stat, id));
                 }
             }
             if let (true, Some(id), false) = (memoised, source_id, known == source_id) {
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
-                if let Some(entry) = memo::lookup(store, id, path, *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))? {
+                if let Some(entry) = memo::lookup(store, id, world::store_path(path), *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))? {
                     return Ok((source_id, Ok(entry)));
                 }
             }
@@ -906,7 +943,7 @@ pub(crate) fn run_with_options(
             let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
             let digest = core::digest(&facts);
             drop(digest_span);
-            Ok((source_id, Err(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None })))
+            Ok((source_id, Err(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module: named.get(path).cloned() })))
         };
         while let Some((d, path)) = at.next() {
             match build(d, path) {
@@ -1198,7 +1235,7 @@ pub(crate) fn run_with_options(
             let _remember = crate::code_rule_dsl::logic::profile::span(|| "memo remember".into());
             for (d, path, source_id, _) in &chunk_docs {
                 let (Some(id), Some(entry)) = (source_id, entries.get(d)) else { continue };
-                memo::remember(store, *id, path, *d, &memo_program, entry).map_err(|e| Error::Plan(e.to_string()))?;
+                memo::remember(store, *id, world::store_path(path), *d, &memo_program, entry).map_err(|e| Error::Plan(e.to_string()))?;
             }
         } else if memoised {
             memo_unattributed += 1;
@@ -1368,6 +1405,7 @@ pub(crate) fn run_with_options(
         let node_columns = &node_columns[rel];
         let mut decoded: Vec<String> = lines
             .iter()
+            .filter(|row| library_keys.is_empty() || !row.split('\t').enumerate().any(|(i, v)| node_columns.contains(&i) && v.parse::<i64>().is_ok_and(|v| library_keys.contains(&(v >> 32)))))
             .map(|row| {
                 row.split('\t')
                     .enumerate()
@@ -1435,6 +1473,32 @@ pub(crate) fn run_with_options(
     Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, memo: (memo_hits, memo_unattributed) })
 }
 
+
+/// A program that reads the file system or loads documents (t21 E1, E2; `world`): rounds of its requests over the
+/// corpus and what it has loaded, until a round asks for nothing new, then the run proper over both.
+#[allow(clippy::too_many_arguments)]
+fn discover(programs: &[&str], prog: &front::Program, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<Report> {
+    let (python, rs) = corpus_files(root)?;
+    let rust = typing.rust.unwrap_or(rs.len() > python.len());
+    let (label, corpus) = if rust { ("rust", rs) } else { ("python", python) };
+    let corpus: BTreeSet<String> = corpus.into_iter().collect();
+    let mut world = world::World::new(root, prog);
+    let scratch = out.join("world");
+    let start = thread_usage();
+    let mut rounds = 0;
+    loop {
+        rounds += 1;
+        let _round = crate::code_rule_dsl::logic::profile::span(|| format!("world round {rounds}"));
+        run_with_options(programs, root, None, &scratch, modes, binding, chunk_nodes, typing, &world.options(options, prog, "discover"))?;
+        if !world.answer(&scratch, label, &corpus)? || rounds >= world::ROUNDS {
+            break;
+        }
+    }
+    let now = thread_usage();
+    let mut final_options = world.options(options, prog, "final");
+    final_options[ "worldSummary"] = format!("{}; {:.2} s CPU on the main thread", world.summary(rounds), now.0 - start.0 + now.1 - start.1).into();
+    run_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &final_options)
+}
 
 /// The cross-file part's bounded rounds (`typing::cross_rounds`): `round` is the part with its hops reading
 /// `<rel>__prev`, the previous round's rows held in memory (none in round 0). Each round's rows of the
@@ -1828,9 +1892,10 @@ fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
                 continue;
             }
             let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
-            match path.extension().and_then(|e| e.to_str()) {
-                Some("py") => python.push(relative),
-                Some("rs") => rust.push(relative),
+            // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
+            match crate::code_rule_dsl::language::label_of_path(&relative) {
+                Some("python") => python.push(relative),
+                Some("rust") => rust.push(relative),
                 _ => {}
             }
         }
