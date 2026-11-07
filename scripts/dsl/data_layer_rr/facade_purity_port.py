@@ -49,10 +49,15 @@ def scan(suite, entry, module, args):
         # The framework does not read explicit non-Python files.
         source = path.read_text() if path.suffix == '.py' else ''
         files.append(dict(path=logical, source=source))
-    rows = suite.native('data_layer_facade_purity', entry, files)
+    rows = suite.native('data_layer_facade_purity', entry, files,
+        dict(attemptedPaths=[str(path) for path in paths]))
+    stats = [row for row in rows if row['code'] == 'FAC_FILES']
+    if entry == 'lint_targets' and len(stats) != 1 or entry != 'lint_targets' and stats:
+        raise AssertionError('Native facade report must include one attempted-file count')
+    rows = [row for row in rows if row['code'] != 'FAC_FILES']
     if any(row['code'] not in {'FAC001', 'FAC002', 'FAC003', 'FAC004'} for row in rows):
         raise AssertionError('Unexpected facade purity diagnostic')
     order = {file['path']: index for index, file in enumerate(files)}
     rows.sort(key=lambda row: (order[row['path']], row['parameters']['ordinal'], row['parameters']['witness']))
     violations = [module.Violation(originals[row['path']], row['line'], row['code'], row['message']) for row in rows]
-    return module.LintResults(violations=violations, files_checked=len(paths)) if entry == 'lint_targets' else violations
+    return module.LintResults(violations=violations, files_checked=stats[0]['parameters']['count']) if entry == 'lint_targets' else violations

@@ -7864,3 +7864,19 @@ Both positive mutation controls reject disabled detection.
 The rule needs no Python producer or new rule-specific native detector.
 The inventory is 61 drafts and 39 absent translations. Full migration acceptance remains false.
 No repository cold run was performed. No Linear tickets were created.
+
+
+## 2026-11-07: the 62nd draft and portable facade assertions
+
+Facade purity is newly translated to native Datalog. Its syntax whitelist preserves the original AST distinctions.
+The seven original tests pass with eight native calls and six complete API returns.
+Every original case has native calls, including the CLI and the default-target constant assertion.
+The constant assertion reads the same native table that selects configured targets.
+Attempted-file statistics come from a native aggregate. The original directory case rejects a native count of 99 against two files, with findings unchanged.
+The 54 supplemental API cases and 16 reporter cases pass. Disabled detection fails both positive controls.
+
+Bare linter imports now bind to the same guarded module as package imports.
+Two alias regressions failed first and now pass. The source tests remain unchanged.
+The generator manifest now lists both new rule files. The format tests pass.
+The inventory is 62 drafts and 38 absent translations; full acceptance remains false.
+The generator changes require no engine build. No repository-wide cold run was performed, and no Linear tickets were created.

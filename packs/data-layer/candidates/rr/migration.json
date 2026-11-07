@@ -1121,6 +1121,13 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_sync_async_signatures.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "packs/data-layer/candidates/rr/data-layer-facade-purity.rr",
+      "sha256": "c6c5af4c479456d15861a1e1edd8744d7c04f57d332edf84a1f788accfe0a7cf",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_data_layer_facade_purity.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -1500,8 +1507,9 @@
       "batch": 5,
       "legacyPath": "packs/data-layer/candidates/rules/data-layer-data-layer-facade-purity.json",
       "legacySha256": "f08348732dcf1827030a1059efb3e6b85e7d92bf3193fd171ae93f9098fdced5",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "packs/data-layer/candidates/rr/data-layer-facade-purity.rr",
+      "ruleSha256": "c6c5af4c479456d15861a1e1edd8744d7c04f57d332edf84a1f788accfe0a7cf"
     },
     {
       "check": "data_layer_compat_aliases",

@@ -39,7 +39,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **61 target drafts and 39 absent translations**. None has full acceptance yet.
+The current inventory contains **62 target drafts and 38 absent translations**. None has full acceptance yet.
 Additional imported policies belong to the remaining 42 checks. Helper tables are not policies.
 Reader success is a syntax milestone. It is not rule completion.
 
@@ -459,3 +459,33 @@ Original display strings normalize only the caller's temporary root. Detector lo
 - [Original positive test before the port](../fixtures/host/data-layer-port/rr-signatures-first-positive-red.json.gz).
 
 The inventory is 61 drafts and 39 absent translations. Full acceptance remains false.
+
+
+## Facade purity and native configuration assertions, 7 November
+
+The new `data_layer_facade_purity` draft runs its top-level AST whitelist in Datalog.
+It preserves ordinary and annotated assignment targets, nested literal containers, dictionary unpacking, and import multiplicity.
+It normalizes import components and handles relative import modules as the source does.
+Literal classification uses syntax; it does not construct decoded values to decide whether a value is a Constant.
+
+All seven original tests pass, including the CLI and the default-target constant assertion.
+The run makes eight native calls and compares six complete API returns. No original case lacks native calls.
+The default-target assertion reads the native table that also selects configured files.
+The attempted-file count comes from the native aggregate in the same API invocation.
+A control changes that count to 99 while preserving findings. The directory case's complete API comparison rejects it against two files.
+The 54 supplemental API cases and 16 configured reporter cases all pass.
+Both detector-positive controls reject disabled detection.
+
+Standalone linter imports now share the guarded package module. A conflicting alias stops validation.
+The two failing alias regressions now pass. CLI execution retains only named argument and printing orchestration in Python.
+Rules do not invoke Python, and no source detector method runs during native validation.
+The original default-target test is no longer merely a Python constant assertion.
+
+- [Original facade assertions](../fixtures/host/data-layer-port/rr-facade-purity-native-direct-contracts.json.gz).
+- [Supplemental contracts and wrong-count control](../fixtures/host/data-layer-port/rr-facade-purity-native-supplemental-contracts.json.gz).
+- [Original suite before the port](../fixtures/host/data-layer-port/rr-facade-purity-original-red.json.gz).
+- [Missing native statistics regression](../fixtures/host/data-layer-port/rr-facade-purity-stats-red.json.gz).
+- [Final-shape merge and regressions](../fixtures/host/data-layer-port/rr-final-shape-merge-tdd.json.gz).
+
+The inventory is 62 drafts and 38 absent translations. No rule has full migration acceptance yet.
+Associated suites, native printing and canonical serialization, and production workspace acceptance remain outstanding.
