@@ -36,6 +36,8 @@ def main():
         green=run('original-control-green-'+str(family),'transaction_contract.py',arguments)
         red=run('original-control-red-'+str(family),'transaction_contract.py',arguments,directory)
         assert green['exitCode']==0 and red['exitCode']==1 and not red['report']['semanticFallbacks']
+        assert red['report']['collected']==baseline['collected']
+        assert len(red['report']['cases'])==1 and all({p['phase']:p['outcome'] for p in phases}==dict(setup='passed',call='failed',teardown='passed') for phases in red['report']['cases'].values())
         assert len(green['report']['calls'])==len(red['report']['calls'])==1
         assert all(c['status']=='passed' for c in red['report']['nativeCalls'])
         assert all(r['code'] in {'TX_LOCAL','TX_SCOPE','TX_CONSTANT'} for c in red['report']['nativeCalls'] for r in c['diagnostics'])
@@ -71,6 +73,8 @@ def main():
         green=run('constant-green-'+table,'transaction_contract.py',arguments)
         red=run('constant-red-'+table,'transaction_contract.py',arguments,directory)
         assert green['exitCode']==0 and red['exitCode']==1 and not red['report']['semanticFallbacks']
+        assert red['report']['collected']==baseline['collected']
+        assert len(red['report']['cases'])==1 and all({p['phase']:p['outcome'] for p in phases}==dict(setup='passed',call='failed',teardown='passed') for phases in red['report']['cases'].values())
         assert all(c['status']=='passed' for c in red['report']['nativeCalls'])
         assert all(r['parameters']['value']!=value for c in red['report']['nativeCalls'] if c['entry']=='constants'
             for r in c['diagnostics'] if r['parameters']['table']==('transaction' if table=='method' else 'mutating'))

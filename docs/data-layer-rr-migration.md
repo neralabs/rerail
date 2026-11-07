@@ -11,7 +11,7 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its baseline is Final rerail shape
-`b505d5121`. That branch includes the migration and regex fixes, the current planner,
+`43c8c521d`. That branch includes the migration and regex fixes, the current planner,
 indexed SQL maintenance, native relation reclamation, corpus publication leases, and the current Python module world.
 It also keeps parsed rules and prepared programs for the process, as decision 0060 specifies.
 Merge `2bf167c90` takes those changes without restoring an older planner or executor.
@@ -62,7 +62,15 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **73 target drafts and 27 absent translations**. None has full acceptance yet.
+The current inventory contains **74 target drafts and 26 absent translations**. None has full acceptance yet.
+The 74th draft, `transaction_closures`, passes all 131 unchanged original tests and preserves 126 complete API observations.
+There are 98 cases with direct native queries and twelve more cases that assert native constant values.
+All 21 remaining cases run their host protocol, storage, DTO, or argparse assertions. The direct receipt identifies each case.
+The supplemental corpus passes 199 API cases, including 113 detector positives, and 73 reporter cases, including 44 positives.
+Each detector family has independent original and configured mutation controls. Parser output and both constant tables have separate controls.
+The [direct receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-transaction-closures-native-direct-contracts.json.gz)
+and [supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-transaction-closures-native-supplemental-contracts.json.gz) bind the results to the root engine through `43c8c521d`.
+Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 73rd draft, `plan_scope_ownership`, passes all 15 original tests and preserves 14 complete API returns through 28 native calls.
 One original test checks Python collector inheritance only. Seventeen source/native callback roundtrips back the transferable behavior of that interface.
 The supplemental corpus contains 223 API cases and 202 reporter cases, including 163 and 110 detector-positive cases respectively.

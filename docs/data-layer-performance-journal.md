@@ -8501,3 +8501,67 @@ The tooling rejects libraries from retired checkouts, including identical copies
 Regeneration leaves all 88 inspected rule, manifest, corpus, and printer-oracle files unchanged.
 The build receipt now names the actual upstream ancestor, `a2c9ee123`, instead of the later documentation-only commit.
 Both evidence bundles were regenerated and checked without changing the recorded test results.
+
+## 2026-11-07 — Transaction closures on Final shape 43c8c521d
+
+The 74th draft ports `transaction_closures` into native `.rr`. The inventory is 74 drafts and 26 absent translations.
+Full migration acceptance remains false. Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
+Merge `54d160500` adopts Final shape `43c8c521d`, including the `.rr` tape implementation.
+All engine work uses this repository root. This rule requires no Rust engine change.
+
+The rule uses ordered detector jobs, with one job for each transaction call.
+It preserves keyword callback precedence, the second positional callback, and the last direct named definition.
+Named callbacks require a definition on an earlier line. Repeated calls retain repeated findings.
+Detector locals accumulate in visit order, including nested function parameters and assignments.
+Function headers do not enter detector traversal. Nested lambdas stop traversal, as the source implementation specifies.
+Module and enclosing-function bindings determine inline callbacks. Named callbacks use the source's narrower direct outer bindings.
+Production containment uses existing tape relations. Supplied ASTs use flat external argument columns, with no Python invocation in the rule.
+
+The regression ladder found and corrected these faults:
+
+- The first generated output name, `Scope`, collided with the library's `scope` relation after lowering.
+- The external AST transport converted zero columns into empty strings. Failing tests now protect numeric zero locations.
+- The recorder did not normalize a string equal to the fixture root. A separate failing test protects that boundary.
+- A generic document gate bypassed the supplied-source trigger. An independent raw-source and AST case exposed the error.
+- Resolving absolute paths changed `/var` into `/private/var`. The adapter now preserves the caller's absolute spelling.
+- Configured reporting allows `impl/test_*.py`. The draft incorrectly excluded those files in addition to test directories.
+- Constant assertions initially read Python globals. They now consume the native rule's constant facts from one batch per suite.
+- Native constants bind after collection and retain imported set aliases. Mutating a constant cannot omit parametrized original cases.
+
+The original module runs unchanged. All 131 cases pass, with 126 complete API observations and 162 native calls.
+Ninety-eight cases make native queries. Twelve additional cases assert values from the native constant batch.
+The remaining 21 cases retain host protocol, storage, DTO, export, constructor-identity, and argparse assertions.
+The direct receipt identifies them individually. None counts as detector-positive coverage.
+Forty-seven original cases produce a native TXN001–TXN004 finding.
+The test guard rejects calls to the original Python detector methods.
+
+All 199 supplemental API cases pass. They contain 113 detector positives, 81 clean detector states, four I/O or parser findings, and one exact ValueError.
+All 73 configured reporter cases pass: 44 positive and 29 clean.
+The corpus covers repeated visits, duplicate findings, supplied function callbacks, independent raw source and ASTs, parameter kinds, ordering, and file selection.
+Four original positive tests and four configured positives reject independent disabled-detector mutations.
+The parser-output control also rejects empty output. Two original constant tests fail when the native rule omits a required fact.
+Those constant controls retain all 131 collected cases and fail inside the selected test call.
+
+The broader reader gate exposed an older imported draft's unsupported slice-pattern syntax in the new frontend.
+`versioned-table-names.rr` now uses typed slice children and token adjacency to select the upper bound.
+A focused source comparison also exposed its generic slice message. The slice output now preserves the source message.
+All 18 compatibility cases pass, including ten positive findings, with complete code, path, line, and message comparisons.
+This is a compatibility check for that slice component. The complete versioned-table-names rule still requires acceptance.
+
+All 85 candidate readers pass, including all 74 target drafts.
+The focused native suite passes 70 tests, with two upstream file-writing utilities ignored.
+Both canonical-printer tests pass. All 65 migration tooling tests and both authoring gate tests pass.
+Regeneration leaves all 88 inspected rule, manifest, and corpus files unchanged.
+The final corpus and control run uses 37 disjoint tasks with two workers. Its slowest task takes 45 seconds.
+An earlier combined control command reaches the 115-second limit. Final controls run separately by family and auxiliary contract.
+No timed-out run certifies acceptance. No full repository cold run or full engine suite runs in this checkpoint.
+
+The frozen CLI hash is `e1530a835e190557d019cc863fef727acbd041701d3e6e5d2670bb71c61dd72b`.
+Its engine source is `54d160500`, with upstream baseline `43c8c521d`.
+The CLI build takes 1 minute 27 seconds. The separate unit build takes 2 minutes 43 seconds.
+These build times are not rule CPU measurements. No CPU or memory improvement is claimed.
+
+Evidence: [all original assertions and positive controls](../gate/data-layer/fixtures/host/data-layer-port/rr-transaction-closures-native-direct-contracts.json.gz)
+and [supplemental corpus, failed steps, reader checks, and slice compatibility](../gate/data-layer/fixtures/host/data-layer-port/rr-transaction-closures-native-supplemental-contracts.json.gz).
+No Linear ticket was created. The next missing translation is `transaction_callback_wrappers`.
+Final shape advances to `824c07935` during acceptance. The next step merges that committed head and checks the updated engine.
