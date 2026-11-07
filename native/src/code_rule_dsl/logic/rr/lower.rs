@@ -903,8 +903,14 @@ impl Lowerer {
         };
         if let Some(op) = test_of(rel) {
             let [p, s] = args else { return Err(Error::Syntax(format!("{rel} takes a pattern and a string"))) };
-            if op == "rx" && let STerm::Str(re) = p && (re.contains("(?<") || re.contains("(?P<")) {
+            if op == "rx" && let STerm::Str(re) = p && !groups(re).is_empty() {
                 return not_yet(format!("match with named groups, {re:?}, here (`Lowerer::captures` lowers it in a body)"));
+            }
+            // The scalar fallback treats an uncompiled matcher as false. A literal in
+            // a policy must therefore be validated before it reaches that fallback.
+            if op == "rx" && let STerm::Str(re) = p {
+                crate::code_rule_dsl::logic::strings::Matcher::new("rx", &[re.clone()])
+                    .map_err(|e| Error::Syntax(format!("match regex: {e}")))?;
             }
             let (s, mut p) = (self.term(s)?, self.term(p)?);
             // `match` is whole-string, as in Soufflé; the engine's `rx` searches.
