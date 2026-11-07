@@ -41,6 +41,7 @@ ENTRIES = {
     'forwardref': ['lint_file', 'lint_file_content', 'lint_directory'],
     'data_layer_facade_purity': ['lint_file', 'lint_targets'],
     'sync_async_signatures': ['analyze_file'],
+    'backend_coupling': ['BackendCouplingChecker.check_file', 'BackendCouplingChecker.should_check_file'],
     'hnsw_architecture': ['find_hnsw_architecture_findings'],
     'data_layer_compat_aliases': ['lint_file', 'lint_file_content', 'lint_targets', '_is_public_name', '_leaf_name'],
 }
@@ -85,7 +86,7 @@ class Suite:
     def native(self, check, entry, files, options=None):
         rule = self.rule_root / (check.replace('_', '-') + '.rr')
         request = dict(rule=str(rule), files=files, options=dict(entryPoint=entry, **(options or {})))
-        call = dict(test=self.item.nodeid, check=check, entry=entry, files=len(files), status='started',
+        call = dict(test=self.item.nodeid if self.item else '<native-configuration>', check=check, entry=entry, files=len(files), status='started',
                     inputFiles=[dict(path=f['path'], sourceSha256=sha(f['source'].encode())) for f in files],
                     options=request['options'])
         self.calls.append(call)
@@ -132,6 +133,9 @@ class Suite:
         elif check == 'data_layer_facade_purity':
             from facade_purity_port import snapshot
             files, scope, root = snapshot(module, entry, args, kwargs)
+        elif check == 'backend_coupling':
+            from coupling_port import snapshot
+            files, scope, root = snapshot(args[2], args[3])
         elif check == 'sync_async_signatures':
             files, scope, root = snapshot(module, 'file', args, kwargs)
         elif check == 'admin_async_purity':
@@ -154,7 +158,10 @@ class Suite:
             return
         compare_inputs(original, files, scope)
         from data_layer_batch_two import normalize as normalize_two
-        if check == 'data_layer_facade_purity':
+        if check == 'backend_coupling':
+            from data_layer_batch_five import normalize as normalize_five
+            actual = normalize_five(check, result, root, files)
+        elif check == 'data_layer_facade_purity':
             from data_layer_batch_five import normalize as normalize_five
             actual = normalize_five(check, result.violations if entry == 'lint_targets' else result, root, files)
         elif check == 'data_layer_compat_aliases':
@@ -188,6 +195,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check == 'backend_coupling':
+            from coupling_port import scan
+            return scan(self, entry, module, arguments)
         if check == 'data_layer_facade_purity':
             from facade_purity_port import scan
             return scan(self, entry, module, arguments)
@@ -455,6 +465,9 @@ class Suite:
         bind_aliases(self.modules)
         originals = codes(self.modules)
         for check, module in self.modules.items():
+            if check == 'backend_coupling':
+                from coupling_port import install
+                install(self, module)
             if check == 'data_layer_facade_purity':
                 from facade_purity_port import DefaultTargets
                 self.replace(module, 'DEFAULT_TARGETS', DefaultTargets(self, module))
@@ -462,7 +475,9 @@ class Suite:
                 # Passive list storage retains the original DTO assertion without source methods.
                 self.replace(module.LintResults, 'add', lambda result, violation: result.violations.append(violation))
             for entry in ENTRIES[check]:
-                original = getattr(module, entry)
+                parts = entry.split('.')
+                owner = getattr(module, parts[0]) if len(parts) == 2 else module
+                original = getattr(owner, parts[-1])
                 signature = inspect.signature(original)
 
                 def wrapper(check, entry, module, original, signature):
@@ -473,7 +488,7 @@ class Suite:
                         self.compare_original(check, entry, module, args, kwargs, result)
                         return result
                     return run
-                self.replace(module, entry, wrapper(check, entry, module, original, signature))
+                self.replace(owner, parts[-1], wrapper(check, entry, module, original, signature))
 
         def guard(frame, event, arg):
             if event != 'call' or frame.f_code not in originals:
@@ -484,7 +499,8 @@ class Suite:
                     'async_executor': {'cli_main'}, 'dynamic_module_loading': {'cli_main'}, 'classvar_check': {'cli_main'},
                     'type_safety_patterns': {'cli_main'},
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
-                    'data_layer_facade_purity': {'cli_main', '_print_results'}}
+                    'data_layer_facade_purity': {'cli_main', '_print_results'},
+                    'backend_coupling': {'cli_main', 'get_project_root'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])

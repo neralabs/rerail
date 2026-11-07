@@ -37,8 +37,9 @@ def main():
             adapters.update({('data_layer_compat_aliases', entry): 'facade_aliases'
                 for entry in ['lint_file', 'lint_file_content']})
             for module, entry, _ in self.originals:
-                check = module.__name__.removeprefix('scripts.lint_')
-                kind = adapters.get((check, entry))
+                backend_checker = isinstance(module, type) and module.__name__ == 'BackendCouplingChecker'
+                check = 'backend_coupling' if backend_checker else module.__name__.removeprefix('scripts.lint_')
+                kind = 'backend_checker' if backend_checker and entry == 'check_file' else adapters.get((check, entry))
                 if kind is None:
                     continue
                 wrapped = getattr(module, entry)
@@ -50,7 +51,10 @@ def main():
                             return wrapped(*args, **kwargs)
                         first = len(self.events)
                         try:
-                            if kind == 'facade_aliases':
+                            if kind == 'backend_checker':
+                                from coupling_port import snapshot
+                                _, _, root = snapshot(args[2], args[3])
+                            elif kind == 'facade_aliases':
                                 from aliases_port import snapshot
                                 _, _, root = snapshot(module, entry, args, kwargs, self.item, self.root)
                             else:
@@ -62,7 +66,8 @@ def main():
                         if len(self.events) != first + 1:
                             raise AssertionError('Original call inventory changed during lossless capture')
                         event = self.events[first]
-                        if (event['check'], event['entry']) != (check, entry):
+                        recorded_entry = 'BackendCouplingChecker.check_file' if kind == 'backend_checker' else entry
+                        if (event['check'], event['entry']) != (check, recorded_entry):
                             raise AssertionError('Original call identity changed during lossless capture')
                         event['sourceResult'] = canonical(result, root)
                         if check == 'sync_async_signatures':

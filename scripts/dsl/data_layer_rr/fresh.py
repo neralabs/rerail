@@ -115,7 +115,15 @@ def run(args):
                     backend.item = SimpleNamespace(nodeid=case['id'])
                     call = lambda: backend.scan(case['check'], case['entry'], module, values)
                 else:
-                    call = lambda: getattr(module, case['entry'])(**values)
+                    if case['check'] == 'backend_coupling':
+                        owner = module.BackendCouplingChecker()
+                        method = getattr(owner, case['entry'].split('.')[-1])
+                        if case['entry'].endswith('check_file') and not case['entry'].endswith('should_check_file'):
+                            import ast
+                            values['tree'] = ast.parse(values['source'])
+                        call = lambda: method(**values)
+                    else:
+                        call = lambda: getattr(module, case['entry'])(**values)
                 actual = invoke(call, root)
                 if native:
                     original = recorded['results'][index]
