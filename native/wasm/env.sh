@@ -19,3 +19,6 @@ export AR_wasm32_wasip1=$_brew/opt/llvm/bin/llvm-ar
 export CFLAGS_wasm32_wasip1="--target=wasm32-wasip1 --sysroot=$_sys"
 export CXXFLAGS_wasm32_wasip1="--target=wasm32-wasip1 --sysroot=$_sys -fwasm-exceptions"
 export WASI_SYSROOT=$_sys
+# Link the C and C++ objects' own libc (Homebrew's wasi-libc, newer than the copy Rust bundles: its TLS start
+# `__wasi_init_tp` is not in Rust's), and libc++ for esaxx.
+export CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="-C link-self-contained=no -C link-arg=$_sys/lib/wasm32-wasip1/crt1-command.o -L native=$_sys/lib/wasm32-wasip1 -l static=c++ -l static=c++abi"

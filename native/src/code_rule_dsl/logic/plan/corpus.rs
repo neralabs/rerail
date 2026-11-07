@@ -362,6 +362,32 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
 /// Records the run's manifest in the persistent store, and, when it is new, starts collection on a thread of its own:
 /// passes until one finds nothing twice or 200 ms have gone (`RERAIL_CORPUS_GC=off`: none). The history's high-water
 /// mark is `RERAIL_CORPUS_HISTORY_MB` (default 512), the low-water mark three quarters of it.
+/// The chunk builder's thread, in `scope`.
+#[cfg(not(target_family = "wasm"))]
+fn spawn_chunks<'scope, T: Send + 'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    build: impl FnOnce() -> T + Send + 'scope,
+) -> std::thread::ScopedJoinHandle<'scope, T> {
+    scope.spawn(build)
+}
+
+/// wasm32 has no threads: the chunk builder runs to its end here, before the chunks are evaluated.
+#[cfg(target_family = "wasm")]
+fn spawn_chunks<'scope, T>(_: &'scope std::thread::Scope<'scope, '_>, build: impl FnOnce() -> T) -> Ran<T> {
+    Ran(build())
+}
+
+/// A chunk builder that already ran (wasm32), joined as a thread would be.
+#[cfg(target_family = "wasm")]
+struct Ran<T>(T);
+
+#[cfg(target_family = "wasm")]
+impl<T> Ran<T> {
+    fn join(self) -> std::thread::Result<T> {
+        Ok(self.0)
+    }
+}
+
 fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32]) -> Result<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -694,12 +720,16 @@ pub(crate) fn run_with_options(
     // A chunk: its nodes and sources (none when it is only memo hits), its documents (key, path, source, nodes) and
     // the memo hits read since the last chunk.
     type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<crate::content_store::SourceId>, u64)>, Vec<memo::Entry>);
+    #[cfg(not(target_family = "wasm"))]
     let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Chunk>>(1);
+    // wasm32 has no threads: the builder runs to its end first (`spawn_chunks`), so every chunk waits here.
+    #[cfg(target_family = "wasm")]
+    let (send, chunks_in) = std::sync::mpsc::channel::<Result<Chunk>>();
     let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
     // A run over the persistent store records which sources it read, its manifest (decision 0053).
     let recording = tapes.is_some() && t.is_none();
     let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>)> {
-    let worker = scope.spawn(|| {
+    let worker = spawn_chunks(scope, || {
         let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
         let add = |acc: &mut (f64, f64), from: (f64, f64)| {
             let now = thread_usage();
