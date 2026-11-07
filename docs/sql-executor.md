@@ -372,10 +372,11 @@ The result names each relation's form: `{"files": 2, "relations": {"def": "rows"
 A relation can take its rows from a SQL query:
 - `.input r(IO=sql, query="SELECT …")`.
 - The query may read session tables and the program's own relations, by name or through `rr_rel_<name>`.
-- The relation's step runs once every relation the query reads is complete. Rules that read `r` run after it.
+- The relation's step runs once every relation the query reads is complete. Rules that read `r` run after it; strata are renumbered so their numbers follow this order.
 - Recursion through a producer is refused.
 - `symbol` columns are interned.
-- A program with producers is not tuple-maintained: `applyChanges` fails for it, and it must be run again.
+- `applyChanges` recomputes a producer when a relation or session input its query reads changes, and maintains its readers from the difference.
+- A change made by plain SQL to another table is not seen: run the program again.
 
 ## Execution boundary
 

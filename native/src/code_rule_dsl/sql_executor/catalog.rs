@@ -19,7 +19,7 @@ const TABLES: &[&str] = &[
 /// lattice, or derived.
 fn kind(run: &session::Execution, name: &str) -> &'static str {
     let program = &run.program;
-    if run.producers.iter().any(|p| p == name) {
+    if run.producers.contains_key(name) {
         "sql"
     } else if program.inputs.iter().any(|i| i == name) {
         "input"

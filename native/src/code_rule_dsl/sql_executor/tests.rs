@@ -466,6 +466,7 @@ fn the_catalog_lists_rules_relations_and_plans_and_names_their_columns() {
 fn sql_producers_read_tables_and_derived_relations_and_refuse_cycles() {
     let (_dir, mut executor) = executor();
     edge(&mut executor, json!([[1, 2], [2, 3], [3, 4], [1, 5]]));
+    executor.bind_relation(json!({"name": "limits", "columns": ["n"], "rows": [[3]]}).to_string()).unwrap();
     executor
         .connection()
         .execute_batch("CREATE TEMP TABLE team_api(name TEXT, owner TEXT); INSERT INTO team_api VALUES ('reach', 'core'), ('ends', 'web');")
@@ -482,8 +483,10 @@ reach(x, z) :- reach(x, y), edge(y, z).
 .input owner(IO=sql, query="SELECT name, owner FROM team_api")
 .decl fanout(src: number, n: number)
 .input fanout(IO=sql, query="SELECT src, count(*) FROM rr_rel_reach GROUP BY src")
+.decl cap(n: number)
+.input cap(IO=sql, query="SELECT max(n) FROM limits")
 .decl wide(src: number)
-wide(s) :- fanout(s, n), n >= 3.
+wide(s) :- fanout(s, n), cap(c), n >= c.
 .decl core_owned(rel: symbol)
 core_owned(r) :- owner(r, "core").
 .output wide, core_owned
@@ -500,10 +503,21 @@ core_owned(r) :- owner(r, "core").
         rows(&executor, "SELECT reads FROM rr_plan WHERE output = 'fanout'"),
         json!([["[\"reach\"]"]])
     );
-    // Tuple maintenance cannot maintain a producer: the change fails and the session is unchanged.
+    // Tuple maintenance recomputes a producer's stratum when what it reads changes, and maintains
+    // the rules that read it from its difference: a change to `edge` reaches `fanout` through
+    // `reach`, and a change to the bound input `limits` reaches `cap`, which reads it by name.
     let change = json!([{"name": "edge", "insert": [[5, 6]], "delete": []}]).to_string();
-    assert!(executor.apply_changes(change, None).unwrap_err().to_string().contains("SQL producers"));
-    assert_eq!(rows(&executor, "SELECT src, n FROM rr_rel_fanout WHERE src = 1"), json!([[1, 4]]));
+    let report: Value = serde_json::from_str(&executor.apply_changes(change, None).unwrap()).unwrap();
+    assert_eq!(report["programs"].as_array().unwrap().len(), 1, "{report}");
+    assert_eq!(rows(&executor, "SELECT src, n FROM rr_rel_fanout ORDER BY src"), json!([[1, 5], [2, 2], [3, 1], [5, 1]]));
+    assert_eq!(rows(&executor, "SELECT src FROM rr_rel_wide"), json!([[1]]));
+    let change = json!([{"name": "limits", "insert": [[2]], "delete": [[3]]}]).to_string();
+    executor.apply_changes(change, None).unwrap();
+    assert_eq!(rows(&executor, "SELECT src FROM rr_rel_wide ORDER BY src"), json!([[1], [2]]));
+    // The same result as running the program afresh.
+    let fresh = rows(&executor, "SELECT src FROM rr_rel_wide ORDER BY src");
+    executor.run(program.into(), "python".into(), None).unwrap();
+    assert_eq!(rows(&executor, "SELECT src FROM rr_rel_wide ORDER BY src"), fresh);
     // Recursion through a producer is refused.
     let cycle = r#"
 .decl a(x: number)

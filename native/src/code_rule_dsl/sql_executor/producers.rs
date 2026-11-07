@@ -5,10 +5,13 @@
 //!
 //! `r` becomes a derived relation of the wave program with one step of its own stratum:
 //! `INSERT OR IGNORE INTO new_r WITH q(c0, …) AS (<query>) SELECT … FROM q`. Its `symbol`
-//! columns are interned on the way in. The scheduler orders strata by what their steps read
-//! (`wave_after`), so the step runs after every relation it reads is complete, and its readers run
-//! after it. A cycle through a producer is refused: SQL is not monotone, so iterating it need not
+//! columns are interned on the way in. The strata are then renumbered so that each one's number
+//! is above those it reads from (`renumber`): the step runs after every relation it reads is
+//! complete, and its readers run after it. A cycle through a producer is refused: SQL is not monotone, so iterating it need not
 //! settle.
+//!
+//! Tuple maintenance recomputes a producer's stratum whole when anything its query reads changes:
+//! a relation of the program, or a session input it reads by name (`maintenance::maintain`).
 use super::*;
 
 #[derive(Clone, Debug)]
@@ -94,14 +97,16 @@ pub(super) fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
 /// that is rolled back, every wave relation gets a placeholder table and its typed view; an
 /// authorizer records the tables the prepared query reads. A relation the emitter made a view
 /// counts as the relations that view reads. Each query must give its declaration's columns.
-fn resolve(db: &rusqlite::Connection, emitted: &plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<Vec<Vec<String>>> {
+/// Per producer: the wave relations it reads, and every other table or view it reads (lowercased),
+/// which tuple maintenance watches for changes.
+fn resolve(db: &rusqlite::Connection, emitted: &plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<Vec<(Vec<String>, Vec<String>)>> {
     use rusqlite::hooks::{AuthAction, Authorization};
     let tables: BTreeMap<String, String> =
         emitted.program.relations.iter().map(|(r, _)| (r.to_ascii_lowercase(), r.clone())).collect();
     let views: BTreeMap<String, &select::Query> =
         emitted.views.iter().map(|(r, q)| (r.to_ascii_lowercase(), q)).collect();
     db.execute_batch("SAVEPOINT rr_producer_reads").map_err(error)?;
-    let result = (|| -> Result<Vec<Vec<String>>> {
+    let result = (|| -> Result<Vec<(Vec<String>, Vec<String>)>> {
         for (rel, arity) in &emitted.program.relations {
             let cols = (0..*arity).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
             db.execute_batch(&format!("CREATE TEMP TABLE IF NOT EXISTS {}({cols})", quote(rel))).map_err(error)?;
@@ -134,6 +139,7 @@ fn resolve(db: &rusqlite::Connection, emitted: &plan::emit::Emitted, program: &f
                 return Err(error(format!("{}: the query gives {width} columns, the declaration {}", p.rel, program.decls[&p.rel].len())));
             }
             let mut reads = BTreeSet::new();
+            let mut other = BTreeSet::new();
             let mut pending: Vec<String> = seen.lock().iter().cloned().collect();
             let mut visited = BTreeSet::new();
             while let Some(name) = pending.pop() {
@@ -145,9 +151,11 @@ fn resolve(db: &rusqlite::Connection, emitted: &plan::emit::Emitted, program: &f
                     reads.insert(rel.clone());
                 } else if let Some(q) = views.get(&name) {
                     pending.extend(q.reads().into_iter().filter_map(|r| r.program_relation().map(str::to_ascii_lowercase)));
+                } else if !name.starts_with("sqlite_") {
+                    other.insert(name);
                 }
             }
-            out.push(reads.into_iter().collect());
+            out.push((reads.into_iter().collect(), other.into_iter().collect()));
         }
         Ok(out)
     })();
@@ -178,16 +186,18 @@ fn downstream(program: &front::Program, producers: &[Producer], reads: &[Vec<Str
 }
 
 /// Add each producer's step to the emitted program, and the typed views its query may read.
-pub(super) fn steps(db: &rusqlite::Connection, emitted: &mut plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<()> {
+/// Returns what each producer reads beyond the wave relations (`resolve`), by producer.
+pub(super) fn steps(db: &rusqlite::Connection, emitted: &mut plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<BTreeMap<String, Vec<String>>> {
     if producers.is_empty() {
-        return Ok(());
+        return Ok(BTreeMap::new());
     }
     for p in producers {
         if !emitted.program.relations.iter().any(|(r, _)| *r == p.rel) {
             return Err(error(format!("{}: the SQL producer's relation is not a wave relation", p.rel)));
         }
     }
-    let all_reads = resolve(db, emitted, program, producers)?;
+    let resolved = resolve(db, emitted, program, producers)?;
+    let all_reads: Vec<Vec<String>> = resolved.iter().map(|(reads, _)| reads.clone()).collect();
     let mut stratum = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
     for (p, reads) in producers.iter().zip(&all_reads) {
         let decl = &program.decls[&p.rel];
@@ -226,6 +236,39 @@ pub(super) fn steps(db: &rusqlite::Connection, emitted: &mut plan::emit::Emitted
                 emitted.setup.push(format!("CREATE TEMP VIEW {view}({names}) AS SELECT * FROM {}", quote(rel)));
             }
         }
+    }
+    renumber(&mut emitted.program.steps)?;
+    Ok(producers.iter().zip(resolved).map(|(p, (_, other))| (p.rel.clone(), other)).collect())
+}
+
+/// Renumber the strata so that a stratum's number is above every stratum it reads from. A
+/// producer's stratum starts above all the rules', though rules may read it; maintenance and
+/// `Program::strata` walk strata by number. The steps keep their order; ties keep the old order.
+fn renumber(steps: &mut [schedule::Step]) -> Result<()> {
+    let mut makes = BTreeMap::<&str, BTreeSet<u32>>::new();
+    for s in steps.iter() {
+        makes.entry(s.output.as_str()).or_default().insert(s.stratum);
+    }
+    let mut after = BTreeMap::<u32, BTreeSet<u32>>::new();
+    for s in steps.iter() {
+        let before = after.entry(s.stratum).or_default();
+        for r in &s.reads {
+            let r = r.strip_prefix("delta_").unwrap_or(r);
+            before.extend(makes.get(r).into_iter().flatten().filter(|&&b| b != s.stratum));
+        }
+    }
+    let first = after.keys().next().copied().unwrap_or(0);
+    let mut placed = BTreeMap::<u32, u32>::new();
+    while placed.len() < after.len() {
+        let next = after
+            .iter()
+            .find(|(s, before)| !placed.contains_key(s) && before.iter().all(|b| placed.contains_key(b)))
+            .map(|(s, _)| *s)
+            .ok_or_else(|| error("SQL producers: the strata read each other in a cycle"))?;
+        placed.insert(next, first + placed.len() as u32);
+    }
+    for s in steps.iter_mut() {
+        s.stratum = placed[&s.stratum];
     }
     Ok(())
 }

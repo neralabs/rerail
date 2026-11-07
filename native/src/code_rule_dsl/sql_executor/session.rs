@@ -8,8 +8,9 @@ pub(super) struct Execution {
     pub emitted: Arc<plan::emit::Emitted>,
     /// The program as declared (pruned, before lowering), for the catalog.
     pub program: Arc<front::Program>,
-    /// Relations made by SQL producers, which tuple maintenance cannot maintain.
-    pub producers: Vec<String>,
+    /// Relations made by SQL producers, each with the session inputs its query reads. Tuple
+    /// maintenance recomputes a producer's stratum when what it reads changes.
+    pub producers: BTreeMap<String, Vec<String>>,
     pub counts: BTreeMap<String, u64>,
     pub outputs: Vec<String>,
     pub max_waves: u32,

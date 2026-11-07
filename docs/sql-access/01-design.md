@@ -140,7 +140,8 @@ big_module($m) :- module_size($m, $c), $c > 500.
 
 **Built (step 2, `sql_executor/producers.rs`), in executor sessions:**
 - `.input r(IO=sql, query="…")` takes `r` out of the inputs and adds one step of its own stratum.
-  The scheduler orders strata by what their steps read, so no renumbering is needed.
+  The strata are then renumbered so that each stratum's number is above every stratum it reads
+  from. Rules may read a producer, and maintenance and the wave count walk strata by number.
 - SQLite resolves what the query reads. Inside a savepoint that is rolled back, each wave relation
   gets a placeholder table and its typed view, and an authorizer records the tables the prepared
   query reads. Emitter views count as the relations they read. The query must give the
@@ -150,13 +151,17 @@ big_module($m) :- module_size($m, $c), $c > 500.
 - Pruning keeps every relation a producer's query names, so rules feeding a producer are not
   dropped.
 - The catalog lists producers as kind `sql`. `rr_plan.reads` is the list SQLite resolved.
-- **Incremental updates are refused.** `applyChanges` and friends fail for a program with
-  producers ("are rerun, not maintained"), and the session keeps its previous results.
+- **Incremental updates recompute the producer.** When anything a producer's query reads changes,
+  `applyChanges` and friends recompute its stratum whole: they snapshot it, rerun its step and
+  take the difference. This is the path maintenance already takes for non-monotone strata. Rules
+  that read the producer are then maintained from that difference.
+  - The query's reads come from the step's resolved wave relations, plus any session input it
+    names (a relation bound with `bindRelation`, `bindCorpus` and the like). Those inputs join
+    the execution's inputs, so a change to one reaches the program.
 
 **Not built yet:**
-- re-running such a program automatically on change;
-- invalidation by the ordinary tables a producer reads, which are not yet in the execution's
-  inputs;
+- watching ordinary tables. A change made by plain SQL to a table a producer reads, such as a
+  temporary table, is not seen: run the program again;
 - the corpus path. Its input readers still refuse `IO=sql`.
 
 **Target design:**

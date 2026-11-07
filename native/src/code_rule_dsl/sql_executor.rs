@@ -539,8 +539,8 @@ impl CodeRuleSqlExecutor {
     }
 
     /// Lower and emit a program. Its SQL producers' steps are added last; their relations are
-    /// returned beside the program.
-    fn compile(&self, mut program: front::Program, dialect: &str) -> Result<(plan::emit::Emitted, Vec<String>)> {
+    /// returned beside the program, each with the session inputs its query reads.
+    fn compile(&self, mut program: front::Program, dialect: &str) -> Result<(plan::emit::Emitted, BTreeMap<String, Vec<String>>)> {
         let producers = producers::take(&mut program)?;
         for name in &program.inputs {
             if let Some((arity, types)) = self.input_shapes.get(name)
@@ -700,8 +700,11 @@ impl CodeRuleSqlExecutor {
         lattices::transfers(&mut emitted, &tops);
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
         emitted.program.lattice_operations = lattice_operations;
-        producers::steps(&self.db, &mut emitted, &program, &producers)?;
-        Ok((emitted, producers.into_iter().map(|p| p.rel).collect()))
+        let other = producers::steps(&self.db, &mut emitted, &program, &producers)?;
+        // A table a query reads that is a session input is watched under the input's own name.
+        let inputs = |name: &String| self.inputs.keys().find(|i| i.eq_ignore_ascii_case(name)).cloned();
+        let producers = other.into_iter().map(|(rel, reads)| (rel, reads.iter().filter_map(inputs).collect())).collect();
+        Ok((emitted, producers))
     }
 
     fn run_program(
@@ -862,6 +865,7 @@ impl CodeRuleSqlExecutor {
         self.generated.extend(objects.clone());
         let owned: BTreeSet<_> = objects.iter().map(|(name, _)| name.as_str()).collect();
         let mut dependencies: BTreeSet<String> = emitted.inputs.iter().cloned().collect();
+        dependencies.extend(producers.values().flatten().cloned());
         for q in emitted
             .queries
             .iter()
