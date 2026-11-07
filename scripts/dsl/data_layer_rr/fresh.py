@@ -130,7 +130,11 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check'] == 'unresolved_forward_refs' and case['entry'] == 'AnnotationUsageFinder.analyze':
+                if case['check']=='plan_scope_ownership' and case['entry']=='collector':
+                    from plan_ownership_port import collector_result
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    call=lambda:collector_result(module,values['root'],values['path'],values['source'],values['tree'],backend if native else None)
+                elif case['check'] == 'unresolved_forward_refs' and case['entry'] == 'AnnotationUsageFinder.analyze':
                     from unresolved_port import analyzed_state
                     owner = module.AnnotationUsageFinder(file_path=values['file_path'],
                         source_lines=values.get('source_lines', []), findings=values.get('initial_findings', []))

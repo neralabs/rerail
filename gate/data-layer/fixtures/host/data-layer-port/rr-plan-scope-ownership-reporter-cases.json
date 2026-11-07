@@ -1,0 +1,1894 @@
+{
+  "cases": [
+    {
+      "id": "original-PSO001",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: Any, workflow: SyncReadPlanWorkflow[T]) -> T:\n    return scope.execute_read_workflow(workflow)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO002",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: SyncReadPlanWorkflow[T]) -> T:\n    execute = getattr(scope, 'execute_read_workflow')\n    return execute(workflow)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO003",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: SyncReadPlanWorkflow[T]) -> T:\n    return scope.fetch(workflow)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO004",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/versioned_plan_scope_helpers.py",
+          "source": "def helper(scope, workflow):\n    return run_read_plan_scope_workflow(scope, workflow)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO005",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "class SyncVersionedPlanScope:\n    def execute_read_workflow(self, workflow):\n        return workflow\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO006",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.fetch(1)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO007",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def lifecycle(txn):\n    return getattr(txn, 'did_publish_branch', False)\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO008",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncReadPlanWorkflow:\n    build: Callable[[Any], object]\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO009",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: SyncReadPlanWorkflow[T]) -> T:\n    return SyncVersionedPlanScope()\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO010",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO011",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/versioned_plan_scope_helpers.py",
+          "source": "def helper(txn, scope):\n    if not txn.is_committed and not txn.is_rolled_back and not txn.did_publish_branch:\n        scope.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO012",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/l2000_connection/test_plan_scope_fetch.py",
+          "source": "async def test_bad(conn):\n    return await run_read_plan_workflow_async(\n            self._async_conn(),\n            SyncReadPlanWorkflow(session_id=1, build=lambda txn: None),\n    )\n"
+        }
+      ]
+    },
+    {
+      "id": "original-PSO013",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2070_batching/executor.py",
+          "source": "def compile(imported_contract_fn):\n    imported_contract = imported_contract_fn('x') if callable(imported_contract_fn) else None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-0-valid",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-0-missing",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow():\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-0-untyped",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-0-posonly",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, /):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-0-posonly-plus",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(ignored, /, scope: SyncPlanScope, workflow: W[T]):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-0-no-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-0-plain-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-0-quoted-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: \"[\"):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-1-valid",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow_async(scope: AsyncPlanScope, workflow: W[T]):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-1-missing",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow_async():\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-1-untyped",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow_async(scope):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-1-posonly",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow_async(scope: AsyncPlanScope, /):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-1-posonly-plus",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow_async(ignored, /, scope: AsyncPlanScope, workflow: W[T]):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-1-no-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow_async(scope: AsyncPlanScope):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-1-plain-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow_async(scope: AsyncPlanScope, workflow: W):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-1-quoted-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow_async(scope: AsyncPlanScope, workflow: \"[\"):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-2-valid",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-2-missing",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow():\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-2-untyped",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow(scope):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-2-posonly",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow(scope: SyncPlanScope, /):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-2-posonly-plus",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow(ignored, /, scope: SyncPlanScope, workflow: W[T]):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-2-no-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow(scope: SyncPlanScope):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-2-plain-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow(scope: SyncPlanScope, workflow: W):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-2-quoted-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow(scope: SyncPlanScope, workflow: \"[\"):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-3-valid",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow_async(scope: AsyncPlanScope, workflow: W[T]):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-3-missing",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow_async():\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-3-untyped",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow_async(scope):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-3-posonly",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow_async(scope: AsyncPlanScope, /):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-3-posonly-plus",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow_async(ignored, /, scope: AsyncPlanScope, workflow: W[T]):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-3-no-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow_async(scope: AsyncPlanScope):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-3-plain-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow_async(scope: AsyncPlanScope, workflow: W):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "runner-3-quoted-workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_write_plan_scope_workflow_async(scope: AsyncPlanScope, workflow: \"[\"):\n    return None\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-0",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: Any, workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-1",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: object, workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-2",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: VersionedScope, workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-3",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: Union[SyncPlanScope, Any], workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-4",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope | object, workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-5",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: typing.SyncPlanScope, workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-6",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: \"SyncPlanScope\", workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-7",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: Anyish, workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-8",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: list[int], workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "annotation-9",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: \uff4f\uff42\uff4a\uff45\uff43\uff54, workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "terminal-_execute_registered_returns",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return scope._execute_registered_returns()\n"
+        }
+      ]
+    },
+    {
+      "id": "terminal-_execute_registered_returns_async",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return scope._execute_registered_returns_async()\n"
+        }
+      ]
+    },
+    {
+      "id": "terminal-commit",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return scope.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "terminal-execute",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return scope.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "terminal-fetch",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return scope.fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "terminal-rollback",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return scope.rollback()\n"
+        }
+      ]
+    },
+    {
+      "id": "reflect-getattr",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return namespace.getattr(scope, \"x\")\n"
+        }
+      ]
+    },
+    {
+      "id": "reflect-hasattr",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return namespace.hasattr(scope, \"x\")\n"
+        }
+      ]
+    },
+    {
+      "id": "reflect-callable",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    return namespace.callable(scope, \"x\")\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-runner-duplicates",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n        return getattr(scope, \"execute_read_workflow\")\n"
+        }
+      ]
+    },
+    {
+      "id": "decorator-descendant",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "@getattr(scope,\"x\")\ndef run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: W[T]):\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned-SyncVersionedPlanScope-execute_read_workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "class SyncVersionedPlanScope:\n    @decorator\n    async def execute_read_workflow(self):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned-SyncVersionedPlanScope-execute_write_workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "class SyncVersionedPlanScope:\n    @decorator\n    async def execute_write_workflow(self):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-method-SyncVersionedPlanScope",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "class SyncVersionedPlanScope:\n    class Inner:\n        def execute_read_workflow(self):\n            pass\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned-AsyncVersionedPlanScope-execute_read_workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "class AsyncVersionedPlanScope:\n    @decorator\n    async def execute_read_workflow(self):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned-AsyncVersionedPlanScope-execute_write_workflow",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "class AsyncVersionedPlanScope:\n    @decorator\n    async def execute_write_workflow(self):\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-method-AsyncVersionedPlanScope",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "class AsyncVersionedPlanScope:\n    class Inner:\n        def execute_read_workflow(self):\n            pass\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncReadPlanWorkflow-valid",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncReadPlanWorkflow:\n    build: Callable[[SyncReadTransaction], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncReadPlanWorkflow-qualified",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncReadPlanWorkflow:\n    build: typing.Callable[[SyncReadTransaction], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncReadPlanWorkflow-untyped",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncReadPlanWorkflow:\n    build: object\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncReadPlanWorkflow-broad",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncReadPlanWorkflow:\n    build: Callable[[Any], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncReadPlanWorkflow-quoted",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncReadPlanWorkflow:\n    build: \"Callable[[SyncReadTransaction], T]\"\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncWritePlanWorkflow-valid",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncWritePlanWorkflow:\n    build: Callable[[SyncWriteTransaction], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncWritePlanWorkflow-qualified",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncWritePlanWorkflow:\n    build: typing.Callable[[SyncWriteTransaction], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncWritePlanWorkflow-untyped",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncWritePlanWorkflow:\n    build: object\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncWritePlanWorkflow-broad",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncWritePlanWorkflow:\n    build: Callable[[Any], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-SyncWritePlanWorkflow-quoted",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class SyncWritePlanWorkflow:\n    build: \"Callable[[SyncWriteTransaction], T]\"\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncReadPlanWorkflow-valid",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncReadPlanWorkflow:\n    build: Callable[[AsyncReadTransaction], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncReadPlanWorkflow-qualified",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncReadPlanWorkflow:\n    build: typing.Callable[[AsyncReadTransaction], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncReadPlanWorkflow-untyped",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncReadPlanWorkflow:\n    build: object\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncReadPlanWorkflow-broad",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncReadPlanWorkflow:\n    build: Callable[[Any], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncReadPlanWorkflow-quoted",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncReadPlanWorkflow:\n    build: \"Callable[[AsyncReadTransaction], T]\"\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncWritePlanWorkflow-valid",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncWritePlanWorkflow:\n    build: Callable[[AsyncWriteTransaction], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncWritePlanWorkflow-qualified",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncWritePlanWorkflow:\n    build: typing.Callable[[AsyncWriteTransaction], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncWritePlanWorkflow-untyped",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncWritePlanWorkflow:\n    build: object\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncWritePlanWorkflow-broad",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncWritePlanWorkflow:\n    build: Callable[[Any], T]\n"
+        }
+      ]
+    },
+    {
+      "id": "workflow-AsyncWritePlanWorkflow-quoted",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "class AsyncWritePlanWorkflow:\n    build: \"Callable[[AsyncWriteTransaction], T]\"\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-terminal-commit",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-terminal-execute",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-terminal-fetch",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-terminal-open_read_plan",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.open_read_plan()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-terminal-open_write_plan",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.open_write_plan()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-terminal-read_transaction",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.read_transaction()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-terminal-rollback",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.rollback()\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-terminal-write_transaction",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.write_transaction()\n"
+        }
+      ]
+    },
+    {
+      "id": "owned-path-0",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/versioned_plan_scope_helpers.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "owned-path-1",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "data_layer_testing/versioning/query_helpers.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "owned-path-2",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "owned-path-3",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "owned-path-4",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/plan_scopes.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "owned-path-5",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "owned-path-6",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l9900_auto_api/_versioning_helpers.py",
+          "source": "def nested_versioned_context(scope):\n    return scope.fetch()\n"
+        }
+      ]
+    },
+    {
+      "id": "owner-lambda",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    return lambda: scope.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "owner-nested-sync",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    def ordinary():\n        return scope.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "owner-class",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def nested_versioned_context(scope):\n    class Inner:\n        value = scope.commit()\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-_base_scope",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, '_base_scope', False)\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-_callback_versioned_txn",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, '_callback_versioned_txn', False)\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-_executed",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, '_executed', False)\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-_plan_owner",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, '_plan_owner', False)\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-did_publish_branch",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, 'did_publish_branch', False)\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-is_active",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, 'is_active', False)\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-is_committed",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, 'is_committed', False)\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-is_rolled_back",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, 'is_rolled_back', False)\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-comment",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, \"other\", False) # _plan_owner\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-escaped",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, \"_pl\\u0061n_owner\", False)\n"
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-split",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def helper(txn):\n    return getattr(txn, \"_base\" + \"_scope\", False)\n"
+        }
+      ]
+    },
+    {
+      "id": "writer-__aenter__",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def __aenter__(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "writer-__aexit__",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def __aexit__(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "writer-__enter__",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def __enter__(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "writer-__exit__",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def __exit__(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "writer-__init__",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def __init__(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "writer-_bind_versioned_write_plan_owner",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def _bind_versioned_write_plan_owner(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "writer-_cleanup_and_restore_callback_versioned_write_plan",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def _cleanup_and_restore_callback_versioned_write_plan(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "writer-_cleanup_and_restore_callback_versioned_write_plan_async",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def _cleanup_and_restore_callback_versioned_write_plan_async(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "writer-_restore_versioned_write_plan_owner",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def _restore_versioned_write_plan_owner(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "store-assign",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    txn._callback_versioned_txn = value\n"
+        }
+      ]
+    },
+    {
+      "id": "store-annotate",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    txn._callback_versioned_txn: object = value\n"
+        }
+      ]
+    },
+    {
+      "id": "store-augment",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    txn._callback_versioned_txn += value\n"
+        }
+      ]
+    },
+    {
+      "id": "store-tuple",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    txn._callback_versioned_txn, x = value\n"
+        }
+      ]
+    },
+    {
+      "id": "store-list",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    [txn._callback_versioned_txn, x] = value\n"
+        }
+      ]
+    },
+    {
+      "id": "store-for",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    for txn._callback_versioned_txn in value:\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "store-with",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    with value as txn._callback_versioned_txn:\n        pass\n"
+        }
+      ]
+    },
+    {
+      "id": "store-comprehension",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    result = [x for txn._callback_versioned_txn in value]\n"
+        }
+      ]
+    },
+    {
+      "id": "store-load",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    return txn._callback_versioned_txn\n"
+        }
+      ]
+    },
+    {
+      "id": "store-delete",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "def random_owner(txn, value):\n    del txn._callback_versioned_txn\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned-name",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "# PlanScope\nfactory(VersionedScope)\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned-literal",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "# PlanScope\nfactory(\"Versioned\")\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned-comment",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "# PlanScope\nfactory(x) # VersionedScope\n"
+        }
+      ]
+    },
+    {
+      "id": "versioned-escape",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "# PlanScope\nfactory(\"\\x56ersioned\")\n"
+        }
+      ]
+    },
+    {
+      "id": "cte-name",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "imported_contract_fn(CtePublicationContract)\n"
+        }
+      ]
+    },
+    {
+      "id": "cte-attribute",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "owner.imported_contract(CtePublicationContract)\n"
+        }
+      ]
+    },
+    {
+      "id": "cte-subscript",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "registry[\"imported_contract\"](CtePublicationContract)\n"
+        }
+      ]
+    },
+    {
+      "id": "cte-call",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "factory(\"imported_contract\")(CtePublicationContract)\n"
+        }
+      ]
+    },
+    {
+      "id": "cte-dual",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "imported_contract = imported_contract_fn(\"CtePublicationContract\") if callable(imported_contract_fn) else None\n"
+        }
+      ]
+    },
+    {
+      "id": "cte-unrelated-else",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l7000_versioned_schema/versioned_connection.py",
+          "source": "# imported_contract = imported_contract_fn\ntext = \"else None\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-0-exact",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_read_plan_workflow_async(\n            conn,\n            SyncReadPlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-0-double",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_read_plan_workflow_async(\n            conn,\n            SyncReadPlanWorkflow\nexecute_read_plan_workflow_async(\n            conn,\n            SyncReadPlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-0-indent",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_read_plan_workflow_async(\n           conn,\n           SyncReadPlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-1-exact",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_write_plan_workflow_async(\n            conn,\n            SyncWritePlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-1-double",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_write_plan_workflow_async(\n            conn,\n            SyncWritePlanWorkflow\nexecute_write_plan_workflow_async(\n            conn,\n            SyncWritePlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-1-indent",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_write_plan_workflow_async(\n           conn,\n           SyncWritePlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-2-exact",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 run_read_plan_workflow_async(\n            self._async_conn(),\n            SyncReadPlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-2-double",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 run_read_plan_workflow_async(\n            self._async_conn(),\n            SyncReadPlanWorkflow\nrun_read_plan_workflow_async(\n            self._async_conn(),\n            SyncReadPlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-2-indent",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 run_read_plan_workflow_async(\n           self._async_conn(),\n           SyncReadPlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-3-exact",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 run_write_plan_workflow_async(\n            self._async_conn(),\n            SyncWritePlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-3-double",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 run_write_plan_workflow_async(\n            self._async_conn(),\n            SyncWritePlanWorkflow\nrun_write_plan_workflow_async(\n            self._async_conn(),\n            SyncWritePlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-3-indent",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 run_write_plan_workflow_async(\n           self._async_conn(),\n           SyncWritePlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-4-exact",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_read_plan_workflow(\n        conn,\n        AsyncReadPlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-4-double",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_read_plan_workflow(\n        conn,\n        AsyncReadPlanWorkflow\nexecute_read_plan_workflow(\n        conn,\n        AsyncReadPlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-4-indent",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_read_plan_workflow(\n        conn,\n        AsyncReadPlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-5-exact",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_write_plan_workflow(\n        conn,\n        AsyncWritePlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-5-double",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_write_plan_workflow(\n        conn,\n        AsyncWritePlanWorkflow\nexecute_write_plan_workflow(\n        conn,\n        AsyncWritePlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-mode-5-indent",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# PlanScope\ntext = \"\"\"\u03c0 execute_write_plan_workflow(\n        conn,\n        AsyncWritePlanWorkflow\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "raw-lifecycle-first-prefix",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "# if not txn.is_committed\n# PlanScope\ntext = \"\"\"if not txn.is_committed and not txn.is_rolled_back and not txn.did_publish_branch\n\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "id": "parse-0",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "def broken(:\n"
+        }
+      ]
+    },
+    {
+      "id": "parse-1",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "# PlanScope\ndef broken(:\n"
+        }
+      ]
+    },
+    {
+      "id": "parse-2",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "# PlanScope\nx = (\n"
+        }
+      ]
+    },
+    {
+      "id": "parse-3",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "\u0000# PlanScope\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-api/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "api/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-data_layer/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "data_layer/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-_internal/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "_internal/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l1234_layer/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l1234_layer/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l\u0661\u0662\u0663\u0664_layer/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l\u0661\u0662\u0663\u0664_layer/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l1234_/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l1234_/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-l1234_layer\nmore/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "l1234_layer\nmore/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-conform/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "conform/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-data_layer_testing/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "data_layer_testing/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-scripts/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "scripts/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/tests/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/tests/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/test_input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/test_input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/.mypy_cache/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/.mypy_cache/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/venv/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/venv/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    },
+    {
+      "id": "scope-impl/__pycache__/input.py",
+      "check": "plan_scope_ownership",
+      "files": [
+        {
+          "path": "impl/__pycache__/input.py",
+          "source": "def run_read_plan_scope_workflow():\n    pass\n"
+        }
+      ]
+    }
+  ]
+}

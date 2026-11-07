@@ -3,7 +3,7 @@
   "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "syntaxSource": {
     "branch": "jeremybarnes/final-rerail-shape",
-    "commit": "a2c9ee1231fd2be9d8ecc505a3170c67ca5134a3",
+    "commit": "b505d51219527b5a5ebcb92ff937fcbc3e12475a",
     "uncommitted": []
   },
   "legacyBaseline": "ce3669ddba89d09acec1094e006446a16a7b296d",
@@ -2382,11 +2382,16 @@
       "branch": "jeremybarnes/final-rerail-shape",
       "commit": "34544f6517b6486774fbb387fcea381d76b63bc0",
       "uncommitted": []
+    },
+    {
+      "branch": "jeremybarnes/final-rerail-shape",
+      "commit": "a2c9ee1231fd2be9d8ecc505a3170c67ca5134a3",
+      "uncommitted": []
     }
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "a2c9ee1231fd2be9d8ecc505a3170c67ca5134a3",
+    "upstreamCommit": "b505d51219527b5a5ebcb92ff937fcbc3e12475a",
     "status": "Root Final shape engine with generic Boolean-context, Python diagnostic/traversal, canonical expression text, and run-root metadata extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",

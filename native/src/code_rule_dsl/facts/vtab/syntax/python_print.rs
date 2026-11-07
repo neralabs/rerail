@@ -673,6 +673,19 @@ pub(super) fn texts(source: &str, requested: Requested) -> Result<Texts> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn canonical_call_pairs_match_python_313_recordings() {
+        let rows: serde_json::Value = serde_json::from_str(include_str!("python_print/calls.json")).unwrap();
+        for row in rows.as_array().unwrap() {
+            let source = row["source"].as_str().unwrap();
+            let values = super::texts(source, super::Requested { calls: true, functions: true, ..Default::default() }).unwrap();
+            let mut calls: Vec<_> = values.calls.into_iter().collect();
+            calls.sort_by_key(|(span, _)| *span);
+            let actual: Vec<Vec<String>> = calls.into_iter().map(|(span, text)| vec![text, values.functions[&span].clone()]).collect();
+            assert_eq!(serde_json::to_value(actual).unwrap(), row["calls"], "{source}");
+        }
+    }
+
+    #[test]
     fn canonical_annotations_match_python_313_recordings() {
         let rows: serde_json::Value =
             serde_json::from_str(include_str!("python_print/expressions.json")).unwrap();

@@ -35,7 +35,7 @@ def ast_input(tree):
     return options,transport
 
 
-def install(suite,module):
+def make_collector(suite,module,root,path,source):
     from scripts.lint_lib.ast_collectors import AstEventCollector
     class Collector(AstEventCollector):
         def __init__(self,root,path,source):
@@ -48,9 +48,29 @@ def install(suite,module):
             options.update(providedSource=self.source,originalPath=str(self.path),relativePath=self.path.relative_to(self.root).as_posix())
             rows=suite.native('plan_scope_ownership','collector',[dict(path='_collector.py',source=transport)],options)
             return [dict(code=r['code'],file_path=r['path'],line=r['line'],message=r['message'],severity='error') for r in ordered(rows)]
+    return Collector(root,path,source)
+
+
+def install(suite,module):
     def factory(root):
-        return {module.PLAN_SCOPE_OWNERSHIP_FACT.extractor_id:lambda path,source:Collector(root,path,source)}
+        return {module.PLAN_SCOPE_OWNERSHIP_FACT.extractor_id:lambda path,source:make_collector(suite,module,root,path,source)}
     suite.replace(module,'plan_scope_ownership_fact_extractors',factory)
+
+
+def collector_result(module,root,path,source,tree,suite=None):
+    """Deliver the caller's supplied AST through the real event protocol, independently of raw source."""
+    from scripts.lint_lib.ast_collectors import AstTraversalContext
+    collector=(make_collector(suite,module,root,path,source) if suite is not None else
+        module.plan_scope_ownership_fact_extractors(root)[module.PLAN_SCOPE_OWNERSHIP_FACT.extractor_id](path,source))
+    parents,children={},{}
+    pending=[tree];nodes=[]
+    while pending:
+        node=pending.pop();nodes.append(node);child_nodes=tuple(ast.iter_child_nodes(node));children[node]=child_nodes
+        for child in child_nodes:parents[child]=node
+        pending.extend(reversed(child_nodes))
+    context=AstTraversalContext(path,source,parents,children)
+    for node in nodes:collector.on_node(node,context)
+    return collector.finish_file()
 
 
 def ordered(rows):
