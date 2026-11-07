@@ -85,6 +85,8 @@ pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::Conte
 
 /// [`build_cached`] for a caller that has already stored the file's source as `known`: it is not hashed or looked up again.
 pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<Built, String> {
+    // A standalone cache build has the same lookup/parse/publication window as a corpus run.
+    let _reading = cache.hold_collection().map_err(|e| e.to_string())?;
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeImage};
     use crate::code_rule_dsl::workspace::grammar_version;

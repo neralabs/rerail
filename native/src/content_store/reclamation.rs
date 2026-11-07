@@ -104,16 +104,25 @@ impl ContentStore {
     /// trees are deleted whole, each row with all of its entries, so a surviving tree row always
     /// has its complete entry set: up to `batch` trees whose entries fit the publication budget
     /// `GIT_TREE_BATCH_ENTRIES`, or the first one alone when it is larger.
+    /// Returns an empty report while a cache reader or another collector holds the collection lease.
     pub fn collect(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .expire(Instant::now());
         if batch == 0 || batch > MAX_COLLECTION_BATCH {
             return Err(StoreError::Invalid(format!(
                 "collection batch must be between 1 and {MAX_COLLECTION_BATCH}"
             )));
         }
+        let Some(_lease) = self.try_collect()? else {
+            return Ok(CollectionReport::default());
+        };
+        self.collect_held(now, batch)
+    }
+
+    /// The caller holds the exclusive collection lease through the complete pass.
+    pub(super) fn collect_held(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
+        self.decompressed_cache
+            .lock()
+            .expect("decompressed cache mutex poisoned")
+            .expire(Instant::now());
         let limit = i64::try_from(batch)
             .map_err(|_| StoreError::Invalid("collection batch exceeds i64".to_owned()))?;
         let entry_budget = GIT_TREE_BATCH_ENTRIES as i64;

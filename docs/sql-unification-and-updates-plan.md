@@ -305,8 +305,8 @@ The dialect parity check normalizes legacy guest requests through the same lower
 ### Final checks
 
 - 57 SQL and persistent-index tests pass.
-- After the final merge, 55 rule-language tests and 57 SQL/index tests pass together with `--test-threads 1`.
-  Two report/write tests are ignored, and the separate syntax census is excluded.
+- After the collection fix, 226 rule-language, SQL/index, corpus, and content-store tests pass together in parallel, twice.
+  Four report/write or performance tests are ignored, and the separate syntax census is excluded.
 - 312 selected TypeScript integration tests pass, with one platform-dependent skip.
 - TypeScript, the JavaScript build, and the layer-boundary check pass.
 - The headless engine compiles. Both SQL CLIs accept file additions and deletions and return the updated retained result.
@@ -316,11 +316,41 @@ The dialect parity check normalizes legacy guest requests through the same lower
 
 The exploratory merged run finished with 778 passing tests, 13 failures, and 25 ignored tests.
 Twelve failures require absent pack fixtures or grammars that this build does not include: HTML, Go, and Scala.
-The other failure is `value_documents_are_memoised_with_the_files_that_asked` in the newly merged guest tests.
-It reports a corpus-cache foreign-key failure during parallel runs.
-The test passes alone. All 112 focused SQL/index and rule-language tests also pass together with one test thread.
-The concurrent corpus-cache failure remains unresolved. These checks do not establish a completely green repository-wide suite.
+The other failure was `value_documents_are_memoised_with_the_files_that_asked` in the newly merged guest tests.
+It reported a corpus-cache foreign-key failure during parallel runs. The test passed alone.
+The parallel failure reproduced before the fix described below.
+The missing fixtures and grammars still prevent a completely green repository-wide suite.
 
 The final merged file-patch examples pass at 100, 1,000, and 10,000 files.
 Their warm insertion uses 4,254 SQL instructions and rebuilds 226, 337, and 448 metadata nodes respectively.
 The 10,000-file run measured 1.51 ms CPU for insertion and 1.33 ms for retraction.
+
+### Concurrent corpus collection
+
+The collector could delete a source between its lookup and publication of its memo results.
+A run records its source manifest after local evaluation. Until then, newly stored or reused sources can appear unreferenced.
+Another run's collector can advance the generation and delete those sources. Memo publication then fails its foreign-key check.
+The generation check alone does not protect a run that spans multiple collection passes.
+
+The store now uses a shared file lease while a corpus reads sources, parses files, and publishes memo rows, stats, and its manifest.
+Standalone cached parses hold the same lease through tape publication.
+Each collector tries an exclusive lease before it selects manifests or deletes rows. If readers are active, collection defers.
+Readers can run together, including in separate processes. Closing a lease or exiting its process releases the lock.
+The lock uses the database's canonical path, so symbolic aliases share it. Its sidecar file must remain in place.
+
+A deferred pass leaves collection due. A later corpus run checks this flag even when its manifest has not changed.
+The maintenance thread can also resume collection. Continuous overlapping analyses can delay collection until a gap between readers.
+All processes that share the cache must use the lease protocol; an older collector cannot respect these leases.
+
+Regression tests cover overlapping readers, memo publication, deferred collection, collection after readers finish, and warm-run resumption.
+A child-process test also checks symbolic aliases and lock release after a process is killed.
+
+The combined checks exposed a second lock issue: a subprocess can inherit an open lock descriptor before it executes its program.
+Closing the parent's handle alone can leave the lock held briefly. Rapid collection passes then defer and leave a derived tape behind.
+Leases now explicitly unlock on release. A regression test keeps a duplicate descriptor open to check this case.
+
+Validation: `cargo check --locked --lib` passes. Both parallel runs pass 226 tests with four ignored tests.
+Each run uses a separate `RERAIL_TAPE_CACHE` database; tests within that run share it with collection enabled.
+This isolates validation from older engines running in other worktrees, which do not use the lease protocol.
+The test filters are `content_store`, `code_rule_dsl::sql_executor`, `code_rule_dsl::logic::rr::tests`, and
+`code_rule_dsl::logic::plan::corpus::tests`, with `rule_syntax_files_pass_check_rr` excluded.

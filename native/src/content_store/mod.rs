@@ -8,6 +8,8 @@ pub(crate) mod atoms;
 #[allow(dead_code)]
 mod bounded_insert;
 mod compression;
+mod collection_guard;
+pub(crate) use collection_guard::CollectionLease;
 mod connection;
 mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, StatIndex};
