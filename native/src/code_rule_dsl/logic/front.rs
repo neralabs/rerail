@@ -695,11 +695,16 @@ impl Parser<'_> {
                 let (Tok::Str(key), Tok::Str(k)) = (self.peek().clone(), self.peek_at(1).clone()) else {
                     return self.fail("a pragma's two strings");
                 };
-                if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
-                    return self.fail("`.pragma \"cross-rounds\" \"k\"`");
-                }
                 self.i += 2;
-                prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
+                if key == "library-open" {
+                    // Decision 0058: relations a workspace run still derives about library nodes.
+                    prog.settings.push(("pragma".to_owned(), format!("\"library-open\" \"{k}\"")));
+                } else if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
+                    self.i -= 2;
+                    return self.fail("`.pragma \"cross-rounds\" \"k\"` or `.pragma \"library-open\" \"r s\"`");
+                } else {
+                    prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
+                }
             }
             "kindset" => {
                 let name = self.id()?;
